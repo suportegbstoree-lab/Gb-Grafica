@@ -26,6 +26,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
   const [cep, setCep] = useState('');
   const [shippingInfo, setShippingInfo] = useState<{ address: string; price: number } | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [logoError, setLogoError] = useState(false);
 
   const calculateShipping = async () => {
     if (cep.length !== 8) return;
@@ -208,10 +209,11 @@ export default function Home({ products, config, categories, cart, setCart, orde
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#ff4d79] via-[#7000ff] to-[#ff4d79] animate-gradient-x"></div>
         
         <div className="flex items-center group">
-          {(config.logo_url || "/logo.png") ? (
+          {!logoError && (config.logo_url || "/logo.png") ? (
             <img 
               src={config.logo_url || "/logo.png"} 
               alt="GB Gráfica" 
+              onError={() => setLogoError(true)}
               className="h-14 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-[0_0_15px_rgba(255,77,121,0.2)]" 
               referrerPolicy="no-referrer"
             />
