@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #ff85a2;
+  --color-brand-secondary: #a78bfa;
+  --color-brand-bg: #ffffff;
+  --color-brand-surface: #fdf2f8;
+  --color-brand-text: #1f2937;
+  --color-brand-muted: #6b7280;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-gray-900;
+  }
+}
+
+.glass-card {
+  @apply bg-white/80 backdrop-blur-md border border-pink-100 shadow-sm;
+}
+
+.gradient-text {
+  @apply text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500;
+}
+
+.gradient-bg {
+  @apply bg-gradient-to-br from-pink-500 to-purple-600;
+}
