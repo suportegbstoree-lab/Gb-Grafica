@@ -165,6 +165,11 @@ export default function Home({ products, config, categories, cart, setCart, orde
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-white font-sans selection:bg-[#ff4d79]/30 relative overflow-hidden">
+      {/* Test Banner */}
+      <div className="bg-red-600 text-white text-center py-1 text-[10px] font-bold uppercase tracking-widest z-50 relative">
+        Modo de Teste Ativo - Verificando sincronização com o domínio
+      </div>
+
       {/* Background Glows */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#ff4d79]/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
       <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#7000ff]/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
