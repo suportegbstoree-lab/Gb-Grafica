@@ -42,6 +42,9 @@ export interface SiteConfig {
   telefone1: string;
   telefone2: string;
   banner_principal: string;
+  banner_titulo?: string;
+  banner_subtitulo?: string;
+  banner_botao?: string;
   beneficio1_titulo: string;
   beneficio1_desc: string;
   beneficio2_titulo: string;

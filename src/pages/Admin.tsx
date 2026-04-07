@@ -52,6 +52,9 @@ export default function Admin({ products, config, categories, orders }: AdminPro
       telefone1: formData.get('telefone1') as string,
       telefone2: formData.get('telefone2') as string,
       banner_principal: formData.get('banner_principal') as string,
+      banner_titulo: formData.get('banner_titulo') as string,
+      banner_subtitulo: formData.get('banner_subtitulo') as string,
+      banner_botao: formData.get('banner_botao') as string,
       beneficio1_titulo: formData.get('beneficio1_titulo') as string,
       beneficio1_desc: formData.get('beneficio1_desc') as string,
       beneficio2_titulo: formData.get('beneficio2_titulo') as string,
@@ -342,6 +345,18 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL Banner Principal</label>
                   <input name="banner_principal" defaultValue={config.banner_principal} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label>
+                  <input name="banner_titulo" defaultValue={config.banner_titulo} placeholder="Ex: Impressão com Amor e Cuidado" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Subtítulo do Banner</label>
+                  <input name="banner_subtitulo" defaultValue={config.banner_subtitulo} placeholder="Ex: Produtos personalizados para eternizar..." className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do Botão do Banner</label>
+                  <input name="banner_botao" defaultValue={config.banner_botao} placeholder="Ex: Ver Produtos" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
               </div>
 

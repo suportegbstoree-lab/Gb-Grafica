@@ -184,90 +184,100 @@ export default function Home({ products, config, categories, cart, setCart, orde
       <div className="fixed bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
 
       {/* Micro Top Bar */}
-      <div className="bg-white/40 backdrop-blur-xl px-4 md:px-12 py-2 flex justify-between items-center text-[11px] text-gray-500 border-b border-gray-100/50 relative z-10">
-        <div className="flex gap-4 md:gap-6">
-          <span className="flex items-center gap-1 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={12} /> {config.telefone1}</span>
-          <span className="flex items-center gap-1 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={12} /> {config.telefone2}</span>
+      <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex justify-between items-center text-[11px] text-white relative z-40">
+        <div className="flex gap-4 md:gap-8">
+          <span className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone1}</span>
+          <span className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone2}</span>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-8 items-center">
           {isAdmin && (
-            <Link to="/admin" className="hover:text-pink-500 flex items-center gap-1 transition-colors font-bold">
-              <Settings size={12} /> Área Admin
+            <Link to="/admin" className="hover:text-pink-100 flex items-center gap-2 transition-colors font-bold">
+              <Settings size={14} /> Área Admin
             </Link>
           )}
           {user && (
-            <button onClick={() => setIsOrdersOpen(true)} className="hover:text-pink-500 transition-colors flex items-center gap-1">
-              <Package size={12} /> Meus Pedidos
+            <button onClick={() => setIsOrdersOpen(true)} className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold">
+              <Package size={14} /> Meus Pedidos
             </button>
           )}
           {user ? (
-            <button onClick={logout} className="hover:text-pink-500 transition-colors flex items-center gap-1">
-              <LogOut size={12} /> Sair ({user.displayName?.split(' ')[0]})
+            <button onClick={logout} className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold">
+              <LogOut size={14} /> Sair ({user.displayName?.split(' ')[0]})
             </button>
           ) : (
             <button 
               onClick={handleLogin} 
               disabled={isLoggingIn}
-              className="hover:text-pink-500 transition-colors flex items-center gap-1 disabled:opacity-50"
+              className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold disabled:opacity-50"
             >
-              {isLoggingIn ? <Loader2 size={12} className="animate-spin" /> : <LogIn size={12} />} 
+              {isLoggingIn ? <Loader2 size={14} className="animate-spin" /> : <LogIn size={14} />} 
               {isLoggingIn ? 'Entrando...' : 'Entrar'}
             </button>
           )}
         </div>
+        
+        {/* Scalloped Bottom */}
+        <div className="absolute bottom-[-10px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-[#d14d8c]">
+            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+          </svg>
+        </div>
       </div>
 
       {/* Header */}
-      <header className="bg-white/60 backdrop-blur-md px-4 md:px-12 py-6 flex flex-col md:flex-row justify-between items-center gap-6 border-b border-gray-100/50 shadow-sm relative overflow-hidden z-20">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-pink-200 via-purple-200 to-pink-200"></div>
-        
+      <header className="bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
         <div className="flex items-center group">
-          {config.logo_url && config.logo_url.trim() !== "" ? (
+          {config.logo_url && config.logo_url.trim() !== "" && config.logo_url !== "/logo.png" ? (
             <img 
               src={config.logo_url} 
               alt="GB Gráfica" 
-              className="h-14 w-auto object-contain transition-transform group-hover:scale-105" 
+              className="h-24 w-auto object-contain transition-transform group-hover:scale-105" 
               referrerPolicy="no-referrer"
               onError={(e) => {
                 const target = e.target as HTMLImageElement;
                 target.style.display = 'none';
                 if (target.parentElement) {
-                  target.parentElement.innerHTML = '<div class="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">GB <span class="text-gray-900">GRÁFICA</span></div>';
+                  target.parentElement.innerHTML = '<div class="flex flex-col"><div class="text-4xl font-black tracking-tighter text-[#d14d8c]">etiquetas</div><div class="text-4xl font-black tracking-tighter text-[#5dc1c1] mt-[-10px]">&adesivos</div></div>';
                 }
               }}
             />
           ) : (
-            <div className="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">
-              GB <span className="text-gray-900">GRÁFICA</span>
+            <div className="flex flex-col">
+              <div className="text-4xl font-black tracking-tighter text-[#d14d8c] leading-none">etiquetas</div>
+              <div className="text-4xl font-black tracking-tighter text-[#5dc1c1] leading-none">&adesivos</div>
             </div>
           )}
         </div>
         
-        <div className="flex w-full md:w-1/2 max-w-2xl relative group">
+        <div className="flex w-full md:w-1/2 max-w-xl relative group">
           <input 
             type="text" 
-            placeholder="O que você deseja imprimir hoje?" 
-            className="w-full bg-gray-50 border border-gray-200 rounded-full px-8 py-4 outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-50 transition-all text-sm"
+            placeholder="Buscar" 
+            className="w-full bg-white border-2 border-gray-100 rounded-full px-8 py-4 outline-none focus:border-pink-300 transition-all text-sm shadow-sm"
           />
-          <button className="absolute right-2 top-2 bottom-2 bg-gradient-to-br from-pink-400 to-purple-500 px-6 rounded-full font-bold text-white hover:scale-105 transition-transform flex items-center justify-center shadow-lg shadow-pink-200">
-            <Search size={20} />
+          <button className="absolute right-4 top-1/2 -translate-y-1/2 text-[#5dc1c1] hover:scale-110 transition-transform">
+            <Search size={28} />
           </button>
         </div>
 
-        <div className="flex gap-8 items-center text-xs font-bold uppercase tracking-wider">
-          <button onClick={() => setIsHowToBuyOpen(true)} className="hover:text-pink-500 transition-colors flex items-center gap-2 group">
-            <div className="p-2 bg-gray-50 rounded-lg group-hover:bg-pink-50 transition-colors">
-              <Info size={20} className="text-pink-500" />
+        <div className="flex gap-12 items-center">
+          <button onClick={() => setIsHowToBuyOpen(true)} className="flex items-center gap-3 group">
+            <div className="w-16 h-16 rounded-full border-2 border-[#d14d8c]/30 flex items-center justify-center bg-white group-hover:border-[#d14d8c] transition-all shadow-sm">
+              <img src="https://cdn-icons-png.flaticon.com/512/2910/2910791.png" className="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
             </div>
-            Como Comprar
+            <span className="text-[11px] font-black uppercase tracking-widest text-[#d14d8c]">Como Aplicar</span>
           </button>
-          <button onClick={() => setIsCartOpen(true)} className="flex items-center gap-2 hover:text-pink-500 transition-colors relative group">
-            <div className="p-2 bg-gray-50 rounded-lg group-hover:bg-pink-50 transition-colors">
-              <ShoppingCart size={20} className="text-pink-500" />
+          
+          <button onClick={() => setIsCartOpen(true)} className="flex items-center gap-3 group relative">
+            <div className="w-16 h-16 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
+              <ShoppingCart size={28} className="text-[#5dc1c1]" />
             </div>
-            Meu Carrinho
+            <div className="flex flex-col items-start">
+              <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1]">Meu</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1] mt-[-4px]">Carrinho</span>
+            </div>
             {cart.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-pink-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center shadow-lg border-2 border-white">
+              <span className="absolute top-0 left-12 bg-pink-500 text-white text-[10px] w-6 h-6 rounded-full flex items-center justify-center shadow-lg border-2 border-white font-black">
                 {cart.reduce((acc, i) => acc + i.quantidade, 0)}
               </span>
             )}
@@ -276,14 +286,53 @@ export default function Home({ products, config, categories, cart, setCart, orde
       </header>
 
       {/* Navigation */}
-      <nav className="bg-white/40 backdrop-blur-md px-4 md:px-12 py-4 flex flex-wrap justify-center gap-4 md:gap-10 border-b border-gray-100/50 sticky top-0 z-30">
-        {categories.map((cat) => (
-          <a key={cat} href="#" className="text-[11px] font-bold uppercase tracking-widest text-gray-500 hover:text-pink-500 transition-all flex items-center gap-2 group whitespace-nowrap">
-            <div className="w-1.5 h-1.5 rounded-full bg-pink-300 group-hover:scale-150 transition-transform shadow-[0_0_8px_rgba(244,114,182,0.4)]"></div>
-            {cat}
-          </a>
-        ))}
+      <nav className="bg-white px-4 md:px-12 py-10 flex flex-wrap justify-center gap-8 md:gap-14 relative z-30 shadow-sm">
+        {categories.map((cat, idx) => {
+          const icons = [
+            "https://cdn-icons-png.flaticon.com/512/3063/3063822.png",
+            "https://cdn-icons-png.flaticon.com/512/3531/3531821.png",
+            "https://cdn-icons-png.flaticon.com/512/1048/1048953.png",
+            "https://cdn-icons-png.flaticon.com/512/2965/2965301.png",
+            "https://cdn-icons-png.flaticon.com/512/2666/2666505.png",
+            "https://cdn-icons-png.flaticon.com/512/2554/2554922.png"
+          ];
+          return (
+            <motion.a 
+              key={cat} 
+              href="#" 
+              whileHover={{ y: -5 }}
+              className="flex flex-col items-center gap-3 group transition-all"
+            >
+              <div className="w-10 h-10 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all opacity-60 group-hover:opacity-100">
+                <img src={icons[idx % icons.length]} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+              </div>
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-hover:text-[#d14d8c] text-center max-w-[100px] leading-tight transition-colors">
+                {cat}
+              </span>
+            </motion.a>
+          );
+        })}
+        
+        {/* Scalloped Bottom for Nav */}
+        <div className="absolute bottom-[-12px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-white">
+            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+          </svg>
+        </div>
       </nav>
+
+      {/* Promo Bar */}
+      <div className="bg-[#5dc1c1] py-4 text-center relative z-20">
+        <span className="text-white font-black uppercase tracking-[0.3em] text-[11px]">
+          PROMOÇÃO DESCONTO PROGRESSIVO - ATÉ 30% OFF - CONFIRA O REGULAMENTO
+        </span>
+        {/* Scalloped Bottom for Promo */}
+        <div className="absolute bottom-[-12px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-[#5dc1c1]">
+            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+          </svg>
+        </div>
+      </div>
 
       {/* Banner Carousel */}
       <section className="w-full h-[500px] overflow-hidden relative group z-10">
@@ -314,8 +363,25 @@ export default function Home({ products, config, categories, cart, setCart, orde
               transition={{ delay: 0.2 }}
             >
               <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-gray-900 leading-none">
-                Impressão com <br/>
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Amor e Cuidado</span>
+                {config.banner_titulo ? (
+                  <>
+                    {config.banner_titulo.split('<br/>').map((line, i) => (
+                      <React.Fragment key={i}>
+                        {i > 0 && <br/>}
+                        {line.includes('**') ? (
+                          <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">
+                            {line.replace(/\*\*/g, '')}
+                          </span>
+                        ) : line}
+                      </React.Fragment>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    Impressão com <br/>
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Amor e Cuidado</span>
+                  </>
+                )}
               </h1>
             </motion.div>
             <motion.p 
@@ -324,7 +390,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
               transition={{ delay: 0.4 }}
               className="text-gray-600 max-w-xl mx-auto text-base md:text-lg font-medium"
             >
-              Produtos personalizados para eternizar os momentos mais especiais da sua vida.
+              {config.banner_subtitulo || "Produtos personalizados para eternizar os momentos mais especiais da sua vida."}
             </motion.p>
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -332,7 +398,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
               transition={{ delay: 0.6 }}
             >
               <button className="bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl shadow-pink-100 hover:scale-105 active:scale-95">
-                Ver Produtos
+                {config.banner_botao || "Ver Produtos"}
               </button>
             </motion.div>
           </div>
