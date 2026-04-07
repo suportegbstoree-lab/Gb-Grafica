@@ -26,7 +26,6 @@ export default function Home({ products, config, categories, cart, setCart, orde
   const [cep, setCep] = useState('');
   const [shippingInfo, setShippingInfo] = useState<{ address: string; price: number } | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
-  const [logoError, setLogoError] = useState(false);
 
   const calculateShipping = async () => {
     if (cep.length !== 8) return;
@@ -209,19 +208,12 @@ export default function Home({ products, config, categories, cart, setCart, orde
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-[#ff4d79] via-[#7000ff] to-[#ff4d79] animate-gradient-x"></div>
         
         <div className="flex items-center group">
-          {!logoError && (config.logo_url || "/logo.png") ? (
-            <img 
-              src={config.logo_url || "/logo.png"} 
-              alt="GB Gráfica" 
-              onError={() => setLogoError(true)}
-              className="h-14 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-[0_0_15px_rgba(255,77,121,0.2)]" 
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="text-3xl font-black tracking-tighter text-white">
-              GB <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#ff4d79] to-[#7000ff]">GRÁFICA</span>
-            </div>
-          )}
+          <img 
+            src={config.logo_url && config.logo_url.trim() !== "" ? config.logo_url : "/logo.png"} 
+            alt="GB Gráfica" 
+            className="h-14 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-[0_0_15px_rgba(255,77,121,0.2)]" 
+            referrerPolicy="no-referrer"
+          />
         </div>
         
         <div className="flex w-full md:w-1/2 max-w-2xl relative group">
