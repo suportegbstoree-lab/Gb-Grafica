@@ -129,7 +129,7 @@ export default function App() {
     const titleElement = document.querySelector('title');
     if (titleElement) titleElement.innerText = title;
 
-    const faviconUrl = `${config.logo_url || "/logo.png"}?v=${Date.now()}`;
+    const faviconUrl = config.logo_url || "/logo.png";
     
     let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
     if (!link) {

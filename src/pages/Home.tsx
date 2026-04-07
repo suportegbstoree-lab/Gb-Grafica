@@ -165,11 +165,6 @@ export default function Home({ products, config, categories, cart, setCart, orde
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-white font-sans selection:bg-[#ff4d79]/30 relative overflow-hidden">
-      {/* Test Banner */}
-      <div className="bg-red-600 text-white text-center py-1 text-[10px] font-bold uppercase tracking-widest z-50 relative">
-        Modo de Teste Ativo - Verificando sincronização com o domínio
-      </div>
-
       {/* Background Glows */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#ff4d79]/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
       <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#7000ff]/10 blur-[120px] rounded-full pointer-events-none z-0"></div>
@@ -215,7 +210,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
         <div className="flex items-center group">
           {(config.logo_url || "/logo.png") ? (
             <img 
-              src={`${config.logo_url || "/logo.png"}?v=3`} 
+              src={config.logo_url || "/logo.png"} 
               alt="GB Gráfica" 
               className="h-14 w-auto object-contain transition-transform group-hover:scale-110 drop-shadow-[0_0_15px_rgba(255,77,121,0.2)]" 
               referrerPolicy="no-referrer"
@@ -373,9 +368,9 @@ export default function Home({ products, config, categories, cart, setCart, orde
           <div>
             <h4 className="text-white font-bold mb-6 uppercase text-xs tracking-widest">Pagamento</h4>
             <div className="flex gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
-              <img src="https://logodownload.org/wp-content/uploads/2014/07/visa-logo-1.png" className="h-4 object-contain" />
-              <img src="https://logodownload.org/wp-content/uploads/2014/07/mastercard-logo.png" className="h-6 object-contain" />
-              <img src="https://logodownload.org/wp-content/uploads/2019/06/pix-logo-1.png" className="h-6 object-contain" />
+              <img src="https://logodownload.org/wp-content/uploads/2014/07/visa-logo-1.png" className="h-4 object-contain" referrerPolicy="no-referrer" />
+              <img src="https://logodownload.org/wp-content/uploads/2014/07/mastercard-logo.png" className="h-6 object-contain" referrerPolicy="no-referrer" />
+              <img src="https://logodownload.org/wp-content/uploads/2019/06/pix-logo-1.png" className="h-6 object-contain" referrerPolicy="no-referrer" />
             </div>
           </div>
         </div>
