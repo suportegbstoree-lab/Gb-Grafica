@@ -1,0 +1,116 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A product available in the store.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "desc": { "type": "string" },
+        "categoria": { "type": "string" },
+        "imagem": { "type": "string" },
+        "preco_base": { "type": "string" },
+        "atributos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": { "type": "string" },
+              "opcoes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "combinacoes": { "type": "object" },
+        "tipoInput": { "type": "string", "enum": ["arte", "texto", "nenhum"] },
+        "labelTexto": { "type": "string" }
+      },
+      "required": ["nome", "desc", "categoria", "imagem"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A product category.",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" }
+      },
+      "required": ["nome"]
+    },
+    "SiteConfig": {
+      "title": "SiteConfig",
+      "description": "General site configuration.",
+      "type": "object",
+      "properties": {
+        "telefone1": { "type": "string" },
+        "telefone2": { "type": "string" },
+        "banner_principal": { "type": "string" },
+        "beneficio1_titulo": { "type": "string" },
+        "beneficio1_desc": { "type": "string" },
+        "beneficio2_titulo": { "type": "string" },
+        "beneficio2_desc": { "type": "string" },
+        "beneficio3_titulo": { "type": "string" },
+        "beneficio3_desc": { "type": "string" }
+      }
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A customer order.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "data": { "type": "string" },
+        "total": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pendente", "Processando", "Enviado", "Entregue"] },
+        "itens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "nome": { "type": "string" },
+              "imagem": { "type": "string" },
+              "preco": { "type": "string" },
+              "quantidade": { "type": "number" },
+              "selecoes": { "type": "object" },
+              "arquivoUrl": { "type": "string" },
+              "textoPersonalizado": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["userId", "data", "total", "status", "itens"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and role.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Collection of products."
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Collection of categories."
+    },
+    "/config/main": {
+      "schema": "SiteConfig",
+      "description": "Main site configuration."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Collection of orders."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and roles."
+    }
+  }
+}

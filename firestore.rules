@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: products
+    // Document ID: productId
+    // Fields:
+    //   - nome: string (required)
+    //   - desc: string (required)
+    //   - categoria: string (required)
+    //   - imagem: string (required)
+    //   - preco_base: string (optional)
+    //   - atributos: list of objects (optional)
+    //   - combinacoes: map (optional)
+    //   - tipoInput: string (optional, enum: arte, texto, nenhum)
+    //   - labelTexto: string (optional)
+    //
+    // Collection: categories
+    // Document ID: categoryId
+    // Fields:
+    //   - nome: string (required)
+    //
+    // Collection: config
+    // Document ID: main
+    // Fields:
+    //   - telefone1: string
+    //   - telefone2: string
+    //   - banner_principal: string
+    //   - beneficio1_titulo: string
+    //   - beneficio1_desc: string
+    //   - beneficio2_titulo: string
+    //   - beneficio2_desc: string
+    //   - beneficio3_titulo: string
+    //   - beneficio3_desc: string
+    //
+    // Collection: orders
+    // Document ID: orderId
+    // Fields:
+    //   - userId: string (required, immutable)
+    //   - data: string (required)
+    //   - total: string (required)
+    //   - status: string (required, enum: Pendente, Processando, Enviado, Entregue)
+    //   - itens: list of objects (required)
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - email: string (required, immutable)
+    //   - role: string (required, enum: admin, user)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "ggarciapalermo@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidProduct(data) {
+      return hasRequiredFields(['nome', 'desc', 'categoria', 'imagem']) &&
+             data.nome is string && data.nome.size() > 0 && data.nome.size() < 200 &&
+             data.desc is string && data.desc.size() < 1000 &&
+             data.categoria is string &&
+             data.imagem is string &&
+             (!('tipoInput' in data) || data.tipoInput in ['arte', 'texto', 'nenhum']) &&
+             (!('labelTexto' in data) || data.labelTexto is string);
+    }
+
+    function isValidCategory(data) {
+      return hasRequiredFields(['nome']) &&
+             data.nome is string && data.nome.size() > 0 && data.nome.size() < 100;
+    }
+
+    function isValidOrder(data) {
+      return hasRequiredFields(['userId', 'data', 'total', 'status', 'itens']) &&
+             data.userId is string &&
+             data.total is string &&
+             data.status in ['Pendente', 'Processando', 'Enviado', 'Entregue'] &&
+             data.itens is list;
+    }
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'user'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidProduct(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidCategory(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /config/main {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidOrder(request.resource.data) && (isOwner(request.resource.data.userId) || isAdmin());
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(resource.data.userId) && request.resource.data.status == resource.data.status));
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin()) && (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin()) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
