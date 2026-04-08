@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, SiteConfig, CartItem, Order, Category } from '../types';
 import { cn } from '../lib/utils';
-import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType, storage } from '../firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { Upload, FileCheck, Loader2 } from 'lucide-react';
+import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType } from '../firebase';
+// Removidas funções de upload de arquivo para usar URLs diretas
 
 interface HomeProps {
   products: Product[];
@@ -764,8 +763,6 @@ function BenefitItem({ icon, title, desc }: { icon: string; title: string; desc:
 
 function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: (item: CartItem) => void; key?: string }) {
   const [selections, setSelections] = useState<Record<string, string>>({});
-  const [file, setFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [customText, setCustomText] = useState("");
   
@@ -773,24 +770,8 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
     setSelections(prev => ({ ...prev, [attrName]: option }));
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-    
-    setFile(selectedFile);
-    setIsUploading(true);
-    
-    try {
-      const fileRef = ref(storage, `artes/${Date.now()}-${selectedFile.name}`);
-      await uploadBytes(fileRef, selectedFile);
-      const url = await getDownloadURL(fileRef);
-      setUploadedUrl(url);
-    } catch (error) {
-      console.error("Erro no upload:", error);
-      alert("Erro ao enviar arquivo.");
-    } finally {
-      setIsUploading(false);
-    }
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadedUrl(e.target.value);
   };
 
   const isFullySelected = product.atributos.every(attr => selections[attr.nome]);
@@ -882,26 +863,17 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
           <div className="flex flex-col gap-8">
             {product.tipoInput === 'arte' && (
               <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">Sua Arte</span>
-                <label className={cn(
-                  "flex items-center gap-3 px-4 py-4 rounded-xl border border-dashed cursor-pointer transition-all",
-                  uploadedUrl ? "border-green-500 bg-green-50" : "border-gray-200 hover:border-pink-400 bg-gray-50"
-                )}>
-                  <input type="file" className="hidden" onChange={handleFileChange} accept=".pdf,.jpg,.jpeg,.png,.ai,.psd" />
-                  {isUploading ? (
-                    <Loader2 size={20} className="animate-spin text-pink-500" />
-                  ) : uploadedUrl ? (
-                    <FileCheck size={20} className="text-green-500" />
-                  ) : (
-                    <Upload size={20} className="text-gray-400" />
-                  )}
-                  <div className="flex flex-col">
-                    <span className="text-[11px] font-bold text-gray-700">
-                      {isUploading ? "Enviando..." : uploadedUrl ? "Arte Pronta!" : "Anexar Arquivo"}
-                    </span>
-                    <span className="text-[9px] text-gray-400">PDF, JPG, PNG, AI</span>
-                  </div>
-                </label>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">Sua Arte (Link)</span>
+                <input 
+                  type="text"
+                  value={uploadedUrl || ""}
+                  onChange={handleUrlChange}
+                  placeholder="Cole o link da sua arte aqui"
+                  className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-4 text-xs outline-none focus:border-pink-400 text-gray-900 transition-all mb-2"
+                />
+                <p className="text-[9px] text-gray-400 leading-tight">
+                  Você pode usar sites como PostImages ou Imgur. Se preferir, pode enviar pelo WhatsApp após a compra.
+                </p>
               </div>
             )}
 

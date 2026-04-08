@@ -4,8 +4,7 @@ import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Setting
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, SiteConfig, Order, Category } from '../types';
 import { cn } from '../lib/utils';
-import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, storage, auth } from '../firebase';
-import { ref, uploadBytesResumable, getDownloadURL, uploadBytes } from 'firebase/storage';
+import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, auth } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 
 interface AdminProps {
@@ -20,59 +19,11 @@ export default function Admin({ products, config, categories, orders }: AdminPro
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
   const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [currentUploadTask, setCurrentUploadTask] = useState<any>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
   const [showAttrForm, setShowAttrForm] = useState(false);
 
-  const handleFileUpload = async (file: File, path: string): Promise<string> => {
-    if (!auth.currentUser) {
-      setUploadError("Você precisa estar logado para fazer upload de imagens.");
-      return "";
-    }
-
-    setIsUploading(true);
-    setUploadProgress(0);
-    setUploadError(null);
-    setCurrentUploadTask(null);
-    
-    console.log(`Tentando upload de ${file.name} para ${path}...`);
-
-    try {
-      const storageRef = ref(storage, `${path}/${Date.now()}_${file.name}`);
-      
-      // Usando uploadBytes (mais simples e direto que o Resumable para arquivos pequenos/médios)
-      const uploadResult = await uploadBytes(storageRef, file);
-      console.log("Upload concluído com sucesso!");
-      
-      const url = await getDownloadURL(uploadResult.ref);
-      setIsUploading(false);
-      return url;
-    } catch (error: any) {
-      console.error("Erro detalhado no upload:", error);
-      
-      let message = "Erro ao fazer upload da imagem.";
-      
-      if (error.code === 'storage/unauthorized') {
-        message = "Acesso Negado: Verifique se as 'Rules' do seu Firebase Storage permitem gravação.";
-      } else if (error.code === 'storage/canceled') {
-        message = "O upload foi cancelado pelo sistema ou navegador.";
-      } else if (error.code === 'storage/quota-exceeded') {
-        message = "Limite de armazenamento do Firebase atingido.";
-      } else {
-        message = `Erro técnico: ${error.code || 'Desconhecido'} - ${error.message}`;
-      }
-      
-      setUploadError(message);
-      setIsUploading(false);
-      return "";
-    }
-  };
-
   const bootstrapData = async () => {
-    if (!confirm('Isso irá carregar os produtos e categorias iniciais. Continuar?')) return;
     setIsBootstrapping(true);
     try {
       // Categories
@@ -85,7 +36,7 @@ export default function Admin({ products, config, categories, orders }: AdminPro
         const id = prod.id || Math.random().toString(36).substr(2, 9);
         await setDoc(doc(db, 'products', id), { ...prod, id });
       }
-      alert('Dados iniciais carregados com sucesso!');
+      setSuccessMessage('Dados iniciais carregados com sucesso!');
     } catch (error) {
       console.error('Error bootstrapping data:', error);
     } finally {
@@ -116,7 +67,7 @@ export default function Admin({ products, config, categories, orders }: AdminPro
     
     try {
       await setDoc(doc(db, 'config', 'main'), updatedConfig);
-      alert('Configurações salvas!');
+      setSuccessMessage('Configurações salvas com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'config/main');
     }
@@ -159,9 +110,10 @@ export default function Admin({ products, config, categories, orders }: AdminPro
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!confirm('Tem certeza?')) return;
+    // Removido confirm() devido a restrições de iFrame
     try {
       await deleteDoc(doc(db, 'products', id));
+      setSuccessMessage('Produto excluído com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `products/${id}`);
     }
@@ -291,30 +243,14 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
-                  <div className="flex gap-4 items-center">
-                    <input 
-                      type="text" 
-                      value={newCategory.icon}
-                      onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
-                      placeholder="https://cdn-icons-png.flaticon.com/..."
-                      className="flex-grow bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                    />
-                    <label className="cursor-pointer bg-gray-800 p-3 rounded-lg hover:bg-gray-700 transition-colors">
-                      <Upload size={20} />
-                      <input 
-                        type="file" 
-                        className="hidden" 
-                        accept="image/*"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const url = await handleFileUpload(file, 'categories');
-                            if (url) setNewCategory({ ...newCategory, icon: url });
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
+                  <input 
+                    type="text" 
+                    value={newCategory.icon}
+                    onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
+                    placeholder="https://cdn-icons-png.flaticon.com/..."
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1">Cole o link da imagem (ex: PostImages ou Imgur)</p>
                 </div>
               </div>
               <button onClick={handleAddCategory} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto">
@@ -410,44 +346,26 @@ export default function Admin({ products, config, categories, orders }: AdminPro
 
         {activeTab === 'config' && (
           <div className="max-w-4xl space-y-8">
-            <h2 className="text-2xl font-bold">Configurações do Site</h2>
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Configurações do Site</h2>
+            </div>
             
             <form onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site</label>
-                  <div className="flex gap-4 items-center">
-                    <input 
-                      id="logo_url_input"
-                      name="logo_url" 
-                      defaultValue={config.logo_url} 
-                      placeholder="https://..." 
-                      className="flex-grow bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
-                    />
-                    <label className="cursor-pointer bg-gray-800 p-3 rounded-lg hover:bg-gray-700 transition-colors">
-                      <Upload size={20} />
-                      <input 
-                        type="file" 
-                        className="hidden" 
-                        accept="image/*"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const url = await handleFileUpload(file, 'config');
-                            if (url) {
-                              const input = document.getElementById('logo_url_input') as HTMLInputElement;
-                              if (input) input.value = url;
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                    {config.logo_url && (
-                      <div className="w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
-                        <img src={config.logo_url} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
-                      </div>
-                    )}
-                  </div>
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site (URL)</label>
+                  <input 
+                    id="logo_url_input"
+                    name="logo_url" 
+                    defaultValue={config.logo_url} 
+                    placeholder="https://exemplo.com/logo.png"
+                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                  />
+                  {config.logo_url && (
+                    <div className="mt-2 w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
+                      <img src={config.logo_url} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                    </div>
+                  )}
                   <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
                 </div>
                 <div className="space-y-2">
@@ -459,33 +377,14 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                   <input name="telefone2" defaultValue={config.telefone2} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal</label>
-                  <div className="flex gap-4 items-center">
-                    <input 
-                      id="banner_principal_input"
-                      name="banner_principal" 
-                      defaultValue={config.banner_principal} 
-                      className="flex-grow bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
-                    />
-                    <label className="cursor-pointer bg-gray-800 p-3 rounded-lg hover:bg-gray-700 transition-colors">
-                      <Upload size={20} />
-                      <input 
-                        type="file" 
-                        className="hidden" 
-                        accept="image/*"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const url = await handleFileUpload(file, 'banners');
-                            if (url) {
-                              const input = document.getElementById('banner_principal_input') as HTMLInputElement;
-                              if (input) input.value = url;
-                            }
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal (URL)</label>
+                  <input 
+                    id="banner_principal_input"
+                    name="banner_principal" 
+                    defaultValue={config.banner_principal} 
+                    placeholder="https://exemplo.com/banner.jpg"
+                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label>
@@ -580,32 +479,14 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Imagem do Produto</label>
-                    <div className="flex gap-4 items-center">
-                      <input 
-                        required
-                        value={editingProduct.imagem}
-                        onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
-                        placeholder="URL da Imagem"
-                        className="flex-grow bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
-                      />
-                      <label className="cursor-pointer bg-gray-800 p-3 rounded-lg hover:bg-gray-700 transition-colors relative">
-                        {isUploading ? <Loader2 size={20} className="animate-spin text-[#ff4d79]" /> : <Upload size={20} />}
-                        <input 
-                          type="file" 
-                          className="hidden" 
-                          accept="image/*"
-                          disabled={isUploading}
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const url = await handleFileUpload(file, 'products');
-                              if (url) setEditingProduct({ ...editingProduct, imagem: url });
-                            }
-                          }}
-                        />
-                      </label>
-                    </div>
+                    <label className="text-xs font-bold text-gray-500 uppercase">Imagem do Produto (URL)</label>
+                    <input 
+                      required
+                      value={editingProduct.imagem}
+                      onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
+                      placeholder="https://exemplo.com/produto.jpg"
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -755,83 +636,7 @@ export default function Admin({ products, config, categories, orders }: AdminPro
           </div>
         )}
       </AnimatePresence>
-      {isUploading && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex flex-col items-center justify-center gap-4">
-          <div className="relative w-24 h-24">
-            <svg className="w-full h-full" viewBox="0 0 100 100">
-              <circle 
-                cx="50" cy="50" r="45" 
-                fill="none" stroke="#222" strokeWidth="8" 
-              />
-              <circle 
-                cx="50" cy="50" r="45" 
-                fill="none" stroke="#ff4d79" strokeWidth="8" 
-                strokeDasharray={283}
-                strokeDashoffset={283 - (283 * uploadProgress) / 100}
-                strokeLinecap="round"
-                className="transition-all duration-300"
-              />
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center font-bold text-sm">
-              {uploadProgress}%
-            </div>
-          </div>
-          <div className="font-bold text-xl">Fazendo upload...</div>
-          <p className="text-gray-400 text-sm">Por favor, aguarde enquanto processamos sua imagem.</p>
-          
-          <button 
-            onClick={() => {
-              if (currentUploadTask) {
-                currentUploadTask.cancel();
-              }
-              setIsUploading(false);
-              setCurrentUploadTask(null);
-            }}
-            className="mt-4 px-6 py-2 bg-gray-800 hover:bg-gray-700 rounded-full text-xs font-bold transition-colors"
-          >
-            Cancelar Upload
-          </button>
-        </div>
-      )}
-
-      {uploadError && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex flex-col items-center justify-center gap-4 p-4">
-          <div className="bg-[#111111] border border-red-500/50 p-8 rounded-2xl max-w-lg w-full space-y-4">
-            <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto">
-              <X size={32} />
-            </div>
-            <h3 className="text-xl font-bold text-center">Falha no Upload</h3>
-            <div className="bg-black/50 p-4 rounded-lg border border-gray-800 text-sm font-mono break-all text-gray-300">
-              {uploadError}
-            </div>
-            
-            <div className="space-y-2">
-              <p className="text-xs text-gray-500 font-bold uppercase">Possíveis Soluções:</p>
-              <ul className="text-xs text-gray-400 list-disc pl-4 space-y-1">
-                <li>Verifique se o <b>Firebase Storage</b> está ativado no seu console.</li>
-                <li>Confirme se as <b>Regras de Segurança</b> do Storage permitem escrita (<code>allow write: if request.auth != null;</code>).</li>
-                <li>Tente fazer o upload de uma imagem menor (abaixo de 2MB).</li>
-                <li>Verifique se você está logado no painel (seu email: {auth.currentUser?.email}).</li>
-              </ul>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button 
-                onClick={() => setUploadError(null)}
-                className="flex-grow bg-gray-800 py-3 rounded-lg font-bold hover:bg-gray-700 transition-colors"
-              >
-                Fechar
-              </button>
-              <button 
-                onClick={() => window.open('https://console.firebase.google.com/', '_blank')}
-                className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors flex items-center justify-center gap-2"
-              >
-                Abrir Console <ArrowLeft className="rotate-180" size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Removidos modais de upload */}
     </div>
   );
 }
