@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, SiteConfig, CartItem, Order } from '../types';
+import { Product, SiteConfig, CartItem, Order, Category } from '../types';
 import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType, storage } from '../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -11,7 +11,7 @@ import { Upload, FileCheck, Loader2 } from 'lucide-react';
 interface HomeProps {
   products: Product[];
   config: SiteConfig;
-  categories: string[];
+  categories: Category[];
   cart: CartItem[];
   setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
   orders: Order[];
@@ -216,10 +216,12 @@ export default function Home({ products, config, categories, cart, setCart, orde
           )}
         </div>
         
-        {/* Scalloped Bottom */}
-        <div className="absolute bottom-[-10px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
-          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-[#d14d8c]">
-            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+        {/* Smooth Wave Bottom */}
+        <div className="absolute bottom-[-15px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[25px] fill-[#d14d8c]">
+            <path d="M0,0V46.29c47.79,22.2,103.59,32.17,158,28,70.36-5.37,136.33-33.31,206.8-37.5C438.64,32.43,512.34,53.67,583,72.05c69.27,18,138.3,24.88,209.4,13.08,36.15-6,69.85-17.84,104.45-29.34C989.49,25,1113-14.29,1200,52.47V0Z" opacity=".25"></path>
+            <path d="M0,0V15.81C13,36.92,27.64,56.86,47.69,72.05,99.41,111.27,165,111,224.58,91.58c31.15-10.15,60.09-26.07,89.67-39.8,40.92-19,84.73-46,130.83-49.67,36.26-2.85,70.9,9.42,98.6,31.56,31.77,25.39,62.32,62,103.63,73,40.44,10.79,81.35-6.69,119.13-24.28s75.16-39,116.92-43.05c59.73-5.85,113.28,22.88,168.9,38.84,30.2,8.66,59,6.17,87.09-7.5,22.43-10.89,48-26.93,60.65-49.24V0Z" opacity=".5"></path>
+            <path d="M0,0V5.63C149.93,59,314.09,71.32,475.83,42.57c43-7.64,84.23-20.12,127.61-26.46,59-8.63,112.48,12.24,165.56,35.4C827.93,77.22,886,95.24,951.2,90c86.53-7,172.46-45.71,248.8-84.81V0Z"></path>
           </svg>
         </div>
       </div>
@@ -227,7 +229,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
       {/* Header */}
       <header className="bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
         <div className="flex items-center group">
-          {config.logo_url && config.logo_url.trim() !== "" && config.logo_url !== "/logo.png" ? (
+          {config.logo_url && config.logo_url.trim() !== "" ? (
             <img 
               src={config.logo_url} 
               alt="GB Gráfica" 
@@ -237,14 +239,14 @@ export default function Home({ products, config, categories, cart, setCart, orde
                 const target = e.target as HTMLImageElement;
                 target.style.display = 'none';
                 if (target.parentElement) {
-                  target.parentElement.innerHTML = '<div class="flex flex-col"><div class="text-4xl font-black tracking-tighter text-[#d14d8c]">etiquetas</div><div class="text-4xl font-black tracking-tighter text-[#5dc1c1] mt-[-10px]">&adesivos</div></div>';
+                  target.parentElement.innerHTML = '<div class="flex flex-col"><div class="text-4xl font-black tracking-tighter text-[#d14d8c]">GB</div><div class="text-4xl font-black tracking-tighter text-[#5dc1c1] mt-[-10px]">GRÁFICA</div></div>';
                 }
               }}
             />
           ) : (
             <div className="flex flex-col">
-              <div className="text-4xl font-black tracking-tighter text-[#d14d8c] leading-none">etiquetas</div>
-              <div className="text-4xl font-black tracking-tighter text-[#5dc1c1] leading-none">&adesivos</div>
+              <div className="text-4xl font-black tracking-tighter text-[#d14d8c] leading-none">GB</div>
+              <div className="text-4xl font-black tracking-tighter text-[#5dc1c1] leading-none">GRÁFICA</div>
             </div>
           )}
         </div>
@@ -261,11 +263,11 @@ export default function Home({ products, config, categories, cart, setCart, orde
         </div>
 
         <div className="flex gap-12 items-center">
-          <button onClick={() => setIsHowToBuyOpen(true)} className="flex items-center gap-3 group">
+          <button onClick={() => setIsOrdersOpen(true)} className="flex items-center gap-3 group">
             <div className="w-16 h-16 rounded-full border-2 border-[#d14d8c]/30 flex items-center justify-center bg-white group-hover:border-[#d14d8c] transition-all shadow-sm">
-              <img src="https://cdn-icons-png.flaticon.com/512/2910/2910791.png" className="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity" referrerPolicy="no-referrer" />
+              <Package size={28} className="text-[#d14d8c]" />
             </div>
-            <span className="text-[11px] font-black uppercase tracking-widest text-[#d14d8c]">Como Aplicar</span>
+            <span className="text-[11px] font-black uppercase tracking-widest text-[#d14d8c]">Meus Pedidos</span>
           </button>
           
           <button onClick={() => setIsCartOpen(true)} className="flex items-center gap-3 group relative">
@@ -286,37 +288,37 @@ export default function Home({ products, config, categories, cart, setCart, orde
       </header>
 
       {/* Navigation */}
-      <nav className="bg-white px-4 md:px-12 py-10 flex flex-wrap justify-center gap-8 md:gap-14 relative z-30 shadow-sm">
-        {categories.map((cat, idx) => {
-          const icons = [
-            "https://cdn-icons-png.flaticon.com/512/3063/3063822.png",
-            "https://cdn-icons-png.flaticon.com/512/3531/3531821.png",
-            "https://cdn-icons-png.flaticon.com/512/1048/1048953.png",
-            "https://cdn-icons-png.flaticon.com/512/2965/2965301.png",
-            "https://cdn-icons-png.flaticon.com/512/2666/2666505.png",
-            "https://cdn-icons-png.flaticon.com/512/2554/2554922.png"
-          ];
-          return (
-            <motion.a 
-              key={cat} 
-              href="#" 
-              whileHover={{ y: -5 }}
-              className="flex flex-col items-center gap-3 group transition-all"
-            >
-              <div className="w-10 h-10 flex items-center justify-center grayscale group-hover:grayscale-0 transition-all opacity-60 group-hover:opacity-100">
-                <img src={icons[idx % icons.length]} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-              </div>
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 group-hover:text-[#d14d8c] text-center max-w-[100px] leading-tight transition-colors">
-                {cat}
-              </span>
-            </motion.a>
-          );
-        })}
+      <nav className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
+        {categories.map((cat, idx) => (
+          <motion.a 
+            key={cat.id} 
+            href={`#${cat.nome}`} 
+            whileHover={{ scale: 1.05 }}
+            className="flex items-center gap-2 group transition-all"
+          >
+            <div className="w-8 h-8 flex items-center justify-center transition-all">
+              {cat.icon ? (
+                <img src={cat.icon} className="w-full h-full object-contain grayscale group-hover:grayscale-0 opacity-60 group-hover:opacity-100 transition-all" referrerPolicy="no-referrer" />
+              ) : (
+                <Package size={20} className="text-gray-400 group-hover:text-[#d14d8c]" />
+              )}
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-tight text-gray-400 group-hover:text-[#d14d8c] transition-colors leading-none">
+              {cat.nome.split(' ').map((word, i) => (
+                <span key={i} className={cn("block", i === 0 && word.length < 10 ? "inline" : "block")}>
+                  {word} {i === 0 && word.length < 10 && ' '}
+                </span>
+              ))}
+            </span>
+          </motion.a>
+        ))}
         
-        {/* Scalloped Bottom for Nav */}
-        <div className="absolute bottom-[-12px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
-          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-white">
-            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+        {/* Smooth Wave Bottom for Nav */}
+        <div className="absolute bottom-[-15px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[25px] fill-white">
+            <path d="M0,0V46.29c47.79,22.2,103.59,32.17,158,28,70.36-5.37,136.33-33.31,206.8-37.5C438.64,32.43,512.34,53.67,583,72.05c69.27,18,138.3,24.88,209.4,13.08,36.15-6,69.85-17.84,104.45-29.34C989.49,25,1113-14.29,1200,52.47V0Z" opacity=".25"></path>
+            <path d="M0,0V15.81C13,36.92,27.64,56.86,47.69,72.05,99.41,111.27,165,111,224.58,91.58c31.15-10.15,60.09-26.07,89.67-39.8,40.92-19,84.73-46,130.83-49.67,36.26-2.85,70.9,9.42,98.6,31.56,31.77,25.39,62.32,62,103.63,73,40.44,10.79,81.35-6.69,119.13-24.28s75.16-39,116.92-43.05c59.73-5.85,113.28,22.88,168.9,38.84,30.2,8.66,59,6.17,87.09-7.5,22.43-10.89,48-26.93,60.65-49.24V0Z" opacity=".5"></path>
+            <path d="M0,0V5.63C149.93,59,314.09,71.32,475.83,42.57c43-7.64,84.23-20.12,127.61-26.46,59-8.63,112.48,12.24,165.56,35.4C827.93,77.22,886,95.24,951.2,90c86.53-7,172.46-45.71,248.8-84.81V0Z"></path>
           </svg>
         </div>
       </nav>
@@ -326,10 +328,12 @@ export default function Home({ products, config, categories, cart, setCart, orde
         <span className="text-white font-black uppercase tracking-[0.3em] text-[11px]">
           PROMOÇÃO DESCONTO PROGRESSIVO - ATÉ 30% OFF - CONFIRA O REGULAMENTO
         </span>
-        {/* Scalloped Bottom for Promo */}
-        <div className="absolute bottom-[-12px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
-          <svg viewBox="0 0 1200 20" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[12px] fill-[#5dc1c1]">
-            <path d="M0,0 C15,20 30,0 45,20 60,0 75,20 90,0 105,20 120,0 135,20 150,0 165,20 180,0 195,20 210,0 225,20 240,0 255,20 270,0 285,20 300,0 315,20 330,0 345,20 360,0 375,20 390,0 405,20 420,0 435,20 450,0 465,20 480,0 495,20 510,0 525,20 540,0 555,20 570,0 585,20 600,0 615,20 630,0 645,20 660,0 675,20 690,0 705,20 720,0 735,20 750,0 765,20 780,0 795,20 810,0 825,20 840,0 855,20 870,0 885,20 900,0 915,20 930,0 945,20 960,0 975,20 990,0 1005,20 1020,0 1035,20 1050,0 1065,20 1080,0 1095,20 1110,0 1125,20 1140,0 1155,20 1170,0 1185,20 1200,0 V0 H0 Z"></path>
+        {/* Smooth Wave Bottom for Promo */}
+        <div className="absolute bottom-[-15px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
+          <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[25px] fill-[#5dc1c1]">
+            <path d="M0,0V46.29c47.79,22.2,103.59,32.17,158,28,70.36-5.37,136.33-33.31,206.8-37.5C438.64,32.43,512.34,53.67,583,72.05c69.27,18,138.3,24.88,209.4,13.08,36.15-6,69.85-17.84,104.45-29.34C989.49,25,1113-14.29,1200,52.47V0Z" opacity=".25"></path>
+            <path d="M0,0V15.81C13,36.92,27.64,56.86,47.69,72.05,99.41,111.27,165,111,224.58,91.58c31.15-10.15,60.09-26.07,89.67-39.8,40.92-19,84.73-46,130.83-49.67,36.26-2.85,70.9,9.42,98.6,31.56,31.77,25.39,62.32,62,103.63,73,40.44,10.79,81.35-6.69,119.13-24.28s75.16-39,116.92-43.05c59.73-5.85,113.28,22.88,168.9,38.84,30.2,8.66,59,6.17,87.09-7.5,22.43-10.89,48-26.93,60.65-49.24V0Z" opacity=".5"></path>
+            <path d="M0,0V5.63C149.93,59,314.09,71.32,475.83,42.57c43-7.64,84.23-20.12,127.61-26.46,59-8.63,112.48,12.24,165.56,35.4C827.93,77.22,886,95.24,951.2,90c86.53-7,172.46-45.71,248.8-84.81V0Z"></path>
           </svg>
         </div>
       </div>
@@ -437,11 +441,11 @@ export default function Home({ products, config, categories, cart, setCart, orde
             <div className="flex flex-col">
               {categories.map((cat) => (
                 <a 
-                  key={cat} 
-                  href="#" 
+                  key={cat.id} 
+                  href={`#${cat.nome}`} 
                   className="p-5 text-[13px] font-bold uppercase tracking-wider text-gray-500 border-l-4 border-transparent hover:border-pink-400 hover:bg-pink-50/20 hover:text-pink-600 transition-all flex justify-between items-center group"
                 >
-                  {cat} <ChevronRight size={16} className="text-pink-400 opacity-0 group-hover:opacity-100 transition-all translate-x-[-10px] group-hover:translate-x-0" />
+                  {cat.nome} <ChevronRight size={16} className="text-pink-400 opacity-0 group-hover:opacity-100 transition-all translate-x-[-10px] group-hover:translate-x-0" />
                 </a>
               ))}
             </div>
@@ -481,6 +485,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
             <ul className="space-y-4 text-gray-500 text-sm font-medium">
               <li className="flex items-center gap-2 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={14} /> {config.telefone1}</li>
               <li className="flex items-center gap-2 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={14} /> {config.telefone2}</li>
+              <li onClick={() => setIsHowToBuyOpen(true)} className="hover:text-pink-500 transition-colors cursor-pointer">Como Comprar</li>
               <li className="hover:text-pink-500 transition-colors cursor-pointer">Segunda a Sexta: 08h às 18h</li>
             </ul>
           </div>

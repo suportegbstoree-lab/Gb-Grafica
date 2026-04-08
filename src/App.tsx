@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Admin from './pages/Admin';
-import { Product, SiteConfig, CartItem, Order } from './types';
+import { Product, SiteConfig, CartItem, Order, Category } from './types';
 import { INITIAL_PRODUCTS, INITIAL_CONFIG, INITIAL_CATEGORIES } from './constants';
 import { 
   db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType 
@@ -20,7 +20,7 @@ export default function App() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [config, setConfig] = useState<SiteConfig>(INITIAL_CONFIG);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('gb_cart');
     return saved ? JSON.parse(saved) : [];
@@ -66,7 +66,7 @@ export default function App() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'products'));
 
     const unsubCategories = onSnapshot(query(collection(db, 'categories'), orderBy('nome')), (snapshot) => {
-      setCategories(snapshot.docs.map(doc => doc.data().nome));
+      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
     const unsubConfig = onSnapshot(doc(db, 'config', 'main'), async (docSnap) => {

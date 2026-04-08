@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, SiteConfig, Order } from '../types';
+import { Product, SiteConfig, Order, Category } from '../types';
 import { cn } from '../lib/utils';
 import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
@@ -10,14 +10,14 @@ import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 interface AdminProps {
   products: Product[];
   config: SiteConfig;
-  categories: string[];
+  categories: Category[];
   orders: Order[];
 }
 
 export default function Admin({ products, config, categories, orders }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders'>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
-  const [newCategory, setNewCategory] = useState('');
+  const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
 
   const bootstrapData = async () => {
@@ -26,8 +26,8 @@ export default function Admin({ products, config, categories, orders }: AdminPro
     try {
       // Categories
       for (const cat of INITIAL_CATEGORIES) {
-        const id = cat.toLowerCase().replace(/\s+/g, '-');
-        await setDoc(doc(db, 'categories', id), { nome: cat });
+        const id = cat.nome.toLowerCase().replace(/\s+/g, '-');
+        await setDoc(doc(db, 'categories', id), cat);
       }
       // Products
       for (const prod of INITIAL_PRODUCTS) {
@@ -73,22 +73,21 @@ export default function Admin({ products, config, categories, orders }: AdminPro
 
   // Category Handlers
   const handleAddCategory = async () => {
-    if (!newCategory) return;
-    const id = newCategory.toLowerCase().replace(/\s+/g, '-');
+    if (!newCategory.nome) return;
+    const id = newCategory.nome.toLowerCase().replace(/\s+/g, '-');
     try {
-      await setDoc(doc(db, 'categories', id), { nome: newCategory });
-      setNewCategory('');
+      await setDoc(doc(db, 'categories', id), { nome: newCategory.nome, icon: newCategory.icon });
+      setNewCategory({ nome: '', icon: '' });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `categories/${id}`);
     }
   };
 
-  const handleDeleteCategory = async (catName: string) => {
-    const id = catName.toLowerCase().replace(/\s+/g, '-');
+  const handleDeleteCategory = async (catId: string) => {
     try {
-      await deleteDoc(doc(db, 'categories', id));
+      await deleteDoc(doc(db, 'categories', catId));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `categories/${id}`);
+      handleFirestoreError(error, OperationType.DELETE, `categories/${catId}`);
     }
   };
 
@@ -224,27 +223,45 @@ export default function Admin({ products, config, categories, orders }: AdminPro
         )}
 
         {activeTab === 'categories' && (
-          <div className="max-w-2xl space-y-8">
-            <h2 className="text-2xl font-bold">Categorias</h2>
+          <div className="max-w-4xl space-y-8">
+            <h2 className="text-2xl font-bold">Categorias e Navegação</h2>
             
-            <div className="flex gap-4">
-              <input 
-                type="text" 
-                value={newCategory}
-                onChange={(e) => setNewCategory(e.target.value)}
-                placeholder="Nova categoria..."
-                className="flex-grow bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-              />
-              <button onClick={handleAddCategory} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c]">
-                Adicionar
+            <div className="bg-[#111111] border border-gray-800 p-6 rounded-xl space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
+                  <input 
+                    type="text" 
+                    value={newCategory.nome}
+                    onChange={(e) => setNewCategory({ ...newCategory, nome: e.target.value })}
+                    placeholder="Ex: Etiquetas p/ Objetos"
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
+                  <input 
+                    type="text" 
+                    value={newCategory.icon}
+                    onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
+                    placeholder="https://cdn-icons-png.flaticon.com/..."
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                  />
+                </div>
+              </div>
+              <button onClick={handleAddCategory} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto">
+                Adicionar Categoria
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {categories.map(cat => (
-                <div key={cat} className="bg-[#111111] border border-gray-800 p-4 rounded-lg flex justify-between items-center group">
-                  <span className="font-bold text-sm uppercase tracking-wider">{cat}</span>
-                  <button onClick={() => handleDeleteCategory(cat)} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                <div key={cat.id} className="bg-[#111111] border border-gray-800 p-4 rounded-lg flex justify-between items-center group">
+                  <div className="flex items-center gap-4">
+                    {cat.icon && <img src={cat.icon} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />}
+                    <span className="font-bold text-sm uppercase tracking-wider">{cat.nome}</span>
+                  </div>
+                  <button onClick={() => handleDeleteCategory(cat.id)} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
                     <Trash2 size={18} />
                   </button>
                 </div>

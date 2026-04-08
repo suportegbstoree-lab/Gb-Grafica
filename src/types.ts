@@ -37,6 +37,12 @@ export interface Order {
   status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue';
 }
 
+export interface Category {
+  id: string;
+  nome: string;
+  icon?: string;
+}
+
 export interface SiteConfig {
   logo_url?: string;
   telefone1: string;

@@ -14,10 +14,15 @@ export const INITIAL_CONFIG: SiteConfig = {
 };
 
 export const INITIAL_CATEGORIES = [
-  "Adesivos e Etiquetas",
-  "Cartões de Visita",
-  "Flyers / Panfletos",
-  "Cadernetas"
+  { nome: "Etiquetas p/ Objetos", icon: "https://cdn-icons-png.flaticon.com/512/3063/3063822.png" },
+  { nome: "Etiquetas p/ Roupas", icon: "https://cdn-icons-png.flaticon.com/512/3531/3531821.png" },
+  { nome: "Chaveiros", icon: "https://cdn-icons-png.flaticon.com/512/1048/1048953.png" },
+  { nome: "Pulseiras", icon: "https://cdn-icons-png.flaticon.com/512/2965/2965301.png" },
+  { nome: "Rótulos", icon: "https://cdn-icons-png.flaticon.com/512/2666/2666505.png" },
+  { nome: "Saquinhos Multiuso", icon: "https://cdn-icons-png.flaticon.com/512/2554/2554922.png" },
+  { nome: "Adesivos de Parede", icon: "https://cdn-icons-png.flaticon.com/512/2910/2910791.png" },
+  { nome: "Luminárias", icon: "https://cdn-icons-png.flaticon.com/512/2590/2590525.png" },
+  { nome: "Painéis Educativos", icon: "https://cdn-icons-png.flaticon.com/512/2618/2618245.png" }
 ];
 
 export const INITIAL_PRODUCTS: Product[] = [
