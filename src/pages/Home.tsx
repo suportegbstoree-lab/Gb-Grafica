@@ -156,6 +156,8 @@ export default function Home({ products, config, categories, cart, setCart, orde
   }, []);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+  const [fallbackError, setFallbackError] = useState(false);
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
@@ -229,19 +231,21 @@ export default function Home({ products, config, categories, cart, setCart, orde
       {/* Header */}
       <header className="bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
         <div className="flex items-center group">
-          {config.logo_url && config.logo_url.trim() !== "" ? (
+          {config.logo_url && config.logo_url.trim() !== "" && !logoError ? (
             <img 
               src={config.logo_url} 
               alt="GB Gráfica" 
               className="h-24 w-auto object-contain transition-transform group-hover:scale-105" 
               referrerPolicy="no-referrer"
-              onError={(e) => {
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-                if (target.parentElement) {
-                  target.parentElement.innerHTML = '<div class="flex flex-col"><div class="text-4xl font-black tracking-tighter text-[#d14d8c]">GB</div><div class="text-4xl font-black tracking-tighter text-[#5dc1c1] mt-[-10px]">GRÁFICA</div></div>';
-                }
-              }}
+              onError={() => setLogoError(true)}
+            />
+          ) : !fallbackError ? (
+            <img 
+              src="/logo.png" 
+              alt="GB Gráfica" 
+              className="h-24 w-auto object-contain transition-transform group-hover:scale-105" 
+              referrerPolicy="no-referrer"
+              onError={() => setFallbackError(true)}
             />
           ) : (
             <div className="flex flex-col">

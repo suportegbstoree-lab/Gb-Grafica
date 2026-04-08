@@ -348,7 +348,14 @@ export default function Admin({ products, config, categories, orders }: AdminPro
               <div className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL da Logo</label>
-                  <input name="logo_url" defaultValue={config.logo_url} placeholder="https://..." className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <div className="flex gap-4 items-center">
+                    <input name="logo_url" defaultValue={config.logo_url} placeholder="https://..." className="flex-grow bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                    {config.logo_url && (
+                      <div className="w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
+                        <img src={config.logo_url} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                      </div>
+                    )}
+                  </div>
                   <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
                 </div>
                 <div className="space-y-2">
