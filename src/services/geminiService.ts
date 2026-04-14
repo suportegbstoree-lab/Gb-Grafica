@@ -1,8 +1,27 @@
 import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// O Vite substituirá process.env.GEMINI_API_KEY pelo valor real durante o build.
+// Usamos uma função para evitar erro de referência ao 'process' no carregamento do módulo.
+const getAiClient = () => {
+  try {
+    // @ts-ignore - process.env é injetado pelo Vite
+    const apiKey = typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined;
+    
+    if (!apiKey) {
+      console.warn("GEMINI_API_KEY não encontrada. As funções de IA estarão desativadas.");
+      return null;
+    }
+    return new GoogleGenAI({ apiKey });
+  } catch (e) {
+    console.error("Erro ao inicializar cliente Gemini:", e);
+    return null;
+  }
+};
+
+const ai = getAiClient();
 
 export const generateDescriptionFromTitle = async (title: string): Promise<string> => {
+  if (!ai) throw new Error("IA não configurada");
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -18,6 +37,7 @@ export const generateDescriptionFromTitle = async (title: string): Promise<strin
 };
 
 export const improveTitle = async (title: string): Promise<string> => {
+  if (!ai) throw new Error("IA não configurada");
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -32,6 +52,7 @@ export const improveTitle = async (title: string): Promise<string> => {
 };
 
 export const improveDescription = async (description: string): Promise<string> => {
+  if (!ai) throw new Error("IA não configurada");
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -46,6 +67,7 @@ export const improveDescription = async (description: string): Promise<string> =
 };
 
 export const generateDescriptionWithCustomPrompt = async (title: string, customPrompt: string): Promise<string> => {
+  if (!ai) throw new Error("IA não configurada");
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
