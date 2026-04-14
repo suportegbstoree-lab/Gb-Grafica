@@ -656,7 +656,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
                           )}
                           {item.arquivoUrl && (
                             <div className="text-[9px] text-green-500 flex items-center gap-1 font-black uppercase tracking-wider">
-                              <FileCheck size={10} /> Arte enviada
+                              <CheckCircle2 size={10} /> Arte enviada
                             </div>
                           )}
                         </div>
@@ -801,7 +801,6 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
     });
 
     // Reset after adding
-    setFile(null);
     setUploadedUrl(null);
     setCustomText("");
   };

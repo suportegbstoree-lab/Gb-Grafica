@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Product, SiteConfig, Order, Category } from '../types';
 import { cn } from '../lib/utils';
 import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, auth } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
+import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 
 interface AdminProps {
   products: Product[];
@@ -22,6 +23,46 @@ export default function Admin({ products, config, categories, orders }: AdminPro
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
   const [showAttrForm, setShowAttrForm] = useState(false);
+  const [showCustomAiPrompt, setShowCustomAiPrompt] = useState(false);
+  const [customAiPrompt, setCustomAiPrompt] = useState('');
+  const [aiPreview, setAiPreview] = useState<{
+    field: 'nome' | 'desc';
+    original: string;
+    suggested: string;
+    loading: boolean;
+  } | null>(null);
+
+  const handleAiAction = async (action: 'generate' | 'improveTitle' | 'improveDescription' | 'custom', prompt?: string) => {
+    if (!editingProduct) return;
+
+    const currentField = action === 'improveTitle' ? 'nome' : 'desc';
+    const currentValue = action === 'improveTitle' ? editingProduct.nome || '' : editingProduct.desc || '';
+
+    setAiPreview({
+      field: currentField,
+      original: currentValue,
+      suggested: '',
+      loading: true
+    });
+
+    try {
+      let result = '';
+      if (action === 'generate') {
+        result = await generateDescriptionFromTitle(editingProduct.nome || '');
+      } else if (action === 'improveTitle') {
+        result = await improveTitle(editingProduct.nome || '');
+      } else if (action === 'improveDescription') {
+        result = await improveDescription(editingProduct.desc || '');
+      } else if (action === 'custom' && prompt) {
+        result = await generateDescriptionWithCustomPrompt(editingProduct.nome || '', prompt);
+      }
+
+      setAiPreview(prev => prev ? { ...prev, suggested: result, loading: false } : null);
+    } catch (error) {
+      console.error(error);
+      setAiPreview(null);
+    }
+  };
 
   const bootstrapData = async () => {
     setIsBootstrapping(true);
@@ -438,7 +479,16 @@ export default function Admin({ products, config, categories, orders }: AdminPro
               <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
+                      <button 
+                        type="button"
+                        onClick={() => handleAiAction('improveTitle')}
+                        className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                      >
+                        <Sparkles size={10} /> Melhorar com IA
+                      </button>
+                    </div>
                     <input 
                       required
                       value={editingProduct.nome}
@@ -447,7 +497,32 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
+                      <div className="flex gap-3">
+                        <button 
+                          type="button"
+                          onClick={() => setShowCustomAiPrompt(true)}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Comando IA
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => handleAiAction('generate')}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Gerar da IA
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => handleAiAction('improveDescription')}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Melhorar com IA
+                        </button>
+                      </div>
+                    </div>
                     <textarea 
                       required
                       value={editingProduct.desc}
@@ -632,6 +707,126 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                   </button>
                 </div>
               </form>
+
+              {/* AI Custom Prompt Overlay */}
+              <AnimatePresence>
+                {showCustomAiPrompt && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-20 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                  >
+                    <div className="flex justify-between items-center mb-6">
+                      <div className="flex items-center gap-2 text-[#ff4d79]">
+                        <Sparkles size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-sm">Comando Personalizado</h4>
+                      </div>
+                      <button onClick={() => setShowCustomAiPrompt(false)} className="text-gray-500 hover:text-white">
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="flex-grow flex flex-col gap-4">
+                      <p className="text-xs text-gray-400">Diga à IA exatamente o que você quer na descrição (ex: dimensões, materiais, tom de voz):</p>
+                      <textarea 
+                        value={customAiPrompt}
+                        onChange={e => setCustomAiPrompt(e.target.value)}
+                        placeholder="Ex: Faça para panfletos de 10x15 falando sobre a qualidade do papel e entrega rápida..."
+                        className="flex-grow bg-black border border-gray-800 rounded-xl p-4 text-sm outline-none focus:border-[#ff4d79] resize-none"
+                      />
+                      <div className="flex gap-4 pt-4">
+                        <button 
+                          onClick={() => {
+                            if (customAiPrompt.trim()) {
+                              handleAiAction('custom', customAiPrompt);
+                              setShowCustomAiPrompt(false);
+                              setCustomAiPrompt('');
+                            }
+                          }}
+                          className="flex-grow bg-[#ff4d79] py-3 rounded-xl font-bold hover:bg-[#e6004c] transition-colors"
+                        >
+                          Gerar Descrição
+                        </button>
+                        <button 
+                          onClick={() => setShowCustomAiPrompt(false)}
+                          className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* AI Preview Overlay */}
+              <AnimatePresence>
+                {aiPreview && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-10 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                  >
+                    <div className="flex justify-between items-center mb-6">
+                      <div className="flex items-center gap-2 text-[#ff4d79]">
+                        <Sparkles size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-sm">Sugestão da IA</h4>
+                      </div>
+                      {!aiPreview.loading && (
+                        <button onClick={() => setAiPreview(null)} className="text-gray-500 hover:text-white">
+                          <X size={20} />
+                        </button>
+                      )}
+                    </div>
+
+                    {aiPreview.loading ? (
+                      <div className="flex-grow flex flex-col items-center justify-center gap-4">
+                        <Loader2 size={40} className="animate-spin text-[#ff4d79]" />
+                        <p className="text-gray-400 animate-pulse">Consultando o Gemini...</p>
+                      </div>
+                    ) : (
+                      <div className="flex-grow flex flex-col gap-6 overflow-hidden">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase">Original</label>
+                          <div className="bg-black/50 border border-gray-800 p-4 rounded-lg text-sm text-gray-400 italic">
+                            {aiPreview.original || "(Vazio)"}
+                          </div>
+                        </div>
+                        <div className="flex-grow space-y-2 overflow-hidden flex flex-col">
+                          <label className="text-[10px] font-bold text-[#ff4d79] uppercase">Sugestão</label>
+                          <div className="flex-grow bg-black border border-[#ff4d79]/30 p-4 rounded-lg text-sm overflow-y-auto whitespace-pre-wrap">
+                            {aiPreview.suggested}
+                          </div>
+                        </div>
+                        <div className="flex gap-4 pt-4">
+                          <button 
+                            onClick={() => {
+                              if (editingProduct) {
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  [aiPreview.field]: aiPreview.suggested
+                                });
+                              }
+                              setAiPreview(null);
+                            }}
+                            className="flex-grow bg-[#ff4d79] py-3 rounded-xl font-bold hover:bg-[#e6004c] transition-colors"
+                          >
+                            Aprovar e Usar
+                          </button>
+                          <button 
+                            onClick={() => setAiPreview(null)}
+                            className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
+                          >
+                            Descartar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           </div>
         )}
