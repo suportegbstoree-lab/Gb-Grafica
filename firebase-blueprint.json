@@ -1,7 +1,7 @@
 {
   "entities": {
-    "Product": {
-      "title": "Product",
+    "Anuncio": {
+      "title": "Anuncio",
       "description": "A product available in the store.",
       "type": "object",
       "properties": {
@@ -92,8 +92,8 @@
     }
   },
   "firestore": {
-    "/products/{productId}": {
-      "schema": "Product",
+    "/anuncios/{anuncioId}": {
+      "schema": "Anuncio",
       "description": "Collection of products."
     },
     "/categories/{categoryId}": {

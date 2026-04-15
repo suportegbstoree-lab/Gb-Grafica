@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, SiteConfig, CartItem, Order, Category } from '../types';
+import { Anuncio, SiteConfig, CartItem, Order, Category } from '../types';
 import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType } from '../firebase';
 // Removidas funções de upload de arquivo para usar URLs diretas
 
 interface HomeProps {
-  products: Product[];
+  products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
   cart: CartItem[];
@@ -761,13 +761,18 @@ function BenefitItem({ icon, title, desc }: { icon: string; title: string; desc:
   );
 }
 
-function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: (item: CartItem) => void; key?: string }) {
+function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: (item: CartItem) => void; key?: string }) {
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [customText, setCustomText] = useState("");
   const [activeImage, setActiveImage] = useState(product.imagem);
   
   const allImages = [product.imagem, ...(product.imagens || [])];
+
+  // Sincroniza a imagem ativa se o produto mudar (ex: edição no admin)
+  React.useEffect(() => {
+    setActiveImage(product.imagem);
+  }, [product.imagem]);
 
   const handleSelect = (attrName: string, option: string) => {
     setSelections(prev => ({ ...prev, [attrName]: option }));
@@ -822,6 +827,9 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
             alt={product.nome} 
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
             referrerPolicy="no-referrer"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = "https://picsum.photos/seed/error/400/400?blur=2";
+            }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-pink-50/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
         </div>

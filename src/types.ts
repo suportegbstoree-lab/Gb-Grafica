@@ -3,7 +3,7 @@ export interface ProductAttribute {
   opcoes: string[];
 }
 
-export interface Product {
+export interface Anuncio {
   id: string;
   nome: string;
   desc: string;

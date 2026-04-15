@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Product, SiteConfig, Order, Category } from '../types';
+import { Anuncio, SiteConfig, Order, Category } from '../types';
 import { cn } from '../lib/utils';
 import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, auth } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 
 interface AdminProps {
-  products: Product[];
+  products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
   orders: Order[];
@@ -17,7 +17,7 @@ interface AdminProps {
 
 export default function Admin({ products, config, categories, orders }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders'>('products');
-  const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
+  const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -77,7 +77,7 @@ export default function Admin({ products, config, categories, orders }: AdminPro
       // Products
       for (const prod of INITIAL_PRODUCTS) {
         const id = prod.id || Math.random().toString(36).substr(2, 9);
-        await setDoc(doc(db, 'products', id), { ...prod, id });
+        await setDoc(doc(db, 'anuncios', id), { ...prod, id });
       }
       setSuccessMessage('Dados iniciais carregados com sucesso!');
     } catch (error) {
@@ -142,23 +142,23 @@ export default function Admin({ products, config, categories, orders }: AdminPro
     if (!editingProduct) return;
     
     const id = editingProduct.id || Math.random().toString(36).substr(2, 9);
-    const productToSave = { ...editingProduct, id } as Product;
+    const productToSave = { ...editingProduct, id } as Anuncio;
     
     try {
-      await setDoc(doc(db, 'products', id), productToSave);
+      await setDoc(doc(db, 'anuncios', id), productToSave);
       setEditingProduct(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `products/${id}`);
+      handleFirestoreError(error, OperationType.WRITE, `anuncios/${id}`);
     }
   };
 
   const handleDeleteProduct = async (id: string) => {
     // Removido confirm() devido a restrições de iFrame
     try {
-      await deleteDoc(doc(db, 'products', id));
-      setSuccessMessage('Produto excluído com sucesso!');
+      await deleteDoc(doc(db, 'anuncios', id));
+      setSuccessMessage('Anúncio excluído com sucesso!');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `products/${id}`);
+      handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
     }
   };
 
@@ -582,7 +582,14 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                       <div className="grid grid-cols-4 gap-2">
                         {editingProduct.imagens?.map((img, idx) => (
                           <div key={idx} className="relative aspect-square bg-black border border-gray-800 rounded overflow-hidden group">
-                            <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <img 
+                              src={img} 
+                              className="w-full h-full object-cover" 
+                              referrerPolicy="no-referrer" 
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).classList.add('opacity-20');
+                              }}
+                            />
                             <button 
                               type="button"
                               onClick={() => {
@@ -780,16 +787,20 @@ export default function Admin({ products, config, categories, orders }: AdminPro
 
                     <div className="flex-grow flex flex-col gap-4">
                       <p className="text-xs text-gray-400">
-                        Cole aqui uma lista de URLs (uma por linha). 
-                        Dica: No site <a href="https://postimages.org/" target="_blank" className="text-blue-400 underline">PostImages</a>, 
-                        você pode subir várias fotos e copiar a lista de "Links Diretos".
+                        Cole aqui uma lista de URLs (uma por linha). <br/>
+                        <span className="text-[#ff4d79] font-bold">IMPORTANTE:</span> Use apenas o <span className="underline">Link Direto</span> (que termina em .jpg ou .png).
                       </p>
                       <textarea 
                         value={bulkImages}
                         onChange={e => setBulkImages(e.target.value)}
-                        placeholder="https://exemplo.com/foto1.jpg&#10;https://exemplo.com/foto2.jpg"
+                        placeholder="https://i.postimg.cc/xxxx/foto.jpg"
                         className="flex-grow bg-black border border-gray-800 rounded-xl p-4 text-sm outline-none focus:border-[#ff4d79] resize-none"
                       />
+                      {bulkImages && !bulkImages.split('\n').every(u => u.trim() === '' || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(u.trim())) && (
+                        <p className="text-[10px] text-yellow-500 bg-yellow-500/10 p-2 rounded border border-yellow-500/20">
+                          Atenção: Alguns links parecem não ser "Links Diretos". Verifique se eles terminam em .jpg ou .png.
+                        </p>
+                      )}
                       <div className="flex gap-4 pt-4">
                         <button 
                           onClick={() => {
