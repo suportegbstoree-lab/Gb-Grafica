@@ -9,6 +9,7 @@ export interface Product {
   desc: string;
   categoria: string;
   imagem: string;
+  imagens?: string[];
   preco_base: string;
   atributos: ProductAttribute[];
   combinacoes: Record<string, string>;

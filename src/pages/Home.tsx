@@ -765,7 +765,10 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [customText, setCustomText] = useState("");
+  const [activeImage, setActiveImage] = useState(product.imagem);
   
+  const allImages = [product.imagem, ...(product.imagens || [])];
+
   const handleSelect = (attrName: string, option: string) => {
     setSelections(prev => ({ ...prev, [attrName]: option }));
   };
@@ -812,16 +815,33 @@ function ProductCard({ product, onAddToCart }: { product: Product; onAddToCart: 
       viewport={{ once: true }}
       className="bg-white/60 backdrop-blur-sm border border-gray-100 rounded-[2.5rem] p-8 flex flex-col lg:flex-row gap-10 hover:border-pink-200 transition-all group shadow-sm hover:shadow-md"
     >
-      <div className="w-full lg:w-80 flex-shrink-0">
+      <div className="w-full lg:w-80 flex-shrink-0 flex flex-col gap-4">
         <div className="aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 relative group-hover:shadow-[0_0_30px_rgba(244,114,182,0.1)] transition-all">
           <img 
-            src={product.imagem} 
+            src={activeImage} 
             alt={product.nome} 
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
             referrerPolicy="no-referrer"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-pink-50/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
         </div>
+
+        {allImages.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {allImages.map((img, idx) => (
+              <button 
+                key={idx}
+                onClick={() => setActiveImage(img)}
+                className={cn(
+                  "w-16 h-16 rounded-lg overflow-hidden border-2 flex-shrink-0 transition-all",
+                  activeImage === img ? "border-pink-400 scale-105 shadow-md" : "border-transparent opacity-60 hover:opacity-100"
+                )}
+              >
+                <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex-grow flex flex-col">

@@ -23,6 +23,8 @@ export default function Admin({ products, config, categories, orders }: AdminPro
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
   const [showAttrForm, setShowAttrForm] = useState(false);
+  const [showBulkImageForm, setShowBulkImageForm] = useState(false);
+  const [bulkImages, setBulkImages] = useState('');
   const [showCustomAiPrompt, setShowCustomAiPrompt] = useState(false);
   const [customAiPrompt, setCustomAiPrompt] = useState('');
   const [aiPreview, setAiPreview] = useState<{
@@ -553,15 +555,64 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                       />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Imagem do Produto (URL)</label>
-                    <input 
-                      required
-                      value={editingProduct.imagem}
-                      onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
-                      placeholder="https://exemplo.com/produto.jpg"
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
-                    />
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-gray-500 uppercase">Imagem Principal (URL)</label>
+                      <input 
+                        required
+                        value={editingProduct.imagem}
+                        onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
+                        placeholder="https://exemplo.com/capa.jpg"
+                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-xs font-bold text-gray-500 uppercase">Galeria de Fotos (Opcional)</label>
+                        <button 
+                          type="button"
+                          onClick={() => setShowBulkImageForm(true)}
+                          className="text-[#ff4d79] text-[10px] font-bold hover:underline"
+                        >
+                          + Adicionar Várias
+                        </button>
+                      </div>
+                      
+                      <div className="grid grid-cols-4 gap-2">
+                        {editingProduct.imagens?.map((img, idx) => (
+                          <div key={idx} className="relative aspect-square bg-black border border-gray-800 rounded overflow-hidden group">
+                            <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                const newImgs = [...(editingProduct.imagens || [])];
+                                newImgs.splice(idx, 1);
+                                setEditingProduct({...editingProduct, imagens: newImgs});
+                              }}
+                              className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        ))}
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const url = prompt("Cole a URL da imagem:");
+                            if (url) {
+                              setEditingProduct({
+                                ...editingProduct,
+                                imagens: [...(editingProduct.imagens || []), url]
+                              });
+                            }
+                          }}
+                          className="aspect-square border border-dashed border-gray-700 rounded flex items-center justify-center text-gray-500 hover:border-[#ff4d79] hover:text-[#ff4d79] transition-colors"
+                        >
+                          <Plus size={20} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
@@ -707,6 +758,64 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                   </button>
                 </div>
               </form>
+
+              {/* AI Custom Prompt Overlay */}
+              <AnimatePresence>
+                {showBulkImageForm && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-30 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                  >
+                    <div className="flex justify-between items-center mb-6">
+                      <div className="flex items-center gap-2 text-[#ff4d79]">
+                        <Upload size={20} />
+                        <h4 className="font-bold uppercase tracking-widest text-sm">Adicionar Várias Fotos</h4>
+                      </div>
+                      <button onClick={() => setShowBulkImageForm(false)} className="text-gray-500 hover:text-white">
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="flex-grow flex flex-col gap-4">
+                      <p className="text-xs text-gray-400">
+                        Cole aqui uma lista de URLs (uma por linha). 
+                        Dica: No site <a href="https://postimages.org/" target="_blank" className="text-blue-400 underline">PostImages</a>, 
+                        você pode subir várias fotos e copiar a lista de "Links Diretos".
+                      </p>
+                      <textarea 
+                        value={bulkImages}
+                        onChange={e => setBulkImages(e.target.value)}
+                        placeholder="https://exemplo.com/foto1.jpg&#10;https://exemplo.com/foto2.jpg"
+                        className="flex-grow bg-black border border-gray-800 rounded-xl p-4 text-sm outline-none focus:border-[#ff4d79] resize-none"
+                      />
+                      <div className="flex gap-4 pt-4">
+                        <button 
+                          onClick={() => {
+                            const urls = bulkImages.split('\n').map(u => u.trim()).filter(u => u);
+                            setEditingProduct({
+                              ...editingProduct,
+                              imagens: [...(editingProduct.imagens || []), ...urls]
+                            });
+                            setBulkImages('');
+                            setShowBulkImageForm(false);
+                          }}
+                          className="flex-grow bg-[#ff4d79] py-3 rounded-xl font-bold hover:bg-[#e6004c] transition-colors"
+                        >
+                          Adicionar à Galeria
+                        </button>
+                        <button 
+                          onClick={() => setShowBulkImageForm(false)}
+                          className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* AI Custom Prompt Overlay */}
               <AnimatePresence>
