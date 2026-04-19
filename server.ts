@@ -21,26 +21,16 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
 
-  // Global Request Logger
-  app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
+  // Health checks and status
+  app.get("/ping", (req, res) => {
+    console.log('PING received');
+    res.send("pong");
   });
 
-  // Health check at root
-  app.get("/ping", (req, res) => res.send("pong"));
-
-  const apiRouter = express.Router();
-
-  apiRouter.get("/status", (req, res) => {
-    res.json({ 
-      status: "online", 
-      env: process.env.NODE_ENV,
-      hasToken: !!process.env.MP_ACCESS_TOKEN,
-      baseUrl: process.env.APP_URL
-    });
+  app.get("/api/status", (req, res) => {
+    console.log('STATUS API hit');
+    res.json({ status: "online", time: new Date().toISOString() });
   });
 
   // Mercado Pago Configuration
@@ -49,34 +39,26 @@ async function startServer() {
     options: { timeout: 10000 }
   });
 
-  apiRouter.post("/checkout", async (req, res) => {
-    console.log('--- API CHECKOUT HIT ---');
+  // Checkout Route
+  app.post("/api/checkout", async (req, res) => {
+    console.log('CHECKOUT API hit');
     try {
       const { items, orderId, baseUrl } = req.body;
       
       if (!process.env.MP_ACCESS_TOKEN) {
-        return res.status(500).json({ error: 'Erro de Configuração', details: 'MP_ACCESS_TOKEN não configurado.' });
+        return res.status(500).json({ error: 'Token MP não configurado' });
       }
 
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Carrinho Vazio' });
-      }
-
-      const effectiveBaseUrl = baseUrl || process.env.APP_URL || `http://${req.headers.host}`;
-      console.log(`Order: ${orderId} | Base: ${effectiveBaseUrl}`);
-
+      const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
       const preference = new Preference(client);
       
-      const mpItems = items.map((item: any) => {
-        const unitPrice = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
-        return {
-          id: item.id,
-          title: item.nome,
-          unit_price: unitPrice,
-          quantity: parseInt(item.quantidade) || 1,
-          currency_id: 'BRL'
-        };
-      });
+      const mpItems = items.map((item: any) => ({
+        id: item.id,
+        title: item.nome,
+        unit_price: parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.')),
+        quantity: parseInt(item.quantidade) || 1,
+        currency_id: 'BRL'
+      }));
 
       const result = await preference.create({
         body: {
@@ -92,7 +74,6 @@ async function startServer() {
         }
       });
 
-      console.log('Preference Created:', result.id);
       res.json({ id: result.id, init_point: result.init_point });
     } catch (error: any) {
       console.error('Checkout error:', error);
@@ -100,10 +81,7 @@ async function startServer() {
     }
   });
 
-  // Mount API Router
-  app.use("/api", apiRouter);
-
-  // Vite middleware for development
+  // Vite / Static Files (Dynamic)
   if (process.env.NODE_ENV !== "production") {
     console.log('Starting in DEVELOPMENT mode with Vite...');
     const vite = await createViteServer({
