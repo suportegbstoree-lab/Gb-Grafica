@@ -133,9 +133,7 @@ async function startServer() {
         },
         payment_methods: {
           installments: 12,
-          // We suggest PIX if selected, but don't exclude anything anymore 
-          // This ensures that if the account has PIX enabled, it WILL show up.
-          default_payment_method_id: paymentMethod === 'pix' ? 'pix' : '',
+          // Removed default_payment_method_id to let MP decide based on account availability
         }
       };
 
