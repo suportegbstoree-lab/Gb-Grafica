@@ -19,38 +19,74 @@ async function startServer() {
   // Mercado Pago Configuration
   const client = new MercadoPagoConfig({ 
     accessToken: process.env.MP_ACCESS_TOKEN || '',
-    options: { timeout: 5000 }
+    options: { timeout: 10000 }
   });
+
+  console.log('Mercado Pago Access Token status:', process.env.MP_ACCESS_TOKEN ? 'DEFINED (Ends with ' + process.env.MP_ACCESS_TOKEN.slice(-4) + ')' : 'UNDEFINED');
+  console.log('APP_URL status:', process.env.APP_URL || 'UNDEFINED (Using fallback)');
 
   // API Routes
   app.post("/api/checkout", async (req, res) => {
     try {
-      const { items, orderId } = req.body;
+      const { items, orderId, baseUrl } = req.body;
+      
+      if (!process.env.MP_ACCESS_TOKEN) {
+        return res.status(500).json({ error: 'Configuração Incompleta', details: 'MP_ACCESS_TOKEN não encontrado no servidor.' });
+      }
+
+      const effectiveBaseUrl = baseUrl || process.env.APP_URL || 'http://localhost:3000';
+      console.log(`Processing checkout for order ${orderId}. Base URL: ${effectiveBaseUrl}`);
+
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'Carrinho Vazio', details: 'Nenhum item enviado.' });
+      }
 
       const preference = new Preference(client);
+      
       const result = await preference.create({
         body: {
-          items: items.map((item: any) => ({
-            id: item.id,
-            title: item.nome,
-            unit_price: parseFloat(item.preco),
-            quantity: item.quantidade,
-            currency_id: 'BRL'
-          })),
+          items: items.map((item: any) => {
+            // Clean price string: remove anything that's not a digit, dot or comma
+            // Then replace comma with dot
+            const cleanedPrice = (item.preco || "0").toString()
+              .replace(/[^0-9,.]/g, '')
+              .replace(',', '.');
+            
+            const unitPrice = parseFloat(cleanedPrice);
+
+            if (isNaN(unitPrice) || unitPrice <= 0) {
+              console.error(`Invalid price for item ${item.nome}: ${item.preco}`);
+              throw new Error(`Preço inválido para o item ${item.nome}`);
+            }
+
+            return {
+              id: item.id,
+              title: item.nome,
+              unit_price: unitPrice,
+              quantity: parseInt(item.quantidade) || 1,
+              currency_id: 'BRL'
+            };
+          }),
           external_reference: orderId,
           back_urls: {
-            success: `${process.env.APP_URL || 'http://localhost:3000'}/?status=success&orderId=${orderId}`,
-            failure: `${process.env.APP_URL || 'http://localhost:3000'}/?status=failure`,
-            pending: `${process.env.APP_URL || 'http://localhost:3000'}/?status=pending`,
+            success: `${effectiveBaseUrl}/?status=success&orderId=${orderId}`,
+            failure: `${effectiveBaseUrl}/?status=failure`,
+            pending: `${effectiveBaseUrl}/?status=pending`,
           },
           auto_return: 'approved',
+          // Set binary mode to true to receive success immediately after payment
+          binary_mode: true,
         }
       });
 
+      console.log('MP Preference created successfully:', result.id);
       res.json({ id: result.id, init_point: result.init_point });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating MP preference:', error);
-      res.status(500).json({ error: 'Failed to create payment preference' });
+      res.status(500).json({ 
+        error: 'Failed to create payment preference',
+        details: error.message || 'Unknown error'
+      });
     }
   });
 

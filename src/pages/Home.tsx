@@ -107,13 +107,14 @@ export default function Home({ products, config, categories, promotions, cart, s
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           items: cart,
-          orderId
+          orderId,
+          baseUrl: window.location.origin
         })
       });
       
       const data = await response.json();
       
-      if (data.init_point) {
+      if (response.ok && data.init_point) {
         // 2. Save Pending Order to Firestore
         const total = totalWithShipping;
         const newOrder: Order = {
@@ -129,11 +130,12 @@ export default function Home({ products, config, categories, promotions, cart, s
         // 3. Redirect to Mercado Pago
         window.location.href = data.init_point;
       } else {
-        throw new Error('Failed to create payment preference');
+        const errorMsg = data.details || data.error || 'Erro desconhecido ao criar preferência';
+        throw new Error(errorMsg);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Checkout error:', error);
-      alert('Erro ao processar checkout. Tente novamente.');
+      alert(`Erro ao processar o pagamento: ${error.message}\n\nVerifique se o token do Mercado Pago está correto nas configurações de Secrets.`);
     } finally {
       setIsCalculating(false);
     }
