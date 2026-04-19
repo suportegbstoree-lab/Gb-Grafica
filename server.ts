@@ -68,10 +68,9 @@ async function startServer() {
             description: `Pedido ${orderId} - GBL Gráfica`,
             payment_method_id: 'pix',
             external_reference: orderId,
+            notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
             payer: {
-              email: email,
-              first_name: firstName,
-              last_name: 'GBL'
+              email: email
             }
           };
 
@@ -140,16 +139,24 @@ async function startServer() {
           pending: `${effectiveBaseUrl}/?status=pending`,
         },
         auto_return: 'approved',
-        binary_mode: true,
+        // binary_mode: false (default) is better for wide payment method support
         payer: {
-          email: userEmail || 'compras@gblgrafica.com.br',
-          // Adding a name helps avoid risk filters that hide PIX
-          first_name: 'Cliente',
-          last_name: 'GBL'
+          email: userEmail || 'cliente_teste@gmail.com',
+          first_name: 'Comprador',
+          last_name: 'GBL',
+          identification: {
+            type: 'CPF',
+            number: '00000000000'
+          }
         },
         payment_methods: {
           installments: 12,
-        }
+          // Explicitly ensuring no exclusions as per support advice
+          excluded_payment_methods: [],
+          excluded_payment_types: [],
+          default_payment_method_id: paymentMethod === 'pix' ? 'pix' : undefined,
+        },
+        notification_url: `${effectiveBaseUrl}/api/webhook/mp`
       };
 
       const result = await preference.create({
