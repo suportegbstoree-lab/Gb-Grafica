@@ -150,9 +150,10 @@ export default function Home({ products, config, categories, promotions, cart, s
       console.log('[DEBUG] Status:', response.status);
 
       if (!response.ok) {
-        const text = await response.text();
-        console.error('[DEBUG] Erro payload:', text);
-        throw new Error(`Erro do servidor (${response.status}): ${text.slice(0, 50)}`);
+        const data = await response.json();
+        console.error('[DEBUG] Erro payload:', data);
+        const detailedError = data.raw ? JSON.stringify(data.raw) : (data.details || data.error || 'Erro desconhecido');
+        throw new Error(`Erro do servidor (${response.status}): ${detailedError}`);
       }
 
       const data = await response.json();

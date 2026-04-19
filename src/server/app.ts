@@ -100,7 +100,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       const response = await axios.post(`${PAGBANK_BASE_URL}/orders`, orderBody, {
         headers: {
           'Authorization': `Bearer ${PAGBANK_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         }
       });
 
@@ -145,7 +146,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     const response = await axios.post(`${PAGBANK_BASE_URL}/checkouts`, checkoutBody, {
       headers: {
         'Authorization': `Bearer ${PAGBANK_TOKEN}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       }
     });
 
@@ -153,11 +155,25 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     res.json({ payment_method: 'hosted', id: response.data.id, init_point: payLink });
 
   } catch (error: any) {
-    console.error('[SERVER] PagBank Checkout Error:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ 
-      error: 'Erro no checkout PagBank', 
-      details: error.response?.data?.error_messages?.[0]?.description || error.message 
-    });
+    if (axios.isAxiosError(error) && error.response) {
+      const errorData = error.response.data;
+      console.error('[SERVER] PagBank Detailed Error:', JSON.stringify(errorData, null, 2));
+      
+      // Extract error messages if available in PagBank format
+      let details = "";
+      if (errorData.error_messages) {
+        details = errorData.error_messages.map((m: any) => `${m.code}: ${m.description}`).join(' | ');
+      }
+      
+      res.status(error.response.status).json({
+        error: "Erro no Checkout PagBank",
+        details: details || error.message,
+        raw: errorData
+      });
+    } else {
+      console.error('[SERVER] Generic Checkout Error:', error.message);
+      res.status(500).json({ error: 'Erro interno no checkout', details: error.message });
+    }
   }
 };
 
