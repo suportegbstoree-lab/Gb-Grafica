@@ -26,3 +26,15 @@
 .gradient-bg {
   @apply bg-gradient-to-br from-pink-500 to-purple-600;
 }
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-gray-50 rounded-full;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-gray-200 rounded-full hover:bg-pink-300 transition-colors;
+}

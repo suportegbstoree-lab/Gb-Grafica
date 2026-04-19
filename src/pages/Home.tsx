@@ -606,7 +606,7 @@ export default function Home({ products, config, categories, promotions, cart, s
               <div className="py-12 text-center text-gray-500">Seu carrinho está vazio.</div>
             ) : (
               <div className="space-y-6">
-                <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-2">
+                <div className="space-y-4 pr-2">
                   {cart.map((item) => (
                     <div key={item.id} className="flex gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
                       <img src={item.imagem} className="w-16 h-16 object-cover rounded" referrerPolicy="no-referrer" />
@@ -797,7 +797,7 @@ export default function Home({ products, config, categories, promotions, cart, s
             {orders.length === 0 ? (
               <div className="py-12 text-center text-gray-500">Você ainda não possui pedidos.</div>
             ) : (
-              <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
+              <div className="space-y-6 pr-2">
                 {orders.map((order) => (
                   <div key={order.id} className="bg-gray-50 p-6 rounded-2xl border border-gray-100 space-y-4">
                     <div className="flex justify-between items-center border-b border-gray-200 pb-4">
@@ -1004,7 +1004,7 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
             <X size={24} />
           </button>
         </div>
-        <div className="p-8">
+        <div className="p-8 overflow-y-auto max-h-[calc(90vh-80px)] custom-scrollbar">
           {children}
         </div>
       </motion.div>
