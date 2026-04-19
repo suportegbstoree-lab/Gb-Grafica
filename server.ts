@@ -16,6 +16,20 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Global Logger
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+
+  app.get("/api/status", (req, res) => {
+    res.json({ 
+      status: "online", 
+      env: process.env.NODE_ENV,
+      hasToken: !!process.env.MP_ACCESS_TOKEN
+    });
+  });
+
   // Mercado Pago Configuration
   const client = new MercadoPagoConfig({ 
     accessToken: process.env.MP_ACCESS_TOKEN || '',
