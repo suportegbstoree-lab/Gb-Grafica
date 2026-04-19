@@ -186,6 +186,11 @@ export default function Home({ products, config, categories, promotions, cart, s
 
   return (
     <div className="min-h-screen bg-[#fcfcfd] text-gray-900 font-sans selection:bg-pink-100 relative overflow-hidden">
+      {/* Test Banner */}
+      <div className="bg-red-600 text-white text-center py-2 font-bold text-sm uppercase tracking-widest z-[100] relative">
+        TESTE DE ATUALIZAÇÃO - BANNER ATIVO
+      </div>
+
       {/* Background Glows (Subtle) */}
       <div className="fixed top-[-10%] left-[-10%] w-[70%] h-[70%] bg-pink-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
       <div className="fixed bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
