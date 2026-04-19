@@ -50,36 +50,52 @@ async function startServer() {
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
 
       if (paymentMethod === 'pix') {
-        const payment = new Payment(client);
-        
-        // Calculate total total
-        const subtotal = items.reduce((acc: number, item: any) => {
-          const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
-          return acc + (price * (item.quantidade || 1));
-        }, 0);
-        
-        const total = subtotal + (parseFloat(shippingCost) || 0);
-
-        const result = await payment.create({
-          body: {
-            transaction_amount: parseFloat(total.toFixed(2)),
-            description: `Pedido ${orderId} - GBL Gráfica`,
-            payment_method_id: 'pix',
-            external_reference: orderId,
-            notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
-            payer: {
-              email: userEmail || 'compras@gblgrafica.com.br',
+        try {
+          const payment = new Payment(client);
+          
+          const subtotal = items.reduce((acc: number, item: any) => {
+            const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
+            return acc + (price * (item.quantidade || 1));
+          }, 0);
+          
+          const total = subtotal + (parseFloat(shippingCost) || 0);
+          const emailParts = (userEmail || 'compras@gblgrafica.com.br').split('@')[0];
+          
+          const result = await payment.create({
+            body: {
+              transaction_amount: parseFloat(total.toFixed(2)),
+              description: `Pedido ${orderId} - GBL Gráfica`,
+              payment_method_id: 'pix',
+              external_reference: orderId,
+              notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
+              payer: {
+                email: userEmail || 'compras@gblgrafica.com.br',
+                first_name: 'Cliente',
+                last_name: emailParts.substring(0, 10),
+              }
+            },
+            requestOptions: {
+              idempotencyKey: orderId // Use orderId as idempotency key to prevent double charging
             }
-          }
-        });
+          });
 
-        return res.json({ 
-          payment_method: 'pix',
-          qr_code: result.point_of_interaction?.transaction_data?.qr_code,
-          qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
-          payment_id: result.id,
-          status: result.status
-        });
+          console.log('[SERVER] PIX Success:', result.id);
+
+          return res.json({ 
+            payment_method: 'pix',
+            qr_code: result.point_of_interaction?.transaction_data?.qr_code,
+            qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
+            payment_id: result.id,
+            status: result.status
+          });
+        } catch (pixError: any) {
+          console.error('[SERVER] PIX Direct Error Details:', pixError.message, pixError.cause);
+          return res.status(400).json({ 
+            error: 'Erro ao gerar PIX', 
+            details: 'A API do Mercado Pago recusou a geração direta do PIX. Verifique se o seu Token possui permissões de "Pagamentos" ou use a opção de Cartão.',
+            raw: pixError.message
+          });
+        }
       }
 
       // Default: Checkout Pro (for Card)
