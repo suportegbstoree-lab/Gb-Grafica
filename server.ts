@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
+import axios from "axios";
 import dotenv from "dotenv";
 import cors from "cors";
 
@@ -10,6 +10,12 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const PAGBANK_TOKEN = process.env.PAGBANK_TOKEN;
+const PAGBANK_ENV = process.env.PAGBANK_ENV || 'production';
+const PAGBANK_BASE_URL = PAGBANK_ENV === 'sandbox' 
+  ? 'https://sandbox.api.pagseguro.com' 
+  : 'https://api.pagseguro.com';
 
 async function startServer() {
   const app = express();
@@ -21,190 +27,164 @@ async function startServer() {
 
   // --- API ROUTES FIRST ---
   
-  // Health checks
-  app.get("/ping", (req, res) => {
-    res.send("pong-v3");
-  });
-
   app.get("/api/health", (req, res) => {
     res.json({ 
       status: "ok", 
       time: new Date().toISOString(),
-      node_env: process.env.NODE_ENV,
-      mp_token: !!process.env.MP_ACCESS_TOKEN 
+      pagbank_configured: !!PAGBANK_TOKEN 
     });
   });
 
-  // Mercado Pago Checkout
+  // PagBank Checkout
   app.post("/api/checkout", async (req, res) => {
-    console.log('[SERVER] Checkout Request');
+    console.log('[SERVER] PagBank Checkout Request');
     try {
-      const { items, orderId, baseUrl, shippingCost, paymentMethod, userEmail } = req.body;
+      const { items, orderId, baseUrl, shippingCost, paymentMethod, userEmail, cpf } = req.body;
       
-      const token = process.env.MP_ACCESS_TOKEN;
-      if (!token) {
-        return res.status(500).json({ error: 'Configuração Incompleta', details: 'Token MP não definido no servidor.' });
+      if (!PAGBANK_TOKEN) {
+        return res.status(500).json({ error: 'Configuração Incompleta', details: 'Token PagBank não definido no servidor.' });
       }
 
-      const client = new MercadoPagoConfig({ accessToken: token });
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
+      const subtotalInCents = items.reduce((acc: number, item: any) => {
+        const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
+        return acc + Math.round(price * 100 * (item.quantidade || 1));
+      }, 0);
+      const shippingInCents = Math.round((parseFloat(shippingCost) || 0) * 100);
+      const totalInCents = subtotalInCents + shippingInCents;
 
-      // DIRECT PIX FLOW (Always try this first and fail if not possible)
+      const customer = {
+        name: userEmail?.split('@')[0] || 'Cliente GBL',
+        email: userEmail || 'compras@gblgrafica.com.br',
+        tax_id: cpf || '00000000000', 
+        phones: [{ country: '55', area: '11', number: '99999999', type: 'MOBILE' }]
+      };
+
+      // PAGBANK DIRECT PIX FLOW
       if (paymentMethod === 'pix') {
-        try {
-          const payment = new Payment(client);
-          
-          const subtotal = items.reduce((acc: number, item: any) => {
-            const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
-            return acc + (price * (item.quantidade || 1));
-          }, 0);
-          
-          const total = subtotal + (parseFloat(shippingCost) || 0);
-          const email = userEmail || 'compras@gblgrafica.com.br';
-          const firstName = (email.split('@')[0] || 'Cliente').substring(0, 20);
-
-          const body = {
-            transaction_amount: parseFloat(total.toFixed(2)),
-            description: `Pedido ${orderId} - GBL Gráfica`,
-            payment_method_id: 'pix',
-            external_reference: orderId,
-            notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
-            payer: {
-              email: email
+        const orderBody = {
+          reference_id: orderId,
+          customer: customer,
+          items: items.map((i: any) => ({
+            name: i.nome,
+            quantity: i.quantidade || 1,
+            unit_amount: Math.round(parseFloat((i.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.')) * 100)
+          })),
+          qr_codes: [
+            {
+              amount: { value: totalInCents },
+              expiration_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24h
             }
-          };
+          ],
+          notification_urls: [`${effectiveBaseUrl}/api/webhook/pagbank`]
+        };
 
-          const result = await payment.create({
-            body,
-            requestOptions: {
-              idempotencyKey: `${orderId}-${Date.now()}`
-            }
-          });
-
-          console.log('[SERVER] Direct PIX Status:', result.status);
-
-          if (result.status === 'rejected') {
-            return res.status(400).json({ 
-              error: 'PIX Rejeitado pelo Mercado Pago', 
-              details: `Sua conta do Mercado Pago não permitiu gerar este PIX: ${result.status_detail}. Geralmente isso ocorre por falta de Chave PIX cadastrada no MP ou conta sem documentos validados.`,
-              payment_method: 'error'
-            });
-          }
-
-          return res.json({ 
-            payment_method: 'pix',
-            qr_code: result.point_of_interaction?.transaction_data?.qr_code,
-            qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
-            payment_id: result.id,
-            status: result.status,
-            total: total.toFixed(2)
-          });
-        } catch (pixError: any) {
-          console.error('[SERVER] PIX API Error:', pixError);
-          return res.status(400).json({ 
-            error: 'Erro na API de PIX do Mercado Pago', 
-            details: pixError.message || 'Verifique se você tem uma chave PIX cadastrada no Mercado Pago e se sua conta é de Vendedor.',
-            payment_method: 'error'
+        if (shippingInCents > 0) {
+          orderBody.items.push({
+            name: 'Frete',
+            quantity: 1,
+            unit_amount: shippingInCents
           });
         }
-      }
 
-      // HOSTED CHECKOUT FLOW (Pro)
-      const preference = new Preference(client);
-      
-      const mpItems = items.map((item: any) => ({
-        id: item.id,
-        title: item.nome,
-        unit_price: parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.')),
-        quantity: parseInt(item.quantidade) || 1,
-        currency_id: 'BRL'
-      }));
+        const response = await axios.post(`${PAGBANK_BASE_URL}/orders`, orderBody, {
+          headers: {
+            'Authorization': `Bearer ${PAGBANK_TOKEN}`,
+            'Content-Type': 'application/json'
+          }
+        });
 
-      if (shippingCost && parseFloat(shippingCost) > 0) {
-        mpItems.push({
-          id: 'shipping',
-          title: 'Frete / Entrega',
-          unit_price: parseFloat(shippingCost),
-          quantity: 1,
-          currency_id: 'BRL'
+        const pixData = response.data.qr_codes[0];
+        const qrCodeImage = pixData.links.find((l: any) => l.rel === 'QRCODE')?.href;
+
+        return res.json({ 
+          payment_method: 'pix',
+          qr_code: pixData.text,
+          qr_code_url: qrCodeImage,
+          payment_id: response.data.id,
+          status: response.data.status || 'WAITING',
+          total: (totalInCents / 100).toFixed(2)
         });
       }
 
-      const preferenceBody: any = {
-        items: mpItems,
-        external_reference: orderId,
-        back_urls: {
-          success: `${effectiveBaseUrl}/?status=success&orderId=${orderId}`,
-          failure: `${effectiveBaseUrl}/?status=failure`,
-          pending: `${effectiveBaseUrl}/?status=pending`,
-        },
-        auto_return: 'approved',
-        // binary_mode: false (default) is better for wide payment method support
-        payer: {
-          email: userEmail || 'cliente_teste@gmail.com',
-          first_name: 'Comprador',
-          last_name: 'GBL',
-          identification: {
-            type: 'CPF',
-            number: '00000000000'
-          }
-        },
-        payment_methods: {
-          installments: 12,
-          // Explicitly ensuring no exclusions as per support advice
-          excluded_payment_methods: [],
-          excluded_payment_types: [],
-          default_payment_method_id: paymentMethod === 'pix' ? 'pix' : undefined,
-        },
-        notification_url: `${effectiveBaseUrl}/api/webhook/mp`
+      // PAGBANK REDIRECT CHECKOUT (For Cards)
+      const checkoutBody = {
+        reference_id: orderId,
+        customer: customer,
+        items: items.map((i: any) => ({
+          name: i.nome,
+          quantity: i.quantidade || 1,
+          unit_amount: Math.round(parseFloat((i.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.')) * 100)
+        })),
+        payment_methods: [
+          { type: 'CREDIT_CARD' },
+          { type: 'BOLETO' },
+          { type: 'PIX' }
+        ],
+        redirect_url: `${effectiveBaseUrl}/?status=success&orderId=${orderId}`,
+        notification_urls: [`${effectiveBaseUrl}/api/webhook/pagbank`]
       };
 
-      const result = await preference.create({
-        body: preferenceBody
+      if (shippingInCents > 0) {
+        checkoutBody.items.push({
+          name: 'Frete',
+          quantity: 1,
+          unit_amount: shippingInCents
+        });
+      }
+
+      const response = await axios.post(`${PAGBANK_BASE_URL}/checkouts`, checkoutBody, {
+        headers: {
+          'Authorization': `Bearer ${PAGBANK_TOKEN}`,
+          'Content-Type': 'application/json'
+        }
       });
 
-      res.json({ payment_method: 'hosted', id: result.id, init_point: result.init_point });
+      const payLink = response.data.links.find((l: any) => l.rel === 'PAY')?.href;
+
+      res.json({ payment_method: 'hosted', id: response.data.id, init_point: payLink });
     } catch (error: any) {
-      console.error('[SERVER] Checkout Error:', error);
-      res.status(500).json({ error: 'Erro no checkout', details: error.message });
+      console.error('[SERVER] PagBank Checkout Error:', error.response?.data || error.message);
+      res.status(500).json({ 
+        error: 'Erro no checkout PagBank', 
+        details: error.response?.data?.error_messages?.[0]?.description || error.message 
+      });
     }
   });
 
-  // Check Payment Status (Polling endpoint)
+  // Check Payment Status
   app.get("/api/payment-status/:id", async (req, res) => {
     try {
-      const token = process.env.MP_ACCESS_TOKEN;
-      if (!token) return res.status(500).json({ error: 'Token missing' });
+      if (!PAGBANK_TOKEN) return res.status(500).json({ error: 'Token missing' });
       
-      const client = new MercadoPagoConfig({ accessToken: token });
-      const payment = new Payment(client);
-      const result = await payment.get({ id: req.params.id });
+      const response = await axios.get(`${PAGBANK_BASE_URL}/orders/${req.params.id}`, {
+        headers: { 'Authorization': `Bearer ${PAGBANK_TOKEN}` }
+      });
       
-      res.json({ status: result.status });
+      // Map PagBank status to simple terms
+      const status = response.data.status === 'PAID' ? 'approved' : 'pending';
+      res.json({ status });
     } catch (error) {
       res.status(500).json({ error: 'Error fetching status' });
     }
   });
 
-  // Webhook for Mercado Pago (to automate updates)
-  app.post("/api/webhook/mp", async (req, res) => {
-    console.log('[SERVER] MP Webhook Received:', JSON.stringify(req.body));
+  // Webhook for PagBank
+  app.post("/api/webhook/pagbank", async (req, res) => {
+    console.log('[SERVER] PagBank Webhook Received:', JSON.stringify(req.body));
     res.sendStatus(200);
   });
 
   // --- STATIC FILES / VITE ---
-  
   const isDev = process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging";
 
   if (isDev) {
-    console.log('Running in DEVELOPMENT mode');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    console.log('Running in PRODUCTION mode');
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {

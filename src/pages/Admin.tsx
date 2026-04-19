@@ -1213,7 +1213,7 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
               {order.metodoPagamento === 'pix' ? (
                 <><QrCode size={10} className="stroke-[3px]" /> PIX</>
               ) : (
-                <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / MP</>
+                <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / PB</>
               )}
             </span>
           </div>

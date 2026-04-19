@@ -27,7 +27,8 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [paymentMethod, setPaymentMethod] = useState<'cartao' | 'pix'>('cartao');
-  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; payment_id: string; total: string } | null>(null);
+  const [cpf, setCpf] = useState('');
+  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_url?: string; qr_code_base64?: string; payment_id: string; total: string } | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -141,7 +142,8 @@ export default function Home({ products, config, categories, promotions, cart, s
           baseUrl: window.location.origin,
           shippingCost,
           paymentMethod,
-          userEmail: user.email
+          userEmail: user.email,
+          cpf: cpf.replace(/\D/g, '')
         })
       });
 
@@ -162,6 +164,7 @@ export default function Home({ products, config, categories, promotions, cart, s
         if (data.payment_method === 'pix') {
           setPixData({
             qr_code: data.qr_code,
+            qr_code_url: data.qr_code_url,
             qr_code_base64: data.qr_code_base64,
             payment_id: data.payment_id,
             total: data.total
@@ -734,6 +737,23 @@ export default function Home({ products, config, categories, promotions, cart, s
                     </div>
                   )}
 
+                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">CPF do Pagador (Obrigatório PagBank)</label>
+                    <input 
+                      type="text" 
+                      placeholder="000.000.000-00" 
+                      value={cpf}
+                      onChange={(e) => {
+                        let val = e.target.value.replace(/\D/g, '').slice(0, 11);
+                        if (val.length > 3 && val.length <= 6) val = val.slice(0, 3) + '.' + val.slice(3);
+                        else if (val.length > 6 && val.length <= 9) val = val.slice(0, 3) + '.' + val.slice(3, 6) + '.' + val.slice(6);
+                        else if (val.length > 9) val = val.slice(0, 3) + '.' + val.slice(3, 6) + '.' + val.slice(6, 9) + '-' + val.slice(9);
+                        setCpf(val);
+                      }}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400"
+                    />
+                  </div>
+
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-sm text-gray-500">
                       <span>Subtotal</span>
@@ -760,7 +780,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                   </div>
                   <button 
                     onClick={checkout}
-                    disabled={isCalculating || (deliveryMethod === 'entrega' && !shippingInfo)}
+                    disabled={isCalculating || (deliveryMethod === 'entrega' && !shippingInfo) || cpf.replace(/\D/g, '').length !== 11}
                     className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50"
                   >
                     {isCalculating ? <Loader2 className="animate-spin mx-auto" /> : "FINALIZAR PEDIDO"}
@@ -879,7 +899,14 @@ export default function Home({ products, config, categories, promotions, cart, s
 
                 <div className="relative">
                   <div className="bg-white p-6 rounded-3xl shadow-xl shadow-pink-200/20 relative z-10 scale-105">
-                    {pixData.qr_code_base64 && (
+                    {pixData.qr_code_url ? (
+                      <img 
+                        src={pixData.qr_code_url} 
+                        alt="QR Code PIX" 
+                        className="w-48 h-48 mx-auto"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : pixData.qr_code_base64 && (
                       <img 
                         src={`data:image/png;base64,${pixData.qr_code_base64}`} 
                         alt="QR Code PIX" 
@@ -925,7 +952,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                   Aguardando Confirmação automática...
                 </div>
                 <p className="text-[11px] text-gray-400 font-medium px-4 leading-relaxed">
-                  Não é necessário enviar comprovante. Nosso sistema identifica o pagamento em segundos através do Mercado Pago.
+                  Não é necessário enviar comprovante. Nosso sistema identifica o pagamento em segundos através do PagBank.
                 </p>
                 <button 
                   onClick={() => setPixData(null)}
