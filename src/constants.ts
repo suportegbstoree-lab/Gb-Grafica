@@ -1,4 +1,4 @@
-import { Product, SiteConfig } from "./types";
+import { Anuncio, SiteConfig } from "./types";
 
 export const INITIAL_CONFIG: SiteConfig = {
   logo_url: "/logo.png",
@@ -25,7 +25,7 @@ export const INITIAL_CATEGORIES = [
   { nome: "Painéis Educativos", icon: "https://cdn-icons-png.flaticon.com/512/2618/2618245.png" }
 ];
 
-export const INITIAL_PRODUCTS: Product[] = [
+export const INITIAL_PRODUCTS: Anuncio[] = [
   {
     id: "1",
     nome: "Cartão de Visita Premium",

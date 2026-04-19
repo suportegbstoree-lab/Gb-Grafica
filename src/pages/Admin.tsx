@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category } from '../types';
 import { cn } from '../lib/utils';
@@ -21,6 +21,17 @@ export default function Admin({ products, config, categories, orders }: AdminPro
   const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (successMessage || errorMessage) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        setErrorMessage(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage, errorMessage]);
   const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
   const [showAttrForm, setShowAttrForm] = useState(false);
   const [showBulkImageForm, setShowBulkImageForm] = useState(false);
@@ -141,13 +152,29 @@ export default function Admin({ products, config, categories, orders }: AdminPro
     e.preventDefault();
     if (!editingProduct) return;
     
+    // Validar campos obrigatórios antes de tentar salvar
+    if (!editingProduct.nome || !editingProduct.desc || !editingProduct.categoria || !editingProduct.imagem) {
+      setErrorMessage('Por favor, preencha todos os campos obrigatórios (Nome, Descrição, Categoria e Imagem Principal).');
+      return;
+    }
+    
     const id = editingProduct.id || Math.random().toString(36).substr(2, 9);
-    const productToSave = { ...editingProduct, id } as Anuncio;
+    const productToSave = { 
+      ...editingProduct, 
+      id,
+      imagens: editingProduct.imagens || [],
+      atributos: editingProduct.atributos || [],
+      combinacoes: editingProduct.combinacoes || {},
+      tipoInput: editingProduct.tipoInput || 'nenhum'
+    } as Anuncio;
     
     try {
       await setDoc(doc(db, 'anuncios', id), productToSave);
       setEditingProduct(null);
+      setSuccessMessage('Anúncio salvo com sucesso!');
     } catch (error) {
+      console.error('Erro ao salvar anúncio:', error);
+      setErrorMessage('Erro ao salvar anúncio. Verifique o console ou as regras de segurança.');
       handleFirestoreError(error, OperationType.WRITE, `anuncios/${id}`);
     }
   };
@@ -219,7 +246,29 @@ export default function Admin({ products, config, categories, orders }: AdminPro
       </aside>
 
       {/* Main Content Admin */}
-      <main className="flex-grow p-12 overflow-y-auto max-h-screen">
+      <main className="flex-grow p-12 overflow-y-auto max-h-screen relative">
+        <AnimatePresence>
+          {successMessage && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="fixed top-8 right-8 z-[100] bg-green-500 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2"
+            >
+              <CheckCircle2 size={18} /> {successMessage}
+            </motion.div>
+          )}
+          {errorMessage && (
+            <motion.div 
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="fixed top-8 right-8 z-[100] bg-red-500 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2"
+            >
+              <X size={18} /> {errorMessage}
+            </motion.div>
+          )}
+        </AnimatePresence>
         {activeTab === 'products' && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -236,7 +285,17 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                 )}
               </div>
               <button 
-                onClick={() => setEditingProduct({ nome: '', desc: '', categoria: categories[0]?.nome || '', imagem: '', preco_base: '', atributos: [], combinacoes: {} })}
+                onClick={() => setEditingProduct({ 
+                  nome: '', 
+                  desc: '', 
+                  categoria: categories[0]?.nome || '', 
+                  imagem: '', 
+                  imagens: [],
+                  preco_base: '', 
+                  atributos: [], 
+                  combinacoes: {},
+                  tipoInput: 'nenhum'
+                })}
                 className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
               >
                 <Plus size={18} /> Novo Produto
