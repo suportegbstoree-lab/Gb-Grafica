@@ -194,7 +194,13 @@ export default function Admin({ products, config, categories, orders, promotions
   // Order Handlers
   const handleStatusChange = async (orderId: string, newStatus: string) => {
     try {
-      await updateDoc(doc(db, 'orders', orderId), { status: newStatus });
+      const updates: any = { status: newStatus };
+      if (newStatus === 'Pago') {
+        updates.paymentStatus = 'pago';
+      } else if (newStatus === 'Pendente') {
+        updates.paymentStatus = 'pendente';
+      }
+      await updateDoc(doc(db, 'orders', orderId), updates);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -421,71 +427,43 @@ export default function Admin({ products, config, categories, orders, promotions
         )}
 
         {activeTab === 'orders' && (
-          <div className="space-y-8">
+          <div className="space-y-12">
             <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
             
-            <div className="space-y-4">
-              {orders.length === 0 ? (
-                <div className="text-gray-500">Nenhum pedido encontrado.</div>
-              ) : (
-                orders.map(order => (
-                  <div key={order.id} className="bg-[#111111] border border-gray-800 rounded-xl p-6 space-y-6">
-                    <div className="flex justify-between items-start border-b border-gray-800 pb-4">
-                      <div>
-                        <div className="text-xs text-[#ff4d79] font-bold uppercase tracking-widest mb-1">Pedido #{order.id}</div>
-                        <div className="text-sm text-gray-400">{order.data}</div>
-                        <div className="text-xs text-gray-500 mt-1">ID Usuário: {order.userId}</div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <select 
-                          value={order.status}
-                          onChange={(e) => handleStatusChange(order.id, e.target.value)}
-                          className="bg-black border border-gray-700 rounded px-3 py-1 text-xs outline-none focus:border-[#ff4d79]"
-                        >
-                          <option value="Pendente">Pendente</option>
-                          <option value="Processando">Processando</option>
-                          <option value="Enviado">Enviado</option>
-                          <option value="Entregue">Entregue</option>
-                        </select>
-                        <div className="text-xl font-bold">R$ {order.total}</div>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-3">
-                        <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Itens do Pedido</div>
-                        {order.itens.map((item, idx) => (
-                          <div key={idx} className="flex gap-3 items-center bg-black/40 p-3 rounded-lg border border-gray-800/50">
-                            <img src={item.imagem} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
-                            <div className="flex-grow">
-                              <div className="text-xs font-bold">{item.nome}</div>
-                              <div className="text-[10px] text-gray-500">
-                                {item.quantidade}x - {Object.entries(item.selecoes).map(([k, v]) => `${k}: ${v}`).join(', ')}
-                              </div>
-                              {item.textoPersonalizado && (
-                                <div className="text-[10px] text-[#ff4d79] mt-1 font-bold">
-                                  Personalização: {item.textoPersonalizado}
-                                </div>
-                              )}
-                              {item.arquivoUrl && (
-                                <a 
-                                  href={item.arquivoUrl} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline mt-1"
-                                >
-                                  <Upload size={10} /> Baixar Arte
-                                </a>
-                              )}
-                            </div>
-                            <div className="text-xs font-bold">R$ {(parseFloat(item.preco) * item.quantidade).toFixed(2)}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
+            {/* Pedidos Pagos */}
+            <div className="space-y-6">
+              <div className="flex items-center gap-3 border-b border-green-500/30 pb-2">
+                <CheckCircle2 className="text-green-500" size={20} />
+                <h3 className="text-lg font-bold text-green-500">Pedidos Finalizados (Pagos)</h3>
+              </div>
+              
+              <div className="space-y-4">
+                {orders.filter(o => o.paymentStatus === 'pago' || o.status === 'Pago').length === 0 ? (
+                  <div className="text-gray-600 text-sm italic">Nenhum pedido pago encontrado.</div>
+                ) : (
+                  orders.filter(o => o.paymentStatus === 'pago' || o.status === 'Pago').map(order => (
+                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Pedidos Pendentes */}
+            <div className="space-y-6 pt-8">
+              <div className="flex items-center gap-3 border-b border-yellow-500/30 pb-2">
+                <Clock className="text-yellow-500" size={20} />
+                <h3 className="text-lg font-bold text-yellow-500">Pedidos Pendentes (Falta Pagamento)</h3>
+              </div>
+              
+              <div className="space-y-4">
+                {orders.filter(o => o.paymentStatus !== 'pago' && o.status !== 'Pago').length === 0 ? (
+                  <div className="text-gray-600 text-sm italic">Nenhum pedido pendente encontrado.</div>
+                ) : (
+                  orders.filter(o => o.paymentStatus !== 'pago' && o.status !== 'Pago').map(order => (
+                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} />
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1189,4 +1167,89 @@ function generateCombinations(attributes: any[]): string[] {
   }
   
   return results;
+}
+
+function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusChange: (id: string, s: string) => void; key?: string }) {
+  return (
+    <div className="bg-[#111111] border border-gray-800 rounded-xl p-6 space-y-6">
+      <div className="flex justify-between items-start border-b border-gray-800 pb-4">
+        <div>
+          <div className="text-xs text-[#ff4d79] font-bold uppercase tracking-widest mb-1">Pedido #{order.id}</div>
+          <div className="text-sm text-gray-400">{order.data}</div>
+          <div className="text-xs text-gray-500 mt-1">ID Usuário: {order.userId}</div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className={cn(
+               "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded flex items-center gap-1.5",
+               order.metodoEntrega === 'retirada' 
+                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
+                : "bg-purple-500/20 text-purple-400 border border-purple-500/30"
+            )}>
+              {order.metodoEntrega === 'retirada' ? (
+                <><Settings size={10} className="stroke-[3px]" /> RETIRADA NA GRÁFICA</>
+              ) : (
+                <><Package size={10} className="stroke-[3px]" /> ENTREGA</>
+              )}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex flex-col items-end">
+            <span className={cn(
+              "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded mb-2",
+              (order.paymentStatus === 'pago' || order.status === 'Pago') 
+                ? "bg-green-500/20 text-green-500 border border-green-500/30" 
+                : "bg-yellow-500/20 text-yellow-500 border border-yellow-500/30"
+            )}>
+              {(order.paymentStatus === 'pago' || order.status === 'Pago') ? 'PAGO' : 'AGUARDANDO PAGAMENTO'}
+            </span>
+            <select 
+              value={order.status}
+              onChange={(e) => handleStatusChange(order.id, e.target.value)}
+              className="bg-black border border-gray-700 rounded px-3 py-1 text-xs outline-none focus:border-[#ff4d79]"
+            >
+              <option value="Pendente">Pendente</option>
+              <option value="Pago">Pago</option>
+              <option value="Processando">Processando</option>
+              <option value="Enviado">Enviado</option>
+              <option value="Entregue">Entregue</option>
+            </select>
+          </div>
+          <div className="text-xl font-bold">R$ {order.total}</div>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="space-y-3">
+          <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Itens do Pedido</div>
+          {order.itens.map((item, idx) => (
+            <div key={idx} className="flex gap-3 items-center bg-black/40 p-3 rounded-lg border border-gray-800/50">
+              <img src={item.imagem} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
+              <div className="flex-grow">
+                <div className="text-xs font-bold">{item.nome}</div>
+                <div className="text-[10px] text-gray-500">
+                  {item.quantidade}x - {Object.entries(item.selecoes).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                </div>
+                {item.textoPersonalizado && (
+                  <div className="text-[10px] text-[#ff4d79] mt-1 font-bold">
+                    Personalização: {item.textoPersonalizado}
+                  </div>
+                )}
+                {item.arquivoUrl && (
+                  <a 
+                    href={item.arquivoUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline mt-1"
+                  >
+                    <Upload size={10} /> Baixar Arte
+                  </a>
+                )}
+              </div>
+              <div className="text-xs font-bold">R$ {(parseFloat(item.preco) * item.quantidade).toFixed(2)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }

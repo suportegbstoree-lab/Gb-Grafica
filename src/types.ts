@@ -35,7 +35,9 @@ export interface Order {
   data: string;
   itens: CartItem[];
   total: string;
-  status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue';
+  status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue' | 'Pago';
+  paymentStatus?: 'pago' | 'pendente';
+  metodoEntrega?: 'retirada' | 'entrega';
 }
 
 export interface Category {

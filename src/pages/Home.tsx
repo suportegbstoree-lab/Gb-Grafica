@@ -4,7 +4,7 @@ import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, T
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
-import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType } from '../firebase';
+import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType, updateDoc } from '../firebase';
 
 interface HomeProps {
   products: Anuncio[];
@@ -25,6 +25,7 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [cep, setCep] = useState('');
   const [shippingInfo, setShippingInfo] = useState<{ address: string; price: number } | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -62,7 +63,10 @@ export default function Home({ products, config, categories, promotions, cart, s
     }
   };
 
-  const totalWithShipping = (parseFloat(cart.reduce((acc, i) => acc + (parseFloat(i.preco) * i.quantidade), 0).toFixed(2)) + (shippingInfo?.price || 0)).toFixed(2);
+  const totalWithShipping = (
+    parseFloat(cart.reduce((acc, i) => acc + (parseFloat(i.preco) * i.quantidade), 0).toFixed(2)) + 
+    (deliveryMethod === 'entrega' ? (shippingInfo?.price || 0) : 0)
+  ).toFixed(2);
 
   const addToCart = (item: CartItem) => {
     setCart(prev => {
@@ -134,7 +138,9 @@ export default function Home({ products, config, categories, promotions, cart, s
           data: new Date().toLocaleString('pt-BR'),
           itens: [...cart],
           total,
-          status: 'Pendente'
+          status: 'Pendente',
+          paymentStatus: 'pendente',
+          metodoEntrega: deliveryMethod
         };
         await setDoc(doc(db, 'orders', orderId), newOrder);
         window.location.href = data.init_point;
@@ -157,8 +163,19 @@ export default function Home({ products, config, categories, promotions, cart, s
     const orderId = params.get('orderId');
 
     if (status === 'success' && orderId) {
-      setCart([]);
-      setIsOrdersOpen(true);
+      const updateOrder = async () => {
+        try {
+          await updateDoc(doc(db, 'orders', orderId), { 
+            status: 'Pago',
+            paymentStatus: 'pago' 
+          });
+          setCart([]);
+          setIsOrdersOpen(true);
+        } catch (error) {
+          console.error("Erro ao atualizar status do pedido:", error);
+        }
+      };
+      updateOrder();
       // Clean URL
       window.history.replaceState({}, document.title, "/");
     }
@@ -570,49 +587,86 @@ export default function Home({ products, config, categories, promotions, cart, s
                   ))}
                 </div>
                 <div className="border-t border-gray-100 pt-6 space-y-4">
-                  {/* Shipping Calculator */}
+                  {/* Forma de Entrega */}
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">Calcular Frete (Correios)</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        placeholder="00000000" 
-                        value={cep}
-                        onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))}
-                        className="flex-grow bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400"
-                      />
+                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Forma de Entrega</label>
+                    <div className="grid grid-cols-2 gap-2">
                       <button 
-                        onClick={calculateShipping}
-                        disabled={isCalculating || cep.length !== 8}
-                        className="bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-pink-500 disabled:opacity-50 transition-colors"
+                        onClick={() => setDeliveryMethod('entrega')}
+                        className={cn(
+                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          deliveryMethod === 'entrega' 
+                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
+                            : "bg-white border-gray-100 text-gray-400"
+                        )}
                       >
-                        {isCalculating ? '...' : 'OK'}
+                        <Package size={16} /> Entregar
+                      </button>
+                      <button 
+                        onClick={() => setDeliveryMethod('retirada')}
+                        className={cn(
+                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          deliveryMethod === 'retirada' 
+                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
+                            : "bg-white border-gray-100 text-gray-400"
+                        )}
+                      >
+                        <Settings size={16} /> Retirar na Loja
                       </button>
                     </div>
-                    {shippingInfo && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="mt-3 text-[11px] text-gray-500"
-                      >
-                        <p className="mb-1">📍 {shippingInfo.address}</p>
-                        <div className="flex justify-between text-gray-900 font-bold">
-                          <span>PAC / Sedex</span>
-                          <span className="text-pink-500">R$ {shippingInfo.price.toFixed(2)}</span>
-                        </div>
-                      </motion.div>
-                    )}
                   </div>
+
+                  {/* Shipping Calculator */}
+                  {deliveryMethod === 'entrega' && (
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                      <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">Calcular Frete (Correios)</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="text" 
+                          placeholder="00000000" 
+                          value={cep}
+                          onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                          className="flex-grow bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400"
+                        />
+                        <button 
+                          onClick={calculateShipping}
+                          disabled={isCalculating || cep.length !== 8}
+                          className="bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-pink-500 disabled:opacity-50 transition-colors"
+                        >
+                          {isCalculating ? '...' : 'OK'}
+                        </button>
+                      </div>
+                      {shippingInfo && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="mt-3 text-[11px] text-gray-500"
+                        >
+                          <p className="mb-1">📍 {shippingInfo.address}</p>
+                          <div className="flex justify-between text-gray-900 font-bold">
+                            <span>PAC / Sedex</span>
+                            <span className="text-pink-500">R$ {shippingInfo.price.toFixed(2)}</span>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-sm text-gray-500">
                       <span>Subtotal</span>
                       <span>R$ {cart.reduce((acc, i) => acc + (parseFloat(i.preco) * i.quantidade), 0).toFixed(2)}</span>
                     </div>
-                    {shippingInfo && (
+                    {deliveryMethod === 'entrega' && shippingInfo && (
                       <div className="flex justify-between items-center text-sm text-gray-500">
                         <span>Frete</span>
                         <span>R$ {shippingInfo.price.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {deliveryMethod === 'retirada' && (
+                      <div className="flex justify-between items-center text-sm text-green-600 font-bold italic">
+                        <span>Retirada na Gráfica</span>
+                        <span>Grátis</span>
                       </div>
                     )}
                     <div className="flex justify-between items-center pt-2 border-t border-gray-100">
@@ -624,9 +678,10 @@ export default function Home({ products, config, categories, promotions, cart, s
                   </div>
                   <button 
                     onClick={checkout}
-                    className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100"
+                    disabled={isCalculating || (deliveryMethod === 'entrega' && !shippingInfo)}
+                    className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50"
                   >
-                    FINALIZAR PEDIDO
+                    {isCalculating ? <Loader2 className="animate-spin mx-auto" /> : "FINALIZAR PEDIDO"}
                   </button>
                 </div>
 
@@ -647,6 +702,15 @@ export default function Home({ products, config, categories, promotions, cart, s
                       <div>
                         <div className="text-[10px] text-gray-400 uppercase tracking-widest font-black">Pedido #{order.id}</div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center gap-1"><Clock size={12} /> {order.data}</div>
+                        {order.metodoEntrega && (
+                          <div className="text-[9px] text-pink-400 mt-1.5 font-black uppercase tracking-[0.1em] flex items-center gap-1.5">
+                            {order.metodoEntrega === 'retirada' ? (
+                              <><Settings size={10} className="stroke-[2.5px]" /> Retirada na Gráfica</>
+                            ) : (
+                              <><Package size={10} className="stroke-[2.5px]" /> Entrega</>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
                         {order.status}
