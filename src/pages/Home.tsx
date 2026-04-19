@@ -101,7 +101,9 @@ export default function Home({ products, config, categories, promotions, cart, s
     try {
       const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
       
-      // Use relative path to avoid SSL/Domain issues
+      console.log('[DEBUG] Enviando pedido:', orderId);
+      
+      // Use relative path - ensures same domain/protocol
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,12 +113,15 @@ export default function Home({ products, config, categories, promotions, cart, s
           baseUrl: window.location.origin
         })
       });
-      
+
       const contentType = response.headers.get("content-type");
+      console.log('[DEBUG] Status:', response.status);
+      console.log('[DEBUG] Content-Type:', contentType);
+
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
-        console.error('Resposta não é JSON:', text);
-        throw new Error(`Servidor retornou erro inesperado (${response.status}). Verifique os logs do servidor.`);
+        console.error('[DEBUG] Resposta não-JSON:', text.substring(0, 500));
+        throw new Error(`Erro do servidor (${response.status}). O servidor retornou uma página inesperada em vez de dados.`);
       }
 
       const data = await response.json();

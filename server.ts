@@ -15,45 +15,42 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  console.log('--- SERVER STARTING ---');
-  console.log('NODE_ENV:', process.env.NODE_ENV);
-  console.log('Access Token defined:', !!process.env.MP_ACCESS_TOKEN);
-
+  // Middleware
   app.use(cors());
   app.use(express.json());
 
-  // Health checks and status
-  app.get("/ping", (req, res) => {
-    console.log('PING received');
-    res.send("pong");
-  });
-
-  app.get("/api/status", (req, res) => {
-    console.log('STATUS API hit');
-    res.json({ status: "online", time: new Date().toISOString() });
-  });
-
-  // Mercado Pago Configuration
-  // Move it inside the routes to avoid startup issues if token is missing
+  // --- API ROUTES FIRST ---
   
-  // Checkout Route
+  // Health checks
+  app.get("/ping", (req, res) => {
+    res.send("pong-v3");
+  });
+
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      time: new Date().toISOString(),
+      node_env: process.env.NODE_ENV,
+      mp_token: !!process.env.MP_ACCESS_TOKEN 
+    });
+  });
+
+  // Mercado Pago Checkout
   app.post("/api/checkout", async (req, res) => {
-    console.log('[API] Checkout Request Started');
+    console.log('[SERVER] Checkout Request');
     try {
-      if (!process.env.MP_ACCESS_TOKEN) {
-        console.error('[API] Error: MP_ACCESS_TOKEN not found');
-        return res.status(500).json({ error: 'Configuração Incompleta', details: 'O token do Mercado Pago não foi configurado no servidor.' });
+      const { items, orderId, baseUrl } = req.body;
+      
+      const token = process.env.MP_ACCESS_TOKEN;
+      if (!token) {
+        return res.status(500).json({ error: 'Configuração Incompleta', details: 'Token MP não definido no servidor.' });
       }
 
-      const client = new MercadoPagoConfig({ 
-        accessToken: process.env.MP_ACCESS_TOKEN,
-        options: { timeout: 15000 }
-      });
+      const client = new MercadoPagoConfig({ accessToken: token });
+      const preference = new Preference(client);
 
-      const { items, orderId, baseUrl } = req.body;
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
       
-      const preference = new Preference(client);
       const mpItems = items.map((item: any) => ({
         id: item.id,
         title: item.nome,
@@ -76,29 +73,27 @@ async function startServer() {
         }
       });
 
-      console.log('[API] Checkout Success:', result.id);
       res.json({ id: result.id, init_point: result.init_point });
     } catch (error: any) {
-      console.error('[API] Checkout Fatal Error:', error);
-      res.status(500).json({ error: 'Erro no processamento', details: error.message });
+      console.error('[SERVER] Checkout Error:', error);
+      res.status(500).json({ error: 'Erro no checkout', details: error.message });
     }
   });
 
-  // Health checks
-  app.get("/ping", (req, res) => res.send("pong version 2"));
-  app.get("/api/status", (req, res) => res.json({ status: "ok", version: "2.1" }));
+  // --- STATIC FILES / VITE ---
+  
+  const isDev = process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging";
 
-  // Vite / Static Files
-  if (process.env.NODE_ENV !== "production") {
-    console.log('Starting in DEVELOPMENT mode with Vite...');
+  if (isDev) {
+    console.log('Running in DEVELOPMENT mode');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    console.log('Starting in PRODUCTION mode with static files...');
-    const distPath = path.join(process.cwd(), 'dist');
+    console.log('Running in PRODUCTION mode');
+    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
@@ -106,10 +101,8 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`--- SERVER LISTENING ON PORT ${PORT} ---`);
+    console.log(`Server listening on 0.0.0.0:${PORT}`);
   });
 }
 
-startServer().catch(err => {
-  console.error('FAILED TO START SERVER:', err);
-});
+startServer().catch(console.error);
