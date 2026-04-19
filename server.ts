@@ -34,24 +34,26 @@ async function startServer() {
   });
 
   // Mercado Pago Configuration
-  const client = new MercadoPagoConfig({ 
-    accessToken: process.env.MP_ACCESS_TOKEN || '',
-    options: { timeout: 10000 }
-  });
-
+  // Move it inside the routes to avoid startup issues if token is missing
+  
   // Checkout Route
   app.post("/api/checkout", async (req, res) => {
-    console.log('CHECKOUT API hit');
+    console.log('[API] Checkout Request Started');
     try {
-      const { items, orderId, baseUrl } = req.body;
-      
       if (!process.env.MP_ACCESS_TOKEN) {
-        return res.status(500).json({ error: 'Token MP não configurado' });
+        console.error('[API] Error: MP_ACCESS_TOKEN not found');
+        return res.status(500).json({ error: 'Configuração Incompleta', details: 'O token do Mercado Pago não foi configurado no servidor.' });
       }
 
+      const client = new MercadoPagoConfig({ 
+        accessToken: process.env.MP_ACCESS_TOKEN,
+        options: { timeout: 15000 }
+      });
+
+      const { items, orderId, baseUrl } = req.body;
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
-      const preference = new Preference(client);
       
+      const preference = new Preference(client);
       const mpItems = items.map((item: any) => ({
         id: item.id,
         title: item.nome,
@@ -74,14 +76,19 @@ async function startServer() {
         }
       });
 
+      console.log('[API] Checkout Success:', result.id);
       res.json({ id: result.id, init_point: result.init_point });
     } catch (error: any) {
-      console.error('Checkout error:', error);
-      res.status(500).json({ error: 'Erro no checkout', details: error.message });
+      console.error('[API] Checkout Fatal Error:', error);
+      res.status(500).json({ error: 'Erro no processamento', details: error.message });
     }
   });
 
-  // Vite / Static Files (Dynamic)
+  // Health checks
+  app.get("/ping", (req, res) => res.send("pong version 2"));
+  app.get("/api/status", (req, res) => res.json({ status: "ok", version: "2.1" }));
+
+  // Vite / Static Files
   if (process.env.NODE_ENV !== "production") {
     console.log('Starting in DEVELOPMENT mode with Vite...');
     const vite = await createViteServer({
