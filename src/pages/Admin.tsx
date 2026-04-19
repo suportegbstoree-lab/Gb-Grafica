@@ -119,6 +119,8 @@ export default function Admin({ products, config, categories, orders, promotions
       beneficio2_desc: formData.get('beneficio2_desc') as string,
       beneficio3_titulo: formData.get('beneficio3_titulo') as string,
       beneficio3_desc: formData.get('beneficio3_desc') as string,
+      pix_chave: formData.get('pix_chave') as string || '1af0ad42-6066-4a14-9888-0508d0c1371f',
+      pix_beneficiario: formData.get('pix_beneficiario') as string || 'GBL Gráfica'
     };
     
     try {

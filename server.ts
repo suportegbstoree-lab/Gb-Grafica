@@ -47,8 +47,58 @@ async function startServer() {
       }
 
       const client = new MercadoPagoConfig({ accessToken: token });
-      const preference = new Preference(client);
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
+
+      // DIRECT PIX FLOW
+      if (paymentMethod === 'pix') {
+        try {
+          const payment = new Payment(client);
+          
+          const subtotal = items.reduce((acc: number, item: any) => {
+            const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
+            return acc + (price * (item.quantidade || 1));
+          }, 0);
+          
+          const total = subtotal + (parseFloat(shippingCost) || 0);
+          const email = userEmail || 'compras@gblgrafica.com.br';
+          const firstName = email.split('@')[0].substring(0, 20) || 'Cliente';
+
+          const result = await payment.create({
+            body: {
+              transaction_amount: parseFloat(total.toFixed(2)),
+              description: `Pedido ${orderId} - GBL Gráfica`,
+              payment_method_id: 'pix',
+              external_reference: orderId,
+              notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
+              payer: {
+                email: email,
+                first_name: firstName,
+                last_name: 'GBL',
+              }
+            },
+            requestOptions: {
+              idempotencyKey: `${orderId}-${Date.now()}`
+            }
+          });
+
+          console.log('[SERVER] Direct PIX Created:', result.id);
+
+          return res.json({ 
+            payment_method: 'pix',
+            qr_code: result.point_of_interaction?.transaction_data?.qr_code,
+            qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
+            payment_id: result.id,
+            status: result.status,
+            total: total.toFixed(2)
+          });
+        } catch (pixError: any) {
+          console.error('[SERVER] PIX Direct API Error:', pixError.message);
+          // Fallback to hosted if direct fails (e.g., account permissions)
+        }
+      }
+
+      // HOSTED CHECKOUT FLOW (Pro)
+      const preference = new Preference(client);
       
       const mpItems = items.map((item: any) => ({
         id: item.id,
@@ -80,21 +130,14 @@ async function startServer() {
         binary_mode: true,
         payer: {
           email: userEmail || 'compras@gblgrafica.com.br',
+        },
+        payment_methods: {
+          installments: 12,
+          // We suggest PIX if selected, but don't exclude anything anymore 
+          // This ensures that if the account has PIX enabled, it WILL show up.
+          default_payment_method_id: paymentMethod === 'pix' ? 'pix' : '',
         }
       };
-
-      // Configuration to enable PIX and Cards without exclusions
-      // We set default_payment_method_id to suggest PIX if chosen in store
-      preferenceBody.payment_methods = {
-        excluded_payment_types: [
-          { id: 'ticket' } // Excluding standard Boleto if you want to focus on PIX/Cards
-        ],
-        installments: 12
-      };
-
-      if (paymentMethod === 'pix') {
-        preferenceBody.payment_methods.default_payment_method_id = 'pix';
-      }
 
       const result = await preference.create({
         body: preferenceBody
@@ -107,10 +150,25 @@ async function startServer() {
     }
   });
 
+  // Check Payment Status (Polling endpoint)
+  app.get("/api/payment-status/:id", async (req, res) => {
+    try {
+      const token = process.env.MP_ACCESS_TOKEN;
+      if (!token) return res.status(500).json({ error: 'Token missing' });
+      
+      const client = new MercadoPagoConfig({ accessToken: token });
+      const payment = new Payment(client);
+      const result = await payment.get({ id: req.params.id });
+      
+      res.json({ status: result.status });
+    } catch (error) {
+      res.status(500).json({ error: 'Error fetching status' });
+    }
+  });
+
   // Webhook for Mercado Pago (to automate updates)
   app.post("/api/webhook/mp", async (req, res) => {
-    // This would ideally update Firestore directly
-    console.log('[SERVER] MP Webhook Received:', req.body);
+    console.log('[SERVER] MP Webhook Received:', JSON.stringify(req.body));
     res.sendStatus(200);
   });
 

@@ -27,6 +27,7 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [paymentMethod, setPaymentMethod] = useState<'cartao' | 'pix'>('cartao');
+  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; payment_id: string; total: string } | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -154,10 +155,22 @@ export default function Home({ products, config, categories, promotions, cart, s
 
       const data = await response.json();
       
-      if (response.ok && data.init_point) {
-        // First save to Firestore
+      if (response.ok) {
+        // Save to Firestore
         await setDoc(doc(db, 'orders', orderId), newOrder);
-        window.location.href = data.init_point;
+
+        if (data.payment_method === 'pix') {
+          setPixData({
+            qr_code: data.qr_code,
+            qr_code_base64: data.qr_code_base64,
+            payment_id: data.payment_id,
+            total: data.total
+          });
+          setCart([]);
+          setIsCartOpen(false);
+        } else if (data.init_point) {
+          window.location.href = data.init_point;
+        }
       } else {
         const errorMsg = data.details || data.error || 'Erro desconhecido';
         throw new Error(errorMsg);
@@ -169,6 +182,32 @@ export default function Home({ products, config, categories, promotions, cart, s
       setIsCalculating(false);
     }
   };
+
+  // Polling for PIX Status
+  React.useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if (pixData && pixData.payment_id) {
+      interval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/payment-status/${pixData.payment_id}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'approved') {
+              // Update local orders if needed, we'll probably just close the modal and show success
+              alert('Pagamento aprovado com sucesso!');
+              setPixData(null);
+              setIsOrdersOpen(true);
+            }
+          }
+        } catch (error) {
+          console.error('Error polling status:', error);
+        }
+      }, 5000);
+    }
+
+    return () => clearInterval(interval);
+  }, [pixData]);
 
   // Handle Return from Mercado Pago
   React.useEffect(() => {
@@ -824,6 +863,75 @@ export default function Home({ products, config, categories, promotions, cart, s
                   className="bg-gray-900 text-white px-12 py-4 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-pink-500 transition-all shadow-xl shadow-gray-100"
                 >
                   ENTENDI
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {pixData && (
+          <Modal title="Pague com PIX" onClose={() => setPixData(null)}>
+            <div className="space-y-6 text-center">
+              <div className="p-8 bg-pink-50 rounded-[40px] border border-pink-100 flex flex-col items-center gap-6 relative overflow-hidden">
+                {/* Decorative Elements */}
+                <div className="absolute top-0 right-0 w-24 h-24 bg-pink-200/20 blur-3xl rounded-full"></div>
+                <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-200/20 blur-3xl rounded-full"></div>
+
+                <div className="relative">
+                  <div className="bg-white p-6 rounded-3xl shadow-xl shadow-pink-200/20 relative z-10 scale-105">
+                    {pixData.qr_code_base64 && (
+                      <img 
+                        src={`data:image/png;base64,${pixData.qr_code_base64}`} 
+                        alt="QR Code PIX" 
+                        className="w-48 h-48 mx-auto"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 relative z-10">
+                  <div className="text-gray-900 font-black text-lg tracking-tight">R$ {pixData.total}</div>
+                  <div className="text-gray-500 font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2">
+                    <QrCode size={14} className="text-pink-500" /> Escaneie para Pagar
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 text-left">
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-black block mb-2 px-1">Código Copia e Cola</label>
+                  <div className="flex gap-2">
+                    <input 
+                      readOnly 
+                      value={pixData.qr_code} 
+                      className="flex-grow bg-gray-50 border border-gray-100 rounded-2xl px-4 py-4 text-xs font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-500/20 transition-all"
+                    />
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(pixData.qr_code);
+                        alert('Código copiado!');
+                      }}
+                      className="bg-gray-900 text-white px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-pink-500 transition-all shadow-lg shadow-gray-200 active:scale-95"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-4 space-y-4 border-t border-gray-100">
+                <div className="flex items-center justify-center gap-3 text-pink-500 font-black text-[11px] uppercase tracking-widest animate-pulse">
+                  <div className="w-2 h-2 bg-pink-500 rounded-full"></div>
+                  Aguardando Confirmação automática...
+                </div>
+                <p className="text-[11px] text-gray-400 font-medium px-4 leading-relaxed">
+                  Não é necessário enviar comprovante. Nosso sistema identifica o pagamento em segundos através do Mercado Pago.
+                </p>
+                <button 
+                  onClick={() => setPixData(null)}
+                  className="w-full bg-white border-2 border-gray-900 text-gray-900 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-gray-50 transition-all active:scale-[0.98]"
+                >
+                  Fechar Janela
                 </button>
               </div>
             </div>
