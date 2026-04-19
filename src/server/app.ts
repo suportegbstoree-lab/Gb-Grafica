@@ -67,8 +67,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     const customer = {
       name: userEmail?.split('@')[0] || 'Cliente GBL',
       email: userEmail || 'compras@gblgrafica.com.br',
-      tax_id: cpf || '52317132029', 
-      phones: [{ country: '55', area: '11', number: '999999999', type: 'MOBILE' }]
+      tax_id: cpf || '52317132029'
     };
 
     if (paymentMethod === 'pix') {
@@ -159,14 +158,20 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       const errorData = error.response.data;
       console.error('[SERVER] PagBank Detailed Error:', JSON.stringify(errorData, null, 2));
       
-      // Extract error messages if available in PagBank format
       let details = "";
       if (errorData.error_messages) {
         details = errorData.error_messages.map((m: any) => `${m.code}: ${m.description}`).join(' | ');
       }
+
+      const isWhitelistError = details.includes("whitelist access required") || 
+                              (errorData.error_messages && errorData.error_messages.some((m: any) => m.code === "ACCESS_DENIED"));
+
+      if (isWhitelistError) {
+        details = "Sua conta PagBank não está autorizada para o Checkout v3 em Sandbox. Solução: Acesse o painel PagBank, vá em 'Minha Conta' > 'Aplicativos' e verifique as permissões, ou entre em contato com o suporte PagBank.";
+      }
       
       res.status(error.response.status).json({
-        error: "Erro no Checkout PagBank",
+        error: isWhitelistError ? "Erro de Autorização" : "Erro no Checkout PagBank",
         details: details || error.message,
         raw: errorData
       });
