@@ -49,7 +49,7 @@ async function startServer() {
       const client = new MercadoPagoConfig({ accessToken: token });
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
 
-      // DIRECT PIX FLOW
+      // DIRECT PIX FLOW (Always try this first and fail if not possible)
       if (paymentMethod === 'pix') {
         try {
           const payment = new Payment(client);
@@ -61,31 +61,33 @@ async function startServer() {
           
           const total = subtotal + (parseFloat(shippingCost) || 0);
           const email = userEmail || 'compras@gblgrafica.com.br';
-          const firstName = email.split('@')[0].substring(0, 20) || 'Cliente';
+          const firstName = (email.split('@')[0] || 'Cliente').substring(0, 20);
+
+          const body = {
+            transaction_amount: parseFloat(total.toFixed(2)),
+            description: `Pedido ${orderId} - GBL Gráfica`,
+            payment_method_id: 'pix',
+            external_reference: orderId,
+            payer: {
+              email: email,
+              first_name: firstName,
+              last_name: 'GBL'
+            }
+          };
 
           const result = await payment.create({
-            body: {
-              transaction_amount: parseFloat(total.toFixed(2)),
-              description: `Pedido ${orderId} - GBL Gráfica`,
-              payment_method_id: 'pix',
-              external_reference: orderId,
-              payer: {
-                email: email,
-                first_name: firstName,
-                last_name: 'GBL',
-              }
-            },
+            body,
             requestOptions: {
               idempotencyKey: `${orderId}-${Date.now()}`
             }
           });
 
-          console.log('[SERVER] Direct PIX Created:', result.id, 'Status:', result.status);
+          console.log('[SERVER] Direct PIX Status:', result.status);
 
           if (result.status === 'rejected') {
             return res.status(400).json({ 
-              error: 'PIX Rejeitado', 
-              details: `O Mercado Pago não permitiu gerar este PIX. Motivo: ${result.status_detail}. Verifique sua conta.`,
+              error: 'PIX Rejeitado pelo Mercado Pago', 
+              details: `Sua conta do Mercado Pago não permitiu gerar este PIX: ${result.status_detail}. Geralmente isso ocorre por falta de Chave PIX cadastrada no MP ou conta sem documentos validados.`,
               payment_method: 'error'
             });
           }
@@ -99,10 +101,10 @@ async function startServer() {
             total: total.toFixed(2)
           });
         } catch (pixError: any) {
-          console.error('[SERVER] PIX Direct API Error:', pixError.message);
+          console.error('[SERVER] PIX API Error:', pixError);
           return res.status(400).json({ 
-            error: 'Erro na API de PIX', 
-            details: `Não foi possível gerar o QR Code. Erro: ${pixError.message}. Verifique se sua chave PIX está ativa no Mercado Pago.`,
+            error: 'Erro na API de PIX do Mercado Pago', 
+            details: pixError.message || 'Verifique se você tem uma chave PIX cadastrada no Mercado Pago e se sua conta é de Vendedor.',
             payment_method: 'error'
           });
         }
