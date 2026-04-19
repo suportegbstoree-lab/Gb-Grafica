@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Anuncio, SiteConfig, Order, Category } from '../types';
+import { Anuncio, SiteConfig, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
 import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, auth } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
@@ -13,11 +13,13 @@ interface AdminProps {
   config: SiteConfig;
   categories: Category[];
   orders: Order[];
+  promotions: Promocao[];
 }
 
-export default function Admin({ products, config, categories, orders }: AdminProps) {
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders'>('products');
+export default function Admin({ products, config, categories, orders, promotions }: AdminProps) {
+  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders' | 'promotions'>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
+  const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
   const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -198,6 +200,42 @@ export default function Admin({ products, config, categories, orders }: AdminPro
     }
   };
 
+  // Promotion Handlers
+  const handleSavePromotion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPromotion) return;
+    
+    if (!editingPromotion.titulo || !editingPromotion.imagem) {
+      setErrorMessage('Por favor, preencha o título e a imagem da promoção.');
+      return;
+    }
+    
+    const id = editingPromotion.id || Math.random().toString(36).substr(2, 9);
+    const promotionToSave = { 
+      ...editingPromotion, 
+      id,
+      ativa: editingPromotion.ativa ?? true 
+    } as Promocao;
+    
+    try {
+      await setDoc(doc(db, 'promocoes', id), promotionToSave);
+      setEditingPromotion(null);
+      setSuccessMessage('Promoção salva com sucesso!');
+    } catch (error) {
+      setErrorMessage('Erro ao salvar promoção.');
+      handleFirestoreError(error, OperationType.WRITE, `promocoes/${id}`);
+    }
+  };
+
+  const handleDeletePromotion = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'promocoes', id));
+      setSuccessMessage('Promoção excluída com sucesso!');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `promocoes/${id}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#060606] text-white flex">
       {/* Sidebar Admin */}
@@ -225,6 +263,12 @@ export default function Admin({ products, config, categories, orders }: AdminPro
               className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'orders' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Package size={18} /> Pedidos
+            </button>
+            <button 
+              onClick={() => setActiveTab('promotions')}
+              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'promotions' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+            >
+              <Tag size={18} /> Promoções
             </button>
             <button 
               onClick={() => setActiveTab('config')}
@@ -518,6 +562,51 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {activeTab === 'promotions' && (
+          <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Gerenciar Promoções</h2>
+              <button 
+                onClick={() => setEditingPromotion({ titulo: '', imagem: '', link: '', ativa: true })}
+                className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
+              >
+                <Plus size={18} /> Nova Promoção
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {promotions.map(promo => (
+                <div key={promo.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
+                  <div className="aspect-[21/9] relative">
+                    <img src={promo.imagem} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                      <button onClick={() => setEditingPromotion(promo)} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
+                        <Edit2 size={18} />
+                      </button>
+                      <button onClick={() => handleDeletePromotion(promo.id)} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                    {!promo.ativa && (
+                      <div className="absolute top-2 right-2 bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded">Inativa</div>
+                    )}
+                  </div>
+                  <div className="p-4">
+                    <h3 className="font-bold text-sm mb-1">{promo.titulo}</h3>
+                    {promo.link && <div className="text-[10px] text-gray-500 truncate">{promo.link}</div>}
+                  </div>
+                </div>
+              ))}
+              {promotions.length === 0 && (
+                <div className="col-span-3 py-20 text-center text-gray-500 bg-[#111111] rounded-xl border border-dashed border-gray-800">
+                  <Tag className="mx-auto mb-4 opacity-20" size={48} />
+                  <p>Nenhuma promoção cadastrada.</p>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -1006,6 +1095,75 @@ export default function Admin({ products, config, categories, orders }: AdminPro
                   </motion.div>
                 )}
               </AnimatePresence>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Editor de Promoção */}
+      <AnimatePresence>
+        {editingPromotion && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setEditingPromotion(null)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="relative bg-[#111111] border border-gray-800 w-full max-w-lg rounded-2xl shadow-2xl p-8"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
+                <button onClick={() => setEditingPromotion(null)}><X size={24} /></button>
+              </div>
+
+              <form onSubmit={handleSavePromotion} className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase">Título da Promoção</label>
+                  <input 
+                    required
+                    value={editingPromotion.titulo}
+                    onChange={e => setEditingPromotion({...editingPromotion, titulo: e.target.value})}
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase">Banner URL</label>
+                  <input 
+                    required
+                    value={editingPromotion.imagem}
+                    onChange={e => setEditingPromotion({...editingPromotion, imagem: e.target.value})}
+                    placeholder="https://exemplo.com/promo.jpg"
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase">Link de Destino (Opcional)</label>
+                  <input 
+                    value={editingPromotion.link || ''}
+                    onChange={e => setEditingPromotion({...editingPromotion, link: e.target.value})}
+                    placeholder="https://..."
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="checkbox"
+                    id="promo-ativa"
+                    checked={editingPromotion.ativa}
+                    onChange={e => setEditingPromotion({...editingPromotion, ativa: e.target.checked})}
+                    className="w-4 h-4 accent-[#ff4d79]"
+                  />
+                  <label htmlFor="promo-ativa" className="text-sm font-bold">Promoção Ativa</label>
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button type="submit" className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors">
+                    Salvar Promoção
+                  </button>
+                  <button type="button" onClick={() => setEditingPromotion(null)} className="px-6 py-3 border border-gray-800 rounded-lg font-bold hover:bg-gray-800 transition-colors">
+                    Cancelar
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

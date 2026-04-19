@@ -7,7 +7,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Admin from './pages/Admin';
-import { Anuncio, SiteConfig, CartItem, Order, Category } from './types';
+import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from './types';
 import { INITIAL_PRODUCTS, INITIAL_CONFIG, INITIAL_CATEGORIES } from './constants';
 import { 
   db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType 
@@ -21,6 +21,7 @@ export default function App() {
   const [products, setProducts] = useState<Anuncio[]>([]);
   const [config, setConfig] = useState<SiteConfig>(INITIAL_CONFIG);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [promotions, setPromotions] = useState<Promocao[]>([]);
   const [cart, setCart] = useState<CartItem[]>(() => {
     const saved = localStorage.getItem('gb_cart');
     return saved ? JSON.parse(saved) : [];
@@ -69,6 +70,10 @@ export default function App() {
       setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
+    const unsubPromotions = onSnapshot(query(collection(db, 'promocoes'), orderBy('titulo')), (snapshot) => {
+      setPromotions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Promocao)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'promocoes'));
+
     const unsubConfig = onSnapshot(doc(db, 'config', 'main'), async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as SiteConfig;
@@ -94,6 +99,7 @@ export default function App() {
     return () => {
       unsubProducts();
       unsubCategories();
+      unsubPromotions();
       unsubConfig();
     };
   }, []);
@@ -158,6 +164,7 @@ export default function App() {
               products={products} 
               config={config} 
               categories={categories} 
+              promotions={promotions}
               cart={cart}
               setCart={setCart}
               orders={orders}
@@ -175,12 +182,14 @@ export default function App() {
                 config={config} 
                 categories={categories}
                 orders={orders}
+                promotions={promotions}
               />
             ) : (
               <Home 
                 products={products} 
                 config={config} 
                 categories={categories} 
+                promotions={promotions}
                 cart={cart}
                 setCart={setCart}
                 orders={orders}

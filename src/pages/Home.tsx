@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2 } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2, Share2, Facebook, Twitter, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Anuncio, SiteConfig, CartItem, Order, Category } from '../types';
+import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType } from '../firebase';
-// Removidas funções de upload de arquivo para usar URLs diretas
 
 interface HomeProps {
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
+  promotions: Promocao[];
   cart: CartItem[];
   setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
   orders: Order[];
@@ -18,7 +18,7 @@ interface HomeProps {
   isAdmin: boolean;
 }
 
-export default function Home({ products, config, categories, cart, setCart, orders, user, isAdmin }: HomeProps) {
+export default function Home({ products, config, categories, promotions, cart, setCart, orders, user, isAdmin }: HomeProps) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
@@ -29,8 +29,7 @@ export default function Home({ products, config, categories, cart, setCart, orde
 
   const bannerImages = [
     config.banner_principal,
-    "https://picsum.photos/seed/baby1/1920/1080",
-    "https://picsum.photos/seed/baby2/1920/1080"
+    ...(promotions?.filter(p => p.ativa).map(p => p.imagem) || [])
   ];
 
   React.useEffect(() => {
@@ -934,18 +933,64 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
               )}
             </div>
           </div>
-          <button 
-            onClick={handleAdd}
-            disabled={!isFullySelected}
-            className={cn(
-              "px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
-              isFullySelected 
-                ? "bg-gray-900 text-white hover:bg-pink-500 shadow-xl hover:shadow-pink-100 active:scale-95" 
-                : "bg-gray-50 text-gray-300 cursor-not-allowed"
-            )}
-          >
-            Adicionar ao Carrinho
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="flex gap-2">
+              <button 
+                onClick={() => {
+                  const text = `Confira esse produto: ${product.nome} - ${window.location.origin}`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+                }}
+                className="p-3 bg-green-50 text-green-600 rounded-xl hover:bg-green-600 hover:text-white transition-all shadow-sm"
+                title="Compartilhar no WhatsApp"
+              >
+                <MessageCircle size={18} />
+              </button>
+              <button 
+                onClick={() => {
+                  const url = window.location.href;
+                  window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`, '_blank');
+                }}
+                className="p-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"
+                title="Compartilhar no Facebook"
+              >
+                <Facebook size={18} />
+              </button>
+              <button 
+                onClick={() => {
+                  const url = window.location.href;
+                  const text = `Confira esse produto: ${product.nome}`;
+                  window.open(`https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`, '_blank');
+                }}
+                className="p-3 bg-sky-50 text-sky-500 rounded-xl hover:bg-sky-500 hover:text-white transition-all shadow-sm"
+                title="Compartilhar no X (Twitter)"
+              >
+                <Twitter size={18} />
+              </button>
+              <button 
+                onClick={() => {
+                  const url = window.location.href;
+                  navigator.clipboard.writeText(url);
+                  alert('Link copiado para a área de transferência!');
+                }}
+                className="p-3 bg-pink-50 text-pink-600 rounded-xl hover:bg-pink-600 hover:text-white transition-all shadow-sm"
+                title="Copiar Link"
+              >
+                <Share2 size={18} />
+              </button>
+            </div>
+            <button 
+              onClick={handleAdd}
+              disabled={!isFullySelected}
+              className={cn(
+                "px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
+                isFullySelected 
+                  ? "bg-gray-900 text-white hover:bg-pink-500 shadow-xl hover:shadow-pink-100 active:scale-95" 
+                  : "bg-gray-50 text-gray-300 cursor-not-allowed"
+              )}
+            >
+              Adicionar ao Carrinho
+            </button>
+          </div>
         </div>
       </div>
     </motion.div>

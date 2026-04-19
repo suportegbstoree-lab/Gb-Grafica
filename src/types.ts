@@ -44,6 +44,14 @@ export interface Category {
   icon?: string;
 }
 
+export interface Promocao {
+  id: string;
+  titulo: string;
+  imagem: string;
+  link?: string;
+  ativa: boolean;
+}
+
 export interface SiteConfig {
   logo_url?: string;
   telefone1: string;

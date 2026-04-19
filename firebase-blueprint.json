@@ -89,6 +89,18 @@
         "role": { "type": "string", "enum": ["admin", "user"] }
       },
       "required": ["uid", "email", "role"]
+    },
+    "Promocao": {
+      "title": "Promocao",
+      "description": "A promotional banner or offer.",
+      "type": "object",
+      "properties": {
+        "titulo": { "type": "string" },
+        "imagem": { "type": "string" },
+        "link": { "type": "string" },
+        "ativa": { "type": "boolean" }
+      },
+      "required": ["titulo", "imagem", "ativa"]
     }
   },
   "firestore": {
@@ -111,6 +123,10 @@
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles and roles."
+    },
+    "/promocoes/{promocaoId}": {
+      "schema": "Promocao",
+      "description": "Collection of promotional banners."
     }
   }
 }
