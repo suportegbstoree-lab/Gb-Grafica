@@ -786,7 +786,8 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
   const currentPrice = () => {
     if (!isFullySelected) return null;
     const key = product.atributos.map(attr => selections[attr.nome]).join('|');
-    return product.combinacoes[key];
+    const comboPrice = product.combinacoes[key];
+    return comboPrice || product.preco_base;
   };
 
   const price = currentPrice();
@@ -918,42 +919,44 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
           </div>
         </div>
 
-        <div className="mt-auto pt-8 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-          <div className="flex items-baseline gap-3">
-            <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Preço</span>
-            <div className="text-3xl font-black text-gray-900">
-              {price ? (
-                <span className="flex items-center gap-1">
-                  <span className="text-sm font-normal text-gray-400">R$</span> {price}
-                </span>
-              ) : (
-                <span className="text-sm text-pink-500 font-bold uppercase tracking-widest animate-pulse">
-                  {product.preco_base || "Configure as opções"}
-                </span>
-              )}
+        <div className="mt-auto pt-8 border-t border-gray-100 flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row justify-between items-end sm:items-center gap-6">
+            <div className="flex items-baseline gap-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Preço</span>
+              <div className="text-3xl font-black text-gray-900">
+                {price ? (
+                  <span className="flex items-center gap-1">
+                    <span className="text-sm font-normal text-gray-400">R$</span> {price}
+                  </span>
+                ) : (
+                  <span className="text-sm text-pink-500 font-bold uppercase tracking-widest animate-pulse">
+                    {product.preco_base || "Selecione as opções"}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex gap-2">
+
+            <div className="flex items-center gap-2 bg-gray-50/50 p-1.5 rounded-2xl border border-gray-100">
+              <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest px-2">Compartilhar</span>
               <button 
                 onClick={() => {
                   const text = `Confira esse produto: ${product.nome} - ${window.location.origin}`;
                   window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                 }}
-                className="p-3 bg-green-50 text-green-600 rounded-xl hover:bg-green-600 hover:text-white transition-all shadow-sm"
-                title="Compartilhar no WhatsApp"
+                className="p-2 text-green-500 hover:scale-110 transition-transform"
+                title="WhatsApp"
               >
-                <MessageCircle size={18} />
+                <MessageCircle size={16} />
               </button>
               <button 
                 onClick={() => {
                   const url = window.location.href;
                   window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`, '_blank');
                 }}
-                className="p-3 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all shadow-sm"
-                title="Compartilhar no Facebook"
+                className="p-2 text-blue-600 hover:scale-110 transition-transform"
+                title="Facebook"
               >
-                <Facebook size={18} />
+                <Facebook size={16} />
               </button>
               <button 
                 onClick={() => {
@@ -961,36 +964,38 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
                   const text = `Confira esse produto: ${product.nome}`;
                   window.open(`https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`, '_blank');
                 }}
-                className="p-3 bg-sky-50 text-sky-500 rounded-xl hover:bg-sky-500 hover:text-white transition-all shadow-sm"
-                title="Compartilhar no X (Twitter)"
+                className="p-2 text-sky-500 hover:scale-110 transition-transform"
+                title="Twitter"
               >
-                <Twitter size={18} />
+                <Twitter size={16} />
               </button>
               <button 
                 onClick={() => {
                   const url = window.location.href;
                   navigator.clipboard.writeText(url);
-                  alert('Link copiado para a área de transferência!');
+                  alert('Link copiado!');
                 }}
-                className="p-3 bg-pink-50 text-pink-600 rounded-xl hover:bg-pink-600 hover:text-white transition-all shadow-sm"
+                className="p-2 text-gray-400 hover:text-pink-500 transition-all"
                 title="Copiar Link"
               >
-                <Share2 size={18} />
+                <Share2 size={16} />
               </button>
             </div>
-            <button 
-              onClick={handleAdd}
-              disabled={!isFullySelected}
-              className={cn(
-                "px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
-                isFullySelected 
-                  ? "bg-gray-900 text-white hover:bg-pink-500 shadow-xl hover:shadow-pink-100 active:scale-95" 
-                  : "bg-gray-50 text-gray-300 cursor-not-allowed"
-              )}
-            >
-              Adicionar ao Carrinho
-            </button>
           </div>
+
+          <button 
+            onClick={handleAdd}
+            disabled={!isFullySelected}
+            className={cn(
+              "w-full flex items-center justify-center gap-3 px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
+              isFullySelected 
+                ? "bg-gray-900 text-white hover:bg-[#d14d8c] shadow-xl hover:shadow-pink-100 active:scale-95 cursor-pointer" 
+                : "bg-gray-100 text-gray-400 cursor-not-allowed opacity-60"
+            )}
+          >
+            <ShoppingCart size={18} />
+            Adicionar ao Carrinho
+          </button>
         </div>
       </div>
     </motion.div>
