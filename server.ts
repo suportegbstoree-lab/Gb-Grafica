@@ -47,59 +47,8 @@ async function startServer() {
       }
 
       const client = new MercadoPagoConfig({ accessToken: token });
-      const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
-
-      if (paymentMethod === 'pix') {
-        try {
-          const payment = new Payment(client);
-          
-          const subtotal = items.reduce((acc: number, item: any) => {
-            const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
-            return acc + (price * (item.quantidade || 1));
-          }, 0);
-          
-          const total = subtotal + (parseFloat(shippingCost) || 0);
-          const emailParts = (userEmail || 'compras@gblgrafica.com.br').split('@')[0];
-          
-          const result = await payment.create({
-            body: {
-              transaction_amount: parseFloat(total.toFixed(2)),
-              description: `Pedido ${orderId} - GBL Gráfica`,
-              payment_method_id: 'pix',
-              external_reference: orderId,
-              notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
-              payer: {
-                email: userEmail || 'compras@gblgrafica.com.br',
-                first_name: 'Cliente',
-                last_name: emailParts.substring(0, 10),
-              }
-            },
-            requestOptions: {
-              idempotencyKey: orderId // Use orderId as idempotency key to prevent double charging
-            }
-          });
-
-          console.log('[SERVER] PIX Success:', result.id);
-
-          return res.json({ 
-            payment_method: 'pix',
-            qr_code: result.point_of_interaction?.transaction_data?.qr_code,
-            qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
-            payment_id: result.id,
-            status: result.status
-          });
-        } catch (pixError: any) {
-          console.error('[SERVER] PIX Direct Error Details:', pixError.message, pixError.cause);
-          return res.status(400).json({ 
-            error: 'Erro ao gerar PIX', 
-            details: 'A API do Mercado Pago recusou a geração direta do PIX. Verifique se o seu Token possui permissões de "Pagamentos" ou use a opção de Cartão.',
-            raw: pixError.message
-          });
-        }
-      }
-
-      // Default: Checkout Pro (for Card)
       const preference = new Preference(client);
+      const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
       
       const mpItems = items.map((item: any) => ({
         id: item.id,
@@ -129,24 +78,29 @@ async function startServer() {
         },
         auto_return: 'approved',
         binary_mode: true,
+        payer: {
+          email: userEmail || 'compras@gblgrafica.com.br',
+        }
       };
 
-      // Ensure user choice is respected in MP checkout Pro as a hint
+      // Configuration to enable PIX and Cards without exclusions
+      // We set default_payment_method_id to suggest PIX if chosen in store
       preferenceBody.payment_methods = {
-        excluded_payment_methods: [
-          { id: 'pix' }
-        ],
         excluded_payment_types: [
-          { id: 'ticket' }
+          { id: 'ticket' } // Excluding standard Boleto if you want to focus on PIX/Cards
         ],
         installments: 12
       };
+
+      if (paymentMethod === 'pix') {
+        preferenceBody.payment_methods.default_payment_method_id = 'pix';
+      }
 
       const result = await preference.create({
         body: preferenceBody
       });
 
-      res.json({ payment_method: 'cartao', id: result.id, init_point: result.init_point });
+      res.json({ payment_method: 'hosted', id: result.id, init_point: result.init_point });
     } catch (error: any) {
       console.error('[SERVER] Checkout Error:', error);
       res.status(500).json({ error: 'Erro no checkout', details: error.message });
