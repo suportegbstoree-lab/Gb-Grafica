@@ -97,11 +97,11 @@ export default function Home({ products, config, categories, promotions, cart, s
       return;
     }
     
-    setIsCalculating(true); // Reusing loading state for checkout
+    setIsCalculating(true);
     try {
       const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
       
-      // 1. Create Preference on Backend
+      console.log('Iniciando checkout para pedido:', orderId);
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -112,10 +112,16 @@ export default function Home({ products, config, categories, promotions, cart, s
         })
       });
       
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error('Resposta não é JSON:', text);
+        throw new Error(`Servidor retornou erro inesperado (${response.status}). Verifique os logs do servidor.`);
+      }
+
       const data = await response.json();
       
       if (response.ok && data.init_point) {
-        // 2. Save Pending Order to Firestore
         const total = totalWithShipping;
         const newOrder: Order = {
           id: orderId,
@@ -126,16 +132,14 @@ export default function Home({ products, config, categories, promotions, cart, s
           status: 'Pendente'
         };
         await setDoc(doc(db, 'orders', orderId), newOrder);
-        
-        // 3. Redirect to Mercado Pago
         window.location.href = data.init_point;
       } else {
-        const errorMsg = data.details || data.error || 'Erro desconhecido ao criar preferência';
+        const errorMsg = data.details || data.error || 'Erro desconhecido';
         throw new Error(errorMsg);
       }
     } catch (error: any) {
       console.error('Checkout error:', error);
-      alert(`Erro ao processar o pagamento: ${error.message}\n\nVerifique se o token do Mercado Pago está correto nas configurações de Secrets.`);
+      alert(`ERRO NO CHECKOUT:\n${error.message}`);
     } finally {
       setIsCalculating(false);
     }
