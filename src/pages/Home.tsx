@@ -100,9 +100,10 @@ export default function Home({ products, config, categories, promotions, cart, s
     setIsCalculating(true);
     try {
       const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
+      const apiUrl = `${window.location.origin}/api/checkout`;
       
-      console.log('Iniciando checkout para pedido:', orderId);
-      const response = await fetch('/api/checkout', {
+      console.log('Iniciando checkout em:', apiUrl);
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { MercadoPagoConfig, Preference } from 'mercadopago';
 import dotenv from "dotenv";
+import cors from "cors";
 
 dotenv.config();
 
@@ -14,19 +15,31 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  console.log('--- SERVER STARTING ---');
+  console.log('NODE_ENV:', process.env.NODE_ENV);
+  console.log('Access Token defined:', !!process.env.MP_ACCESS_TOKEN);
 
-  // Global Logger
+  app.use(cors());
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+
+  // Global Request Logger
   app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
   });
 
-  app.get("/api/status", (req, res) => {
+  // Health check at root
+  app.get("/ping", (req, res) => res.send("pong"));
+
+  const apiRouter = express.Router();
+
+  apiRouter.get("/status", (req, res) => {
     res.json({ 
       status: "online", 
       env: process.env.NODE_ENV,
-      hasToken: !!process.env.MP_ACCESS_TOKEN
+      hasToken: !!process.env.MP_ACCESS_TOKEN,
+      baseUrl: process.env.APP_URL
     });
   });
 
@@ -36,43 +49,26 @@ async function startServer() {
     options: { timeout: 10000 }
   });
 
-  console.log('Mercado Pago Access Token status:', process.env.MP_ACCESS_TOKEN ? 'DEFINED (Ends with ' + process.env.MP_ACCESS_TOKEN.slice(-4) + ')' : 'UNDEFINED');
-  console.log('APP_URL status:', process.env.APP_URL || 'UNDEFINED (Using fallback)');
-
-  // API Routes
-  app.post("/api/checkout", async (req, res) => {
-    console.log('--- NEW CHECKOUT ATTEMPT ---');
+  apiRouter.post("/checkout", async (req, res) => {
+    console.log('--- API CHECKOUT HIT ---');
     try {
-      if (!process.env.MP_ACCESS_TOKEN) {
-        console.error('SERVER ERROR: MP_ACCESS_TOKEN is missing');
-        return res.status(500).json({ error: 'Erro de Configuração', details: 'Token do Mercado Pago não configurado no servidor.' });
-      }
-
       const { items, orderId, baseUrl } = req.body;
-      console.log('Request parameters:', { orderId, baseUrl, itemCount: items?.length });
+      
+      if (!process.env.MP_ACCESS_TOKEN) {
+        return res.status(500).json({ error: 'Erro de Configuração', details: 'MP_ACCESS_TOKEN não configurado.' });
+      }
 
       if (!items || !Array.isArray(items) || items.length === 0) {
-        console.error('CLIENT ERROR: Empty or invalid items array');
-        return res.status(400).json({ error: 'Carrinho Vazio', details: 'Nenhum item foi enviado para o checkout.' });
+        return res.status(400).json({ error: 'Carrinho Vazio' });
       }
 
-      const effectiveBaseUrl = baseUrl || process.env.APP_URL || 'http://localhost:3000';
-      
+      const effectiveBaseUrl = baseUrl || process.env.APP_URL || `http://${req.headers.host}`;
+      console.log(`Order: ${orderId} | Base: ${effectiveBaseUrl}`);
+
       const preference = new Preference(client);
       
-      // Detailed logging of item formatting
-      const mpItems = items.map((item: any, index: number) => {
-        const cleanedPrice = (item.preco || "0").toString()
-          .replace(/[^0-9,.]/g, '')
-          .replace(',', '.');
-        
-        const unitPrice = parseFloat(cleanedPrice);
-        console.log(`Item ${index}: "${item.nome}" | Raw: "${item.preco}" | Cleaned: "${cleanedPrice}" | Final: ${unitPrice}`);
-
-        if (isNaN(unitPrice) || unitPrice <= 0) {
-          throw new Error(`Preço inválido para o item "${item.nome}" (Entrada: ${item.preco})`);
-        }
-
+      const mpItems = items.map((item: any) => {
+        const unitPrice = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
         return {
           id: item.id,
           title: item.nome,
@@ -82,7 +78,6 @@ async function startServer() {
         };
       });
 
-      console.log('Creating preference on Mercado Pago...');
       const result = await preference.create({
         body: {
           items: mpItems,
@@ -97,38 +92,39 @@ async function startServer() {
         }
       });
 
-      console.log('SUCCESS: Preference created:', result.id);
+      console.log('Preference Created:', result.id);
       res.json({ id: result.id, init_point: result.init_point });
     } catch (error: any) {
-      console.error('FATAL CHECKOUT ERROR:', error);
-      res.status(500).json({ 
-        error: 'Erro no Mercado Pago',
-        details: error.message || 'Erro interno desconhecido no servidor.'
-      });
+      console.error('Checkout error:', error);
+      res.status(500).json({ error: 'Erro no checkout', details: error.message });
     }
   });
 
+  // Mount API Router
+  app.use("/api", apiRouter);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    console.log('Starting in DEVELOPMENT mode with Vite...');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
+    console.log('Starting in PRODUCTION mode with static files...');
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`--- SERVER LISTENING ON PORT ${PORT} ---`);
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error('FAILED TO START SERVER:', err);
+});
