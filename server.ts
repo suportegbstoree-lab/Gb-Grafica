@@ -69,7 +69,6 @@ async function startServer() {
               description: `Pedido ${orderId} - GBL Gráfica`,
               payment_method_id: 'pix',
               external_reference: orderId,
-              notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
               payer: {
                 email: email,
                 first_name: firstName,
@@ -81,7 +80,15 @@ async function startServer() {
             }
           });
 
-          console.log('[SERVER] Direct PIX Created:', result.id);
+          console.log('[SERVER] Direct PIX Created:', result.id, 'Status:', result.status);
+
+          if (result.status === 'rejected') {
+            return res.status(400).json({ 
+              error: 'PIX Rejeitado', 
+              details: `O Mercado Pago não permitiu gerar este PIX. Motivo: ${result.status_detail}. Verifique sua conta.`,
+              payment_method: 'error'
+            });
+          }
 
           return res.json({ 
             payment_method: 'pix',
@@ -93,7 +100,11 @@ async function startServer() {
           });
         } catch (pixError: any) {
           console.error('[SERVER] PIX Direct API Error:', pixError.message);
-          // Fallback to hosted if direct fails (e.g., account permissions)
+          return res.status(400).json({ 
+            error: 'Erro na API de PIX', 
+            details: `Não foi possível gerar o QR Code. Erro: ${pixError.message}. Verifique se sua chave PIX está ativa no Mercado Pago.`,
+            payment_method: 'error'
+          });
         }
       }
 
@@ -130,10 +141,12 @@ async function startServer() {
         binary_mode: true,
         payer: {
           email: userEmail || 'compras@gblgrafica.com.br',
+          // Adding a name helps avoid risk filters that hide PIX
+          first_name: 'Cliente',
+          last_name: 'GBL'
         },
         payment_methods: {
           installments: 12,
-          // Removed default_payment_method_id to let MP decide based on account availability
         }
       };
 
