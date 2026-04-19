@@ -82,15 +82,26 @@ async function startServer() {
         binary_mode: true,
       };
 
-      // If user specifically chose PIX, we can try to restrict Mercado Pago to show PIX prominently
+      // If user specifically chose PIX, we restrict Mercado Pago to ONLY show PIX
       if (paymentMethod === 'pix') {
         preferenceBody.payment_methods = {
+          excluded_payment_types: [
+            { id: 'credit_card' },
+            { id: 'debit_card' },
+            { id: 'ticket' } // ticket is Boleto
+          ],
           default_payment_method_id: 'pix',
           installments: 1
         };
       } else if (paymentMethod === 'cartao') {
+        // If user chose card, we can exclude Boleto (ticket) to keep it focused on cards
         preferenceBody.payment_methods = {
-          excluded_payment_types: [{ id: 'ticket' }], // Exclude boleto if card is chosen specifically
+          excluded_payment_methods: [
+            { id: 'pix' }
+          ],
+          excluded_payment_types: [
+            { id: 'ticket' }
+          ],
           installments: 12
         };
       }
