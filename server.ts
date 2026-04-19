@@ -39,7 +39,7 @@ async function startServer() {
   app.post("/api/checkout", async (req, res) => {
     console.log('[SERVER] Checkout Request');
     try {
-      const { items, orderId, baseUrl } = req.body;
+      const { items, orderId, baseUrl, shippingCost, paymentMethod } = req.body;
       
       const token = process.env.MP_ACCESS_TOKEN;
       if (!token) {
@@ -59,18 +59,44 @@ async function startServer() {
         currency_id: 'BRL'
       }));
 
+      // Add shipping as an item if exists
+      if (shippingCost && parseFloat(shippingCost) > 0) {
+        mpItems.push({
+          id: 'shipping',
+          title: 'Frete / Entrega',
+          unit_price: parseFloat(shippingCost),
+          quantity: 1,
+          currency_id: 'BRL'
+        });
+      }
+
+      const preferenceBody: any = {
+        items: mpItems,
+        external_reference: orderId,
+        back_urls: {
+          success: `${effectiveBaseUrl}/?status=success&orderId=${orderId}`,
+          failure: `${effectiveBaseUrl}/?status=failure`,
+          pending: `${effectiveBaseUrl}/?status=pending`,
+        },
+        auto_return: 'approved',
+        binary_mode: true,
+      };
+
+      // If user specifically chose PIX, we can try to restrict Mercado Pago to show PIX prominently
+      if (paymentMethod === 'pix') {
+        preferenceBody.payment_methods = {
+          default_payment_method_id: 'pix',
+          installments: 1
+        };
+      } else if (paymentMethod === 'cartao') {
+        preferenceBody.payment_methods = {
+          excluded_payment_types: [{ id: 'ticket' }], // Exclude boleto if card is chosen specifically
+          installments: 12
+        };
+      }
+
       const result = await preference.create({
-        body: {
-          items: mpItems,
-          external_reference: orderId,
-          back_urls: {
-            success: `${effectiveBaseUrl}/?status=success&orderId=${orderId}`,
-            failure: `${effectiveBaseUrl}/?status=failure`,
-            pending: `${effectiveBaseUrl}/?status=pending`,
-          },
-          auto_return: 'approved',
-          binary_mode: true,
-        }
+        body: preferenceBody
       });
 
       res.json({ id: result.id, init_point: result.init_point });

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2, Share2, Facebook, Twitter, MessageCircle } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, Info, LogIn, LogOut, User, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
@@ -26,6 +26,7 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [shippingInfo, setShippingInfo] = useState<{ address: string; price: number } | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
+  const [paymentMethod, setPaymentMethod] = useState<'cartao' | 'pix'>('cartao');
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -102,9 +103,31 @@ export default function Home({ products, config, categories, promotions, cart, s
     }
     
     setIsCalculating(true);
+    const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
+    
+    // Sanitize cart items to remove undefined values before saving to Firestore
+    const sanitizedCart = cart.map(item => ({
+      ...item,
+      arquivoUrl: item.arquivoUrl || "",
+      textoPersonalizado: item.textoPersonalizado || ""
+    }));
+
+    const total = totalWithShipping;
+    const shippingCost = deliveryMethod === 'entrega' ? (shippingInfo?.price || 0) : 0;
+
+    const newOrder: Order = {
+      id: orderId,
+      userId: user.uid,
+      data: new Date().toLocaleString('pt-BR'),
+      itens: sanitizedCart,
+      total,
+      status: 'Pendente',
+      paymentStatus: 'pendente',
+      metodoEntrega: deliveryMethod || 'entrega',
+      metodoPagamento: paymentMethod
+    };
+
     try {
-      const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
-      
       console.log('[DEBUG] Enviando pedido:', orderId);
       
       // Use relative path - ensures same domain/protocol
@@ -114,7 +137,9 @@ export default function Home({ products, config, categories, promotions, cart, s
         body: JSON.stringify({
           items: cart,
           orderId,
-          baseUrl: window.location.origin
+          baseUrl: window.location.origin,
+          shippingCost,
+          paymentMethod
         })
       });
 
@@ -131,25 +156,6 @@ export default function Home({ products, config, categories, promotions, cart, s
       const data = await response.json();
       
       if (response.ok && data.init_point) {
-        const total = totalWithShipping;
-        
-        // Sanitize cart items to remove undefined values before saving to Firestore
-        const sanitizedCart = cart.map(item => ({
-          ...item,
-          arquivoUrl: item.arquivoUrl || "",
-          textoPersonalizado: item.textoPersonalizado || ""
-        }));
-
-        const newOrder: Order = {
-          id: orderId,
-          userId: user.uid,
-          data: new Date().toLocaleString('pt-BR'),
-          itens: sanitizedCart,
-          total,
-          status: 'Pendente',
-          paymentStatus: 'pendente',
-          metodoEntrega: deliveryMethod || 'entrega'
-        };
         await setDoc(doc(db, 'orders', orderId), newOrder);
         window.location.href = data.init_point;
       } else {
@@ -624,6 +630,35 @@ export default function Home({ products, config, categories, promotions, cart, s
                     </div>
                   </div>
 
+                  {/* Forma de Pagamento */}
+                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Forma de Pagamento</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => setPaymentMethod('cartao')}
+                        className={cn(
+                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          paymentMethod === 'cartao' 
+                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
+                            : "bg-white border-gray-100 text-gray-400"
+                        )}
+                      >
+                        <CreditCard size={16} /> Cartão / Boleto
+                      </button>
+                      <button 
+                        onClick={() => setPaymentMethod('pix')}
+                        className={cn(
+                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          paymentMethod === 'pix' 
+                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
+                            : "bg-white border-gray-100 text-gray-400"
+                        )}
+                      >
+                        <QrCode size={16} /> PIX (Sem Taxas)
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Shipping Calculator */}
                   {deliveryMethod === 'entrega' && (
                     <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
@@ -716,6 +751,15 @@ export default function Home({ products, config, categories, promotions, cart, s
                               <><Settings size={10} className="stroke-[2.5px]" /> Retirada na Gráfica</>
                             ) : (
                               <><Package size={10} className="stroke-[2.5px]" /> Entrega</>
+                            )}
+                          </div>
+                        )}
+                        {order.metodoPagamento && (
+                          <div className="text-[9px] text-gray-400 mt-1 font-black uppercase tracking-[0.1em] flex items-center gap-1.5">
+                            {order.metodoPagamento === 'pix' ? (
+                              <><QrCode size={10} className="stroke-[2.5px]" /> Pago via PIX</>
+                            ) : (
+                              <><CreditCard size={10} className="stroke-[2.5px]" /> Cartão / Boleto</>
                             )}
                           </div>
                         )}

@@ -38,6 +38,7 @@ export interface Order {
   status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue' | 'Pago';
   paymentStatus?: 'pago' | 'pendente';
   metodoEntrega?: 'retirada' | 'entrega';
+  metodoPagamento?: 'cartao' | 'pix';
 }
 
 export interface Category {
@@ -68,4 +69,6 @@ export interface SiteConfig {
   beneficio2_desc: string;
   beneficio3_titulo: string;
   beneficio3_desc: string;
+  pix_chave?: string;
+  pix_beneficiario?: string;
 }

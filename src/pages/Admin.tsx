@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, Share2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, Share2, QrCode, CreditCard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
@@ -532,6 +532,18 @@ export default function Admin({ products, config, categories, orders, promotions
                     <input name={`beneficio${num}_desc`} defaultValue={(config as any)[`beneficio${num}_desc`]} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
                   </div>
                 ))}
+
+                <div className="p-6 bg-[#111111] border border-pink-500/20 rounded-xl space-y-4">
+                  <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Configuração PIX (Manual - Sem taxa)</div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-gray-500 font-medium">Chave PIX</label>
+                    <input name="pix_chave" defaultValue={config.pix_chave} placeholder="CPF, E-mail, Celular ou Chave Aleatória" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-gray-500 font-medium">Nome do Beneficiário</label>
+                    <input name="pix_beneficiario" defaultValue={config.pix_beneficiario} placeholder="Nome Completo ou Razão Social" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                  </div>
+                </div>
               </div>
 
               <div className="md:col-span-2 pt-8">
@@ -1188,6 +1200,18 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
                 <><Settings size={10} className="stroke-[3px]" /> RETIRADA NA GRÁFICA</>
               ) : (
                 <><Package size={10} className="stroke-[3px]" /> ENTREGA</>
+              )}
+            </span>
+            <span className={cn(
+               "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded flex items-center gap-1.5",
+               order.metodoPagamento === 'pix' 
+                ? "bg-green-500/20 text-green-400 border border-green-500/30" 
+                : "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+            )}>
+              {order.metodoPagamento === 'pix' ? (
+                <><QrCode size={10} className="stroke-[3px]" /> PIX</>
+              ) : (
+                <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / MP</>
               )}
             </span>
           </div>
