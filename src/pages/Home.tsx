@@ -132,15 +132,23 @@ export default function Home({ products, config, categories, promotions, cart, s
       
       if (response.ok && data.init_point) {
         const total = totalWithShipping;
+        
+        // Sanitize cart items to remove undefined values before saving to Firestore
+        const sanitizedCart = cart.map(item => ({
+          ...item,
+          arquivoUrl: item.arquivoUrl || "",
+          textoPersonalizado: item.textoPersonalizado || ""
+        }));
+
         const newOrder: Order = {
           id: orderId,
           userId: user.uid,
           data: new Date().toLocaleString('pt-BR'),
-          itens: [...cart],
+          itens: sanitizedCart,
           total,
           status: 'Pendente',
           paymentStatus: 'pendente',
-          metodoEntrega: deliveryMethod
+          metodoEntrega: deliveryMethod || 'entrega'
         };
         await setDoc(doc(db, 'orders', orderId), newOrder);
         window.location.href = data.init_point;
@@ -879,8 +887,8 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
       preco: price,
       selecoes: { ...selections },
       quantidade: 1,
-      arquivoUrl: uploadedUrl || undefined,
-      textoPersonalizado: customText || undefined
+      arquivoUrl: uploadedUrl || "",
+      textoPersonalizado: customText || ""
     });
 
     // Reset after adding
