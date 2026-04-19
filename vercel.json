@@ -1,6 +1,22 @@
 {
   "rewrites": [
     {
+      "source": "/api/checkout",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/api/payment-status/:id",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/api/webhook/pagbank",
+      "destination": "/api/index.ts"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },

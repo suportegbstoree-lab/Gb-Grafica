@@ -147,12 +147,12 @@ export default function Home({ products, config, categories, promotions, cart, s
         })
       });
 
-      const contentType = response.headers.get("content-type");
       console.log('[DEBUG] Status:', response.status);
 
-      if (!contentType || !contentType.includes("application/json")) {
+      if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Erro do servidor (${response.status}).`);
+        console.error('[DEBUG] Erro payload:', text);
+        throw new Error(`Erro do servidor (${response.status}): ${text.slice(0, 50)}`);
       }
 
       const data = await response.json();
