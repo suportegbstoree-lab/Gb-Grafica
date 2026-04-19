@@ -24,6 +24,11 @@ const PAGBANK_BASE_URL = PAGBANK_ENV === 'sandbox'
   ? 'https://sandbox.api.pagseguro.com' 
   : 'https://api.pagseguro.com';
 
+console.log(`[SERVER] Initializing PagBank in ${PAGBANK_ENV} mode.`);
+if (!PAGBANK_TOKEN) {
+  console.warn('[SERVER] WARNING: PAGBANK_TOKEN is not defined.');
+}
+
 // --- API ROUTES ---
 
 // Health check (multi-path for robustness)
