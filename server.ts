@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import { MercadoPagoConfig, Preference } from 'mercadopago';
+import { MercadoPagoConfig, Preference, Payment } from 'mercadopago';
 import dotenv from "dotenv";
 import cors from "cors";
 
@@ -39,7 +39,7 @@ async function startServer() {
   app.post("/api/checkout", async (req, res) => {
     console.log('[SERVER] Checkout Request');
     try {
-      const { items, orderId, baseUrl, shippingCost, paymentMethod } = req.body;
+      const { items, orderId, baseUrl, shippingCost, paymentMethod, userEmail } = req.body;
       
       const token = process.env.MP_ACCESS_TOKEN;
       if (!token) {
@@ -47,9 +47,43 @@ async function startServer() {
       }
 
       const client = new MercadoPagoConfig({ accessToken: token });
-      const preference = new Preference(client);
-
       const effectiveBaseUrl = baseUrl || process.env.APP_URL || `https://${req.headers.host}`;
+
+      if (paymentMethod === 'pix') {
+        const payment = new Payment(client);
+        
+        // Calculate total total
+        const subtotal = items.reduce((acc: number, item: any) => {
+          const price = parseFloat((item.preco || "0").toString().replace(/[^0-9,.]/g, '').replace(',', '.'));
+          return acc + (price * (item.quantidade || 1));
+        }, 0);
+        
+        const total = subtotal + (parseFloat(shippingCost) || 0);
+
+        const result = await payment.create({
+          body: {
+            transaction_amount: parseFloat(total.toFixed(2)),
+            description: `Pedido ${orderId} - GBL Gráfica`,
+            payment_method_id: 'pix',
+            external_reference: orderId,
+            notification_url: `${effectiveBaseUrl}/api/webhook/mp`,
+            payer: {
+              email: userEmail || 'compras@gblgrafica.com.br',
+            }
+          }
+        });
+
+        return res.json({ 
+          payment_method: 'pix',
+          qr_code: result.point_of_interaction?.transaction_data?.qr_code,
+          qr_code_base64: result.point_of_interaction?.transaction_data?.qr_code_base64,
+          payment_id: result.id,
+          status: result.status
+        });
+      }
+
+      // Default: Checkout Pro (for Card)
+      const preference = new Preference(client);
       
       const mpItems = items.map((item: any) => ({
         id: item.id,
@@ -59,7 +93,6 @@ async function startServer() {
         currency_id: 'BRL'
       }));
 
-      // Add shipping as an item if exists
       if (shippingCost && parseFloat(shippingCost) > 0) {
         mpItems.push({
           id: 'shipping',
@@ -82,39 +115,33 @@ async function startServer() {
         binary_mode: true,
       };
 
-      // If user specifically chose PIX, we restrict Mercado Pago to ONLY show PIX
-      if (paymentMethod === 'pix') {
-        preferenceBody.payment_methods = {
-          excluded_payment_types: [
-            { id: 'credit_card' },
-            { id: 'debit_card' },
-            { id: 'ticket' } // ticket is Boleto
-          ],
-          default_payment_method_id: 'pix',
-          installments: 1
-        };
-      } else if (paymentMethod === 'cartao') {
-        // If user chose card, we can exclude Boleto (ticket) to keep it focused on cards
-        preferenceBody.payment_methods = {
-          excluded_payment_methods: [
-            { id: 'pix' }
-          ],
-          excluded_payment_types: [
-            { id: 'ticket' }
-          ],
-          installments: 12
-        };
-      }
+      // Ensure user choice is respected in MP checkout Pro as a hint
+      preferenceBody.payment_methods = {
+        excluded_payment_methods: [
+          { id: 'pix' }
+        ],
+        excluded_payment_types: [
+          { id: 'ticket' }
+        ],
+        installments: 12
+      };
 
       const result = await preference.create({
         body: preferenceBody
       });
 
-      res.json({ id: result.id, init_point: result.init_point });
+      res.json({ payment_method: 'cartao', id: result.id, init_point: result.init_point });
     } catch (error: any) {
       console.error('[SERVER] Checkout Error:', error);
       res.status(500).json({ error: 'Erro no checkout', details: error.message });
     }
+  });
+
+  // Webhook for Mercado Pago (to automate updates)
+  app.post("/api/webhook/mp", async (req, res) => {
+    // This would ideally update Firestore directly
+    console.log('[SERVER] MP Webhook Received:', req.body);
+    res.sendStatus(200);
   });
 
   // --- STATIC FILES / VITE ---

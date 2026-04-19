@@ -27,6 +27,7 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [paymentMethod, setPaymentMethod] = useState<'cartao' | 'pix'>('cartao');
+  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_base64: string; payment_id: string } | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -139,25 +140,36 @@ export default function Home({ products, config, categories, promotions, cart, s
           orderId,
           baseUrl: window.location.origin,
           shippingCost,
-          paymentMethod
+          paymentMethod,
+          userEmail: user.email
         })
       });
 
       const contentType = response.headers.get("content-type");
       console.log('[DEBUG] Status:', response.status);
-      console.log('[DEBUG] Content-Type:', contentType);
 
       if (!contentType || !contentType.includes("application/json")) {
         const text = await response.text();
-        console.error('[DEBUG] Resposta não-JSON:', text.substring(0, 500));
-        throw new Error(`Erro do servidor (${response.status}). O servidor retornou uma página inesperada em vez de dados.`);
+        throw new Error(`Erro do servidor (${response.status}).`);
       }
 
       const data = await response.json();
       
-      if (response.ok && data.init_point) {
+      if (response.ok) {
+        // First save to Firestore
         await setDoc(doc(db, 'orders', orderId), newOrder);
-        window.location.href = data.init_point;
+
+        if (data.payment_method === 'pix') {
+          setPixData({
+            qr_code: data.qr_code,
+            qr_code_base64: data.qr_code_base64,
+            payment_id: data.payment_id
+          });
+          setCart([]); // Clean cart
+          setIsCartOpen(false);
+        } else if (data.init_point) {
+          window.location.href = data.init_point;
+        }
       } else {
         const errorMsg = data.details || data.error || 'Erro desconhecido';
         throw new Error(errorMsg);
@@ -824,6 +836,64 @@ export default function Home({ products, config, categories, promotions, cart, s
                   className="bg-gray-900 text-white px-12 py-4 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-pink-500 transition-all shadow-xl shadow-gray-100"
                 >
                   ENTENDI
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {pixData && (
+          <Modal title="Pagamento via PIX" onClose={() => setPixData(null)}>
+            <div className="space-y-6 text-center">
+              <div className="p-6 bg-pink-50 rounded-3xl border border-pink-100 flex flex-col items-center gap-4">
+                <div className="bg-white p-4 rounded-xl shadow-md">
+                  {pixData.qr_code_base64 && (
+                    <img 
+                      src={`data:image/png;base64,${pixData.qr_code_base64}`} 
+                      alt="QR Code PIX" 
+                      className="w-48 h-48 mx-auto"
+                    />
+                  )}
+                </div>
+                <div className="text-gray-900 font-bold">
+                  Escaneie o QR Code acima para pagar
+                </div>
+              </div>
+
+              <div className="space-y-4 text-left bg-gray-50 p-6 rounded-2xl border border-gray-100">
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-gray-400 font-black block mb-1">Código Copia e Cola</label>
+                  <div className="flex gap-2">
+                    <input 
+                      readOnly 
+                      value={pixData.qr_code} 
+                      className="flex-grow bg-white border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono text-gray-900"
+                    />
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(pixData.qr_code);
+                        alert('Código copiado!');
+                      }}
+                      className="bg-gray-900 text-white px-3 py-2 rounded-lg text-xs font-bold whitespace-nowrap"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500 font-medium">
+                  Assim que o pagamento for concluído, nosso sistema identificará automaticamente e você receberá a confirmação.
+                </p>
+                <div className="flex items-center justify-center gap-2 text-green-500 font-bold text-xs animate-pulse">
+                  <Clock size={14} /> Aguardando pagamento...
+                </div>
+                <button 
+                  onClick={() => setPixData(null)}
+                  className="w-full bg-gray-900 text-white py-4 rounded-xl font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-gray-100"
+                >
+                  Fechar Janela
                 </button>
               </div>
             </div>
