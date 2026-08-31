@@ -43,7 +43,7 @@ service cloud.firestore {
     //   - userId: string (required, immutable)
     //   - data: string (required)
     //   - total: string (required)
-    //   - status: string (required, enum: Pendente, Processando, Enviado, Entregue)
+    //   - status: string (required, enum: Pendente, Pago, Processando, Enviado, Entregue)
     //   - itens: list of objects (required)
     //
     // Collection: users
@@ -108,7 +108,7 @@ service cloud.firestore {
       return hasRequiredFields(['userId', 'data', 'total', 'status', 'itens']) &&
              data.userId is string &&
              data.total is string &&
-             data.status in ['Pendente', 'Processando', 'Enviado', 'Entregue'] &&
+             data.status in ['Pendente', 'Pago', 'Processando', 'Enviado', 'Entregue'] &&
              data.itens is list;
     }
 
@@ -142,8 +142,9 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
-      allow create: if isAuthenticated() && isValidOrder(request.resource.data) && (isOwner(request.resource.data.userId) || isAdmin());
-      allow update: if isAuthenticated() && (isAdmin() || (isOwner(resource.data.userId) && request.resource.data.status == resource.data.status));
+      // Orders are created and updated by the server after PagBank validation.
+      allow create: if false;
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 

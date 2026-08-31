@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
@@ -21,6 +24,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.11.0",
+    "firebase-admin": "^14.3.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.0",
@@ -36,5 +40,12 @@
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2"
+  },
+  "allowScripts": {
+    "@firebase/util@1.15.0": true,
+    "@firebase/util@1.15.3": true,
+    "esbuild@0.27.7": true,
+    "esbuild@0.25.12": true,
+    "protobufjs@7.6.6": true
   }
 }

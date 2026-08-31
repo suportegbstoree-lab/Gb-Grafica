@@ -1206,11 +1206,15 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
             </span>
             <span className={cn(
                "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded flex items-center gap-1.5",
-               order.metodoPagamento === 'pix' 
+               order.metodoPagamento === 'pagbank'
+                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                : order.metodoPagamento === 'pix'
                 ? "bg-green-500/20 text-green-400 border border-green-500/30" 
                 : "bg-orange-500/20 text-orange-400 border border-orange-500/30"
             )}>
-              {order.metodoPagamento === 'pix' ? (
+              {order.metodoPagamento === 'pagbank' ? (
+                <><CreditCard size={10} className="stroke-[3px]" /> PAGBANK: CARTÃO / PIX / BOLETO</>
+              ) : order.metodoPagamento === 'pix' ? (
                 <><QrCode size={10} className="stroke-[3px]" /> PIX</>
               ) : (
                 <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / PB</>

@@ -4,7 +4,7 @@ import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, T
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
-import { loginWithGoogle, logout, db, collection, setDoc, doc, FirebaseUser, handleFirestoreError, OperationType, updateDoc } from '../firebase';
+import { loginWithGoogle, logout, FirebaseUser } from '../firebase';
 
 interface HomeProps {
   products: Anuncio[];
@@ -26,9 +26,8 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [shippingInfo, setShippingInfo] = useState<{ address: string; price: number } | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
-  const [paymentMethod, setPaymentMethod] = useState<'cartao' | 'pix'>('cartao');
+  const [customerName, setCustomerName] = useState('');
   const [cpf, setCpf] = useState('');
-  const [pixData, setPixData] = useState<{ qr_code: string; qr_code_url?: string; qr_code_base64?: string; payment_id: string; total: string } | null>(null);
   const [currentSlide, setCurrentSlide] = useState(0);
 
   const bannerImages = [
@@ -42,6 +41,10 @@ export default function Home({ products, config, categories, promotions, cart, s
     }, 5000);
     return () => clearInterval(timer);
   }, []);
+
+  React.useEffect(() => {
+    if (user?.displayName) setCustomerName(user.displayName);
+  }, [user?.uid, user?.displayName]);
 
   const calculateShipping = async () => {
     if (cep.length !== 8) return;
@@ -103,138 +106,77 @@ export default function Home({ products, config, categories, promotions, cart, s
       loginWithGoogle();
       return;
     }
-    
+
+    const normalizedName = customerName.trim().replace(/\s+/g, ' ');
+    const cpfDigits = cpf.replace(/\D/g, '');
+    if (normalizedName.length < 3) {
+      alert('Informe seu nome completo para continuar.');
+      return;
+    }
+    if (cpfDigits.length !== 11) {
+      alert('Informe seu CPF para continuar.');
+      return;
+    }
+    if (deliveryMethod === 'entrega' && !shippingInfo) {
+      alert('Calcule o frete antes de continuar.');
+      return;
+    }
+
     setIsCalculating(true);
-    const orderId = Math.random().toString(36).substr(2, 9).toUpperCase();
-    
-    // Sanitize cart items to remove undefined values before saving to Firestore
-    const sanitizedCart = cart.map(item => ({
-      ...item,
-      arquivoUrl: item.arquivoUrl || "",
-      textoPersonalizado: item.textoPersonalizado || ""
-    }));
-
-    const total = totalWithShipping;
-    const shippingCost = deliveryMethod === 'entrega' ? (shippingInfo?.price || 0) : 0;
-
-    const newOrder: Order = {
-      id: orderId,
-      userId: user.uid,
-      data: new Date().toLocaleString('pt-BR'),
-      itens: sanitizedCart,
-      total,
-      status: 'Pendente',
-      paymentStatus: 'pendente',
-      metodoEntrega: deliveryMethod || 'entrega',
-      metodoPagamento: paymentMethod
-    };
 
     try {
-      console.log('[DEBUG] Enviando pedido:', orderId);
-      
-      // Use relative path - ensures same domain/protocol
+      const idToken = await user.getIdToken();
       const response = await fetch('/api/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
-          items: cart,
-          orderId,
-          baseUrl: window.location.origin,
-          shippingCost,
-          paymentMethod,
-          userEmail: user.email,
-          cpf: cpf.replace(/\D/g, '')
-        })
+          items: cart.map(item => ({
+            productId: item.productId,
+            quantidade: item.quantidade,
+            selecoes: item.selecoes,
+            arquivoUrl: item.arquivoUrl || '',
+            textoPersonalizado: item.textoPersonalizado || '',
+          })),
+          customerName: normalizedName,
+          cpf: cpfDigits,
+          deliveryMethod,
+          cep: deliveryMethod === 'entrega' ? cep : undefined,
+        }),
       });
 
-      console.log('[DEBUG] Status:', response.status);
-
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const data = await response.json();
-        console.error('[DEBUG] Erro payload:', data);
-        const detailedError = data.raw ? JSON.stringify(data.raw) : (data.details || data.error || 'Erro desconhecido');
-        throw new Error(`Erro do servidor (${response.status}): ${detailedError}`);
+        throw new Error(data.error || 'Não foi possível iniciar o pagamento.');
       }
 
-      const data = await response.json();
-      
-      if (response.ok) {
-        // Save to Firestore
-        await setDoc(doc(db, 'orders', orderId), newOrder);
-
-        if (data.payment_method === 'pix') {
-          setPixData({
-            qr_code: data.qr_code,
-            qr_code_url: data.qr_code_url,
-            qr_code_base64: data.qr_code_base64,
-            payment_id: data.payment_id,
-            total: data.total
-          });
-          setCart([]);
-          setIsCartOpen(false);
-        } else if (data.init_point) {
-          window.location.href = data.init_point;
-        }
-      } else {
-        const errorMsg = data.details || data.error || 'Erro desconhecido';
-        throw new Error(errorMsg);
+      if (typeof data.init_point !== 'string' || !data.init_point) {
+        throw new Error('O PagBank não retornou o link de pagamento.');
       }
+
+      setCart([]);
+      setIsCartOpen(false);
+      window.location.href = data.init_point;
     } catch (error: any) {
       console.error('Checkout error:', error);
-      alert(`ERRO NO CHECKOUT:\n${error.message}`);
+      alert(`ERRO NO CHECKOUT:\n${error.message || 'Tente novamente.'}`);
     } finally {
       setIsCalculating(false);
     }
   };
 
-  // Polling for PIX Status
-  React.useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    if (pixData && pixData.payment_id) {
-      interval = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/payment-status/${pixData.payment_id}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'approved') {
-              // Update local orders if needed, we'll probably just close the modal and show success
-              alert('Pagamento aprovado com sucesso!');
-              setPixData(null);
-              setIsOrdersOpen(true);
-            }
-          }
-        } catch (error) {
-          console.error('Error polling status:', error);
-        }
-      }, 5000);
-    }
-
-    return () => clearInterval(interval);
-  }, [pixData]);
-
-  // Handle Return from Mercado Pago
+  // O retorno do PagBank não confirma pagamento. A confirmação real chega pelo webhook.
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const status = params.get('status');
+    const pagbankReturn = params.get('pagbank') === 'return';
     const orderId = params.get('orderId');
 
-    if (status === 'success' && orderId) {
-      const updateOrder = async () => {
-        try {
-          await updateDoc(doc(db, 'orders', orderId), { 
-            status: 'Pago',
-            paymentStatus: 'pago' 
-          });
-          setCart([]);
-          setIsOrdersOpen(true);
-        } catch (error) {
-          console.error("Erro ao atualizar status do pedido:", error);
-        }
-      };
-      updateOrder();
-      // Clean URL
-      window.history.replaceState({}, document.title, "/");
+    if (pagbankReturn && orderId) {
+      setCart([]);
+      setIsOrdersOpen(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
 
@@ -673,32 +615,18 @@ export default function Home({ products, config, categories, promotions, cart, s
                     </div>
                   </div>
 
-                  {/* Forma de Pagamento */}
+                  {/* Pagamento hospedado */}
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Forma de Pagamento</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button 
-                        onClick={() => setPaymentMethod('cartao')}
-                        className={cn(
-                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
-                          paymentMethod === 'cartao' 
-                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
-                            : "bg-white border-gray-100 text-gray-400"
-                        )}
-                      >
-                        <CreditCard size={16} /> Cartão / Boleto
-                      </button>
-                      <button 
-                        onClick={() => setPaymentMethod('pix')}
-                        className={cn(
-                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
-                          paymentMethod === 'pix' 
-                            ? "bg-white border-pink-400 text-pink-500 shadow-sm" 
-                            : "bg-white border-gray-100 text-gray-400"
-                        )}
-                      >
-                        <QrCode size={16} /> PIX (Sem Taxas)
-                      </button>
+                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Pagamento</label>
+                    <div className="flex items-center gap-3 text-gray-900">
+                      <div className="flex gap-2 text-pink-500">
+                        <CreditCard size={18} />
+                        <QrCode size={18} />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-widest">Checkout seguro PagBank</p>
+                        <p className="text-[11px] text-gray-500 mt-1">Cartão, Pix ou boleto na próxima etapa.</p>
+                      </div>
                     </div>
                   </div>
 
@@ -711,7 +639,10 @@ export default function Home({ products, config, categories, promotions, cart, s
                           type="text" 
                           placeholder="00000000" 
                           value={cep}
-                          onChange={(e) => setCep(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                          onChange={(e) => {
+                            setCep(e.target.value.replace(/\D/g, '').slice(0, 8));
+                            setShippingInfo(null);
+                          }}
                           className="flex-grow bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400"
                         />
                         <button 
@@ -728,7 +659,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                           animate={{ opacity: 1, height: 'auto' }}
                           className="mt-3 text-[11px] text-gray-500"
                         >
-                          <p className="mb-1">📍 {shippingInfo.address}</p>
+                          <p className="mb-1">{shippingInfo.address}</p>
                           <div className="flex justify-between text-gray-900 font-bold">
                             <span>PAC / Sedex</span>
                             <span className="text-pink-500">R$ {shippingInfo.price.toFixed(2)}</span>
@@ -739,6 +670,15 @@ export default function Home({ products, config, categories, promotions, cart, s
                   )}
 
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">Nome completo</label>
+                    <input
+                      type="text"
+                      placeholder="Seu nome completo"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value.slice(0, 100))}
+                      autoComplete="name"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400 mb-4"
+                    />
                     <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">CPF do Pagador (Obrigatório PagBank)</label>
                     <input 
                       type="text" 
@@ -781,10 +721,10 @@ export default function Home({ products, config, categories, promotions, cart, s
                   </div>
                   <button 
                     onClick={checkout}
-                    disabled={isCalculating || (deliveryMethod === 'entrega' && !shippingInfo) || cpf.replace(/\D/g, '').length !== 11}
+                    disabled={isCalculating || (deliveryMethod === 'entrega' && !shippingInfo) || cpf.replace(/\D/g, '').length !== 11 || customerName.trim().length < 3}
                     className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50"
                   >
-                    {isCalculating ? <Loader2 className="animate-spin mx-auto" /> : "FINALIZAR PEDIDO"}
+                    {isCalculating ? <Loader2 className="animate-spin mx-auto" /> : "IR PARA O PAGBANK"}
                   </button>
                 </div>
 
@@ -816,7 +756,9 @@ export default function Home({ products, config, categories, promotions, cart, s
                         )}
                         {order.metodoPagamento && (
                           <div className="text-[9px] text-gray-400 mt-1 font-black uppercase tracking-[0.1em] flex items-center gap-1.5">
-                            {order.metodoPagamento === 'pix' ? (
+                            {order.metodoPagamento === 'pagbank' ? (
+                              <><CreditCard size={10} className="stroke-[2.5px]" /> PagBank: cartão, Pix ou boleto</>
+                            ) : order.metodoPagamento === 'pix' ? (
                               <><QrCode size={10} className="stroke-[2.5px]" /> Pago via PIX</>
                             ) : (
                               <><CreditCard size={10} className="stroke-[2.5px]" /> Cartão / Boleto</>
@@ -890,81 +832,6 @@ export default function Home({ products, config, categories, promotions, cart, s
           </Modal>
         )}
 
-        {pixData && (
-          <Modal title="Pague com PIX" onClose={() => setPixData(null)}>
-            <div className="space-y-6 text-center">
-              <div className="p-8 bg-pink-50 rounded-[40px] border border-pink-100 flex flex-col items-center gap-6 relative overflow-hidden">
-                {/* Decorative Elements */}
-                <div className="absolute top-0 right-0 w-24 h-24 bg-pink-200/20 blur-3xl rounded-full"></div>
-                <div className="absolute bottom-0 left-0 w-24 h-24 bg-purple-200/20 blur-3xl rounded-full"></div>
-
-                <div className="relative">
-                  <div className="bg-white p-6 rounded-3xl shadow-xl shadow-pink-200/20 relative z-10 scale-105">
-                    {pixData.qr_code_url ? (
-                      <img 
-                        src={pixData.qr_code_url} 
-                        alt="QR Code PIX" 
-                        className="w-48 h-48 mx-auto"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : pixData.qr_code_base64 && (
-                      <img 
-                        src={`data:image/png;base64,${pixData.qr_code_base64}`} 
-                        alt="QR Code PIX" 
-                        className="w-48 h-48 mx-auto"
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2 relative z-10">
-                  <div className="text-gray-900 font-black text-lg tracking-tight">R$ {pixData.total}</div>
-                  <div className="text-gray-500 font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2">
-                    <QrCode size={14} className="text-pink-500" /> Escaneie para Pagar
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-4 text-left">
-                <div>
-                  <label className="text-[10px] uppercase tracking-[0.2em] text-gray-400 font-black block mb-2 px-1">Código Copia e Cola</label>
-                  <div className="flex gap-2">
-                    <input 
-                      readOnly 
-                      value={pixData.qr_code} 
-                      className="flex-grow bg-gray-50 border border-gray-100 rounded-2xl px-4 py-4 text-xs font-mono text-gray-900 focus:outline-none focus:ring-2 focus:ring-pink-500/20 transition-all"
-                    />
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(pixData.qr_code);
-                        alert('Código copiado!');
-                      }}
-                      className="bg-gray-900 text-white px-6 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-pink-500 transition-all shadow-lg shadow-gray-200 active:scale-95"
-                    >
-                      Copiar
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-4 space-y-4 border-t border-gray-100">
-                <div className="flex items-center justify-center gap-3 text-pink-500 font-black text-[11px] uppercase tracking-widest animate-pulse">
-                  <div className="w-2 h-2 bg-pink-500 rounded-full"></div>
-                  Aguardando Confirmação automática...
-                </div>
-                <p className="text-[11px] text-gray-400 font-medium px-4 leading-relaxed">
-                  Não é necessário enviar comprovante. Nosso sistema identifica o pagamento em segundos através do PagBank.
-                </p>
-                <button 
-                  onClick={() => setPixData(null)}
-                  className="w-full bg-white border-2 border-gray-900 text-gray-900 py-4 rounded-2xl font-black text-xs uppercase tracking-[0.2em] hover:bg-gray-50 transition-all active:scale-[0.98]"
-                >
-                  Fechar Janela
-                </button>
-              </div>
-            </div>
-          </Modal>
-        )}
       </AnimatePresence>
 
       {/* Floating Chat Button */}
@@ -1264,5 +1131,3 @@ function ProductCard({ product, onAddToCart }: { product: Anuncio; onAddToCart: 
     </motion.div>
   );
 }
-
-

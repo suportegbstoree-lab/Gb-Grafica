@@ -36,9 +36,13 @@ export interface Order {
   itens: CartItem[];
   total: string;
   status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue' | 'Pago';
-  paymentStatus?: 'pago' | 'pendente';
+  paymentStatus?: 'pago' | 'pendente' | 'em_analise' | 'recusado' | 'cancelado' | 'expirado' | 'erro';
   metodoEntrega?: 'retirada' | 'entrega';
-  metodoPagamento?: 'cartao' | 'pix';
+  metodoPagamento?: 'cartao' | 'pix' | 'pagbank';
+  pagbankCheckoutId?: string;
+  pagbankOrderId?: string;
+  pagbankChargeId?: string;
+  pagbankStatus?: string;
 }
 
 export interface Category {
