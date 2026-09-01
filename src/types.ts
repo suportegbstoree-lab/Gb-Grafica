@@ -1,3 +1,7 @@
+import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
+
+export type { DeliveryMethod, FulfillmentStatus, PaymentStatus };
+
 export interface ProductAttribute {
   nome: string;
   opcoes: string[];
@@ -26,7 +30,20 @@ export interface CartItem {
   selecoes: Record<string, string>;
   quantidade: number;
   arquivoUrl?: string;
+  arquivoPath?: string;
+  arquivoNome?: string;
+  artePendente?: boolean;
   textoPersonalizado?: string;
+}
+
+export interface DeliveryAddress {
+  cep: string;
+  rua: string;
+  numero: string;
+  complemento?: string;
+  bairro: string;
+  cidade: string;
+  estado: string;
 }
 
 export interface Order {
@@ -36,13 +53,23 @@ export interface Order {
   itens: CartItem[];
   total: string;
   status: 'Pendente' | 'Processando' | 'Enviado' | 'Entregue' | 'Pago';
-  paymentStatus?: 'pago' | 'pendente' | 'em_analise' | 'recusado' | 'cancelado' | 'expirado' | 'erro';
-  metodoEntrega?: 'retirada' | 'entrega';
+  paymentStatus?: PaymentStatus;
+  fulfillmentStatus?: FulfillmentStatus;
+  metodoEntrega?: DeliveryMethod;
   metodoPagamento?: 'cartao' | 'pix' | 'pagbank';
+  subtotal?: string;
+  frete?: string;
+  totalCents?: number;
+  clienteNome?: string;
+  clienteEmail?: string;
+  clienteTelefone?: string;
+  enderecoEntrega?: DeliveryAddress;
   pagbankCheckoutId?: string;
   pagbankOrderId?: string;
   pagbankChargeId?: string;
   pagbankStatus?: string;
+  pagbankPayUrl?: string;
+  checkoutExpiresAt?: string;
 }
 
 export interface Category {

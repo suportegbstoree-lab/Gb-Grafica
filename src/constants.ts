@@ -5,10 +5,10 @@ export const INITIAL_CONFIG: SiteConfig = {
   telefone1: "(16) 99999-9999",
   telefone2: "(16) 3333-3333",
   banner_principal: "https://picsum.photos/seed/grafica-banner/1920/600",
-  beneficio1_titulo: "ENVIO RÁPIDO",
-  beneficio1_desc: "EM ATÉ 2 DIAS ÚTEIS",
-  beneficio2_titulo: "FRETE GRÁTIS",
-  beneficio2_desc: "PARA PEDIDOS ACIMA DE R$ 150",
+  beneficio1_titulo: "ATENDIMENTO RÁPIDO",
+  beneficio1_desc: "FALE DIRETO COM NOSSA EQUIPE",
+  beneficio2_titulo: "PAGAMENTO SEGURO",
+  beneficio2_desc: "CARTÃO, PIX OU BOLETO",
   beneficio3_titulo: "ALTA QUALIDADE",
   beneficio3_desc: "IMPRESSÃO PREMIUM"
 };

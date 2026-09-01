@@ -3,15 +3,43 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import Home from './pages/Home';
-import Admin from './pages/Admin';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from './types';
-import { INITIAL_PRODUCTS, INITIAL_CONFIG, INITIAL_CATEGORIES } from './constants';
-import { 
-  db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType 
+import { INITIAL_CONFIG } from './constants';
+import {
+  db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType
 } from './firebase';
+
+const Admin = lazy(() => import('./pages/Admin'));
+
+function restoreCart(): CartItem[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('gb_cart') || '[]');
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((item): item is CartItem => (
+      typeof item === 'object' && item !== null &&
+      typeof item.id === 'string' &&
+      typeof item.productId === 'string' &&
+      typeof item.nome === 'string' &&
+      typeof item.preco === 'string' &&
+      Number.isInteger(item.quantidade) && item.quantidade > 0
+    ));
+  } catch {
+    localStorage.removeItem('gb_cart');
+    return [];
+  }
+}
+
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen bg-[#060606] flex items-center justify-center" role="status">
+      <div className="text-[#ff4d79] animate-pulse font-bold">Carregando...</div>
+    </div>
+  );
+}
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -19,38 +47,48 @@ export default function App() {
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const [products, setProducts] = useState<Anuncio[]>([]);
+  const [productsReady, setProductsReady] = useState(false);
+  const [productsError, setProductsError] = useState<string | null>(null);
   const [config, setConfig] = useState<SiteConfig>(INITIAL_CONFIG);
+  const [configExists, setConfigExists] = useState<boolean | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [promotions, setPromotions] = useState<Promocao[]>([]);
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    const saved = localStorage.getItem('gb_cart');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [cart, setCart] = useState<CartItem[]>(restoreCart);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersReady, setOrdersReady] = useState(true);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const previousUserId = useRef<string | null>(null);
 
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
+        let hasAdminClaim = false;
+        try {
+          const token = await firebaseUser.getIdTokenResult();
+          hasAdminClaim = token.claims.admin === true;
+        } catch (error) {
+          console.error('Não foi possível verificar as permissões do token:', error);
+        }
         // Check Admin Role
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists()) {
-            setIsAdmin(userDoc.data().role === 'admin');
+            setIsAdmin(hasAdminClaim || userDoc.data().role === 'admin');
           } else {
-            // Check if default admin
-            const isDefaultAdmin = firebaseUser.email === 'ggarciapalermo@gmail.com' && firebaseUser.emailVerified;
-            const role = isDefaultAdmin ? 'admin' : 'user';
+            const role = hasAdminClaim ? 'admin' : 'user';
+            setIsAdmin(hasAdminClaim);
             await setDoc(doc(db, 'users', firebaseUser.uid), {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
               role: role
             });
-            setIsAdmin(isDefaultAdmin);
+            setIsAdmin(hasAdminClaim);
           }
         } catch (error) {
-          console.error("Error checking user role:", error);
+          console.error('Não foi possível verificar o perfil do usuário:', error);
+          setIsAdmin(hasAdminClaim);
         }
       } else {
         setIsAdmin(false);
@@ -64,7 +102,13 @@ export default function App() {
   useEffect(() => {
     const unsubProducts = onSnapshot(query(collection(db, 'anuncios'), orderBy('nome')), (snapshot) => {
       setProducts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Anuncio)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'anuncios'));
+      setProductsError(null);
+      setProductsReady(true);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'anuncios');
+      setProductsError('Não foi possível carregar os produtos agora. Tente atualizar a página.');
+      setProductsReady(true);
+    });
 
     const unsubCategories = onSnapshot(query(collection(db, 'categories'), orderBy('nome')), (snapshot) => {
       setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
@@ -75,24 +119,10 @@ export default function App() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'promocoes'));
 
     const unsubConfig = onSnapshot(doc(db, 'config', 'main'), async (docSnap) => {
+      setConfigExists(docSnap.exists());
       if (docSnap.exists()) {
-        const data = docSnap.data() as SiteConfig;
-        setConfig(data);
-        // If logo_url is missing or empty, update it with the initial value if user is admin
-        if (!data.logo_url && isAdmin) {
-          try {
-            await setDoc(doc(db, 'config', 'main'), { ...data, logo_url: INITIAL_CONFIG.logo_url }, { merge: true });
-          } catch (error) {
-            console.error("Error updating logo_url:", error);
-          }
-        }
-      } else if (isAdmin) {
-        // Bootstrap initial config if missing and user is admin
-        try {
-          await setDoc(doc(db, 'config', 'main'), INITIAL_CONFIG);
-        } catch (error) {
-          console.error("Error bootstrapping config:", error);
-        }
+        const data = docSnap.data() as Partial<SiteConfig>;
+        setConfig({ ...INITIAL_CONFIG, ...data });
       }
     }, (error) => handleFirestoreError(error, OperationType.GET, 'config/main'));
 
@@ -104,19 +134,41 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isAdmin || configExists !== false) return;
+
+    setDoc(doc(db, 'config', 'main'), INITIAL_CONFIG)
+      .catch((error) => handleFirestoreError(error, OperationType.CREATE, 'config/main'));
+  }, [configExists, isAdmin]);
+
   // Orders Listener (Only if logged in)
   useEffect(() => {
     if (!user) {
       setOrders([]);
+      setOrdersReady(true);
+      setOrdersError(null);
       return;
     }
-    const q = isAdmin 
+    setOrdersReady(false);
+    setOrdersError(null);
+    const q = isAdmin
       ? query(collection(db, 'orders'), orderBy('data', 'desc'))
       : query(collection(db, 'orders'), where('userId', '==', user.uid));
-    
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'orders'));
+      const nextOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+      nextOrders.sort((first, second) => {
+        const firstDate = Date.parse(first.data) || 0;
+        const secondDate = Date.parse(second.data) || 0;
+        return secondDate - firstDate;
+      });
+      setOrders(nextOrders);
+      setOrdersReady(true);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'orders');
+      setOrdersError('Não foi possível carregar os pedidos agora.');
+      setOrdersReady(true);
+    });
 
     return () => unsubscribe();
   }, [user, isAdmin]);
@@ -126,17 +178,25 @@ export default function App() {
     localStorage.setItem('gb_cart', JSON.stringify(cart));
   }, [cart]);
 
+  useEffect(() => {
+    const nextUserId = user?.uid || null;
+    if (previousUserId.current && previousUserId.current !== nextUserId) {
+      setCart([]);
+    }
+    previousUserId.current = nextUserId;
+  }, [user?.uid]);
+
   // Update Title and Favicon
   useEffect(() => {
     const title = "GB Gráfica | Impressão de Alta Qualidade";
     document.title = title;
-    
+
     // Force title update for some browsers
     const titleElement = document.querySelector('title');
     if (titleElement) titleElement.innerText = title;
 
     const faviconUrl = config.logo_url || "/logo.png";
-    
+
     let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
     if (!link) {
       link = document.createElement('link');
@@ -147,62 +207,54 @@ export default function App() {
   }, [config.logo_url]);
 
   if (!isAuthReady) {
-    return (
-      <div className="min-h-screen bg-[#060606] flex items-center justify-center">
-        <div className="text-[#ff4d79] animate-pulse font-bold">Carregando...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   return (
     <Router>
       <Routes>
-        <Route 
-          path="/" 
+        <Route
+          path="/"
           element={
-            <Home 
-              products={products} 
-              config={config} 
-              categories={categories} 
+            <Home
+              products={products}
+              config={config}
+              categories={categories}
               promotions={promotions}
               cart={cart}
               setCart={setCart}
               orders={orders}
               user={user}
               isAdmin={isAdmin}
+              productsReady={productsReady}
+              productsError={productsError}
+              ordersReady={ordersReady}
+              ordersError={ordersError}
             />
-          } 
+          }
         />
-        <Route 
-          path="/admin" 
+        <Route
+          path="/admin"
           element={
             isAdmin ? (
-              <Admin 
-                products={products} 
-                config={config} 
-                categories={categories}
-                orders={orders}
-                promotions={promotions}
-              />
+              <Suspense fallback={<LoadingScreen />}>
+                <Admin
+                  products={products}
+                  config={config}
+                  categories={categories}
+                  orders={orders}
+                  ordersReady={ordersReady}
+                  ordersError={ordersError}
+                  promotions={promotions}
+                />
+              </Suspense>
             ) : (
-              <Home 
-                products={products} 
-                config={config} 
-                categories={categories} 
-                promotions={promotions}
-                cart={cart}
-                setCart={setCart}
-                orders={orders}
-                user={user}
-                isAdmin={isAdmin}
-              />
+              <Navigate to="/" replace />
             )
-          } 
+          }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
   );
 }
-
-
-

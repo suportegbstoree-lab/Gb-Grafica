@@ -7,3 +7,4 @@ coverage/
 .env*
 !.env.example
 .secret.json
+.personal_infos/

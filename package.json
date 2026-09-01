@@ -1,5 +1,5 @@
 {
-  "name": "react-example",
+  "name": "gb-grafica-store",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -11,8 +11,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "start": "node server.ts",
-    "lint": "tsc --noEmit"
+    "start": "tsx server.ts",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "admin:set": "tsx scripts/set-admin-claim.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

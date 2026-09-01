@@ -1,6 +1,7 @@
 import { App, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
 import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 
 // O projeto atual usa um banco Firestore nomeado. Em outro projeto, substitua
 // pelo identificador configurado no Firebase Console via variável de ambiente.
@@ -16,6 +17,7 @@ export interface AdminServices {
   app: App;
   auth: Auth;
   db: Firestore;
+  bucket: ReturnType<ReturnType<typeof getStorage>['bucket']>;
 }
 
 function getServiceAccount(): ServiceAccountEnvironment | null {
@@ -56,10 +58,12 @@ export function isFirebaseAdminConfigured(): boolean {
 export function getAdminServices(): AdminServices {
   const app = getApps()[0] || createAdminApp();
   const databaseId = process.env.FIREBASE_FIRESTORE_DATABASE_ID?.trim() || DEFAULT_FIRESTORE_DATABASE_ID;
+  const storageBucket = process.env.FIREBASE_STORAGE_BUCKET?.trim() || `${app.options.projectId}.firebasestorage.app`;
   return {
     app,
     auth: getAuth(app),
     db: getFirestore(app, databaseId),
+    bucket: getStorage(app).bucket(storageBucket),
   };
 }
 
@@ -78,5 +82,6 @@ function createAdminApp(): App {
       clientEmail: serviceAccount.client_email,
       privateKey: serviceAccount.private_key.replace(/\\n/g, '\n'),
     }),
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET?.trim() || `${serviceAccount.project_id}.firebasestorage.app`,
   });
 }

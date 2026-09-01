@@ -1,22 +1,34 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, Share2, QrCode, CreditCard } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Anuncio, SiteConfig, Order, Category, Promocao } from '../types';
+import { Anuncio, SiteConfig, Order, Category, Promocao, ProductAttribute, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
-import { db, setDoc, doc, deleteDoc, updateDoc, handleFirestoreError, OperationType, logout, collection, getDocs, auth } from '../firebase';
+import { db, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, logout } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
+import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
+import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
+import { requestArtworkUrl } from '../services/artworkService';
+import { updateOrderFulfillment } from '../services/orderService';
 
 interface AdminProps {
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
   orders: Order[];
+  ordersReady: boolean;
+  ordersError: string | null;
   promotions: Promocao[];
 }
 
-export default function Admin({ products, config, categories, orders, promotions }: AdminProps) {
+const BENEFIT_FIELDS = [
+  { number: 1, title: 'beneficio1_titulo', description: 'beneficio1_desc' },
+  { number: 2, title: 'beneficio2_titulo', description: 'beneficio2_desc' },
+  { number: 3, title: 'beneficio3_titulo', description: 'beneficio3_desc' },
+] as const;
+
+export default function Admin({ products, config, categories, orders, ordersReady, ordersError, promotions }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders' | 'promotions'>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
@@ -24,6 +36,7 @@ export default function Admin({ products, config, categories, orders, promotions
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   React.useEffect(() => {
     if (successMessage || errorMessage) {
@@ -46,6 +59,38 @@ export default function Admin({ products, config, categories, orders, promotions
     suggested: string;
     loading: boolean;
   } | null>(null);
+
+  const closeProductEditor = () => {
+    setEditingProduct(null);
+    setShowAttrForm(false);
+    setShowBulkImageForm(false);
+    setShowCustomAiPrompt(false);
+    setAiPreview(null);
+    setBulkImages('');
+    setCustomAiPrompt('');
+    setNewAttr({ nome: '', opcoes: '' });
+  };
+
+  React.useEffect(() => {
+    if (!editingProduct && !editingPromotion) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (aiPreview) setAiPreview(null);
+      else if (showCustomAiPrompt) setShowCustomAiPrompt(false);
+      else if (showBulkImageForm) setShowBulkImageForm(false);
+      else if (editingProduct) closeProductEditor();
+      else setEditingPromotion(null);
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [editingProduct, editingPromotion, aiPreview, showCustomAiPrompt, showBulkImageForm]);
 
   const handleAiAction = async (action: 'generate' | 'improveTitle' | 'improveDescription' | 'custom', prompt?: string) => {
     if (!editingProduct) return;
@@ -76,6 +121,7 @@ export default function Admin({ products, config, categories, orders, promotions
     } catch (error) {
       console.error(error);
       setAiPreview(null);
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível consultar a IA.');
     }
   };
 
@@ -84,17 +130,19 @@ export default function Admin({ products, config, categories, orders, promotions
     try {
       // Categories
       for (const cat of INITIAL_CATEGORIES) {
-        const id = cat.nome.toLowerCase().replace(/\s+/g, '-');
+        const id = slugifyDocumentId(cat.nome);
+        if (!id) continue;
         await setDoc(doc(db, 'categories', id), cat);
       }
       // Products
       for (const prod of INITIAL_PRODUCTS) {
-        const id = prod.id || Math.random().toString(36).substr(2, 9);
+        const id = prod.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
         await setDoc(doc(db, 'anuncios', id), { ...prod, id });
       }
       setSuccessMessage('Dados iniciais carregados com sucesso!');
     } catch (error) {
       console.error('Error bootstrapping data:', error);
+      setErrorMessage('Não foi possível carregar os dados iniciais.');
     } finally {
       setIsBootstrapping(false);
     }
@@ -119,35 +167,75 @@ export default function Admin({ products, config, categories, orders, promotions
       beneficio2_desc: formData.get('beneficio2_desc') as string,
       beneficio3_titulo: formData.get('beneficio3_titulo') as string,
       beneficio3_desc: formData.get('beneficio3_desc') as string,
-      pix_chave: formData.get('pix_chave') as string || '1af0ad42-6066-4a14-9888-0508d0c1371f',
-      pix_beneficiario: formData.get('pix_beneficiario') as string || 'GBL Gráfica'
+      pix_chave: String(formData.get('pix_chave') || '').trim(),
+      pix_beneficiario: String(formData.get('pix_beneficiario') || '').trim(),
     };
-    
+
+    if (!updatedConfig.telefone1.trim() || !updatedConfig.telefone2.trim()) {
+      setErrorMessage('Informe os dois números de atendimento.');
+      return;
+    }
+    if (updatedConfig.logo_url && !isHttpUrl(updatedConfig.logo_url) && !updatedConfig.logo_url.startsWith('/')) {
+      setErrorMessage('A URL do logo é inválida.');
+      return;
+    }
+    if (!isHttpUrl(updatedConfig.banner_principal) && !updatedConfig.banner_principal.startsWith('/')) {
+      setErrorMessage('A URL do banner principal é inválida.');
+      return;
+    }
+
+    setIsSaving(true);
     try {
       await setDoc(doc(db, 'config', 'main'), updatedConfig);
       setSuccessMessage('Configurações salvas com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'config/main');
+      setErrorMessage('Não foi possível salvar as configurações.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   // Category Handlers
   const handleAddCategory = async () => {
-    if (!newCategory.nome) return;
-    const id = newCategory.nome.toLowerCase().replace(/\s+/g, '-');
+    const name = newCategory.nome.trim();
+    if (!name) return;
+    if (newCategory.icon.trim() && !isHttpUrl(newCategory.icon.trim())) {
+      setErrorMessage('A URL do ícone da categoria é inválida.');
+      return;
+    }
+    const id = slugifyDocumentId(name);
+    if (!id) {
+      setErrorMessage('O nome da categoria não gera um identificador válido.');
+      return;
+    }
+    if (categories.some(category => category.id === id || category.nome.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))) {
+      setErrorMessage('Já existe uma categoria com esse nome.');
+      return;
+    }
     try {
-      await setDoc(doc(db, 'categories', id), { nome: newCategory.nome, icon: newCategory.icon });
+      await setDoc(doc(db, 'categories', id), { nome: name, icon: newCategory.icon.trim() });
       setNewCategory({ nome: '', icon: '' });
+      setSuccessMessage('Categoria adicionada.');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `categories/${id}`);
+      setErrorMessage('Não foi possível adicionar a categoria.');
     }
   };
 
   const handleDeleteCategory = async (catId: string) => {
+    const category = categories.find(item => item.id === catId);
+    if (category && products.some(product => product.categoria === category.nome)) {
+      setErrorMessage('Esta categoria ainda possui produtos. Mova-os antes de excluir.');
+      return;
+    }
+    if (!window.confirm(`Excluir a categoria "${category?.nome || catId}"?`)) return;
     try {
       await deleteDoc(doc(db, 'categories', catId));
+      setSuccessMessage('Categoria excluída.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `categories/${catId}`);
+      setErrorMessage('Não foi possível excluir a categoria.');
     }
   };
 
@@ -155,56 +243,119 @@ export default function Admin({ products, config, categories, orders, promotions
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct) return;
-    
-    // Validar campos obrigatórios antes de tentar salvar
-    if (!editingProduct.nome || !editingProduct.desc || !editingProduct.categoria || !editingProduct.imagem) {
+
+    const name = editingProduct.nome?.trim() || '';
+    const description = editingProduct.desc?.trim() || '';
+    const category = editingProduct.categoria?.trim() || '';
+    const mainImage = editingProduct.imagem?.trim() || '';
+    const attributes = (editingProduct.atributos || []).map(attribute => ({
+      nome: attribute.nome.trim(),
+      opcoes: Array.from(new Set(attribute.opcoes.map(option => option.trim()).filter(Boolean))),
+    }));
+
+    if (!name || !description || !category || !mainImage) {
       setErrorMessage('Por favor, preencha todos os campos obrigatórios (Nome, Descrição, Categoria e Imagem Principal).');
       return;
     }
-    
-    const id = editingProduct.id || Math.random().toString(36).substr(2, 9);
-    const productToSave = { 
-      ...editingProduct, 
+    if (name.length >= 200 || description.length >= 1000) {
+      setErrorMessage('O nome deve ter menos de 200 caracteres e a descrição menos de 1000.');
+      return;
+    }
+    if (!isHttpUrl(mainImage) && !mainImage.startsWith('/')) {
+      setErrorMessage('A URL da imagem principal é inválida.');
+      return;
+    }
+    const gallery = [...new Set<string>((editingProduct.imagens || []).map(image => image.trim()).filter(Boolean))];
+    if (gallery.some(image => !isHttpUrl(image) && !image.startsWith('/'))) {
+      setErrorMessage('A galeria contém uma URL inválida.');
+      return;
+    }
+    if (attributes.some(attribute => !attribute.nome || attribute.opcoes.length === 0) || new Set(attributes.map(attribute => attribute.nome)).size !== attributes.length) {
+      setErrorMessage('Cada atributo precisa de nome único e pelo menos uma opção.');
+      return;
+    }
+
+    const combinationKeys = generateCombinations(attributes);
+    if (combinationKeys.length > 500) {
+      setErrorMessage('Este produto gera combinações demais. Reduza a quantidade de atributos ou opções.');
+      return;
+    }
+    const combinations = Object.fromEntries(combinationKeys.map(key => [key, editingProduct.combinacoes?.[key]?.trim() || '']));
+    if (combinationKeys.some(key => {
+      const cents = parseMoneyToCents(combinations[key]);
+      return cents === null || cents <= 0;
+    })) {
+      setErrorMessage('Defina um preço válido e maior que zero para todas as combinações.');
+      return;
+    }
+    if (attributes.length === 0) {
+      const basePrice = parseMoneyToCents(editingProduct.preco_base);
+      if (basePrice === null || basePrice <= 0) {
+        setErrorMessage('Defina um preço base válido e maior que zero.');
+        return;
+      }
+    }
+
+    const id = editingProduct.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const productToSave: Anuncio = {
+      ...editingProduct,
       id,
-      imagens: editingProduct.imagens || [],
-      atributos: editingProduct.atributos || [],
-      combinacoes: editingProduct.combinacoes || {},
-      tipoInput: editingProduct.tipoInput || 'nenhum'
-    } as Anuncio;
-    
+      nome: name,
+      desc: description,
+      categoria: category,
+      imagem: mainImage,
+      imagens: gallery,
+      preco_base: editingProduct.preco_base?.trim() || '',
+      atributos: attributes,
+      combinacoes: combinations,
+      tipoInput: editingProduct.tipoInput || 'nenhum',
+      labelTexto: editingProduct.labelTexto?.trim() || '',
+    };
+
+    setIsSaving(true);
     try {
       await setDoc(doc(db, 'anuncios', id), productToSave);
-      setEditingProduct(null);
+      closeProductEditor();
       setSuccessMessage('Anúncio salvo com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar anúncio:', error);
-      setErrorMessage('Erro ao salvar anúncio. Verifique o console ou as regras de segurança.');
+      setErrorMessage('Não foi possível salvar o anúncio. Verifique os campos e tente novamente.');
       handleFirestoreError(error, OperationType.WRITE, `anuncios/${id}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDeleteProduct = async (id: string) => {
-    // Removido confirm() devido a restrições de iFrame
+    const product = products.find(item => item.id === id);
+    if (!window.confirm(`Excluir o produto "${product?.nome || id}"? Esta ação não pode ser desfeita.`)) return;
     try {
       await deleteDoc(doc(db, 'anuncios', id));
       setSuccessMessage('Anúncio excluído com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
+      setErrorMessage('Não foi possível excluir o anúncio.');
     }
   };
 
   // Order Handlers
-  const handleStatusChange = async (orderId: string, newStatus: string) => {
+  const handleStatusChange = async (orderId: string, newStatus: FulfillmentStatus) => {
     try {
-      const updates: any = { status: newStatus };
-      if (newStatus === 'Pago') {
-        updates.paymentStatus = 'pago';
-      } else if (newStatus === 'Pendente') {
-        updates.paymentStatus = 'pendente';
-      }
-      await updateDoc(doc(db, 'orders', orderId), updates);
+      await updateOrderFulfillment(orderId, newStatus);
+      setSuccessMessage('Etapa do pedido atualizada.');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível atualizar o pedido.');
+    }
+  };
+
+  const handleOpenArtwork = async (orderId: string, itemId: string) => {
+    try {
+      const url = await requestArtworkUrl(orderId, itemId);
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (opened) opened.opener = null;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível abrir a arte.');
     }
   };
 
@@ -212,19 +363,30 @@ export default function Admin({ products, config, categories, orders, promotions
   const handleSavePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPromotion) return;
-    
-    if (!editingPromotion.titulo || !editingPromotion.imagem) {
+
+    const title = editingPromotion.titulo?.trim() || '';
+    const image = editingPromotion.imagem?.trim() || '';
+    const link = editingPromotion.link?.trim() || '';
+    if (!title || !image) {
       setErrorMessage('Por favor, preencha o título e a imagem da promoção.');
       return;
     }
-    
-    const id = editingPromotion.id || Math.random().toString(36).substr(2, 9);
-    const promotionToSave = { 
-      ...editingPromotion, 
+    if ((!isHttpUrl(image) && !image.startsWith('/')) || (link && !isHttpUrl(link))) {
+      setErrorMessage('A promoção contém uma URL inválida.');
+      return;
+    }
+
+    const id = editingPromotion.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const promotionToSave = {
+      ...editingPromotion,
       id,
-      ativa: editingPromotion.ativa ?? true 
+      titulo: title,
+      imagem: image,
+      link,
+      ativa: editingPromotion.ativa ?? true
     } as Promocao;
-    
+
+    setIsSaving(true);
     try {
       await setDoc(doc(db, 'promocoes', id), promotionToSave);
       setEditingPromotion(null);
@@ -232,15 +394,20 @@ export default function Admin({ products, config, categories, orders, promotions
     } catch (error) {
       setErrorMessage('Erro ao salvar promoção.');
       handleFirestoreError(error, OperationType.WRITE, `promocoes/${id}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleDeletePromotion = async (id: string) => {
+    const promotion = promotions.find(item => item.id === id);
+    if (!window.confirm(`Excluir a promoção "${promotion?.titulo || id}"?`)) return;
     try {
       await deleteDoc(doc(db, 'promocoes', id));
       setSuccessMessage('Promoção excluída com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `promocoes/${id}`);
+      setErrorMessage('Não foi possível excluir a promoção.');
     }
   };
 
@@ -252,41 +419,41 @@ export default function Admin({ products, config, categories, orders, promotions
           <div className="text-xl font-black tracking-tighter text-white mb-8">
             GB <span className="text-[#ff4d79]">ADMIN</span>
           </div>
-          
+
           <nav className="space-y-2">
-            <button 
+            <button
               onClick={() => setActiveTab('products')}
-              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'products' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'products' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Layout size={18} /> Produtos
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('categories')}
-              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'categories' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'categories' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <List size={18} /> Categorias
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('orders')}
-              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'orders' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'orders' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Package size={18} /> Pedidos
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('promotions')}
-              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'promotions' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'promotions' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Tag size={18} /> Promoções
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab('config')}
-              className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'config' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
+              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'config' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Settings size={18} /> Configurações
             </button>
           </nav>
         </div>
-        
+
         <div className="mt-auto p-8 space-y-4">
           <Link to="/" className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors">
             <ArrowLeft size={14} /> Voltar para a Loja
@@ -301,20 +468,23 @@ export default function Admin({ products, config, categories, orders, promotions
       <main className="flex-grow p-12 overflow-y-auto max-h-screen relative">
         <AnimatePresence>
           {successMessage && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
+              role="status"
+              aria-live="polite"
               className="fixed top-8 right-8 z-[100] bg-green-500 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2"
             >
               <CheckCircle2 size={18} /> {successMessage}
             </motion.div>
           )}
           {errorMessage && (
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
+              role="alert"
               className="fixed top-8 right-8 z-[100] bg-red-500 text-white px-6 py-3 rounded-lg shadow-xl font-bold flex items-center gap-2"
             >
               <X size={18} /> {errorMessage}
@@ -327,7 +497,7 @@ export default function Admin({ products, config, categories, orders, promotions
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">Gerenciar Produtos</h2>
                 {products.length === 0 && (
-                  <button 
+                  <button
                     onClick={bootstrapData}
                     disabled={isBootstrapping}
                     className="text-[10px] bg-blue-500/10 text-blue-400 px-3 py-1 rounded border border-blue-500/20 hover:bg-blue-500/20 transition-colors"
@@ -336,15 +506,15 @@ export default function Admin({ products, config, categories, orders, promotions
                   </button>
                 )}
               </div>
-              <button 
-                onClick={() => setEditingProduct({ 
-                  nome: '', 
-                  desc: '', 
-                  categoria: categories[0]?.nome || '', 
-                  imagem: '', 
+              <button
+                onClick={() => setEditingProduct({
+                  nome: '',
+                  desc: '',
+                  categoria: categories[0]?.nome || '',
+                  imagem: '',
                   imagens: [],
-                  preco_base: '', 
-                  atributos: [], 
+                  preco_base: '',
+                  atributos: [],
                   combinacoes: {},
                   tipoInput: 'nenhum'
                 })}
@@ -358,12 +528,12 @@ export default function Admin({ products, config, categories, orders, promotions
               {products.map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-video bg-gray-900 relative">
-                    <img src={p.imagem} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                      <button onClick={() => setEditingProduct(p)} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
+                      <button type="button" onClick={() => setEditingProduct(p)} aria-label={`Editar ${p.nome}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
-                      <button onClick={() => handleDeleteProduct(p.id)} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
+                      <button type="button" onClick={() => handleDeleteProduct(p.id)} aria-label={`Excluir ${p.nome}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
                         <Trash2 size={18} />
                       </button>
                     </div>
@@ -382,13 +552,13 @@ export default function Admin({ products, config, categories, orders, promotions
         {activeTab === 'categories' && (
           <div className="max-w-4xl space-y-8">
             <h2 className="text-2xl font-bold">Categorias e Navegação</h2>
-            
+
             <div className="bg-[#111111] border border-gray-800 p-6 rounded-xl space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={newCategory.nome}
                     onChange={(e) => setNewCategory({ ...newCategory, nome: e.target.value })}
                     placeholder="Ex: Etiquetas p/ Objetos"
@@ -397,14 +567,14 @@ export default function Admin({ products, config, categories, orders, promotions
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     value={newCategory.icon}
                     onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
                     placeholder="https://cdn-icons-png.flaticon.com/..."
                     className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
-                  <p className="text-[10px] text-gray-500 mt-1">Cole o link da imagem (ex: PostImages ou Imgur)</p>
+                  <p className="text-[10px] text-gray-500 mt-1">Informe uma URL HTTPS estável para o ícone.</p>
                 </div>
               </div>
               <button onClick={handleAddCategory} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto">
@@ -416,10 +586,10 @@ export default function Admin({ products, config, categories, orders, promotions
               {categories.map(cat => (
                 <div key={cat.id} className="bg-[#111111] border border-gray-800 p-4 rounded-lg flex justify-between items-center group">
                   <div className="flex items-center gap-4">
-                    {cat.icon && <img src={cat.icon} className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />}
+                    {cat.icon && <img src={cat.icon} alt="" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />}
                     <span className="font-bold text-sm uppercase tracking-wider">{cat.nome}</span>
                   </div>
-                  <button onClick={() => handleDeleteCategory(cat.id)} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                  <button onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
                     <Trash2 size={18} />
                   </button>
                 </div>
@@ -431,20 +601,22 @@ export default function Admin({ products, config, categories, orders, promotions
         {activeTab === 'orders' && (
           <div className="space-y-12">
             <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
-            
+            {!ordersReady && <div role="status" className="text-sm text-gray-400 flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Carregando pedidos...</div>}
+            {ordersError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{ordersError}</div>}
+
             {/* Pedidos Pagos */}
             <div className="space-y-6">
               <div className="flex items-center gap-3 border-b border-green-500/30 pb-2">
                 <CheckCircle2 className="text-green-500" size={20} />
-                <h3 className="text-lg font-bold text-green-500">Pedidos Finalizados (Pagos)</h3>
+                <h3 className="text-lg font-bold text-green-500">Pedidos com pagamento confirmado</h3>
               </div>
-              
+
               <div className="space-y-4">
-                {orders.filter(o => o.paymentStatus === 'pago' || o.status === 'Pago').length === 0 ? (
+                {orders.filter(isPaymentConfirmed).length === 0 ? (
                   <div className="text-gray-600 text-sm italic">Nenhum pedido pago encontrado.</div>
                 ) : (
-                  orders.filter(o => o.paymentStatus === 'pago' || o.status === 'Pago').map(order => (
-                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} />
+                  orders.filter(isPaymentConfirmed).map(order => (
+                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
                   ))
                 )}
               </div>
@@ -456,13 +628,13 @@ export default function Admin({ products, config, categories, orders, promotions
                 <Clock className="text-yellow-500" size={20} />
                 <h3 className="text-lg font-bold text-yellow-500">Pedidos Pendentes (Falta Pagamento)</h3>
               </div>
-              
+
               <div className="space-y-4">
-                {orders.filter(o => o.paymentStatus !== 'pago' && o.status !== 'Pago').length === 0 ? (
+                {orders.filter(order => !isPaymentConfirmed(order)).length === 0 ? (
                   <div className="text-gray-600 text-sm italic">Nenhum pedido pendente encontrado.</div>
                 ) : (
-                  orders.filter(o => o.paymentStatus !== 'pago' && o.status !== 'Pago').map(order => (
-                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} />
+                  orders.filter(order => !isPaymentConfirmed(order)).map(order => (
+                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
                   ))
                 )}
               </div>
@@ -475,41 +647,41 @@ export default function Admin({ products, config, categories, orders, promotions
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Configurações do Site</h2>
             </div>
-            
-            <form onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+            <form key={JSON.stringify(config)} onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site (URL)</label>
-                  <input 
+                  <input
                     id="logo_url_input"
-                    name="logo_url" 
-                    defaultValue={config.logo_url} 
+                    name="logo_url"
+                    defaultValue={config.logo_url}
                     placeholder="https://exemplo.com/logo.png"
-                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                   {config.logo_url && (
                     <div className="mt-2 w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
-                      <img src={config.logo_url} className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                      <img src={config.logo_url} alt="Prévia do logo" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
                     </div>
                   )}
                   <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 1</label>
-                  <input name="telefone1" defaultValue={config.telefone1} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <input name="telefone1" type="tel" defaultValue={config.telefone1} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 2</label>
-                  <input name="telefone2" defaultValue={config.telefone2} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <input name="telefone2" type="tel" defaultValue={config.telefone2} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal (URL)</label>
-                  <input 
+                  <input
                     id="banner_principal_input"
-                    name="banner_principal" 
-                    defaultValue={config.banner_principal} 
+                    name="banner_principal"
+                    defaultValue={config.banner_principal}
                     placeholder="https://exemplo.com/banner.jpg"
-                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
                 <div className="space-y-2">
@@ -527,16 +699,16 @@ export default function Admin({ products, config, categories, orders, promotions
               </div>
 
               <div className="space-y-6">
-                {[1, 2, 3].map(num => (
-                  <div key={num} className="p-6 bg-[#111111] border border-gray-800 rounded-xl space-y-4">
-                    <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Benefício {num}</div>
-                    <input name={`beneficio${num}_titulo`} defaultValue={(config as any)[`beneficio${num}_titulo`]} placeholder="Título" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                    <input name={`beneficio${num}_desc`} defaultValue={(config as any)[`beneficio${num}_desc`]} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                {BENEFIT_FIELDS.map(benefit => (
+                  <div key={benefit.number} className="p-6 bg-[#111111] border border-gray-800 rounded-xl space-y-4">
+                    <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Benefício {benefit.number}</div>
+                    <input name={benefit.title} defaultValue={config[benefit.title]} placeholder="Título" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                    <input name={benefit.description} defaultValue={config[benefit.description]} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
                   </div>
                 ))}
 
                 <div className="p-6 bg-[#111111] border border-pink-500/20 rounded-xl space-y-4">
-                  <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Configuração PIX (Manual - Sem taxa)</div>
+                  <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">PIX manual (legado — não usado no Checkout PagBank)</div>
                   <div className="space-y-2">
                     <label className="text-xs text-gray-500 font-medium">Chave PIX</label>
                     <input name="pix_chave" defaultValue={config.pix_chave} placeholder="CPF, E-mail, Celular ou Chave Aleatória" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
@@ -549,8 +721,8 @@ export default function Admin({ products, config, categories, orders, promotions
               </div>
 
               <div className="md:col-span-2 pt-8">
-                <button type="submit" className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20">
-                  Salvar Todas as Configurações
+                <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20 disabled:opacity-50 flex items-center justify-center gap-2">
+                  {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Todas as Configurações'}
                 </button>
               </div>
             </form>
@@ -561,7 +733,7 @@ export default function Admin({ products, config, categories, orders, promotions
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Gerenciar Promoções</h2>
-              <button 
+              <button
                 onClick={() => setEditingPromotion({ titulo: '', imagem: '', link: '', ativa: true })}
                 className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
               >
@@ -573,12 +745,12 @@ export default function Admin({ products, config, categories, orders, promotions
               {promotions.map(promo => (
                 <div key={promo.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-[21/9] relative">
-                    <img src={promo.imagem} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                      <button onClick={() => setEditingPromotion(promo)} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
+                      <button type="button" onClick={() => setEditingPromotion(promo)} aria-label={`Editar ${promo.titulo}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
-                      <button onClick={() => handleDeletePromotion(promo.id)} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
+                      <button type="button" onClick={() => handleDeletePromotion(promo.id)} aria-label={`Excluir ${promo.titulo}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
                         <Trash2 size={18} />
                       </button>
                     </div>
@@ -607,15 +779,18 @@ export default function Admin({ products, config, categories, orders, promotions
       <AnimatePresence>
         {editingProduct && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setEditingProduct(null)} />
-            <motion.div 
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={closeProductEditor} />
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="product-editor-title"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               className="relative bg-[#111111] border border-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-8"
             >
               <div className="flex justify-between items-center mb-8">
-                <h3 className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
-                <button onClick={() => setEditingProduct(null)}><X size={24} /></button>
+                <h3 id="product-editor-title" className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
+                <button type="button" onClick={closeProductEditor} aria-label="Fechar editor de produto"><X size={24} /></button>
               </div>
 
               <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -623,7 +798,7 @@ export default function Admin({ products, config, categories, orders, promotions
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <label className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
-                      <button 
+                      <button
                         type="button"
                         onClick={() => handleAiAction('improveTitle')}
                         className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
@@ -631,32 +806,33 @@ export default function Admin({ products, config, categories, orders, promotions
                         <Sparkles size={10} /> Melhorar com IA
                       </button>
                     </div>
-                    <input 
+                    <input
                       required
                       value={editingProduct.nome}
+                      maxLength={199}
                       onChange={e => setEditingProduct({...editingProduct, nome: e.target.value})}
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                     />
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
                       <div className="flex gap-3">
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setShowCustomAiPrompt(true)}
                           className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
                         >
                           <Sparkles size={10} /> Comando IA
                         </button>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => handleAiAction('generate')}
                           className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
                         >
                           <Sparkles size={10} /> Gerar da IA
                         </button>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => handleAiAction('improveDescription')}
                           className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
@@ -665,18 +841,19 @@ export default function Admin({ products, config, categories, orders, promotions
                         </button>
                       </div>
                     </div>
-                    <textarea 
+                    <textarea
                       required
                       value={editingProduct.desc}
+                      maxLength={999}
                       onChange={e => setEditingProduct({...editingProduct, desc: e.target.value})}
                       rows={4}
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79] resize-none" 
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79] resize-none"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-500 uppercase">Categoria</label>
-                      <select 
+                      <select
                         value={editingProduct.categoria}
                         onChange={e => setEditingProduct({...editingProduct, categoria: e.target.value})}
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
@@ -687,30 +864,31 @@ export default function Admin({ products, config, categories, orders, promotions
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-500 uppercase">Preço Base (Texto)</label>
-                      <input 
+                      <input
                         value={editingProduct.preco_base}
+                        inputMode="decimal"
                         onChange={e => setEditingProduct({...editingProduct, preco_base: e.target.value})}
                         placeholder="Ex: A partir de R$ 50"
-                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                       />
                     </div>
                   </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-500 uppercase">Imagem Principal (URL)</label>
-                      <input 
+                      <input
                         required
                         value={editingProduct.imagem}
                         onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
                         placeholder="https://exemplo.com/capa.jpg"
-                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                       />
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <label className="text-xs font-bold text-gray-500 uppercase">Galeria de Fotos (Opcional)</label>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setShowBulkImageForm(true)}
                           className="text-[#ff4d79] text-[10px] font-bold hover:underline"
@@ -718,19 +896,20 @@ export default function Admin({ products, config, categories, orders, promotions
                           + Adicionar Várias
                         </button>
                       </div>
-                      
+
                       <div className="grid grid-cols-4 gap-2">
                         {editingProduct.imagens?.map((img, idx) => (
                           <div key={idx} className="relative aspect-square bg-black border border-gray-800 rounded overflow-hidden group">
-                            <img 
-                              src={img} 
-                              className="w-full h-full object-cover" 
-                              referrerPolicy="no-referrer" 
+                            <img
+                              src={img}
+                              alt=""
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).classList.add('opacity-20');
                               }}
                             />
-                            <button 
+                            <button
                               type="button"
                               onClick={() => {
                                 const newImgs = [...(editingProduct.imagens || [])];
@@ -743,17 +922,10 @@ export default function Admin({ products, config, categories, orders, promotions
                             </button>
                           </div>
                         ))}
-                        <button 
+                        <button
                           type="button"
-                          onClick={() => {
-                            const url = prompt("Cole a URL da imagem:");
-                            if (url) {
-                              setEditingProduct({
-                                ...editingProduct,
-                                imagens: [...(editingProduct.imagens || []), url]
-                              });
-                            }
-                          }}
+                          onClick={() => setShowBulkImageForm(true)}
+                          aria-label="Adicionar imagem à galeria"
                           className="aspect-square border border-dashed border-gray-700 rounded flex items-center justify-center text-gray-500 hover:border-[#ff4d79] hover:text-[#ff4d79] transition-colors"
                         >
                           <Plus size={20} />
@@ -765,9 +937,9 @@ export default function Admin({ products, config, categories, orders, promotions
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-xs font-bold text-gray-500 uppercase">Tipo de Personalização</label>
-                      <select 
+                      <select
                         value={editingProduct.tipoInput || 'nenhum'}
-                        onChange={e => setEditingProduct({...editingProduct, tipoInput: e.target.value as any})}
+                        onChange={e => setEditingProduct({...editingProduct, tipoInput: e.target.value as Anuncio['tipoInput']})}
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                       >
                         <option value="nenhum">Nenhuma</option>
@@ -778,11 +950,11 @@ export default function Admin({ products, config, categories, orders, promotions
                     {editingProduct.tipoInput === 'texto' && (
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-gray-500 uppercase">Rótulo do Texto</label>
-                        <input 
+                        <input
                           value={editingProduct.labelTexto || ''}
                           onChange={e => setEditingProduct({...editingProduct, labelTexto: e.target.value})}
                           placeholder="Ex: Nome da Criança"
-                          className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                          className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                         />
                       </div>
                     )}
@@ -792,7 +964,7 @@ export default function Admin({ products, config, categories, orders, promotions
                 <div className="space-y-6">
                   <div className="flex justify-between items-center">
                     <label className="text-xs font-bold text-gray-500 uppercase">Atributos e Preços</label>
-                    <button 
+                    <button
                       type="button"
                       onClick={() => setShowAttrForm(true)}
                       className="text-[#ff4d79] text-xs font-bold hover:underline"
@@ -806,7 +978,7 @@ export default function Admin({ products, config, categories, orders, promotions
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <label className="text-[10px] text-gray-400 uppercase">Nome (ex: Tamanho)</label>
-                          <input 
+                          <input
                             value={newAttr.nome}
                             onChange={e => setNewAttr({...newAttr, nome: e.target.value})}
                             className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm"
@@ -814,7 +986,7 @@ export default function Admin({ products, config, categories, orders, promotions
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] text-gray-400 uppercase">Opções (separadas por vírgula)</label>
-                          <input 
+                          <input
                             value={newAttr.opcoes}
                             onChange={e => setNewAttr({...newAttr, opcoes: e.target.value})}
                             placeholder="P, M, G"
@@ -823,14 +995,23 @@ export default function Admin({ products, config, categories, orders, promotions
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <button 
+                        <button
                           type="button"
                           onClick={() => {
                             if (newAttr.nome && newAttr.opcoes) {
-                              const options = newAttr.opcoes.split(',').map(s => s.trim()).filter(s => s);
+                              const attrName = newAttr.nome.trim();
+                              const options = Array.from(new Set(newAttr.opcoes.split(',').map(s => s.trim()).filter(Boolean)));
+                              if (!attrName || options.length === 0) {
+                                setErrorMessage('Informe o nome e ao menos uma opção para o atributo.');
+                                return;
+                              }
+                              if ((editingProduct.atributos || []).some(attribute => attribute.nome.toLocaleLowerCase('pt-BR') === attrName.toLocaleLowerCase('pt-BR'))) {
+                                setErrorMessage('Já existe um atributo com esse nome.');
+                                return;
+                              }
                               setEditingProduct({
                                 ...editingProduct,
-                                atributos: [...(editingProduct.atributos || []), { nome: newAttr.nome, opcoes: options }]
+                                atributos: [...(editingProduct.atributos || []), { nome: attrName, opcoes: options }]
                               });
                               setNewAttr({ nome: '', opcoes: '' });
                               setShowAttrForm(false);
@@ -840,7 +1021,7 @@ export default function Admin({ products, config, categories, orders, promotions
                         >
                           Confirmar
                         </button>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setShowAttrForm(false)}
                           className="bg-gray-800 px-4 py-2 rounded text-xs font-bold"
@@ -858,7 +1039,7 @@ export default function Admin({ products, config, categories, orders, promotions
                           <div className="text-xs font-bold">{attr.nome}</div>
                           <div className="text-[10px] text-gray-500">{attr.opcoes.join(', ')}</div>
                         </div>
-                        <button 
+                        <button
                           type="button"
                           onClick={() => setEditingProduct({
                             ...editingProduct,
@@ -881,8 +1062,9 @@ export default function Admin({ products, config, categories, orders, promotions
                             <span className="text-[10px] flex-grow">{combo.replace(/\|/g, ' + ')}</span>
                             <div className="flex items-center gap-1">
                               <span className="text-[10px] text-gray-500">R$</span>
-                              <input 
+                              <input
                                 type="text"
+                                inputMode="decimal"
                                 value={editingProduct.combinacoes?.[combo] || ''}
                                 onChange={e => setEditingProduct({
                                   ...editingProduct,
@@ -899,9 +1081,9 @@ export default function Admin({ products, config, categories, orders, promotions
                 </div>
 
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
-                  <button type="button" onClick={() => setEditingProduct(null)} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white">Cancelar</button>
-                  <button type="submit" className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2">
-                    <Save size={18} /> Salvar Produto
+                  <button type="button" onClick={closeProductEditor} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white">Cancelar</button>
+                  <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
+                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} {isSaving ? 'Salvando...' : 'Salvar Produto'}
                   </button>
                 </div>
               </form>
@@ -909,7 +1091,7 @@ export default function Admin({ products, config, categories, orders, promotions
               {/* AI Custom Prompt Overlay */}
               <AnimatePresence>
                 {showBulkImageForm && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -920,7 +1102,7 @@ export default function Admin({ products, config, categories, orders, promotions
                         <Upload size={20} />
                         <h4 className="font-bold uppercase tracking-widest text-sm">Adicionar Várias Fotos</h4>
                       </div>
-                      <button onClick={() => setShowBulkImageForm(false)} className="text-gray-500 hover:text-white">
+                      <button type="button" onClick={() => setShowBulkImageForm(false)} aria-label="Fechar galeria" className="text-gray-500 hover:text-white">
                         <X size={20} />
                       </button>
                     </div>
@@ -930,9 +1112,10 @@ export default function Admin({ products, config, categories, orders, promotions
                         Cole aqui uma lista de URLs (uma por linha). <br/>
                         <span className="text-[#ff4d79] font-bold">IMPORTANTE:</span> Use apenas o <span className="underline">Link Direto</span> (que termina em .jpg ou .png).
                       </p>
-                      <textarea 
+                      <textarea
                         value={bulkImages}
                         onChange={e => setBulkImages(e.target.value)}
+                        maxLength={20000}
                         placeholder="https://i.postimg.cc/xxxx/foto.jpg"
                         className="flex-grow bg-black border border-gray-800 rounded-xl p-4 text-sm outline-none focus:border-[#ff4d79] resize-none"
                       />
@@ -942,9 +1125,14 @@ export default function Admin({ products, config, categories, orders, promotions
                         </p>
                       )}
                       <div className="flex gap-4 pt-4">
-                        <button 
+                        <button
+                          type="button"
                           onClick={() => {
-                            const urls = bulkImages.split('\n').map(u => u.trim()).filter(u => u);
+                            const urls = [...new Set<string>(bulkImages.split('\n').map(u => u.trim()).filter(Boolean))];
+                            if (urls.length === 0 || urls.some(url => !isHttpUrl(url))) {
+                              setErrorMessage('Informe ao menos uma URL HTTP ou HTTPS válida.');
+                              return;
+                            }
                             setEditingProduct({
                               ...editingProduct,
                               imagens: [...(editingProduct.imagens || []), ...urls]
@@ -956,7 +1144,8 @@ export default function Admin({ products, config, categories, orders, promotions
                         >
                           Adicionar à Galeria
                         </button>
-                        <button 
+                        <button
+                          type="button"
                           onClick={() => setShowBulkImageForm(false)}
                           className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
                         >
@@ -971,7 +1160,7 @@ export default function Admin({ products, config, categories, orders, promotions
               {/* AI Custom Prompt Overlay */}
               <AnimatePresence>
                 {showCustomAiPrompt && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -982,21 +1171,23 @@ export default function Admin({ products, config, categories, orders, promotions
                         <Sparkles size={20} />
                         <h4 className="font-bold uppercase tracking-widest text-sm">Comando Personalizado</h4>
                       </div>
-                      <button onClick={() => setShowCustomAiPrompt(false)} className="text-gray-500 hover:text-white">
+                      <button type="button" onClick={() => setShowCustomAiPrompt(false)} aria-label="Fechar comando de IA" className="text-gray-500 hover:text-white">
                         <X size={20} />
                       </button>
                     </div>
 
                     <div className="flex-grow flex flex-col gap-4">
                       <p className="text-xs text-gray-400">Diga à IA exatamente o que você quer na descrição (ex: dimensões, materiais, tom de voz):</p>
-                      <textarea 
+                      <textarea
                         value={customAiPrompt}
                         onChange={e => setCustomAiPrompt(e.target.value)}
+                        maxLength={1000}
                         placeholder="Ex: Faça para panfletos de 10x15 falando sobre a qualidade do papel e entrega rápida..."
                         className="flex-grow bg-black border border-gray-800 rounded-xl p-4 text-sm outline-none focus:border-[#ff4d79] resize-none"
                       />
                       <div className="flex gap-4 pt-4">
-                        <button 
+                        <button
+                          type="button"
                           onClick={() => {
                             if (customAiPrompt.trim()) {
                               handleAiAction('custom', customAiPrompt);
@@ -1008,7 +1199,8 @@ export default function Admin({ products, config, categories, orders, promotions
                         >
                           Gerar Descrição
                         </button>
-                        <button 
+                        <button
+                          type="button"
                           onClick={() => setShowCustomAiPrompt(false)}
                           className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
                         >
@@ -1023,7 +1215,7 @@ export default function Admin({ products, config, categories, orders, promotions
               {/* AI Preview Overlay */}
               <AnimatePresence>
                 {aiPreview && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
@@ -1035,7 +1227,7 @@ export default function Admin({ products, config, categories, orders, promotions
                         <h4 className="font-bold uppercase tracking-widest text-sm">Sugestão da IA</h4>
                       </div>
                       {!aiPreview.loading && (
-                        <button onClick={() => setAiPreview(null)} className="text-gray-500 hover:text-white">
+                        <button type="button" onClick={() => setAiPreview(null)} aria-label="Fechar sugestão" className="text-gray-500 hover:text-white">
                           <X size={20} />
                         </button>
                       )}
@@ -1061,7 +1253,8 @@ export default function Admin({ products, config, categories, orders, promotions
                           </div>
                         </div>
                         <div className="flex gap-4 pt-4">
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => {
                               if (editingProduct) {
                                 setEditingProduct({
@@ -1075,7 +1268,8 @@ export default function Admin({ products, config, categories, orders, promotions
                           >
                             Aprovar e Usar
                           </button>
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => setAiPreview(null)}
                             className="flex-grow bg-gray-800 py-3 rounded-xl font-bold hover:bg-gray-700 transition-colors"
                           >
@@ -1097,47 +1291,51 @@ export default function Admin({ products, config, categories, orders, promotions
         {editingPromotion && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setEditingPromotion(null)} />
-            <motion.div 
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="promotion-editor-title"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               className="relative bg-[#111111] border border-gray-800 w-full max-w-lg rounded-2xl shadow-2xl p-8"
             >
               <div className="flex justify-between items-center mb-8">
-                <h3 className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
-                <button onClick={() => setEditingPromotion(null)}><X size={24} /></button>
+                <h3 id="promotion-editor-title" className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
+                <button type="button" onClick={() => setEditingPromotion(null)} aria-label="Fechar editor de promoção"><X size={24} /></button>
               </div>
 
               <form onSubmit={handleSavePromotion} className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-500 uppercase">Título da Promoção</label>
-                  <input 
-                    required
-                    value={editingPromotion.titulo}
+                  <input
+                      required
+                      value={editingPromotion.titulo}
+                      maxLength={199}
                     onChange={e => setEditingPromotion({...editingPromotion, titulo: e.target.value})}
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-500 uppercase">Banner URL</label>
-                  <input 
+                  <input
                     required
                     value={editingPromotion.imagem}
                     onChange={e => setEditingPromotion({...editingPromotion, imagem: e.target.value})}
                     placeholder="https://exemplo.com/promo.jpg"
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-500 uppercase">Link de Destino (Opcional)</label>
-                  <input 
+                  <input
                     value={editingPromotion.link || ''}
                     onChange={e => setEditingPromotion({...editingPromotion, link: e.target.value})}
                     placeholder="https://..."
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" 
+                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
                 <div className="flex items-center gap-3">
-                  <input 
+                  <input
                     type="checkbox"
                     id="promo-ativa"
                     checked={editingPromotion.ativa}
@@ -1148,8 +1346,8 @@ export default function Admin({ products, config, categories, orders, promotions
                 </div>
 
                 <div className="pt-4 flex gap-4">
-                  <button type="submit" className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors">
-                    Salvar Promoção
+                  <button type="submit" disabled={isSaving} className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                    {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Promoção'}
                   </button>
                   <button type="button" onClick={() => setEditingPromotion(null)} className="px-6 py-3 border border-gray-800 rounded-lg font-bold hover:bg-gray-800 transition-colors">
                     Cancelar
@@ -1165,37 +1363,83 @@ export default function Admin({ products, config, categories, orders, promotions
   );
 }
 
-function generateCombinations(attributes: any[]): string[] {
+function generateCombinations(attributes: ProductAttribute[]): string[] {
   if (attributes.length === 0) return [];
-  
+
   let results: string[] = [ "" ];
-  
+
   for (const attr of attributes) {
     const newResults: string[] = [];
     for (const res of results) {
       for (const option of attr.opcoes) {
         newResults.push(res ? `${res}|${option}` : option);
+        if (newResults.length > 500) return newResults;
       }
     }
     results = newResults;
   }
-  
+
   return results;
 }
 
-function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusChange: (id: string, s: string) => void; key?: string }) {
+function isPaymentConfirmed(order: Order): boolean {
+  return order.paymentStatus ? order.paymentStatus === 'pago' : order.status === 'Pago';
+}
+
+function adminPaymentLabel(order: Order): string {
+  const labels: Partial<Record<NonNullable<Order['paymentStatus']>, string>> = {
+    pago: 'Pago',
+    pendente: 'Aguardando pagamento',
+    em_analise: 'Em análise',
+    recusado: 'Recusado',
+    cancelado: 'Cancelado',
+    expirado: 'Expirado',
+    erro: 'Erro no checkout',
+  };
+  return order.paymentStatus ? labels[order.paymentStatus] || order.paymentStatus : order.status;
+}
+
+function formatAdminDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+}
+
+function OrderCard({
+  order,
+  handleStatusChange,
+  handleOpenArtwork,
+}: {
+  order: Order;
+  handleStatusChange: (id: string, status: FulfillmentStatus) => void;
+  handleOpenArtwork: (orderId: string, itemId: string) => void;
+  key?: string;
+}) {
+  const paymentConfirmed = isPaymentConfirmed(order);
+  const fulfillment = order.fulfillmentStatus || legacyFulfillmentStatus(order.status, order.paymentStatus);
+  const transitionOptions = Array.from(new Set([
+    fulfillment,
+    ...allowedFulfillmentTransitions(
+      fulfillment,
+      paymentConfirmed ? 'pago' : order.paymentStatus,
+      order.metodoEntrega,
+    ),
+  ]));
   return (
     <div className="bg-[#111111] border border-gray-800 rounded-xl p-6 space-y-6">
       <div className="flex justify-between items-start border-b border-gray-800 pb-4">
         <div>
           <div className="text-xs text-[#ff4d79] font-bold uppercase tracking-widest mb-1">Pedido #{order.id}</div>
-          <div className="text-sm text-gray-400">{order.data}</div>
-          <div className="text-xs text-gray-500 mt-1">ID Usuário: {order.userId}</div>
+          <div className="text-sm text-gray-400">{formatAdminDate(order.data)}</div>
+          <div className="text-xs text-gray-300 mt-2 font-semibold">{order.clienteNome || 'Cliente não informado'}</div>
+          {order.clienteEmail && <div className="text-xs text-gray-500 mt-1">{order.clienteEmail}</div>}
+          {order.clienteTelefone && <div className="text-xs text-gray-500 mt-1">Telefone: {order.clienteTelefone}</div>}
+          <div className="text-[10px] text-gray-600 mt-1">ID Usuário: {order.userId}</div>
           <div className="mt-2 flex items-center gap-2">
             <span className={cn(
                "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded flex items-center gap-1.5",
-               order.metodoEntrega === 'retirada' 
-                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" 
+               order.metodoEntrega === 'retirada'
+                ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                 : "bg-purple-500/20 text-purple-400 border border-purple-500/30"
             )}>
               {order.metodoEntrega === 'retirada' ? (
@@ -1209,7 +1453,7 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
                order.metodoPagamento === 'pagbank'
                 ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                 : order.metodoPagamento === 'pix'
-                ? "bg-green-500/20 text-green-400 border border-green-500/30" 
+                ? "bg-green-500/20 text-green-400 border border-green-500/30"
                 : "bg-orange-500/20 text-orange-400 border border-orange-500/30"
             )}>
               {order.metodoPagamento === 'pagbank' ? (
@@ -1217,43 +1461,54 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
               ) : order.metodoPagamento === 'pix' ? (
                 <><QrCode size={10} className="stroke-[3px]" /> PIX</>
               ) : (
-                <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / PB</>
+                <><CreditCard size={10} className="stroke-[3px]" /> CARTÃO / BOLETO</>
               )}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <div className="flex flex-col items-end">
             <span className={cn(
               "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded mb-2",
-              (order.paymentStatus === 'pago' || order.status === 'Pago') 
-                ? "bg-green-500/20 text-green-500 border border-green-500/30" 
+              paymentConfirmed
+                ? "bg-green-500/20 text-green-500 border border-green-500/30"
                 : "bg-yellow-500/20 text-yellow-500 border border-yellow-500/30"
             )}>
-              {(order.paymentStatus === 'pago' || order.status === 'Pago') ? 'PAGO' : 'AGUARDANDO PAGAMENTO'}
+              {adminPaymentLabel(order)}
             </span>
-            <select 
-              value={order.status}
-              onChange={(e) => handleStatusChange(order.id, e.target.value)}
+            <select
+              value={fulfillment}
+              onChange={(e) => handleStatusChange(order.id, e.target.value as FulfillmentStatus)}
+              disabled={transitionOptions.length <= 1}
               className="bg-black border border-gray-700 rounded px-3 py-1 text-xs outline-none focus:border-[#ff4d79]"
             >
-              <option value="Pendente">Pendente</option>
-              <option value="Pago">Pago</option>
-              <option value="Processando">Processando</option>
-              <option value="Enviado">Enviado</option>
-              <option value="Entregue">Entregue</option>
+              {transitionOptions.map(status => (
+                <option key={status} value={status}>{fulfillmentStatusLabel(status)}</option>
+              ))}
             </select>
           </div>
-          <div className="text-xl font-bold">R$ {order.total}</div>
+          <div className="text-xl font-bold">{formatMoney(order.total)}</div>
         </div>
       </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+      {order.metodoEntrega === 'entrega' && order.enderecoEntrega && (
+        <div className="rounded-lg border border-gray-800 bg-black/30 p-4 text-xs text-gray-400">
+          <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-600">Endereço de entrega</div>
+          <div className="text-gray-300">
+            {order.enderecoEntrega.rua}, {order.enderecoEntrega.numero}
+            {order.enderecoEntrega.complemento ? ` - ${order.enderecoEntrega.complemento}` : ''}
+          </div>
+          <div>{order.enderecoEntrega.bairro} — {order.enderecoEntrega.cidade}/{order.enderecoEntrega.estado}</div>
+          <div>CEP {order.enderecoEntrega.cep}</div>
+        </div>
+      )}
+
+      <div>
         <div className="space-y-3">
           <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Itens do Pedido</div>
-          {order.itens.map((item, idx) => (
-            <div key={idx} className="flex gap-3 items-center bg-black/40 p-3 rounded-lg border border-gray-800/50">
-              <img src={item.imagem} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
+          {order.itens.map((item) => (
+            <div key={item.id} className="flex gap-3 items-center bg-black/40 p-3 rounded-lg border border-gray-800/50">
+              <img src={item.imagem || '/logo.png'} alt={item.nome} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
               <div className="flex-grow">
                 <div className="text-xs font-bold">{item.nome}</div>
                 <div className="text-[10px] text-gray-500">
@@ -1264,18 +1519,27 @@ function OrderCard({ order, handleStatusChange }: { order: Order; handleStatusCh
                     Personalização: {item.textoPersonalizado}
                   </div>
                 )}
-                {item.arquivoUrl && (
-                  <a 
-                    href={item.arquivoUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
+                {item.arquivoPath && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenArtwork(order.id, item.id)}
                     className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:underline mt-1"
                   >
-                    <Upload size={10} /> Baixar Arte
-                  </a>
+                    <Upload size={10} /> Abrir arte
+                  </button>
+                )}
+                {item.artePendente && (
+                  <div className="text-[10px] text-amber-400 mt-1 font-bold">
+                    Arte pendente: cliente enviará pelo WhatsApp
+                  </div>
+                )}
+                {item.arquivoUrl && !item.arquivoPath && (
+                  <div className="text-[10px] text-amber-400 mt-1 font-bold">
+                    Arte legada por link externo: confirme o arquivo diretamente com o cliente
+                  </div>
                 )}
               </div>
-              <div className="text-xs font-bold">R$ {(parseFloat(item.preco) * item.quantidade).toFixed(2)}</div>
+              <div className="text-xs font-bold">{formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}</div>
             </div>
           ))}
         </div>

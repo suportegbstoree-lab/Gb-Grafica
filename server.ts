@@ -10,8 +10,17 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function commandLineValue(flag: string): string | undefined {
+  const index = process.argv.indexOf(flag);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
 async function startServer() {
-  const PORT = 3000;
+  const requestedPort = Number(process.env.PORT || commandLineValue('--port') || 3000);
+  const port = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
+    ? requestedPort
+    : 3000;
+  const host = commandLineValue('--host') || '0.0.0.0';
   
   const isDev = process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging";
 
@@ -31,8 +40,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server listening on 0.0.0.0:${PORT}`);
+  app.listen(port, host, () => {
+    console.log(`Server listening on ${host}:${port}`);
   });
 }
 

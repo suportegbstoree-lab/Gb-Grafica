@@ -69,8 +69,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "ggarciapalermo@gmail.com" && request.auth.token.email_verified == true));
+        (request.auth.token.admin == true ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     function isValidEmail(email) {
@@ -104,6 +105,14 @@ service cloud.firestore {
              data.nome is string && data.nome.size() > 0 && data.nome.size() < 100;
     }
 
+    function isValidPromotion(data) {
+      return hasRequiredFields(['titulo', 'imagem', 'ativa']) &&
+             data.titulo is string && data.titulo.size() > 0 && data.titulo.size() < 200 &&
+             data.imagem is string && data.imagem.size() > 0 && data.imagem.size() < 2048 &&
+             data.ativa is bool &&
+             (!('link' in data) || (data.link is string && data.link.size() < 2048));
+    }
+
     function isValidOrder(data) {
       return hasRequiredFields(['userId', 'data', 'total', 'status', 'itens']) &&
              data.userId is string &&
@@ -135,6 +144,12 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /promocoes/{promocaoId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidPromotion(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     match /config/main {
       allow read: if true;
       allow write: if isAdmin();
@@ -144,14 +159,26 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
       // Orders are created and updated by the server after PagBank validation.
       allow create: if false;
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      // Pagamento, produção e histórico são alterados somente pela API autenticada.
+      allow update, delete: if false;
+
+      match /{subcollection}/{documentId} {
+        allow read, write: if false;
+      }
     }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
-      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin()) && (request.resource.data.role == 'user' || isAdmin());
-      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin()) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
+        (isOwner(userId) || isAdmin()) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.email == request.auth.token.email &&
+        (request.resource.data.role == 'user' || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
+        (isOwner(userId) || isAdmin()) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.email == resource.data.email &&
+        (request.resource.data.role == resource.data.role || isAdmin());
       allow delete: if isAdmin();
     }
 
