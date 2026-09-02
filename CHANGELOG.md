@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-02 — Correção da função serverless na Vercel
+
+- Fixada a versão do Node.js em `22.x` para evitar atualizações automáticas de major no runtime.
+- Aplicado `jose@4.15.9` somente à dependência transitiva `jwks-rsa`, corrigindo a incompatibilidade CommonJS/ESM que derrubava a função antes de atender `/api/health`.
+- Mantidas intactas a interface e a folha de estilos restaurada.
+
 ## 2026-09-02 — Correção do login Google
 
 - Liberado `https://apis.google.com` no `script-src` da Content Security Policy do Express e do Vercel.
