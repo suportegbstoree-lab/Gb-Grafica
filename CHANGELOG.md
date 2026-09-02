@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-02 — Correção do login Google
+
+- Liberado `https://apis.google.com` no `script-src` da Content Security Policy do Express e do Vercel.
+- Corrigido o bloqueio do carregador GAPI usado por `signInWithPopup`, que aparecia para o usuário como `Firebase: Error (auth/internal-error)`.
+- Adicionadas mensagens claras para domínio não autorizado, falha de rede e falha interna no login.
+- Mantidas as demais restrições da política de segurança.
+
 ## 2026-09-01 — Restauração visual e entrega do CSS
 
 - Restaurada integralmente a folha global `src/index.css` da versão anterior.

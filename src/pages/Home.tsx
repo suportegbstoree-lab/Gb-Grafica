@@ -404,6 +404,10 @@ export default function Home({ products, config, categories, promotions, cart, s
         setNotice({ type: 'error', message: 'O navegador bloqueou o login. Permita pop-ups para este site e tente novamente.' });
       } else if (code === 'auth/cancelled-popup-request' || code === 'auth/popup-closed-by-user') {
         // User closed the popup, no need to alert
+      } else if (code === 'auth/unauthorized-domain') {
+        setNotice({ type: 'error', message: 'Este domínio ainda não está autorizado no Firebase Authentication.' });
+      } else if (code === 'auth/internal-error' || code === 'auth/network-request-failed') {
+        setNotice({ type: 'error', message: 'Não foi possível carregar o login do Google. Atualize a página e tente novamente.' });
       } else {
         setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível entrar.' });
       }
