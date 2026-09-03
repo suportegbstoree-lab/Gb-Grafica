@@ -11,6 +11,8 @@ import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '..
 import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
 import { requestArtworkUrl } from '../services/artworkService';
 import { updateOrderFulfillment } from '../services/orderService';
+import { missingLegalBusinessFields } from '../lib/legal';
+import { DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata } from '../lib/seo';
 
 interface AdminProps {
   products: Anuncio[];
@@ -28,6 +30,19 @@ const BENEFIT_FIELDS = [
   { number: 3, title: 'beneficio3_titulo', description: 'beneficio3_desc' },
 ] as const;
 
+const LEGAL_FIELD_LABELS: Record<string, string> = {
+  razao_social: 'razão social',
+  documento_fiscal: 'CNPJ ou CPF',
+  endereco_comercial: 'endereço comercial',
+  email_atendimento: 'e-mail de atendimento',
+  email_privacidade: 'e-mail de privacidade',
+  prazo_producao: 'prazo de produção',
+};
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 export default function Admin({ products, config, categories, orders, ordersReady, ordersError, promotions }: AdminProps) {
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders' | 'promotions'>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
@@ -37,6 +52,15 @@ export default function Admin({ products, config, categories, orders, ordersRead
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const missingCommercialFields = missingLegalBusinessFields(config);
+
+  usePageMetadata({
+    title: 'Painel administrativo | GB Gráfica',
+    description: 'Área administrativa restrita da GB Gráfica.',
+    path: '/admin',
+    noIndex: true,
+    image: config.logo_url,
+  });
 
   React.useEffect(() => {
     if (successMessage || errorMessage) {
@@ -74,21 +98,62 @@ export default function Admin({ products, config, categories, orders, ordersRead
   React.useEffect(() => {
     if (!editingProduct && !editingPromotion) return undefined;
     const previousOverflow = document.body.style.overflow;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
 
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (aiPreview) setAiPreview(null);
-      else if (showCustomAiPrompt) setShowCustomAiPrompt(false);
-      else if (showBulkImageForm) setShowBulkImageForm(false);
-      else if (editingProduct) closeProductEditor();
-      else setEditingPromotion(null);
+    const activeDialog = () => Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))
+      .filter(element => element.getClientRects().length > 0)
+      .at(-1);
+    const focusableElements = (dialog: HTMLElement) => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter(element => !element.hasAttribute('hidden') && element.getAttribute('aria-hidden') !== 'true');
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      const dialog = activeDialog();
+      if (dialog) focusableElements(dialog)[0]?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (aiPreview) setAiPreview(null);
+        else if (showCustomAiPrompt) setShowCustomAiPrompt(false);
+        else if (showBulkImageForm) setShowBulkImageForm(false);
+        else if (editingProduct) closeProductEditor();
+        else setEditingPromotion(null);
+        return;
+      }
+
+      if (event.key !== 'Tab') return;
+      const dialog = activeDialog();
+      if (!dialog) return;
+      const focusable = focusableElements(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
 
-    document.addEventListener('keydown', handleEscape);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleEscape);
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = previousOverflow;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
   }, [editingProduct, editingPromotion, aiPreview, showCustomAiPrompt, showBulkImageForm]);
 
@@ -169,6 +234,12 @@ export default function Admin({ products, config, categories, orders, ordersRead
       beneficio3_desc: formData.get('beneficio3_desc') as string,
       pix_chave: String(formData.get('pix_chave') || '').trim(),
       pix_beneficiario: String(formData.get('pix_beneficiario') || '').trim(),
+      razao_social: String(formData.get('razao_social') || '').trim(),
+      documento_fiscal: String(formData.get('documento_fiscal') || '').trim(),
+      endereco_comercial: String(formData.get('endereco_comercial') || '').trim(),
+      email_atendimento: String(formData.get('email_atendimento') || '').trim().toLowerCase(),
+      email_privacidade: String(formData.get('email_privacidade') || '').trim().toLowerCase(),
+      prazo_producao: String(formData.get('prazo_producao') || '').trim(),
     };
 
     if (!updatedConfig.telefone1.trim() || !updatedConfig.telefone2.trim()) {
@@ -181,6 +252,14 @@ export default function Admin({ products, config, categories, orders, ordersRead
     }
     if (!isHttpUrl(updatedConfig.banner_principal) && !updatedConfig.banner_principal.startsWith('/')) {
       setErrorMessage('A URL do banner principal é inválida.');
+      return;
+    }
+    if (updatedConfig.email_atendimento && !isValidEmail(updatedConfig.email_atendimento)) {
+      setErrorMessage('O e-mail de atendimento é inválido.');
+      return;
+    }
+    if (updatedConfig.email_privacidade && !isValidEmail(updatedConfig.email_privacidade)) {
+      setErrorMessage('O e-mail de privacidade é inválido.');
       return;
     }
 
@@ -412,15 +491,21 @@ export default function Admin({ products, config, categories, orders, ordersRead
   };
 
   return (
-    <div className="min-h-screen bg-[#060606] text-white flex">
+    <div className="min-h-screen bg-[#060606] text-white flex flex-col lg:flex-row">
+      <a
+        href="#admin-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[120] focus:rounded-lg focus:bg-white focus:px-4 focus:py-3 focus:text-xs focus:font-bold focus:text-black"
+      >
+        Ir para o conteúdo
+      </a>
       {/* Sidebar Admin */}
-      <aside className="w-64 bg-[#111111] border-r border-gray-800 flex flex-col">
-        <div className="p-8">
-          <div className="text-xl font-black tracking-tighter text-white mb-8">
+      <aside className="w-full lg:w-64 bg-[#111111] border-b lg:border-b-0 lg:border-r border-gray-800 flex flex-col shrink-0">
+        <div className="p-4 sm:p-6 lg:p-8">
+          <div className="text-xl font-black tracking-tighter text-white mb-4 lg:mb-8">
             GB <span className="text-[#ff4d79]">ADMIN</span>
           </div>
 
-          <nav className="space-y-2">
+          <nav aria-label="Seções administrativas" className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <button
               onClick={() => setActiveTab('products')}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'products' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
@@ -454,7 +539,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
           </nav>
         </div>
 
-        <div className="mt-auto p-8 space-y-4">
+        <div className="mt-auto flex flex-wrap gap-4 px-4 pb-4 sm:px-6 sm:pb-6 lg:flex-col lg:p-8">
           <Link to="/" className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors">
             <ArrowLeft size={14} /> Voltar para a Loja
           </Link>
@@ -465,7 +550,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
       </aside>
 
       {/* Main Content Admin */}
-      <main className="flex-grow p-12 overflow-y-auto max-h-screen relative">
+      <main id="admin-main" className="min-w-0 flex-grow p-4 sm:p-6 lg:p-12 overflow-y-visible lg:overflow-y-auto max-h-none lg:max-h-screen relative">
         <AnimatePresence>
           {successMessage && (
             <motion.div
@@ -528,7 +613,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
               {products.map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-video bg-gray-900 relative">
-                    <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                       <button type="button" onClick={() => setEditingProduct(p)} aria-label={`Editar ${p.nome}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
@@ -586,7 +671,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
               {categories.map(cat => (
                 <div key={cat.id} className="bg-[#111111] border border-gray-800 p-4 rounded-lg flex justify-between items-center group">
                   <div className="flex items-center gap-4">
-                    {cat.icon && <img src={cat.icon} alt="" className="w-8 h-8 object-contain" referrerPolicy="no-referrer" />}
+                    {cat.icon && <img src={cat.icon} alt="" className="w-8 h-8 object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
                     <span className="font-bold text-sm uppercase tracking-wider">{cat.nome}</span>
                   </div>
                   <button onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
@@ -661,7 +746,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   />
                   {config.logo_url && (
                     <div className="mt-2 w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
-                      <img src={config.logo_url} alt="Prévia do logo" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                      <img src={resolvePublicImage(config.logo_url)} alt="Prévia do logo" className="max-w-full max-h-full object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                     </div>
                   )}
                   <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
@@ -720,6 +805,49 @@ export default function Admin({ products, config, categories, orders, ordersRead
                 </div>
               </div>
 
+              <section className="md:col-span-2 p-6 bg-[#111111] border border-amber-500/30 rounded-xl space-y-6">
+                <div className="space-y-2">
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-amber-400">Dados comerciais e documentos legais</h3>
+                  <p className="text-xs leading-relaxed text-gray-500">
+                    Estes dados aparecem nas páginas institucionais. Enquanto estiverem incompletos, as páginas serão
+                    marcadas como documento em preparação e não devem ser usadas para contratação comercial.
+                  </p>
+                  <p className={`text-xs font-semibold ${missingCommercialFields.length ? 'text-amber-400' : 'text-green-400'}`}>
+                    {missingCommercialFields.length
+                      ? `Falta confirmar: ${missingCommercialFields.map(field => LEGAL_FIELD_LABELS[field]).join(', ')}.`
+                      : 'Dados comerciais obrigatórios preenchidos.'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-2">
+                    <label htmlFor="razao_social" className="text-xs font-bold uppercase tracking-widest text-gray-500">Razão social ou nome completo</label>
+                    <input id="razao_social" name="razao_social" defaultValue={config.razao_social} maxLength={160} autoComplete="organization" placeholder="Nome jurídico do fornecedor" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79]" />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="documento_fiscal" className="text-xs font-bold uppercase tracking-widest text-gray-500">CNPJ ou CPF do fornecedor</label>
+                    <input id="documento_fiscal" name="documento_fiscal" defaultValue={config.documento_fiscal} maxLength={24} inputMode="numeric" placeholder="00.000.000/0000-00" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79]" />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label htmlFor="endereco_comercial" className="text-xs font-bold uppercase tracking-widest text-gray-500">Endereço físico/comercial</label>
+                    <textarea id="endereco_comercial" name="endereco_comercial" defaultValue={config.endereco_comercial} maxLength={300} rows={2} autoComplete="street-address" placeholder="Rua, número, complemento, bairro, cidade, UF e CEP" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79] resize-y" />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="email_atendimento" className="text-xs font-bold uppercase tracking-widest text-gray-500">E-mail de atendimento</label>
+                    <input id="email_atendimento" name="email_atendimento" type="email" defaultValue={config.email_atendimento} maxLength={160} autoComplete="email" placeholder="atendimento@empresa.com.br" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79]" />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="email_privacidade" className="text-xs font-bold uppercase tracking-widest text-gray-500">E-mail de privacidade/LGPD</label>
+                    <input id="email_privacidade" name="email_privacidade" type="email" defaultValue={config.email_privacidade} maxLength={160} autoComplete="email" placeholder="privacidade@empresa.com.br" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79]" />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <label htmlFor="prazo_producao" className="text-xs font-bold uppercase tracking-widest text-gray-500">Prazo padrão de produção</label>
+                    <input id="prazo_producao" name="prazo_producao" defaultValue={config.prazo_producao} maxLength={200} placeholder="Ex.: de 3 a 5 dias úteis após pagamento e aprovação da arte" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm outline-none focus:border-[#ff4d79]" />
+                    <p className="text-[10px] text-gray-600">O prazo de transporte deve ser informado separadamente.</p>
+                  </div>
+                </div>
+              </section>
+
               <div className="md:col-span-2 pt-8">
                 <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20 disabled:opacity-50 flex items-center justify-center gap-2">
                   {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Todas as Configurações'}
@@ -745,7 +873,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
               {promotions.map(promo => (
                 <div key={promo.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-[21/9] relative">
-                    <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                       <button type="button" onClick={() => setEditingPromotion(promo)} aria-label={`Editar ${promo.titulo}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
@@ -786,7 +914,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
               aria-labelledby="product-editor-title"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative bg-[#111111] border border-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-8"
+              className="relative bg-[#111111] border border-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-4 sm:p-8"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="product-editor-title" className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
@@ -904,6 +1032,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
                               src={img}
                               alt=""
                               className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
                               referrerPolicy="no-referrer"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).classList.add('opacity-20');
@@ -1092,15 +1222,19 @@ export default function Admin({ products, config, categories, orders, ordersRead
               <AnimatePresence>
                 {showBulkImageForm && (
                   <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="bulk-image-dialog-title"
+                    tabIndex={-1}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="absolute inset-0 z-30 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                    className="absolute inset-0 z-30 bg-[#111111] flex flex-col p-4 sm:p-8 rounded-2xl"
                   >
                     <div className="flex justify-between items-center mb-6">
                       <div className="flex items-center gap-2 text-[#ff4d79]">
                         <Upload size={20} />
-                        <h4 className="font-bold uppercase tracking-widest text-sm">Adicionar Várias Fotos</h4>
+                        <h4 id="bulk-image-dialog-title" className="font-bold uppercase tracking-widest text-sm">Adicionar Várias Fotos</h4>
                       </div>
                       <button type="button" onClick={() => setShowBulkImageForm(false)} aria-label="Fechar galeria" className="text-gray-500 hover:text-white">
                         <X size={20} />
@@ -1161,15 +1295,19 @@ export default function Admin({ products, config, categories, orders, ordersRead
               <AnimatePresence>
                 {showCustomAiPrompt && (
                   <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="custom-ai-dialog-title"
+                    tabIndex={-1}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="absolute inset-0 z-20 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                    className="absolute inset-0 z-20 bg-[#111111] flex flex-col p-4 sm:p-8 rounded-2xl"
                   >
                     <div className="flex justify-between items-center mb-6">
                       <div className="flex items-center gap-2 text-[#ff4d79]">
                         <Sparkles size={20} />
-                        <h4 className="font-bold uppercase tracking-widest text-sm">Comando Personalizado</h4>
+                        <h4 id="custom-ai-dialog-title" className="font-bold uppercase tracking-widest text-sm">Comando Personalizado</h4>
                       </div>
                       <button type="button" onClick={() => setShowCustomAiPrompt(false)} aria-label="Fechar comando de IA" className="text-gray-500 hover:text-white">
                         <X size={20} />
@@ -1216,15 +1354,19 @@ export default function Admin({ products, config, categories, orders, ordersRead
               <AnimatePresence>
                 {aiPreview && (
                   <motion.div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="ai-preview-dialog-title"
+                    tabIndex={-1}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="absolute inset-0 z-10 bg-[#111111] flex flex-col p-8 rounded-2xl"
+                    className="absolute inset-0 z-10 bg-[#111111] flex flex-col p-4 sm:p-8 rounded-2xl"
                   >
                     <div className="flex justify-between items-center mb-6">
                       <div className="flex items-center gap-2 text-[#ff4d79]">
                         <Sparkles size={20} />
-                        <h4 className="font-bold uppercase tracking-widest text-sm">Sugestão da IA</h4>
+                        <h4 id="ai-preview-dialog-title" className="font-bold uppercase tracking-widest text-sm">Sugestão da IA</h4>
                       </div>
                       {!aiPreview.loading && (
                         <button type="button" onClick={() => setAiPreview(null)} aria-label="Fechar sugestão" className="text-gray-500 hover:text-white">
@@ -1297,7 +1439,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
               aria-labelledby="promotion-editor-title"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative bg-[#111111] border border-gray-800 w-full max-w-lg rounded-2xl shadow-2xl p-8"
+              className="relative bg-[#111111] border border-gray-800 w-full max-w-lg rounded-2xl shadow-2xl p-4 sm:p-8"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="promotion-editor-title" className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
@@ -1477,6 +1619,7 @@ function OrderCard({
               {adminPaymentLabel(order)}
             </span>
             <select
+              aria-label={`Andamento do pedido ${order.id}`}
               value={fulfillment}
               onChange={(e) => handleStatusChange(order.id, e.target.value as FulfillmentStatus)}
               disabled={transitionOptions.length <= 1}
@@ -1508,7 +1651,7 @@ function OrderCard({
           <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Itens do Pedido</div>
           {order.itens.map((item) => (
             <div key={item.id} className="flex gap-3 items-center bg-black/40 p-3 rounded-lg border border-gray-800/50">
-              <img src={item.imagem || '/logo.png'} alt={item.nome} className="w-10 h-10 object-cover rounded" referrerPolicy="no-referrer" />
+              <img src={item.imagem || DEFAULT_LOGO_URL} alt={item.nome} className="w-10 h-10 object-cover rounded" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
               <div className="flex-grow">
                 <div className="text-xs font-bold">{item.nome}</div>
                 <div className="text-[10px] text-gray-500">

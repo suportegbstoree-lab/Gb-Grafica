@@ -1,13 +1,17 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, FirebaseUser } from '../firebase';
 import { createCartItemId, formatBrazilianPhone, formatCpf, formatMoney, isHttpUrl, isValidBrazilianPhone, isValidCpf, parseMoneyToCents } from '../lib/commerce';
 import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
 import { removePendingArtwork, requestArtworkUrl, uploadArtwork, type UploadedArtwork } from '../services/artworkService';
+import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
+import { validateCheckoutForm } from '../lib/checkoutForm';
+import { createHostedCheckout, isTrustedPagBankPaymentUrl } from '../services/checkoutService';
+import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -51,17 +55,7 @@ function paymentStatusClass(status?: Order['paymentStatus']): string {
 }
 
 function trustedStoredPaymentLink(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'https:' && [
-      'pagamento.sandbox.pagbank.com.br',
-      'pagamento.pagseguro.uol.com.br',
-      'pagamento.pagbank.com.br',
-    ].includes(parsed.hostname);
-  } catch {
-    return false;
-  }
+  return typeof value === 'string' && isTrustedPagBankPaymentUrl(value);
 }
 
 interface ShippingInfo {
@@ -105,12 +99,24 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [addressNumber, setAddressNumber] = useState('');
   const [addressComplement, setAddressComplement] = useState('');
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [isCarouselPaused, setIsCarouselPaused] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [shippingError, setShippingError] = useState<string | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [acceptedLegalTerms, setAcceptedLegalTerms] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const checkoutLock = useRef(false);
+  const shouldReduceMotion = useReducedMotion();
+
+  const storeStructuredData = useMemo(() => buildStoreStructuredData(config), [config]);
+  usePageMetadata({
+    title: 'GB Gráfica | Loja Online Oficial',
+    description: config.banner_subtitulo || 'Produtos gráficos e personalizados da GB Gráfica, com pagamento seguro pelo PagBank.',
+    path: '/',
+    image: config.banner_principal || config.logo_url,
+  });
+  useStructuredData('gb-store-structured-data', storeStructuredData);
 
   const slides = useMemo(() => {
     const availableSlides = [
@@ -124,7 +130,7 @@ export default function Home({ products, config, categories, promotions, cart, s
 
     return availableSlides.length > 0
       ? availableSlides
-      : [{ image: '/logo.png', title: config.banner_titulo, link: '' }];
+      : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
   }, [config.banner_principal, config.banner_titulo, promotions]);
 
   const visibleProducts = useMemo(() => {
@@ -150,11 +156,12 @@ export default function Home({ products, config, categories, promotions, cart, s
     }
 
     setCurrentSlide(previous => Math.min(previous, slides.length - 1));
+    if (isCarouselPaused || shouldReduceMotion) return undefined;
     const timer = setInterval(() => {
       setCurrentSlide((prev) => (prev + 1) % slides.length);
     }, 5000);
     return () => clearInterval(timer);
-  }, [slides.length]);
+  }, [isCarouselPaused, shouldReduceMotion, slides.length]);
 
   React.useEffect(() => {
     if (!notice) return undefined;
@@ -278,35 +285,20 @@ export default function Home({ products, config, categories, promotions, cart, s
       await handleLogin();
       return;
     }
-
-    const normalizedName = customerName.trim().replace(/\s+/g, ' ');
-    const cpfDigits = cpf.replace(/\D/g, '');
-    if (normalizedName.length < 3 || normalizedName.split(' ').filter(Boolean).length < 2) {
-      setNotice({ type: 'error', message: 'Informe nome e sobrenome para continuar.' });
-      return;
-    }
-    if (!isValidCpf(cpfDigits)) {
-      setNotice({ type: 'error', message: 'Informe um CPF válido para continuar.' });
-      return;
-    }
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (!isValidBrazilianPhone(phoneDigits)) {
-      setNotice({ type: 'error', message: 'Informe um telefone válido para contato sobre o pedido.' });
-      return;
-    }
-    if (deliveryMethod === 'entrega' && !shippingInfo) {
-      setNotice({ type: 'error', message: 'Calcule o frete antes de continuar.' });
-      return;
-    }
-    if (
-      deliveryMethod === 'entrega' &&
-      (!addressStreet.trim() || !addressNeighborhood.trim() || !addressNumber.trim())
-    ) {
-      setNotice({ type: 'error', message: 'Complete rua, bairro e número do endereço de entrega.' });
-      return;
-    }
-    if (hasInvalidCartPrice) {
-      setNotice({ type: 'error', message: 'Há um item com preço inválido no carrinho. Remova-o e selecione novamente.' });
+    const formResult = validateCheckoutForm({
+      acceptedLegalTerms,
+      customerName,
+      cpf,
+      phone,
+      deliveryMethod,
+      hasShippingQuote: Boolean(shippingInfo),
+      addressStreet,
+      addressNeighborhood,
+      addressNumber,
+      hasInvalidCartPrice,
+    });
+    if (formResult.ok === false) {
+      setNotice({ type: 'error', message: formResult.message });
       return;
     }
 
@@ -315,48 +307,34 @@ export default function Home({ products, config, categories, promotions, cart, s
 
     try {
       const idToken = await user.getIdToken();
-      const response = await fetch('/api/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          items: cart.map(item => ({
-            productId: item.productId,
-            quantidade: item.quantidade,
-            selecoes: item.selecoes,
-            arquivoPath: item.arquivoPath || '',
-            arquivoNome: item.arquivoNome || '',
-            artePendente: item.artePendente === true,
-            textoPersonalizado: item.textoPersonalizado || '',
-          })),
-          requestId: crypto.randomUUID(),
-          customerName: normalizedName,
-          cpf: cpfDigits,
-          phone: phoneDigits,
-          deliveryMethod,
-          cep: deliveryMethod === 'entrega' ? cep : undefined,
-          addressNumber: deliveryMethod === 'entrega' ? addressNumber.trim() : undefined,
-          addressComplement: deliveryMethod === 'entrega' ? addressComplement.trim() : undefined,
-          addressStreet: deliveryMethod === 'entrega' ? addressStreet.trim() : undefined,
-          addressNeighborhood: deliveryMethod === 'entrega' ? addressNeighborhood.trim() : undefined,
-        }),
-      });
+      const checkoutResult = await createHostedCheckout({
+        items: cart.map(item => ({
+          productId: item.productId,
+          quantidade: item.quantidade,
+          selecoes: item.selecoes,
+          arquivoPath: item.arquivoPath || '',
+          arquivoNome: item.arquivoNome || '',
+          artePendente: item.artePendente === true,
+          textoPersonalizado: item.textoPersonalizado || '',
+        })),
+        requestId: crypto.randomUUID(),
+        customerName: formResult.customerName,
+        cpf: formResult.cpf,
+        phone: formResult.phone,
+        deliveryMethod,
+        cep: deliveryMethod === 'entrega' ? cep : undefined,
+        addressNumber: deliveryMethod === 'entrega' ? addressNumber.trim() : undefined,
+        addressComplement: deliveryMethod === 'entrega' ? addressComplement.trim() : undefined,
+        addressStreet: deliveryMethod === 'entrega' ? addressStreet.trim() : undefined,
+        addressNeighborhood: deliveryMethod === 'entrega' ? addressNeighborhood.trim() : undefined,
+        legalAcceptance: currentLegalAcceptance(),
+      }, idToken);
 
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error || 'Não foi possível iniciar o pagamento.');
-      }
-
-      if (typeof data.init_point !== 'string' || !data.init_point) {
-        throw new Error('O PagBank não retornou o link de pagamento.');
-      }
-
-      if (typeof data.order_id === 'string') localStorage.setItem('gb_pending_order', data.order_id);
+      if (checkoutResult.orderId) localStorage.setItem('gb_pending_order', checkoutResult.orderId);
       setCart([]);
+      setAcceptedLegalTerms(false);
       setIsCartOpen(false);
-      window.location.assign(data.init_point);
+      window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
       console.error('Checkout error:', error);
       setNotice({
@@ -390,6 +368,7 @@ export default function Home({ products, config, categories, promotions, cart, s
 
   React.useEffect(() => {
     setLogoError(false);
+    setFallbackError(false);
   }, [config.logo_url]);
 
   const handleLogin = async () => {
@@ -450,6 +429,12 @@ export default function Home({ products, config, categories, promotions, cart, s
 
   return (
     <div className="min-h-screen bg-[#fcfcfd] text-gray-900 font-sans selection:bg-pink-100 relative overflow-hidden">
+      <a
+        href="#produtos"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[120] focus:rounded-full focus:bg-gray-900 focus:px-5 focus:py-3 focus:text-xs focus:font-black focus:uppercase focus:tracking-widest focus:text-white"
+      >
+        Ir para os produtos
+      </a>
       {/* Background Glows (Subtle) */}
       <div className="fixed top-[-10%] left-[-10%] w-[70%] h-[70%] bg-pink-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
       <div className="fixed bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
@@ -479,12 +464,12 @@ export default function Home({ products, config, categories, promotions, cart, s
       </AnimatePresence>
 
       {/* Micro Top Bar */}
-      <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex justify-between items-center text-[11px] text-white relative z-40">
-        <div className="flex gap-4 md:gap-8">
+      <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex flex-wrap justify-between items-center gap-2 text-[11px] text-white relative z-40">
+        <div className="flex flex-wrap gap-4 md:gap-8">
           <a href={`https://wa.me/${whatsappNumber(config.telefone1)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone1}</a>
           <a href={`https://wa.me/${whatsappNumber(config.telefone2)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone2}</a>
         </div>
-        <div className="flex gap-8 items-center">
+        <div className="flex flex-wrap justify-end gap-x-8 gap-y-2 items-center">
           {isAdmin && (
             <Link to="/admin" className="hover:text-pink-100 flex items-center gap-2 transition-colors font-bold">
               <Settings size={14} /> Área Admin
@@ -526,18 +511,20 @@ export default function Home({ products, config, categories, promotions, cart, s
         <div className="flex items-center group">
           {config.logo_url && config.logo_url.trim() !== "" && !logoError ? (
             <img
-              src={config.logo_url}
+              src={resolvePublicImage(config.logo_url)}
               alt="GB Gráfica"
               className="h-24 w-auto object-contain transition-transform group-hover:scale-105"
               referrerPolicy="no-referrer"
+              decoding="async"
               onError={() => setLogoError(true)}
             />
           ) : !fallbackError ? (
             <img
-              src="/logo.png"
+              src={DEFAULT_LOGO_URL}
               alt="GB Gráfica"
               className="h-24 w-auto object-contain transition-transform group-hover:scale-105"
               referrerPolicy="no-referrer"
+              decoding="async"
               onError={() => setFallbackError(true)}
             />
           ) : (
@@ -589,7 +576,7 @@ export default function Home({ products, config, categories, promotions, cart, s
       </header>
 
       {/* Navigation */}
-      <nav className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
+      <nav aria-label="Categorias de produtos" className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
         {categories.map((cat) => (
           <motion.button
             type="button"
@@ -601,7 +588,7 @@ export default function Home({ products, config, categories, promotions, cart, s
           >
             <div className="w-8 h-8 flex items-center justify-center transition-all">
               {cat.icon ? (
-                <img src={cat.icon} alt="" className="w-full h-full object-contain grayscale group-hover:grayscale-0 opacity-60 group-hover:opacity-100 transition-all" referrerPolicy="no-referrer" />
+                <img src={cat.icon} alt="" className="w-full h-full object-contain grayscale group-hover:grayscale-0 opacity-60 group-hover:opacity-100 transition-all" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
               ) : (
                 <Package size={20} className="text-gray-400 group-hover:text-[#d14d8c]" />
               )}
@@ -642,7 +629,7 @@ export default function Home({ products, config, categories, promotions, cart, s
       </div>
 
       {/* Banner Carousel */}
-      <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques">
+      <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
         <AnimatePresence mode="wait">
           <motion.div
             key={currentSlide}
@@ -657,11 +644,13 @@ export default function Home({ products, config, categories, promotions, cart, s
               alt={activeSlide.title || `Destaque ${currentSlide + 1}`}
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
+              fetchPriority="high"
+              decoding="async"
               onError={(event) => {
                 const image = event.currentTarget;
                 if (!image.dataset.fallbackApplied) {
                   image.dataset.fallbackApplied = 'true';
-                  image.src = '/logo.png';
+                  image.src = DEFAULT_LOGO_URL;
                   image.classList.add('object-contain', 'p-12');
                 }
               }}
@@ -720,7 +709,18 @@ export default function Home({ products, config, categories, promotions, cart, s
         </div>
 
         {/* Carousel Indicators */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-3 z-20">
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
+          {slides.length > 1 && !shouldReduceMotion && (
+            <button
+              type="button"
+              onClick={() => setIsCarouselPaused(previous => !previous)}
+              aria-label={isCarouselPaused ? 'Retomar rotação dos destaques' : 'Pausar rotação dos destaques'}
+              aria-pressed={isCarouselPaused}
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-white/80 text-gray-700 shadow-sm transition-colors hover:bg-white"
+            >
+              {isCarouselPaused ? <Play size={12} aria-hidden="true" /> : <Pause size={12} aria-hidden="true" />}
+            </button>
+          )}
           {slides.map((slide, idx) => (
             <button
               type="button"
@@ -771,9 +771,9 @@ export default function Home({ products, config, categories, promotions, cart, s
         </aside>
 
         {/* Content */}
-        <section className="flex-grow">
+        <section className="flex-grow" aria-labelledby="products-heading">
           <div className="flex items-center gap-4 mb-10">
-            <h2 className="text-3xl font-black uppercase tracking-tighter text-gray-900">
+            <h2 id="products-heading" className="text-3xl font-black uppercase tracking-tighter text-gray-900">
               {activeCategory ? (
                 <>Categoria <span className="text-pink-500">{activeCategory}</span></>
               ) : searchTerm.trim() ? (
@@ -787,7 +787,10 @@ export default function Home({ products, config, categories, promotions, cart, s
 
           {productsError ? (
             <div role="alert" className="rounded-3xl border border-red-100 bg-red-50 p-8 text-center text-sm font-semibold text-red-700">
-              {productsError}
+              <p>{productsError}</p>
+              <button type="button" onClick={() => window.location.reload()} className="mt-4 rounded-full bg-red-700 px-5 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-red-800">
+                Tentar novamente
+              </button>
             </div>
           ) : !productsReady ? (
             <div role="status" className="rounded-3xl border border-gray-100 bg-white p-12 text-center text-gray-500">
@@ -841,22 +844,33 @@ export default function Home({ products, config, categories, promotions, cart, s
           <div>
             <h4 className="text-gray-900 font-black mb-6 uppercase text-xs tracking-widest">Institucional</h4>
             <ul className="space-y-4 text-gray-500 text-sm font-medium">
-              <li className="hover:text-pink-500 transition-colors cursor-pointer">Sobre Nós</li>
-              <li className="hover:text-pink-500 transition-colors cursor-pointer">Política de Privacidade</li>
-              <li className="hover:text-pink-500 transition-colors cursor-pointer">Termos de Uso</li>
+              <li><Link to={LEGAL_ROUTES.about} className="hover:text-pink-500 transition-colors">Sobre Nós</Link></li>
+              <li><Link to={LEGAL_ROUTES.privacy} className="hover:text-pink-500 transition-colors">Política de Privacidade</Link></li>
+              <li><Link to={LEGAL_ROUTES.terms} className="hover:text-pink-500 transition-colors">Termos de Uso</Link></li>
+              <li><Link to={LEGAL_ROUTES.exchanges} className="hover:text-pink-500 transition-colors">Trocas e Reembolsos</Link></li>
+              <li><Link to={LEGAL_ROUTES.production} className="hover:text-pink-500 transition-colors">Prazos de Produção</Link></li>
+              <li><Link to={LEGAL_ROUTES.artwork} className="hover:text-pink-500 transition-colors">Artes Personalizadas</Link></li>
+              <li><Link to={LEGAL_ROUTES.lgpd} className="hover:text-pink-500 transition-colors">LGPD</Link></li>
             </ul>
           </div>
           <div>
             <h4 className="text-gray-900 font-black mb-6 uppercase text-xs tracking-widest">Pagamento</h4>
             <div className="flex gap-4 opacity-50 grayscale hover:grayscale-0 hover:opacity-100 transition-all">
-              <img src="https://logodownload.org/wp-content/uploads/2014/07/visa-logo-1.png" alt="Visa" className="h-4 object-contain" referrerPolicy="no-referrer" />
-              <img src="https://logodownload.org/wp-content/uploads/2014/07/mastercard-logo.png" alt="Mastercard" className="h-6 object-contain" referrerPolicy="no-referrer" />
-              <img src="https://logodownload.org/wp-content/uploads/2019/06/pix-logo-1.png" alt="Pix" className="h-6 object-contain" referrerPolicy="no-referrer" />
+              <PaymentLogo src="https://logodownload.org/wp-content/uploads/2014/07/visa-logo-1.png" label="Visa" className="h-4" />
+              <PaymentLogo src="https://logodownload.org/wp-content/uploads/2014/07/mastercard-logo.png" label="Mastercard" className="h-6" />
+              <PaymentLogo src="https://logodownload.org/wp-content/uploads/2019/06/pix-logo-1.png" label="Pix" className="h-6" />
             </div>
           </div>
         </div>
         <div className="text-center pt-12 border-t border-gray-100 text-gray-400 text-[10px] uppercase tracking-widest space-y-2 font-black">
           <p>© {new Date().getFullYear()} GB Gráfica. Todos os direitos reservados.</p>
+          {(config.razao_social || config.documento_fiscal) && (
+            <p>{[config.razao_social, config.documento_fiscal].filter(Boolean).join(' · ')}</p>
+          )}
+          {config.endereco_comercial && <p>{config.endereco_comercial}</p>}
+          {config.email_atendimento && (
+            <p><a href={`mailto:${config.email_atendimento}`} className="hover:text-pink-500 transition-colors">{config.email_atendimento}</a></p>
+          )}
           <p className="opacity-30">Build: 20260407-0307</p>
         </div>
       </footer>
@@ -872,7 +886,21 @@ export default function Home({ products, config, categories, promotions, cart, s
                 <div className="space-y-4 pr-2">
                   {cart.map((item) => (
                     <div key={item.id} className="flex gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                      <img src={item.imagem || '/logo.png'} alt={item.nome} className="w-16 h-16 object-cover rounded" referrerPolicy="no-referrer" />
+                      <img
+                        src={item.imagem || DEFAULT_LOGO_URL}
+                        alt={item.nome}
+                        className="w-16 h-16 object-cover rounded"
+                        loading="lazy"
+                        decoding="async"
+                        referrerPolicy="no-referrer"
+                        onError={event => {
+                          const image = event.currentTarget;
+                          if (!image.dataset.fallbackApplied) {
+                            image.dataset.fallbackApplied = 'true';
+                            image.src = DEFAULT_LOGO_URL;
+                          }
+                        }}
+                      />
                       <div className="flex-grow">
                         <div className="flex justify-between items-start">
                           <h4 className="font-bold text-sm">{item.nome}</h4>
@@ -1092,6 +1120,33 @@ export default function Home({ products, config, categories, promotions, cart, s
                     />
                   </div>
 
+                  <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-3">
+                    <p className="text-[11px] leading-relaxed text-gray-600">
+                      <strong className="text-gray-900">Prazo de produção:</strong>{' '}
+                      {config.prazo_producao?.trim() || 'a confirmar com a GB Gráfica antes do pagamento'}.
+                      O prazo de entrega é adicional.
+                    </p>
+                    <div className="flex items-start gap-3">
+                      <input
+                        id="checkout-legal-acceptance"
+                        type="checkbox"
+                        checked={acceptedLegalTerms}
+                        onChange={event => setAcceptedLegalTerms(event.target.checked)}
+                        aria-describedby="checkout-legal-documents"
+                        className="mt-1 h-4 w-4 accent-pink-500"
+                      />
+                      <div id="checkout-legal-documents" className="text-[11px] leading-relaxed text-gray-600">
+                        <label htmlFor="checkout-legal-acceptance" className="font-bold text-gray-900 cursor-pointer">
+                          Li e aceito as condições da compra.
+                        </label>{' '}
+                        Consulte os{' '}
+                        <Link to={LEGAL_ROUTES.terms} target="_blank" rel="noopener noreferrer" className="font-bold text-pink-600 hover:underline">Termos de Uso</Link>, a{' '}
+                        <Link to={LEGAL_ROUTES.privacy} target="_blank" rel="noopener noreferrer" className="font-bold text-pink-600 hover:underline">Política de Privacidade</Link> e a{' '}
+                        <Link to={LEGAL_ROUTES.exchanges} target="_blank" rel="noopener noreferrer" className="font-bold text-pink-600 hover:underline">Política de Trocas e Reembolsos</Link>.
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-sm text-gray-500">
                       <span>Subtotal</span>
@@ -1125,7 +1180,8 @@ export default function Home({ products, config, categories, promotions, cart, s
                         !shippingInfo || !addressStreet.trim() || !addressNeighborhood.trim() || !addressNumber.trim()
                       )) ||
                       !isValidCpf(cpf) || !isValidBrazilianPhone(phone) ||
-                      customerName.trim().split(/\s+/).filter(Boolean).length < 2
+                      customerName.trim().split(/\s+/).filter(Boolean).length < 2 ||
+                      !acceptedLegalTerms
                     }
                     className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
@@ -1355,13 +1411,13 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
         className="relative bg-white border border-gray-100 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
       >
-        <div className="px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="px-5 sm:px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
           <h3 id={titleId} className="text-xl font-black text-gray-900 tracking-tight">{title}</h3>
           <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={`Fechar ${title}`} className="text-gray-400 hover:text-pink-500 transition-colors">
             <X size={24} />
           </button>
         </div>
-        <div className="p-8 overflow-y-auto max-h-[calc(90vh-80px)] custom-scrollbar">
+        <div className="p-5 sm:p-8 overflow-y-auto max-h-[calc(90vh-80px)] custom-scrollbar">
           {children}
         </div>
       </motion.div>
@@ -1376,6 +1432,26 @@ function BenefitItem({ icon, title, desc }: { icon: string; title: string; desc:
       <span className="font-black text-xs uppercase tracking-[0.2em] text-gray-900 mb-2">{title}</span>
       <span className="text-[10px] text-gray-400 font-medium max-w-[150px]">{desc}</span>
     </div>
+  );
+}
+
+function PaymentLogo({ src, label, className }: { src: string; label: string; className: string }) {
+  const [hasError, setHasError] = useState(false);
+
+  if (hasError) {
+    return <span className="text-[9px] font-black uppercase tracking-tight text-gray-600">{label}</span>;
+  }
+
+  return (
+    <img
+      src={src}
+      alt={label}
+      className={cn(className, 'object-contain')}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      onError={() => setHasError(true)}
+    />
   );
 }
 
@@ -1399,6 +1475,7 @@ function ProductCard({
   const [isUploadingArtwork, setIsUploadingArtwork] = useState(false);
   const [customText, setCustomText] = useState("");
   const [activeImage, setActiveImage] = useState(product.imagem);
+  const customTextId = React.useId();
 
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
@@ -1509,7 +1586,7 @@ function ProductCard({
   };
 
   return (
-    <motion.div
+    <motion.article
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
@@ -1522,12 +1599,14 @@ function ProductCard({
             src={activeImage}
             alt={product.nome}
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             onError={(e) => {
               const image = e.currentTarget;
               if (!image.dataset.fallbackApplied) {
                 image.dataset.fallbackApplied = 'true';
-                image.src = '/logo.png';
+                image.src = DEFAULT_LOGO_URL;
                 image.classList.add('object-contain', 'p-8');
               }
             }}
@@ -1549,7 +1628,7 @@ function ProductCard({
                   activeImage === img ? "border-pink-400 scale-105 shadow-md" : "border-transparent opacity-60 hover:opacity-100"
                 )}
               >
-                <img src={img} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                <img src={img} alt="" className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
               </button>
             ))}
           </div>
@@ -1644,8 +1723,9 @@ function ProductCard({
 
             {product.tipoInput === 'texto' && (
               <div className="flex flex-col">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{product.labelTexto || "Personalização"}</span>
+                <label htmlFor={customTextId} className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{product.labelTexto || "Personalização"}</label>
                 <input
+                  id={customTextId}
                   type="text"
                   value={customText}
                   onChange={e => setCustomText(e.target.value)}
@@ -1685,6 +1765,7 @@ function ProductCard({
                 }}
                 className="p-2 text-green-500 hover:scale-110 transition-transform"
                 title="WhatsApp"
+                aria-label={`Compartilhar ${product.nome} no WhatsApp`}
               >
                 <MessageCircle size={16} />
               </button>
@@ -1696,6 +1777,7 @@ function ProductCard({
                 }}
                 className="p-2 text-blue-600 hover:scale-110 transition-transform"
                 title="Facebook"
+                aria-label={`Compartilhar ${product.nome} no Facebook`}
               >
                 <Facebook size={16} />
               </button>
@@ -1708,6 +1790,7 @@ function ProductCard({
                 }}
                 className="p-2 text-sky-500 hover:scale-110 transition-transform"
                 title="Twitter"
+                aria-label={`Compartilhar ${product.nome} no Twitter`}
               >
                 <Twitter size={16} />
               </button>
@@ -1724,6 +1807,7 @@ function ProductCard({
                 }}
                 className="p-2 text-gray-400 hover:text-pink-500 transition-all"
                 title="Copiar Link"
+                aria-label={`Copiar link de ${product.nome}`}
               >
                 <Share2 size={16} />
               </button>
@@ -1746,6 +1830,6 @@ function ProductCard({
           </button>
         </div>
       </div>
-    </motion.div>
+    </motion.article>
   );
 }

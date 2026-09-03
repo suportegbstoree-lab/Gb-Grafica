@@ -29,7 +29,21 @@ Reinicie `npm run dev` depois de alterar variáveis de ambiente.
 npm test
 npm run lint
 npm run build
+npm run test:smoke
 ```
+
+O smoke test inicia o bundle de produção em uma porta local e valida `/api/health`, a loja, as sete páginas comerciais, `robots.txt` e `sitemap.xml`. Os testes unitários também simulam respostas do checkout sem chamar Firebase ou PagBank.
+
+## SEO, acessibilidade e resiliência
+
+- Metadados canônicos, Open Graph e Twitter são atualizados por rota.
+- A loja publica dados estruturados `WebSite` e `Store`, além de `robots.txt` e `sitemap.xml`.
+- A área administrativa e a página 404 recebem `noindex`.
+- Há atalhos de teclado para o conteúdo, contenção de foco nos diálogos e controle de pausa do carrossel.
+- A preferência de redução de movimento do sistema é respeitada.
+- Imagens fora da primeira dobra usam carregamento tardio e decodificação assíncrona.
+- Uma barreira global apresenta uma recuperação segura se a interface React falhar.
+- O fallback visual usa a cópia pública íntegra do logo; o arquivo histórico `public/logo.png` está corrompido e não é mais usado em execução.
 
 ## Variáveis na Vercel
 
@@ -86,6 +100,19 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - Atualizações financeiras usam transação Firestore.
 - Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido.
 - Pagamento e andamento operacional são armazenados separadamente.
+
+## Documentos comerciais
+
+O rodapé contém páginas públicas de identificação da loja, privacidade, termos, trocas e reembolsos, prazos de produção, artes personalizadas e LGPD. Antes de liberar vendas, preencha em **Admin → Configurações**:
+
+- razão social ou nome completo do fornecedor;
+- CNPJ ou CPF;
+- endereço físico/comercial;
+- e-mail de atendimento;
+- e-mail de privacidade/LGPD;
+- prazo padrão de produção.
+
+Enquanto algum desses dados estiver ausente, as páginas exibem um aviso de documento em preparação. O checkout exige aceite explícito e o servidor registra a data e as versões aceitas no pedido. Os textos são uma base operacional e devem ser conferidos com os dados reais da empresa e, idealmente, revisados por profissional jurídico antes da publicação comercial.
 
 ## Publicação
 

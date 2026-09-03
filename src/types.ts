@@ -70,6 +70,12 @@ export interface Order {
   pagbankStatus?: string;
   pagbankPayUrl?: string;
   checkoutExpiresAt?: string;
+  legalAcceptance?: {
+    acceptedAt: string;
+    termsVersion: string;
+    privacyVersion: string;
+    exchangesVersion: string;
+  };
 }
 
 export interface Category {
@@ -102,4 +108,10 @@ export interface SiteConfig {
   beneficio3_desc: string;
   pix_chave?: string;
   pix_beneficiario?: string;
+  razao_social?: string;
+  documento_fiscal?: string;
+  endereco_comercial?: string;
+  email_atendimento?: string;
+  email_privacidade?: string;
+  prazo_producao?: string;
 }

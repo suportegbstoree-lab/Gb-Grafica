@@ -14,6 +14,7 @@
     "start": "tsx server.ts",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
+    "test:smoke": "node --import tsx scripts/smoke-routes.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts"
   },
   "dependencies": {

@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-02 — SEO, acessibilidade, resiliência e testes de fluxo
+
+- Adicionados canonical, robots, Open Graph, Twitter Cards e dados estruturados para a loja e documentos públicos.
+- Publicados `robots.txt` e `sitemap.xml` com as oito rotas públicas atuais; painel administrativo e página não encontrada ficam fora da indexação.
+- Criada página 404 interna com identidade da loja e barreira global para recuperar falhas inesperadas do React.
+- Adicionados atalho para conteúdo, nomes acessíveis, rótulos de formulário e contenção de foco nos diálogos administrativos.
+- Incluído controle de pausa no carrossel e respeito à preferência de redução de movimento do sistema.
+- Ajustados painel administrativo, barra superior e modais para telas menores sem alterar a composição de desktop.
+- Ativado carregamento tardio e decodificação assíncrona nas imagens fora da primeira dobra e cache longo nos assets versionados do build.
+- Removida a dependência em execução do `public/logo.png` corrompido; o fallback passa a usar a cópia pública íntegra já adotada pela loja.
+- Separadas validação do formulário e chamada ao checkout para testes com dependências simuladas.
+- Bloqueado no navegador qualquer redirecionamento de checkout que não seja HTTPS em domínio oficial do PagBank.
+- Criado smoke test do servidor de produção para saúde, loja, documentos comerciais, robots e sitemap, integrado ao CI.
+- Mantida intacta a folha global `src/index.css`.
+
+## 2026-09-02 — Documentos comerciais e aceite no checkout
+
+- Criadas páginas públicas para identificação da loja, privacidade, termos de uso, trocas e reembolsos, prazos de produção, artes personalizadas e direitos LGPD.
+- Transformados os itens institucionais do rodapé em links funcionais.
+- Adicionados ao painel os campos de razão social, CNPJ/CPF, endereço, e-mails de atendimento e privacidade e prazo padrão de produção.
+- Adicionado aviso visível de documento em preparação enquanto os dados obrigatórios do fornecedor estiverem incompletos.
+- Incluídos resumo do prazo e aceite explícito, não pré-selecionado, antes do Checkout PagBank.
+- Registradas no servidor a data e as versões dos documentos aceitos em cada pedido e em cada tentativa idempotente de checkout.
+- Rejeitados pelo servidor checkouts sem aceite da versão jurídica atual.
+- Preservados o direito de arrependimento e a garantia legal, sem criar exclusão automática para produtos personalizados.
+- Mantida intacta a folha de estilos global e a identidade visual existente.
+
 ## 2026-09-02 — Correção da função serverless na Vercel
 
 - Fixada a versão do Node.js em `22.x` para evitar atualizações automáticas de major no runtime.

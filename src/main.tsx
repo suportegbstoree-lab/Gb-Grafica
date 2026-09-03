@@ -1,6 +1,8 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import {MotionConfig} from 'motion/react';
 import App from './App.tsx';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
 import appStyles from './index.css?inline';
 
 // Mantém o CSS no mesmo bundle que monta o React. Isso evita que um rewrite,
@@ -15,6 +17,10 @@ document.head.appendChild(styleElement);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <MotionConfig reducedMotion="user">
+        <App />
+      </MotionConfig>
+    </ErrorBoundary>
   </StrictMode>,
 );

@@ -11,8 +11,12 @@ import { INITIAL_CONFIG } from './constants';
 import {
   db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType
 } from './firebase';
+import { LEGAL_ROUTES, type LegalDocumentId } from './lib/legal';
+import { DEFAULT_LOGO_URL, resolvePublicImage } from './lib/seo';
 
 const Admin = lazy(() => import('./pages/Admin'));
+const LegalPage = lazy(() => import('./pages/LegalPage'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 
 function restoreCart(): CartItem[] {
   try {
@@ -38,6 +42,14 @@ function LoadingScreen() {
     <div className="min-h-screen bg-[#060606] flex items-center justify-center" role="status">
       <div className="text-[#ff4d79] animate-pulse font-bold">Carregando...</div>
     </div>
+  );
+}
+
+function LegalRoute({ documentId, config }: { documentId: LegalDocumentId; config: SiteConfig }) {
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <LegalPage documentId={documentId} config={config} />
+    </Suspense>
   );
 }
 
@@ -186,16 +198,9 @@ export default function App() {
     previousUserId.current = nextUserId;
   }, [user?.uid]);
 
-  // Update Title and Favicon
+  // Update favicon. Each public document controls its own page title.
   useEffect(() => {
-    const title = "GB Gráfica | Impressão de Alta Qualidade";
-    document.title = title;
-
-    // Force title update for some browsers
-    const titleElement = document.querySelector('title');
-    if (titleElement) titleElement.innerText = title;
-
-    const faviconUrl = config.logo_url || "/logo.png";
+    const faviconUrl = resolvePublicImage(config.logo_url || DEFAULT_LOGO_URL);
 
     let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
     if (!link) {
@@ -206,17 +211,13 @@ export default function App() {
     link.href = faviconUrl;
   }, [config.logo_url]);
 
-  if (!isAuthReady) {
-    return <LoadingScreen />;
-  }
-
   return (
     <Router>
       <Routes>
         <Route
           path="/"
           element={
-            <Home
+            isAuthReady ? <Home
               products={products}
               config={config}
               categories={categories}
@@ -230,13 +231,13 @@ export default function App() {
               productsError={productsError}
               ordersReady={ordersReady}
               ordersError={ordersError}
-            />
+            /> : <LoadingScreen />
           }
         />
         <Route
           path="/admin"
           element={
-            isAdmin ? (
+            !isAuthReady ? <LoadingScreen /> : isAdmin ? (
               <Suspense fallback={<LoadingScreen />}>
                 <Admin
                   products={products}
@@ -253,7 +254,14 @@ export default function App() {
             )
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path={LEGAL_ROUTES.about} element={<LegalRoute documentId="about" config={config} />} />
+        <Route path={LEGAL_ROUTES.privacy} element={<LegalRoute documentId="privacy" config={config} />} />
+        <Route path={LEGAL_ROUTES.terms} element={<LegalRoute documentId="terms" config={config} />} />
+        <Route path={LEGAL_ROUTES.exchanges} element={<LegalRoute documentId="exchanges" config={config} />} />
+        <Route path={LEGAL_ROUTES.production} element={<LegalRoute documentId="production" config={config} />} />
+        <Route path={LEGAL_ROUTES.artwork} element={<LegalRoute documentId="artwork" config={config} />} />
+        <Route path={LEGAL_ROUTES.lgpd} element={<LegalRoute documentId="lgpd" config={config} />} />
+        <Route path="*" element={<Suspense fallback={<LoadingScreen />}><NotFound /></Suspense>} />
       </Routes>
     </Router>
   );

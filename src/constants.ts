@@ -1,7 +1,8 @@
 import { Anuncio, SiteConfig } from "./types";
+import { DEFAULT_LOGO_URL } from "./lib/seo";
 
 export const INITIAL_CONFIG: SiteConfig = {
-  logo_url: "/logo.png",
+  logo_url: DEFAULT_LOGO_URL,
   telefone1: "(16) 99999-9999",
   telefone2: "(16) 3333-3333",
   banner_principal: "https://picsum.photos/seed/grafica-banner/1920/600",
@@ -10,7 +11,13 @@ export const INITIAL_CONFIG: SiteConfig = {
   beneficio2_titulo: "PAGAMENTO SEGURO",
   beneficio2_desc: "CARTÃO, PIX OU BOLETO",
   beneficio3_titulo: "ALTA QUALIDADE",
-  beneficio3_desc: "IMPRESSÃO PREMIUM"
+  beneficio3_desc: "IMPRESSÃO PREMIUM",
+  razao_social: "",
+  documento_fiscal: "",
+  endereco_comercial: "",
+  email_atendimento: "",
+  email_privacidade: "",
+  prazo_producao: ""
 };
 
 export const INITIAL_CATEGORIES = [

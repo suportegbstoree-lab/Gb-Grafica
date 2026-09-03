@@ -37,6 +37,7 @@ import {
   trustedPagBankPayLink,
 } from './checkoutSecurity.js';
 import { verifyPagBankAuthenticity } from './pagbankAuthenticity.js';
+import { isCurrentLegalAcceptance, LEGAL_VERSIONS } from '../lib/legal.js';
 import type { DocumentReference } from 'firebase-admin/firestore';
 
 type RawBodyRequest = express.Request & { rawBody?: string };
@@ -788,6 +789,16 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       );
     }
 
+    if (!isCurrentLegalAcceptance(body.legalAcceptance)) {
+      throw new HttpError(422, 'Revise e aceite os termos da compra antes de iniciar o pagamento.');
+    }
+    const legalAcceptance = {
+      acceptedAt: new Date().toISOString(),
+      termsVersion: LEGAL_VERSIONS.terms,
+      privacyVersion: LEGAL_VERSIONS.privacy,
+      exchangesVersion: LEGAL_VERSIONS.exchanges,
+    };
+
     enforceRateLimit(`checkout:${firebaseUser.uid}`, 1, 3_000);
     await enforceDistributedRateLimit(db, `checkout:${firebaseUser.uid}`, 5, 5 * 60_000);
 
@@ -830,6 +841,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
         status: 'creating',
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+        legalAcceptance,
       });
       return { created: true, data: undefined };
     });
@@ -888,6 +900,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       clienteNome: customerName,
       clienteEmail: email,
       clienteTelefone: phone.digits,
+      legalAcceptance,
     });
 
     try {
