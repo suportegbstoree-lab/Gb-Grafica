@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-02 — Painel administrativo e testes de navegador
+
+- Adicionadas validações centralizadas para categorias, produtos, atributos, combinações, promoções e configurações antes de qualquer gravação.
+- Bloqueados nomes duplicados, URLs inseguras, limites excessivos de galeria e variações e produtos vinculados a categoria inexistente.
+- Substituídas confirmações nativas por diálogos acessíveis para exclusões e descarte de alterações não salvas.
+- Protegidas troca de seção, retorno à loja, logout e fechamento da aba quando houver edição pendente.
+- Impedidas operações simultâneas no painel e melhoradas as mensagens de falha e os alvos de toque no mobile.
+- Criado ambiente E2E isolado, com catálogo, usuário, persistência administrativa, cálculo de frete e checkout simulados.
+- Adicionados oito fluxos Playwright cobrindo busca, carrinho, frete, checkout, validação administrativa, persistência, exclusão, alterações pendentes e responsividade.
+- Integrados os testes de navegador ao CI, com artefatos de diagnóstico preservados quando ocorrer falha.
+- Mantida intacta a folha global `src/index.css` e preservada a composição visual existente.
+
 ## 2026-09-02 — SEO, acessibilidade, resiliência e testes de fluxo
 
 - Adicionados canonical, robots, Open Graph, Twitter Cards e dados estruturados para a loja e documentos públicos.

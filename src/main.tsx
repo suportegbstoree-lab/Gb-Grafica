@@ -1,7 +1,6 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import {MotionConfig} from 'motion/react';
-import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary.tsx';
 import appStyles from './index.css?inline';
 
@@ -15,12 +14,21 @@ styleElement.id = 'gb-app-styles';
 styleElement.textContent = appStyles;
 document.head.appendChild(styleElement);
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <MotionConfig reducedMotion="user">
-        <App />
-      </MotionConfig>
-    </ErrorBoundary>
-  </StrictMode>,
-);
+async function mountApplication() {
+  const module = import.meta.env.VITE_E2E_MODE === 'true'
+    ? await import('./e2e/E2EHarness.tsx')
+    : await import('./App.tsx');
+  const RootApplication = module.default;
+
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <ErrorBoundary>
+        <MotionConfig reducedMotion="user">
+          <RootApplication />
+        </MotionConfig>
+      </ErrorBoundary>
+    </StrictMode>,
+  );
+}
+
+void mountApplication();

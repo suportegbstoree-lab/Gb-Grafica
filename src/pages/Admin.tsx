@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Anuncio, SiteConfig, Order, Category, Promocao, ProductAttribute, type FulfillmentStatus } from '../types';
+import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
 import { db, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, logout } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
@@ -13,8 +13,25 @@ import { requestArtworkUrl } from '../services/artworkService';
 import { updateOrderFulfillment } from '../services/orderService';
 import { missingLegalBusinessFields } from '../lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata } from '../lib/seo';
+import ConfirmDialog from '../components/ConfirmDialog';
+import {
+  ADMIN_LIMITS,
+  draftFingerprint,
+  generateProductCombinations,
+  validateCategoryDraft,
+  validateProductDraft,
+  validatePromotionDraft,
+  validateSiteConfig,
+} from '../lib/adminValidation';
 
-interface AdminProps {
+type AdminTab = 'products' | 'categories' | 'config' | 'orders' | 'promotions';
+
+export interface AdminPersistence {
+  setDocument: (collectionName: string, documentId: string, value: unknown) => Promise<void>;
+  deleteDocument: (collectionName: string, documentId: string) => Promise<void>;
+}
+
+export interface AdminProps {
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
@@ -22,7 +39,26 @@ interface AdminProps {
   ordersReady: boolean;
   ordersError: string | null;
   promotions: Promocao[];
+  persistence?: AdminPersistence;
+  onLogout?: () => void | Promise<void>;
 }
+
+interface ConfirmationState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  onConfirm: () => void | Promise<void>;
+}
+
+const FIREBASE_PERSISTENCE: AdminPersistence = {
+  async setDocument(collectionName, documentId, value) {
+    await setDoc(doc(db, collectionName, documentId), value);
+  },
+  async deleteDocument(collectionName, documentId) {
+    await deleteDoc(doc(db, collectionName, documentId));
+  },
+};
 
 const BENEFIT_FIELDS = [
   { number: 1, title: 'beneficio1_titulo', description: 'beneficio1_desc' },
@@ -39,14 +75,25 @@ const LEGAL_FIELD_LABELS: Record<string, string> = {
   prazo_producao: 'prazo de produção',
 };
 
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-export default function Admin({ products, config, categories, orders, ordersReady, ordersError, promotions }: AdminProps) {
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'config' | 'orders' | 'promotions'>('products');
+export default function Admin({
+  products,
+  config,
+  categories,
+  orders,
+  ordersReady,
+  ordersError,
+  promotions,
+  persistence = FIREBASE_PERSISTENCE,
+  onLogout = logout,
+}: AdminProps) {
+  const [activeTab, setActiveTab] = useState<AdminTab>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
+  const [productBaseline, setProductBaseline] = useState<string | null>(null);
+  const [promotionBaseline, setPromotionBaseline] = useState<string | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
   const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -84,8 +131,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
     loading: boolean;
   } | null>(null);
 
-  const closeProductEditor = () => {
+  const forceCloseProductEditor = React.useCallback(() => {
     setEditingProduct(null);
+    setProductBaseline(null);
     setShowAttrForm(false);
     setShowBulkImageForm(false);
     setShowCustomAiPrompt(false);
@@ -93,15 +141,112 @@ export default function Admin({ products, config, categories, orders, ordersRead
     setBulkImages('');
     setCustomAiPrompt('');
     setNewAttr({ nome: '', opcoes: '' });
+  }, []);
+
+  const forceClosePromotionEditor = React.useCallback(() => {
+    setEditingPromotion(null);
+    setPromotionBaseline(null);
+  }, []);
+
+  const openProductEditor = (draft: Partial<Anuncio>) => {
+    const copy = structuredClone(draft);
+    setEditingProduct(copy);
+    setProductBaseline(draftFingerprint(copy));
+  };
+
+  const openPromotionEditor = (draft: Partial<Promocao>) => {
+    const copy = structuredClone(draft);
+    setEditingPromotion(copy);
+    setPromotionBaseline(draftFingerprint(copy));
+  };
+
+  const hasUnsavedProduct = Boolean(
+    editingProduct && productBaseline !== null && draftFingerprint(editingProduct) !== productBaseline,
+  );
+  const hasUnsavedPromotion = Boolean(
+    editingPromotion && promotionBaseline !== null && draftFingerprint(editingPromotion) !== promotionBaseline,
+  );
+
+  const requestCloseProductEditor = React.useCallback(() => {
+    if (isSaving) return;
+    if (editingProduct && productBaseline !== null && draftFingerprint(editingProduct) !== productBaseline) {
+      setConfirmation({
+        title: 'Descartar alterações?',
+        message: 'As mudanças feitas neste produto ainda não foram salvas.',
+        confirmLabel: 'Descartar',
+        danger: true,
+        onConfirm: forceCloseProductEditor,
+      });
+      return;
+    }
+    forceCloseProductEditor();
+  }, [editingProduct, forceCloseProductEditor, isSaving, productBaseline]);
+
+  const requestClosePromotionEditor = React.useCallback(() => {
+    if (isSaving) return;
+    if (editingPromotion && promotionBaseline !== null && draftFingerprint(editingPromotion) !== promotionBaseline) {
+      setConfirmation({
+        title: 'Descartar alterações?',
+        message: 'As mudanças feitas nesta promoção ainda não foram salvas.',
+        confirmLabel: 'Descartar',
+        danger: true,
+        onConfirm: forceClosePromotionEditor,
+      });
+      return;
+    }
+    forceClosePromotionEditor();
+  }, [editingPromotion, forceClosePromotionEditor, isSaving, promotionBaseline]);
+
+  const requestTabChange = (nextTab: AdminTab) => {
+    if (nextTab === activeTab) return;
+    if (activeTab === 'config' && configDirty) {
+      setConfirmation({
+        title: 'Sair sem salvar?',
+        message: 'As alterações feitas nas configurações serão perdidas.',
+        confirmLabel: 'Sair sem salvar',
+        danger: true,
+        onConfirm: () => {
+          setConfigDirty(false);
+          setActiveTab(nextTab);
+        },
+      });
+      return;
+    }
+    setActiveTab(nextTab);
+  };
+
+  const runConfirmedAction = async () => {
+    if (!confirmation || isConfirming) return;
+    setIsConfirming(true);
+    try {
+      await confirmation.onConfirm();
+      setConfirmation(null);
+    } catch (error) {
+      console.error('Erro ao executar ação confirmada:', error);
+      setErrorMessage('Não foi possível concluir a ação. Tente novamente.');
+    } finally {
+      setIsConfirming(false);
+    }
   };
 
   React.useEffect(() => {
-    if (!editingProduct && !editingPromotion) return undefined;
+    const hasUnsavedChanges = configDirty || hasUnsavedProduct || hasUnsavedPromotion;
+    if (!hasUnsavedChanges) return undefined;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [configDirty, hasUnsavedProduct, hasUnsavedPromotion]);
+
+  React.useEffect(() => {
+    if (!editingProduct && !editingPromotion && !confirmation) return undefined;
     const previousOverflow = document.body.style.overflow;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
 
-    const activeDialog = () => Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]'))
+    const activeDialog = () => Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]'))
       .filter(element => element.getClientRects().length > 0)
       .at(-1);
     const focusableElements = (dialog: HTMLElement) => Array.from(dialog.querySelectorAll<HTMLElement>(
@@ -119,8 +264,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
         if (aiPreview) setAiPreview(null);
         else if (showCustomAiPrompt) setShowCustomAiPrompt(false);
         else if (showBulkImageForm) setShowBulkImageForm(false);
-        else if (editingProduct) closeProductEditor();
-        else setEditingPromotion(null);
+        else if (editingProduct) requestCloseProductEditor();
+        else if (editingPromotion) requestClosePromotionEditor();
         return;
       }
 
@@ -155,7 +300,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
       document.body.style.overflow = previousOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [editingProduct, editingPromotion, aiPreview, showCustomAiPrompt, showBulkImageForm]);
+  }, [editingProduct, editingPromotion, confirmation, aiPreview, showCustomAiPrompt, showBulkImageForm, requestCloseProductEditor, requestClosePromotionEditor]);
 
   const handleAiAction = async (action: 'generate' | 'improveTitle' | 'improveDescription' | 'custom', prompt?: string) => {
     if (!editingProduct) return;
@@ -191,18 +336,20 @@ export default function Admin({ products, config, categories, orders, ordersRead
   };
 
   const bootstrapData = async () => {
+    if (isBootstrapping) return;
     setIsBootstrapping(true);
+    setErrorMessage(null);
     try {
       // Categories
       for (const cat of INITIAL_CATEGORIES) {
         const id = slugifyDocumentId(cat.nome);
         if (!id) continue;
-        await setDoc(doc(db, 'categories', id), cat);
+        await persistence.setDocument('categories', id, { ...cat, id });
       }
       // Products
       for (const prod of INITIAL_PRODUCTS) {
         const id = prod.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-        await setDoc(doc(db, 'anuncios', id), { ...prod, id });
+        await persistence.setDocument('anuncios', id, { ...prod, id });
       }
       setSuccessMessage('Dados iniciais carregados com sucesso!');
     } catch (error) {
@@ -216,6 +363,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
   // Config Handlers
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isSaving) return;
+    setErrorMessage(null);
     const formData = new FormData(e.currentTarget);
     const updatedConfig: SiteConfig = {
       ...config,
@@ -242,30 +391,16 @@ export default function Admin({ products, config, categories, orders, ordersRead
       prazo_producao: String(formData.get('prazo_producao') || '').trim(),
     };
 
-    if (!updatedConfig.telefone1.trim() || !updatedConfig.telefone2.trim()) {
-      setErrorMessage('Informe os dois números de atendimento.');
-      return;
-    }
-    if (updatedConfig.logo_url && !isHttpUrl(updatedConfig.logo_url) && !updatedConfig.logo_url.startsWith('/')) {
-      setErrorMessage('A URL do logo é inválida.');
-      return;
-    }
-    if (!isHttpUrl(updatedConfig.banner_principal) && !updatedConfig.banner_principal.startsWith('/')) {
-      setErrorMessage('A URL do banner principal é inválida.');
-      return;
-    }
-    if (updatedConfig.email_atendimento && !isValidEmail(updatedConfig.email_atendimento)) {
-      setErrorMessage('O e-mail de atendimento é inválido.');
-      return;
-    }
-    if (updatedConfig.email_privacidade && !isValidEmail(updatedConfig.email_privacidade)) {
-      setErrorMessage('O e-mail de privacidade é inválido.');
+    const validation = validateSiteConfig(updatedConfig);
+    if (validation.ok === false) {
+      setErrorMessage(validation.message);
       return;
     }
 
     setIsSaving(true);
     try {
-      await setDoc(doc(db, 'config', 'main'), updatedConfig);
+      await persistence.setDocument('config', 'main', validation.value);
+      setConfigDirty(false);
       setSuccessMessage('Configurações salvas com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'config/main');
@@ -277,40 +412,30 @@ export default function Admin({ products, config, categories, orders, ordersRead
 
   // Category Handlers
   const handleAddCategory = async () => {
-    const name = newCategory.nome.trim();
-    if (!name) return;
-    if (newCategory.icon.trim() && !isHttpUrl(newCategory.icon.trim())) {
-      setErrorMessage('A URL do ícone da categoria é inválida.');
+    if (isSaving) return;
+    setErrorMessage(null);
+    const validation = validateCategoryDraft(newCategory, categories);
+    if (validation.ok === false) {
+      setErrorMessage(validation.message);
       return;
     }
-    const id = slugifyDocumentId(name);
-    if (!id) {
-      setErrorMessage('O nome da categoria não gera um identificador válido.');
-      return;
-    }
-    if (categories.some(category => category.id === id || category.nome.toLocaleLowerCase('pt-BR') === name.toLocaleLowerCase('pt-BR'))) {
-      setErrorMessage('Já existe uma categoria com esse nome.');
-      return;
-    }
+    setIsSaving(true);
     try {
-      await setDoc(doc(db, 'categories', id), { nome: name, icon: newCategory.icon.trim() });
+      await persistence.setDocument('categories', validation.value.id, validation.value);
       setNewCategory({ nome: '', icon: '' });
       setSuccessMessage('Categoria adicionada.');
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `categories/${id}`);
+      handleFirestoreError(error, OperationType.CREATE, `categories/${validation.value.id}`);
       setErrorMessage('Não foi possível adicionar a categoria.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const handleDeleteCategory = async (catId: string) => {
+  const deleteCategory = async (catId: string) => {
     const category = categories.find(item => item.id === catId);
-    if (category && products.some(product => product.categoria === category.nome)) {
-      setErrorMessage('Esta categoria ainda possui produtos. Mova-os antes de excluir.');
-      return;
-    }
-    if (!window.confirm(`Excluir a categoria "${category?.nome || catId}"?`)) return;
     try {
-      await deleteDoc(doc(db, 'categories', catId));
+      await persistence.deleteDocument('categories', catId);
       setSuccessMessage('Categoria excluída.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `categories/${catId}`);
@@ -318,83 +443,42 @@ export default function Admin({ products, config, categories, orders, ordersRead
     }
   };
 
+  const handleDeleteCategory = (catId: string) => {
+    const category = categories.find(item => item.id === catId);
+    if (category && products.some(product => product.categoria === category.nome)) {
+      setErrorMessage('Esta categoria ainda possui produtos. Mova-os antes de excluir.');
+      return;
+    }
+    setConfirmation({
+      title: 'Excluir categoria?',
+      message: `A categoria “${category?.nome || catId}” será removida.`,
+      confirmLabel: 'Excluir categoria',
+      danger: true,
+      onConfirm: () => deleteCategory(catId),
+    });
+  };
+
   // Product Handlers
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct) return;
-
-    const name = editingProduct.nome?.trim() || '';
-    const description = editingProduct.desc?.trim() || '';
-    const category = editingProduct.categoria?.trim() || '';
-    const mainImage = editingProduct.imagem?.trim() || '';
-    const attributes = (editingProduct.atributos || []).map(attribute => ({
-      nome: attribute.nome.trim(),
-      opcoes: Array.from(new Set(attribute.opcoes.map(option => option.trim()).filter(Boolean))),
-    }));
-
-    if (!name || !description || !category || !mainImage) {
-      setErrorMessage('Por favor, preencha todos os campos obrigatórios (Nome, Descrição, Categoria e Imagem Principal).');
+    if (!editingProduct || isSaving) return;
+    setErrorMessage(null);
+    const validation = validateProductDraft(editingProduct, categories, products);
+    if (validation.ok === false) {
+      setErrorMessage(validation.message);
       return;
-    }
-    if (name.length >= 200 || description.length >= 1000) {
-      setErrorMessage('O nome deve ter menos de 200 caracteres e a descrição menos de 1000.');
-      return;
-    }
-    if (!isHttpUrl(mainImage) && !mainImage.startsWith('/')) {
-      setErrorMessage('A URL da imagem principal é inválida.');
-      return;
-    }
-    const gallery = [...new Set<string>((editingProduct.imagens || []).map(image => image.trim()).filter(Boolean))];
-    if (gallery.some(image => !isHttpUrl(image) && !image.startsWith('/'))) {
-      setErrorMessage('A galeria contém uma URL inválida.');
-      return;
-    }
-    if (attributes.some(attribute => !attribute.nome || attribute.opcoes.length === 0) || new Set(attributes.map(attribute => attribute.nome)).size !== attributes.length) {
-      setErrorMessage('Cada atributo precisa de nome único e pelo menos uma opção.');
-      return;
-    }
-
-    const combinationKeys = generateCombinations(attributes);
-    if (combinationKeys.length > 500) {
-      setErrorMessage('Este produto gera combinações demais. Reduza a quantidade de atributos ou opções.');
-      return;
-    }
-    const combinations = Object.fromEntries(combinationKeys.map(key => [key, editingProduct.combinacoes?.[key]?.trim() || '']));
-    if (combinationKeys.some(key => {
-      const cents = parseMoneyToCents(combinations[key]);
-      return cents === null || cents <= 0;
-    })) {
-      setErrorMessage('Defina um preço válido e maior que zero para todas as combinações.');
-      return;
-    }
-    if (attributes.length === 0) {
-      const basePrice = parseMoneyToCents(editingProduct.preco_base);
-      if (basePrice === null || basePrice <= 0) {
-        setErrorMessage('Defina um preço base válido e maior que zero.');
-        return;
-      }
     }
 
     const id = editingProduct.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
     const productToSave: Anuncio = {
-      ...editingProduct,
+      ...validation.value,
       id,
-      nome: name,
-      desc: description,
-      categoria: category,
-      imagem: mainImage,
-      imagens: gallery,
-      preco_base: editingProduct.preco_base?.trim() || '',
-      atributos: attributes,
-      combinacoes: combinations,
-      tipoInput: editingProduct.tipoInput || 'nenhum',
-      labelTexto: editingProduct.labelTexto?.trim() || '',
     };
 
     setIsSaving(true);
     try {
-      await setDoc(doc(db, 'anuncios', id), productToSave);
-      closeProductEditor();
+      await persistence.setDocument('anuncios', id, productToSave);
+      forceCloseProductEditor();
       setSuccessMessage('Anúncio salvo com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar anúncio:', error);
@@ -405,16 +489,25 @@ export default function Admin({ products, config, categories, orders, ordersRead
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    const product = products.find(item => item.id === id);
-    if (!window.confirm(`Excluir o produto "${product?.nome || id}"? Esta ação não pode ser desfeita.`)) return;
+  const deleteProduct = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'anuncios', id));
+      await persistence.deleteDocument('anuncios', id);
       setSuccessMessage('Anúncio excluído com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
       setErrorMessage('Não foi possível excluir o anúncio.');
     }
+  };
+
+  const handleDeleteProduct = (id: string) => {
+    const product = products.find(item => item.id === id);
+    setConfirmation({
+      title: 'Excluir produto?',
+      message: `O produto “${product?.nome || id}” será excluído permanentemente.`,
+      confirmLabel: 'Excluir produto',
+      danger: true,
+      onConfirm: () => deleteProduct(id),
+    });
   };
 
   // Order Handlers
@@ -441,34 +534,24 @@ export default function Admin({ products, config, categories, orders, ordersRead
   // Promotion Handlers
   const handleSavePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingPromotion) return;
-
-    const title = editingPromotion.titulo?.trim() || '';
-    const image = editingPromotion.imagem?.trim() || '';
-    const link = editingPromotion.link?.trim() || '';
-    if (!title || !image) {
-      setErrorMessage('Por favor, preencha o título e a imagem da promoção.');
-      return;
-    }
-    if ((!isHttpUrl(image) && !image.startsWith('/')) || (link && !isHttpUrl(link))) {
-      setErrorMessage('A promoção contém uma URL inválida.');
+    if (!editingPromotion || isSaving) return;
+    setErrorMessage(null);
+    const validation = validatePromotionDraft(editingPromotion);
+    if (validation.ok === false) {
+      setErrorMessage(validation.message);
       return;
     }
 
     const id = editingPromotion.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-    const promotionToSave = {
-      ...editingPromotion,
+    const promotionToSave: Promocao = {
+      ...validation.value,
       id,
-      titulo: title,
-      imagem: image,
-      link,
-      ativa: editingPromotion.ativa ?? true
-    } as Promocao;
+    };
 
     setIsSaving(true);
     try {
-      await setDoc(doc(db, 'promocoes', id), promotionToSave);
-      setEditingPromotion(null);
+      await persistence.setDocument('promocoes', id, promotionToSave);
+      forceClosePromotionEditor();
       setSuccessMessage('Promoção salva com sucesso!');
     } catch (error) {
       setErrorMessage('Erro ao salvar promoção.');
@@ -478,16 +561,66 @@ export default function Admin({ products, config, categories, orders, ordersRead
     }
   };
 
-  const handleDeletePromotion = async (id: string) => {
-    const promotion = promotions.find(item => item.id === id);
-    if (!window.confirm(`Excluir a promoção "${promotion?.titulo || id}"?`)) return;
+  const deletePromotion = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'promocoes', id));
+      await persistence.deleteDocument('promocoes', id);
       setSuccessMessage('Promoção excluída com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `promocoes/${id}`);
       setErrorMessage('Não foi possível excluir a promoção.');
     }
+  };
+
+  const handleDeletePromotion = (id: string) => {
+    const promotion = promotions.find(item => item.id === id);
+    setConfirmation({
+      title: 'Excluir promoção?',
+      message: `A promoção “${promotion?.titulo || id}” será removida.`,
+      confirmLabel: 'Excluir promoção',
+      danger: true,
+      onConfirm: () => deletePromotion(id),
+    });
+  };
+
+  const performLogout = async () => {
+    try {
+      await onLogout();
+    } catch (error) {
+      console.error('Erro ao sair do painel:', error);
+      setErrorMessage('Não foi possível encerrar a sessão. Tente novamente.');
+    }
+  };
+
+  const handleStoreLink = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!configDirty) return;
+    event.preventDefault();
+    setConfirmation({
+      title: 'Voltar sem salvar?',
+      message: 'As alterações feitas nas configurações serão perdidas.',
+      confirmLabel: 'Voltar para a loja',
+      danger: true,
+      onConfirm: () => {
+        setConfigDirty(false);
+        window.location.assign('/');
+      },
+    });
+  };
+
+  const handleLogout = () => {
+    if (!configDirty) {
+      void performLogout();
+      return;
+    }
+    setConfirmation({
+      title: 'Sair sem salvar?',
+      message: 'As alterações feitas nas configurações serão perdidas e a sessão será encerrada.',
+      confirmLabel: 'Sair do Admin',
+      danger: true,
+      onConfirm: async () => {
+        setConfigDirty(false);
+        await performLogout();
+      },
+    });
   };
 
   return (
@@ -507,31 +640,36 @@ export default function Admin({ products, config, categories, orders, ordersRead
 
           <nav aria-label="Seções administrativas" className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             <button
-              onClick={() => setActiveTab('products')}
+              onClick={() => requestTabChange('products')}
+              aria-current={activeTab === 'products' ? 'page' : undefined}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'products' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Layout size={18} /> Produtos
             </button>
             <button
-              onClick={() => setActiveTab('categories')}
+              onClick={() => requestTabChange('categories')}
+              aria-current={activeTab === 'categories' ? 'page' : undefined}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'categories' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <List size={18} /> Categorias
             </button>
             <button
-              onClick={() => setActiveTab('orders')}
+              onClick={() => requestTabChange('orders')}
+              aria-current={activeTab === 'orders' ? 'page' : undefined}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'orders' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Package size={18} /> Pedidos
             </button>
             <button
-              onClick={() => setActiveTab('promotions')}
+              onClick={() => requestTabChange('promotions')}
+              aria-current={activeTab === 'promotions' ? 'page' : undefined}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'promotions' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Tag size={18} /> Promoções
             </button>
             <button
-              onClick={() => setActiveTab('config')}
+              onClick={() => requestTabChange('config')}
+              aria-current={activeTab === 'config' ? 'page' : undefined}
               className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'config' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
             >
               <Settings size={18} /> Configurações
@@ -540,10 +678,10 @@ export default function Admin({ products, config, categories, orders, ordersRead
         </div>
 
         <div className="mt-auto flex flex-wrap gap-4 px-4 pb-4 sm:px-6 sm:pb-6 lg:flex-col lg:p-8">
-          <Link to="/" className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors">
+          <Link to="/" onClick={handleStoreLink} className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors">
             <ArrowLeft size={14} /> Voltar para a Loja
           </Link>
-          <button onClick={logout} className="flex items-center gap-2 text-xs text-red-500 hover:text-red-400 transition-colors">
+          <button onClick={handleLogout} className="flex items-center gap-2 text-xs text-red-500 hover:text-red-400 transition-colors">
             <LogOut size={14} /> Sair do Admin
           </button>
         </div>
@@ -592,7 +730,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                 )}
               </div>
               <button
-                onClick={() => setEditingProduct({
+                onClick={() => openProductEditor({
                   nome: '',
                   desc: '',
                   categoria: categories[0]?.nome || '',
@@ -614,8 +752,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-video bg-gray-900 relative">
                     <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                      <button type="button" onClick={() => setEditingProduct(p)} aria-label={`Editar ${p.nome}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
+                    <div className="absolute inset-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                      <button type="button" onClick={() => openProductEditor(p)} aria-label={`Editar ${p.nome}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
                       <button type="button" onClick={() => handleDeleteProduct(p.id)} aria-label={`Excluir ${p.nome}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
@@ -641,9 +779,11 @@ export default function Admin({ products, config, categories, orders, ordersRead
             <div className="bg-[#111111] border border-gray-800 p-6 rounded-xl space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
+                  <label htmlFor="new-category-name" className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
                   <input
+                    id="new-category-name"
                     type="text"
+                    maxLength={ADMIN_LIMITS.categoryName}
                     value={newCategory.nome}
                     onChange={(e) => setNewCategory({ ...newCategory, nome: e.target.value })}
                     placeholder="Ex: Etiquetas p/ Objetos"
@@ -651,8 +791,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
+                  <label htmlFor="new-category-icon" className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
                   <input
+                    id="new-category-icon"
                     type="text"
                     value={newCategory.icon}
                     onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
@@ -662,8 +803,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   <p className="text-[10px] text-gray-500 mt-1">Informe uma URL HTTPS estável para o ícone.</p>
                 </div>
               </div>
-              <button onClick={handleAddCategory} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto">
-                Adicionar Categoria
+              <button onClick={handleAddCategory} disabled={isSaving} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto disabled:opacity-50">
+                {isSaving ? 'Adicionando...' : 'Adicionar Categoria'}
               </button>
             </div>
 
@@ -674,7 +815,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                     {cat.icon && <img src={cat.icon} alt="" className="w-8 h-8 object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
                     <span className="font-bold text-sm uppercase tracking-wider">{cat.nome}</span>
                   </div>
-                  <button onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="text-gray-500 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                  <button onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="text-gray-500 hover:text-red-500 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100">
                     <Trash2 size={18} />
                   </button>
                 </div>
@@ -733,10 +874,10 @@ export default function Admin({ products, config, categories, orders, ordersRead
               <h2 className="text-2xl font-bold">Configurações do Site</h2>
             </div>
 
-            <form key={JSON.stringify(config)} onSubmit={handleSaveConfig} className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <form key={JSON.stringify(config)} onSubmit={handleSaveConfig} onChange={() => setConfigDirty(true)} className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site (URL)</label>
+                  <label htmlFor="logo_url_input" className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site (URL)</label>
                   <input
                     id="logo_url_input"
                     name="logo_url"
@@ -752,15 +893,15 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 1</label>
-                  <input name="telefone1" type="tel" defaultValue={config.telefone1} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <label htmlFor="config-phone-1" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 1</label>
+                  <input id="config-phone-1" name="telefone1" type="tel" defaultValue={config.telefone1} autoComplete="tel" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 2</label>
-                  <input name="telefone2" type="tel" defaultValue={config.telefone2} className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <label htmlFor="config-phone-2" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 2</label>
+                  <input id="config-phone-2" name="telefone2" type="tel" defaultValue={config.telefone2} autoComplete="tel" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal (URL)</label>
+                  <label htmlFor="banner_principal_input" className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal (URL)</label>
                   <input
                     id="banner_principal_input"
                     name="banner_principal"
@@ -770,37 +911,37 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label>
-                  <input name="banner_titulo" defaultValue={config.banner_titulo} placeholder="Ex: Impressão com Amor e Cuidado" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <label htmlFor="config-banner-title" className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label>
+                  <input id="config-banner-title" name="banner_titulo" defaultValue={config.banner_titulo} maxLength={160} placeholder="Ex: Impressão com Amor e Cuidado" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Subtítulo do Banner</label>
-                  <input name="banner_subtitulo" defaultValue={config.banner_subtitulo} placeholder="Ex: Produtos personalizados para eternizar..." className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <label htmlFor="config-banner-subtitle" className="text-xs font-bold uppercase tracking-widest text-gray-500">Subtítulo do Banner</label>
+                  <input id="config-banner-subtitle" name="banner_subtitulo" defaultValue={config.banner_subtitulo} maxLength={300} placeholder="Ex: Produtos personalizados para eternizar..." className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do Botão do Banner</label>
-                  <input name="banner_botao" defaultValue={config.banner_botao} placeholder="Ex: Ver Produtos" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                  <label htmlFor="config-banner-button" className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do Botão do Banner</label>
+                  <input id="config-banner-button" name="banner_botao" defaultValue={config.banner_botao} maxLength={80} placeholder="Ex: Ver Produtos" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
                 </div>
               </div>
 
               <div className="space-y-6">
                 {BENEFIT_FIELDS.map(benefit => (
                   <div key={benefit.number} className="p-6 bg-[#111111] border border-gray-800 rounded-xl space-y-4">
-                    <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Benefício {benefit.number}</div>
-                    <input name={benefit.title} defaultValue={config[benefit.title]} placeholder="Título" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                    <input name={benefit.description} defaultValue={config[benefit.description]} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                    <div id={`benefit-${benefit.number}-label`} className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Benefício {benefit.number}</div>
+                    <input aria-labelledby={`benefit-${benefit.number}-label`} aria-label={`Título do benefício ${benefit.number}`} name={benefit.title} defaultValue={config[benefit.title]} maxLength={100} placeholder="Título" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                    <input aria-labelledby={`benefit-${benefit.number}-label`} aria-label={`Descrição do benefício ${benefit.number}`} name={benefit.description} defaultValue={config[benefit.description]} maxLength={180} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
                   </div>
                 ))}
 
                 <div className="p-6 bg-[#111111] border border-pink-500/20 rounded-xl space-y-4">
                   <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">PIX manual (legado — não usado no Checkout PagBank)</div>
                   <div className="space-y-2">
-                    <label className="text-xs text-gray-500 font-medium">Chave PIX</label>
-                    <input name="pix_chave" defaultValue={config.pix_chave} placeholder="CPF, E-mail, Celular ou Chave Aleatória" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                    <label htmlFor="config-pix-key" className="text-xs text-gray-500 font-medium">Chave PIX</label>
+                    <input id="config-pix-key" name="pix_chave" defaultValue={config.pix_chave} maxLength={160} placeholder="CPF, E-mail, Celular ou Chave Aleatória" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs text-gray-500 font-medium">Nome do Beneficiário</label>
-                    <input name="pix_beneficiario" defaultValue={config.pix_beneficiario} placeholder="Nome Completo ou Razão Social" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
+                    <label htmlFor="config-pix-beneficiary" className="text-xs text-gray-500 font-medium">Nome do Beneficiário</label>
+                    <input id="config-pix-beneficiary" name="pix_beneficiario" defaultValue={config.pix_beneficiario} maxLength={160} placeholder="Nome Completo ou Razão Social" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
                   </div>
                 </div>
               </div>
@@ -862,7 +1003,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Gerenciar Promoções</h2>
               <button
-                onClick={() => setEditingPromotion({ titulo: '', imagem: '', link: '', ativa: true })}
+                onClick={() => openPromotionEditor({ titulo: '', imagem: '', link: '', ativa: true })}
                 className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
               >
                 <Plus size={18} /> Nova Promoção
@@ -874,8 +1015,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
                 <div key={promo.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-[21/9] relative">
                     <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                      <button type="button" onClick={() => setEditingPromotion(promo)} aria-label={`Editar ${promo.titulo}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
+                    <div className="absolute inset-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                      <button type="button" onClick={() => openPromotionEditor(promo)} aria-label={`Editar ${promo.titulo}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
                       <button type="button" onClick={() => handleDeletePromotion(promo.id)} aria-label={`Excluir ${promo.titulo}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
@@ -907,7 +1048,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
       <AnimatePresence>
         {editingProduct && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={closeProductEditor} />
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={requestCloseProductEditor} />
             <motion.div
               role="dialog"
               aria-modal="true"
@@ -918,14 +1059,14 @@ export default function Admin({ products, config, categories, orders, ordersRead
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="product-editor-title" className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
-                <button type="button" onClick={closeProductEditor} aria-label="Fechar editor de produto"><X size={24} /></button>
+                <button type="button" onClick={requestCloseProductEditor} aria-label="Fechar editor de produto"><X size={24} /></button>
               </div>
 
               <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-6">
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
+                      <label htmlFor="product-name" className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
                       <button
                         type="button"
                         onClick={() => handleAiAction('improveTitle')}
@@ -935,6 +1076,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                       </button>
                     </div>
                     <input
+                      id="product-name"
                       required
                       value={editingProduct.nome}
                       maxLength={199}
@@ -944,7 +1086,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   </div>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
+                      <label htmlFor="product-description" className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
                       <div className="flex gap-3">
                         <button
                           type="button"
@@ -970,6 +1112,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                       </div>
                     </div>
                     <textarea
+                      id="product-description"
                       required
                       value={editingProduct.desc}
                       maxLength={999}
@@ -980,8 +1123,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Categoria</label>
+                      <label htmlFor="product-category" className="text-xs font-bold text-gray-500 uppercase">Categoria</label>
                       <select
+                        id="product-category"
                         value={editingProduct.categoria}
                         onChange={e => setEditingProduct({...editingProduct, categoria: e.target.value})}
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
@@ -991,8 +1135,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Preço Base (Texto)</label>
+                      <label htmlFor="product-base-price" className="text-xs font-bold text-gray-500 uppercase">Preço Base (Texto)</label>
                       <input
+                        id="product-base-price"
                         value={editingProduct.preco_base}
                         inputMode="decimal"
                         onChange={e => setEditingProduct({...editingProduct, preco_base: e.target.value})}
@@ -1003,8 +1148,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Imagem Principal (URL)</label>
+                      <label htmlFor="product-main-image" className="text-xs font-bold text-gray-500 uppercase">Imagem Principal (URL)</label>
                       <input
+                        id="product-main-image"
                         required
                         value={editingProduct.imagem}
                         onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
@@ -1015,7 +1161,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
 
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
-                        <label className="text-xs font-bold text-gray-500 uppercase">Galeria de Fotos (Opcional)</label>
+                        <span className="text-xs font-bold text-gray-500 uppercase">Galeria de Fotos (Opcional)</span>
                         <button
                           type="button"
                           onClick={() => setShowBulkImageForm(true)}
@@ -1046,7 +1192,8 @@ export default function Admin({ products, config, categories, orders, ordersRead
                                 newImgs.splice(idx, 1);
                                 setEditingProduct({...editingProduct, imagens: newImgs});
                               }}
-                              className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label={`Remover imagem ${idx + 1} da galeria`}
+                              className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition-opacity"
                             >
                               <X size={10} />
                             </button>
@@ -1066,8 +1213,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-gray-500 uppercase">Tipo de Personalização</label>
+                      <label htmlFor="product-customization-type" className="text-xs font-bold text-gray-500 uppercase">Tipo de Personalização</label>
                       <select
+                        id="product-customization-type"
                         value={editingProduct.tipoInput || 'nenhum'}
                         onChange={e => setEditingProduct({...editingProduct, tipoInput: e.target.value as Anuncio['tipoInput']})}
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
@@ -1079,8 +1227,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                     </div>
                     {editingProduct.tipoInput === 'texto' && (
                       <div className="space-y-2">
-                        <label className="text-xs font-bold text-gray-500 uppercase">Rótulo do Texto</label>
+                        <label htmlFor="product-text-label" className="text-xs font-bold text-gray-500 uppercase">Rótulo do Texto</label>
                         <input
+                          id="product-text-label"
                           value={editingProduct.labelTexto || ''}
                           onChange={e => setEditingProduct({...editingProduct, labelTexto: e.target.value})}
                           placeholder="Ex: Nome da Criança"
@@ -1093,7 +1242,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
 
                 <div className="space-y-6">
                   <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-gray-500 uppercase">Atributos e Preços</label>
+                    <span className="text-xs font-bold text-gray-500 uppercase">Atributos e Preços</span>
                     <button
                       type="button"
                       onClick={() => setShowAttrForm(true)}
@@ -1107,16 +1256,18 @@ export default function Admin({ products, config, categories, orders, ordersRead
                     <div className="bg-gray-900 p-4 rounded-lg border border-pink-500/30 space-y-4">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-[10px] text-gray-400 uppercase">Nome (ex: Tamanho)</label>
+                          <label htmlFor="new-attribute-name" className="text-[10px] text-gray-400 uppercase">Nome (ex: Tamanho)</label>
                           <input
+                            id="new-attribute-name"
                             value={newAttr.nome}
                             onChange={e => setNewAttr({...newAttr, nome: e.target.value})}
                             className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm"
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] text-gray-400 uppercase">Opções (separadas por vírgula)</label>
+                          <label htmlFor="new-attribute-options" className="text-[10px] text-gray-400 uppercase">Opções (separadas por vírgula)</label>
                           <input
+                            id="new-attribute-options"
                             value={newAttr.opcoes}
                             onChange={e => setNewAttr({...newAttr, opcoes: e.target.value})}
                             placeholder="P, M, G"
@@ -1128,24 +1279,33 @@ export default function Admin({ products, config, categories, orders, ordersRead
                         <button
                           type="button"
                           onClick={() => {
-                            if (newAttr.nome && newAttr.opcoes) {
-                              const attrName = newAttr.nome.trim();
-                              const options = Array.from(new Set(newAttr.opcoes.split(',').map(s => s.trim()).filter(Boolean)));
-                              if (!attrName || options.length === 0) {
-                                setErrorMessage('Informe o nome e ao menos uma opção para o atributo.');
-                                return;
-                              }
-                              if ((editingProduct.atributos || []).some(attribute => attribute.nome.toLocaleLowerCase('pt-BR') === attrName.toLocaleLowerCase('pt-BR'))) {
-                                setErrorMessage('Já existe um atributo com esse nome.');
-                                return;
-                              }
-                              setEditingProduct({
-                                ...editingProduct,
-                                atributos: [...(editingProduct.atributos || []), { nome: attrName, opcoes: options }]
-                              });
-                              setNewAttr({ nome: '', opcoes: '' });
-                              setShowAttrForm(false);
+                            const attrName = newAttr.nome.trim().replace(/\s+/g, ' ');
+                            const options = Array.from(new Set(newAttr.opcoes.split(',').map(s => s.trim().replace(/\s+/g, ' ')).filter(Boolean)));
+                            if (!attrName || options.length === 0) {
+                              setErrorMessage('Informe o nome e ao menos uma opção para o atributo.');
+                              return;
                             }
+                            if ((editingProduct.atributos || []).length >= ADMIN_LIMITS.attributes) {
+                              setErrorMessage(`Use no máximo ${ADMIN_LIMITS.attributes} atributos por produto.`);
+                              return;
+                            }
+                            if (options.length > ADMIN_LIMITS.optionsPerAttribute) {
+                              setErrorMessage(`Cada atributo aceita no máximo ${ADMIN_LIMITS.optionsPerAttribute} opções.`);
+                              return;
+                            }
+                            if ((editingProduct.atributos || []).some(attribute => attribute.nome.toLocaleLowerCase('pt-BR') === attrName.toLocaleLowerCase('pt-BR'))) {
+                              setErrorMessage('Já existe um atributo com esse nome.');
+                              return;
+                            }
+                            const nextAttributes = [...(editingProduct.atributos || []), { nome: attrName, opcoes: options }];
+                            if (generateProductCombinations(nextAttributes).length > ADMIN_LIMITS.combinations) {
+                              setErrorMessage('Esse atributo geraria combinações demais. Reduza a quantidade de opções.');
+                              return;
+                            }
+                            setErrorMessage(null);
+                            setEditingProduct({ ...editingProduct, atributos: nextAttributes });
+                            setNewAttr({ nome: '', opcoes: '' });
+                            setShowAttrForm(false);
                           }}
                           className="bg-[#ff4d79] px-4 py-2 rounded text-xs font-bold"
                         >
@@ -1187,12 +1347,13 @@ export default function Admin({ products, config, categories, orders, ordersRead
                     <div className="space-y-4 pt-4 border-t border-gray-800">
                       <div className="text-[10px] text-gray-500 uppercase font-bold">Definir Preços das Combinações</div>
                       <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
-                        {generateCombinations(editingProduct.atributos).map(combo => (
+                        {generateProductCombinations(editingProduct.atributos).map(combo => (
                           <div key={combo} className="flex items-center gap-3 bg-black/40 p-2 rounded border border-gray-800">
                             <span className="text-[10px] flex-grow">{combo.replace(/\|/g, ' + ')}</span>
                             <div className="flex items-center gap-1">
                               <span className="text-[10px] text-gray-500">R$</span>
                               <input
+                                aria-label={`Preço da combinação ${combo.replace(/\|/g, ' + ')}`}
                                 type="text"
                                 inputMode="decimal"
                                 value={editingProduct.combinacoes?.[combo] || ''}
@@ -1211,7 +1372,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                 </div>
 
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
-                  <button type="button" onClick={closeProductEditor} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white">Cancelar</button>
+                  <button type="button" onClick={requestCloseProductEditor} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white">Cancelar</button>
                   <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
                     {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} {isSaving ? 'Salvando...' : 'Salvar Produto'}
                   </button>
@@ -1267,9 +1428,15 @@ export default function Admin({ products, config, categories, orders, ordersRead
                               setErrorMessage('Informe ao menos uma URL HTTP ou HTTPS válida.');
                               return;
                             }
+                            const nextImages = [...new Set([...(editingProduct.imagens || []), ...urls])];
+                            if (nextImages.length > ADMIN_LIMITS.galleryImages) {
+                              setErrorMessage(`A galeria aceita no máximo ${ADMIN_LIMITS.galleryImages} imagens.`);
+                              return;
+                            }
+                            setErrorMessage(null);
                             setEditingProduct({
                               ...editingProduct,
-                              imagens: [...(editingProduct.imagens || []), ...urls]
+                              imagens: nextImages,
                             });
                             setBulkImages('');
                             setShowBulkImageForm(false);
@@ -1432,7 +1599,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
       <AnimatePresence>
         {editingPromotion && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setEditingPromotion(null)} />
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={requestClosePromotionEditor} />
             <motion.div
               role="dialog"
               aria-modal="true"
@@ -1443,13 +1610,14 @@ export default function Admin({ products, config, categories, orders, ordersRead
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="promotion-editor-title" className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
-                <button type="button" onClick={() => setEditingPromotion(null)} aria-label="Fechar editor de promoção"><X size={24} /></button>
+                <button type="button" onClick={requestClosePromotionEditor} aria-label="Fechar editor de promoção"><X size={24} /></button>
               </div>
 
               <form onSubmit={handleSavePromotion} className="space-y-6">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Título da Promoção</label>
+                  <label htmlFor="promotion-title" className="text-xs font-bold text-gray-500 uppercase">Título da Promoção</label>
                   <input
+                    id="promotion-title"
                       required
                       value={editingPromotion.titulo}
                       maxLength={199}
@@ -1458,8 +1626,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Banner URL</label>
+                  <label htmlFor="promotion-image" className="text-xs font-bold text-gray-500 uppercase">Banner URL</label>
                   <input
+                    id="promotion-image"
                     required
                     value={editingPromotion.imagem}
                     onChange={e => setEditingPromotion({...editingPromotion, imagem: e.target.value})}
@@ -1468,8 +1637,9 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-500 uppercase">Link de Destino (Opcional)</label>
+                  <label htmlFor="promotion-link" className="text-xs font-bold text-gray-500 uppercase">Link de Destino (Opcional)</label>
                   <input
+                    id="promotion-link"
                     value={editingPromotion.link || ''}
                     onChange={e => setEditingPromotion({...editingPromotion, link: e.target.value})}
                     placeholder="https://..."
@@ -1491,7 +1661,7 @@ export default function Admin({ products, config, categories, orders, ordersRead
                   <button type="submit" disabled={isSaving} className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                     {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Promoção'}
                   </button>
-                  <button type="button" onClick={() => setEditingPromotion(null)} className="px-6 py-3 border border-gray-800 rounded-lg font-bold hover:bg-gray-800 transition-colors">
+                  <button type="button" onClick={requestClosePromotionEditor} className="px-6 py-3 border border-gray-800 rounded-lg font-bold hover:bg-gray-800 transition-colors">
                     Cancelar
                   </button>
                 </div>
@@ -1500,28 +1670,26 @@ export default function Admin({ products, config, categories, orders, ordersRead
           </div>
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {confirmation && (
+          <ConfirmDialog
+            title={confirmation.title}
+            message={confirmation.message}
+            confirmLabel={confirmation.confirmLabel}
+            danger={confirmation.danger}
+            busy={isConfirming}
+            onCancel={() => {
+              if (!isConfirming) setConfirmation(null);
+            }}
+            onConfirm={() => {
+              void runConfirmedAction();
+            }}
+          />
+        )}
+      </AnimatePresence>
       {/* Removidos modais de upload */}
     </div>
   );
-}
-
-function generateCombinations(attributes: ProductAttribute[]): string[] {
-  if (attributes.length === 0) return [];
-
-  let results: string[] = [ "" ];
-
-  for (const attr of attributes) {
-    const newResults: string[] = [];
-    for (const res of results) {
-      for (const option of attr.opcoes) {
-        newResults.push(res ? `${res}|${option}` : option);
-        if (newResults.length > 500) return newResults;
-      }
-    }
-    results = newResults;
-  }
-
-  return results;
 }
 
 function isPaymentConfirmed(order: Order): boolean {

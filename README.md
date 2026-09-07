@@ -25,14 +25,21 @@ Reinicie `npm run dev` depois de alterar variáveis de ambiente.
 
 ## Verificações
 
+Na primeira execução dos testes de navegador, instale o Chromium controlado pelo Playwright:
+
+```bash
+npx playwright install --with-deps chromium
+```
+
 ```bash
 npm test
 npm run lint
 npm run build
 npm run test:smoke
+npm run test:e2e
 ```
 
-O smoke test inicia o bundle de produção em uma porta local e valida `/api/health`, a loja, as sete páginas comerciais, `robots.txt` e `sitemap.xml`. Os testes unitários também simulam respostas do checkout sem chamar Firebase ou PagBank.
+O smoke test inicia o bundle de produção em uma porta local e valida `/api/health`, a loja, as sete páginas comerciais, `robots.txt` e `sitemap.xml`. Os testes unitários simulam respostas do checkout sem chamar Firebase ou PagBank. Os testes E2E abrem a loja e o painel administrativo em desktop e mobile com dados isolados e APIs simuladas; não escrevem no Firebase nem criam checkout real no PagBank.
 
 ## SEO, acessibilidade e resiliência
 

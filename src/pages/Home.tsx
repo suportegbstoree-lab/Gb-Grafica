@@ -81,9 +81,10 @@ interface HomeProps {
   productsError: string | null;
   ordersReady: boolean;
   ordersError: string | null;
+  onCheckoutRedirect?: (url: string) => void;
 }
 
-export default function Home({ products, config, categories, promotions, cart, setCart, orders, user, isAdmin, productsReady, productsError, ordersReady, ordersError }: HomeProps) {
+export default function Home({ products, config, categories, promotions, cart, setCart, orders, user, isAdmin, productsReady, productsError, ordersReady, ordersError, onCheckoutRedirect }: HomeProps) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
@@ -334,7 +335,8 @@ export default function Home({ products, config, categories, promotions, cart, s
       setCart([]);
       setAcceptedLegalTerms(false);
       setIsCartOpen(false);
-      window.location.assign(checkoutResult.initPoint);
+      if (onCheckoutRedirect) onCheckoutRedirect(checkoutResult.initPoint);
+      else window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
       console.error('Checkout error:', error);
       setNotice({
