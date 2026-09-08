@@ -1,4 +1,5 @@
 import { auth } from '../firebase';
+import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
 type AiAction = 'generate' | 'improveTitle' | 'improveDescription' | 'custom';
 
@@ -24,9 +25,9 @@ async function requestSuggestion(
       signal: controller.signal,
     });
 
-    const data = await response.json().catch(() => ({})) as { suggestion?: unknown; error?: unknown };
+    const data = await response.json().catch(() => ({})) as { suggestion?: unknown } & ApiErrorPayload;
     if (!response.ok) {
-      throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível consultar a IA.');
+      throw new Error(apiErrorMessage(data, 'Não foi possível consultar a IA.'));
     }
 
     if (typeof data.suggestion !== 'string' || !data.suggestion.trim()) {

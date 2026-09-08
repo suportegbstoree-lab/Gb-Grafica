@@ -6,6 +6,7 @@ import {
   MAX_ARTWORK_BYTES,
   sanitizeArtworkName,
 } from '../lib/artwork';
+import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
 export interface UploadedArtwork {
   path: string;
@@ -53,9 +54,9 @@ async function authenticatedRequest<T>(url: string, init?: RequestInit): Promise
       Authorization: `Bearer ${token}`,
     },
   });
-  const data = await response.json().catch(() => ({})) as { error?: unknown } & T;
+  const data = await response.json().catch(() => ({})) as ApiErrorPayload & T;
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível acessar a arte.');
+    throw new Error(apiErrorMessage(data, 'Não foi possível acessar a arte.'));
   }
   return data;
 }

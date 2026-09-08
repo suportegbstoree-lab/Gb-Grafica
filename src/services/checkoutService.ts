@@ -1,11 +1,12 @@
+import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
+
 export interface HostedCheckoutResult {
   initPoint: string;
   orderId?: string;
   checkoutId?: string;
 }
 
-interface CheckoutApiResponse {
-  error?: unknown;
+interface CheckoutApiResponse extends ApiErrorPayload {
   init_point?: unknown;
   order_id?: unknown;
   checkout_id?: unknown;
@@ -42,7 +43,7 @@ export async function createHostedCheckout(
 
   const data = await response.json().catch(() => ({})) as CheckoutApiResponse;
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível iniciar o pagamento.');
+    throw new Error(apiErrorMessage(data, 'Não foi possível iniciar o pagamento.'));
   }
 
   if (typeof data.init_point !== 'string' || !isTrustedPagBankPaymentUrl(data.init_point)) {

@@ -52,6 +52,17 @@ O smoke test inicia o bundle de produção em uma porta local e valida `/api/hea
 - Uma barreira global apresenta uma recuperação segura se a interface React falhar.
 - O fallback visual usa a cópia pública íntegra do logo; o arquivo histórico `public/logo.png` está corrompido e não é mais usado em execução.
 
+## Observabilidade e erros da API
+
+- Toda resposta da API recebe o header `X-Request-Id`.
+- Respostas de erro retornam `error`, `code` e `request_id` em JSON.
+- O frontend apresenta a referência da requisição junto à mensagem, permitindo localizar a falha nos logs da Vercel.
+- Os logs do servidor usam uma linha JSON por evento, com método, rota, status e duração.
+- Corpos de requisição não são registrados; credenciais, CPF, telefone, e-mail e endereço são removidos de estruturas enviadas ao logger.
+- CORS recusado, JSON inválido, payload excessivo, mídia incorreta e rota inexistente também seguem o mesmo contrato JSON.
+
+Para operação normal, use `LOG_LEVEL=info`. Valores aceitos: `info`, `warn`, `error` e `silent`. `LOG_INCLUDE_STACK` deve permanecer `false`; ative temporariamente apenas durante uma investigação controlada.
+
 ## Variáveis na Vercel
 
 Cadastre as variáveis em Project Settings → Environment Variables. Para produção, as principais são:
@@ -63,6 +74,8 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `FIREBASE_FIRESTORE_DATABASE_ID`
 - `FIREBASE_STORAGE_BUCKET`
 - `GEMINI_API_KEY` e, opcionalmente, `GEMINI_MODEL`
+- `LOG_LEVEL=info`
+- `LOG_INCLUDE_STACK=false`
 
 O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos do servidor. Não use prefixo `VITE_` nesses segredos.
 

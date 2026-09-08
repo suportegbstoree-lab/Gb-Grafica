@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import app from "./src/server/app.js";
+import { logEvent } from "./src/server/observability.js";
 
 dotenv.config();
 
@@ -49,8 +50,11 @@ async function startServer() {
   }
 
   app.listen(port, host, () => {
-    console.log(`Server listening on ${host}:${port}`);
+    logEvent('info', 'server_started', { host, port, environment: process.env.NODE_ENV || 'development' });
   });
 }
 
-startServer().catch(console.error);
+startServer().catch(error => {
+  logEvent('error', 'server_start_failed', { error });
+  process.exitCode = 1;
+});

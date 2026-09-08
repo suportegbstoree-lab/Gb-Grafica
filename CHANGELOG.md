@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-08 — Observabilidade e contrato de segurança da API
+
+- Adicionado `X-Request-Id` a todas as respostas e correlação automática entre erros apresentados ao usuário e logs do servidor.
+- Padronizadas respostas de erro em JSON com mensagem pública, código estável e referência da requisição.
+- Convertidos logs do servidor para eventos JSON com método, rota, status HTTP e duração em milissegundos.
+- Removidos de logs corpos de requisição, credenciais, tokens, CPF, telefone, e-mail, endereço e campos sensíveis aninhados.
+- Criados níveis configuráveis de log e stack traces desativados por padrão.
+- Corrigidas respostas de CORS recusado, JSON malformado, payload acima de 256 KB e tipo de mídia incompatível.
+- Impedido que rotas `/api` inexistentes retornem o shell React com HTTP 200.
+- Adicionados testes HTTP reais para headers de segurança, CORS, preflight, limites, erros operacionais e contrato 404.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
 ## 2026-09-02 — Painel administrativo e testes de navegador
 
 - Adicionadas validações centralizadas para categorias, produtos, atributos, combinações, promoções e configurações antes de qualquer gravação.

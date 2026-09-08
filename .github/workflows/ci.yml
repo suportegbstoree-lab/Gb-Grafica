@@ -15,7 +15,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,3 +40,9 @@ jobs:
 
       - name: Production server smoke test
         run: npm run test:smoke
+
+      - name: Install E2E browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser flows
+        run: npm run test:e2e

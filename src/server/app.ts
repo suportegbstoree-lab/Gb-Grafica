@@ -38,6 +38,12 @@ import {
 } from './checkoutSecurity.js';
 import { verifyPagBankAuthenticity } from './pagbankAuthenticity.js';
 import { isCurrentLegalAcceptance, LEGAL_VERSIONS } from '../lib/legal.js';
+import {
+  logEvent,
+  requestObservability,
+  requestRequestId,
+  responseRequestId,
+} from './observability.js';
 import type { DocumentReference } from 'firebase-admin/firestore';
 
 type RawBodyRequest = express.Request & { rawBody?: string };
@@ -85,7 +91,11 @@ interface PagBankCheckoutResponse {
 }
 
 class HttpError extends Error {
-  constructor(public readonly status: number, public readonly publicMessage: string) {
+  constructor(
+    public readonly status: number,
+    public readonly publicMessage: string,
+    public readonly code?: string,
+  ) {
     super(publicMessage);
     this.name = 'HttpError';
   }
@@ -150,6 +160,23 @@ async function enforceDistributedRateLimit(
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+app.use(requestObservability);
+
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://accounts.google.com https://*.firebaseapp.com; upgrade-insecure-requests",
+    );
+  }
+  next();
+});
 
 function configuredOrigins(): Set<string> {
   const candidates = [
@@ -184,22 +211,17 @@ app.use(cors({
       return;
     }
 
-    callback(new Error('Origem não autorizada.'));
+    callback(new HttpError(403, 'Origem não autorizada.', 'ORIGIN_NOT_ALLOWED'));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Authenticity-Token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Authenticity-Token', 'X-Request-Id'],
+  exposedHeaders: ['X-Request-Id'],
 }));
 
-app.use((_req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (process.env.NODE_ENV === 'production') {
-    res.setHeader(
-      'Content-Security-Policy',
-      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://accounts.google.com https://*.firebaseapp.com; upgrade-insecure-requests",
-    );
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is(['application/json', 'application/*+json'])) {
+    sendError(res, new HttpError(415, 'Envie o corpo da requisição em JSON.', 'UNSUPPORTED_MEDIA_TYPE'));
+    return;
   }
   next();
 });
@@ -212,8 +234,7 @@ app.use(express.json({
 }));
 
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) {
-    console.log(`[SERVER] ${req.method} ${req.path}`);
+  if (req.path === '/api' || req.path.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store');
   }
   next();
@@ -319,7 +340,10 @@ async function requireFirebaseUser(req: express.Request) {
   try {
     auth = getAdminServices().auth;
   } catch (error) {
-    console.error('[SERVER] Firebase Admin indisponível:', error);
+    logEvent('error', 'firebase_admin_unavailable', {
+      request_id: requestRequestId(req),
+      error,
+    });
     throw new HttpError(503, 'A autenticação do servidor ainda não está configurada.');
   }
 
@@ -343,7 +367,11 @@ async function requireAdminUser(req: express.Request) {
   return firebaseUser;
 }
 
-async function getShippingQuote(deliveryMethod: unknown, cepValue: unknown): Promise<ShippingQuote> {
+async function getShippingQuote(
+  deliveryMethod: unknown,
+  cepValue: unknown,
+  requestId?: string,
+): Promise<ShippingQuote> {
   if (deliveryMethod === 'retirada') {
     return {
       cep: '',
@@ -391,7 +419,11 @@ async function getShippingQuote(deliveryMethod: unknown, cepValue: unknown): Pro
     return { cep, amountCents, address, state, street, neighborhood, city };
   } catch (error) {
     if (error instanceof HttpError) throw error;
-    console.error('[SERVER] Erro ao validar CEP:', error);
+    logEvent('error', 'viacep_request_failed', {
+      request_id: requestId,
+      provider: 'viacep',
+      error,
+    });
     throw new HttpError(502, 'Não foi possível validar o CEP agora. Tente novamente.');
   }
 }
@@ -649,20 +681,62 @@ async function userIsAdmin(
   return userSnapshot.exists && userSnapshot.data()?.role === 'admin';
 }
 
+function publicErrorCode(status: number): string {
+  const codes: Record<number, string> = {
+    400: 'BAD_REQUEST',
+    401: 'AUTHENTICATION_REQUIRED',
+    403: 'ACCESS_DENIED',
+    404: 'NOT_FOUND',
+    409: 'CONFLICT',
+    413: 'PAYLOAD_TOO_LARGE',
+    415: 'UNSUPPORTED_MEDIA_TYPE',
+    422: 'VALIDATION_ERROR',
+    429: 'RATE_LIMITED',
+    502: 'UPSTREAM_SERVICE_ERROR',
+    503: 'SERVICE_UNAVAILABLE',
+  };
+  return codes[status] || (status >= 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_FAILED');
+}
+
 function sendError(res: express.Response, error: unknown) {
+  const requestId = responseRequestId(res);
+  res.setHeader('X-Request-Id', requestId);
+
   if (error instanceof HttpError) {
-    res.status(error.status).json({ error: error.publicMessage });
+    const code = error.code || publicErrorCode(error.status);
+    logEvent(error.status >= 500 ? 'error' : 'warn', 'api_request_rejected', {
+      request_id: requestId,
+      status_code: error.status,
+      error_code: code,
+      error_message: error.publicMessage,
+    });
+    res.status(error.status).json({ error: error.publicMessage, code, request_id: requestId });
     return;
   }
 
   if (axios.isAxiosError(error)) {
-    console.error('[SERVER] Erro retornado pelo PagBank:', JSON.stringify(providerErrorDetails(error)));
-    res.status(502).json({ error: 'Não foi possível criar o checkout PagBank. Tente novamente.' });
+    const code = 'PAGBANK_REQUEST_FAILED';
+    logEvent('error', 'external_service_request_failed', {
+      request_id: requestId,
+      provider: 'pagbank',
+      error,
+      provider_response: providerErrorDetails(error),
+    });
+    res.status(502).json({
+      error: 'Não foi possível criar o checkout PagBank. Tente novamente.',
+      code,
+      request_id: requestId,
+    });
     return;
   }
 
-  console.error('[SERVER] Erro interno:', error);
-  res.status(500).json({ error: 'Erro interno ao processar o checkout.' });
+  const code = 'INTERNAL_SERVER_ERROR';
+  logEvent('error', 'unhandled_api_error', { request_id: requestId, error });
+  res.status(500).json({
+    error: 'Erro interno ao processar a solicitação.',
+    code,
+    request_id: requestId,
+  });
 }
 
 const healthHandler = (_req: express.Request, res: express.Response) => {
@@ -689,7 +763,7 @@ app.post('/api/shipping-quote', async (req, res) => {
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, `shipping:${req.ip || 'unknown'}`, 40, 60_000);
     const body = isPlainRecord(req.body) ? req.body : {};
-    const quote = await getShippingQuote('entrega', body.cep);
+    const quote = await getShippingQuote('entrega', body.cep, responseRequestId(res));
     res.json({
       cep: quote.cep,
       address: quote.address,
@@ -752,7 +826,13 @@ app.post('/api/admin/ai', async (req, res) => {
 
     res.json({ suggestion });
   } catch (error) {
-    if (!(error instanceof HttpError)) console.error('[SERVER] Erro ao consultar IA:', error);
+    if (!(error instanceof HttpError)) {
+      logEvent('error', 'gemini_request_failed', {
+        request_id: responseRequestId(res),
+        provider: 'gemini',
+        error,
+      });
+    }
     sendError(res, error instanceof HttpError ? error : new HttpError(502, 'Não foi possível consultar a IA agora.'));
   }
 });
@@ -812,7 +892,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     const cpf = validCpf(body.cpf);
     const phone = validPhone(body.phone);
     const deliveryMethod = body.deliveryMethod as DeliveryMethod;
-    const shipping = await getShippingQuote(deliveryMethod, body.cep);
+    const shipping = await getShippingQuote(deliveryMethod, body.cep, responseRequestId(res));
     const deliveryAddress = deliveryMethod === 'entrega'
       ? {
           cep: shipping.cep,
@@ -1007,7 +1087,10 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
           pagbankStatus: 'CREATION_FAILED',
         }, { merge: true });
       }).catch(updateError => {
-        console.error('[SERVER] Não foi possível marcar pedido com erro:', updateError);
+        logEvent('error', 'checkout_failure_status_update_failed', {
+          request_id: responseRequestId(res),
+          error: updateError,
+        });
       });
       await requestRef.set({
         status: 'failed',
@@ -1156,19 +1239,19 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
   }
   const pagbank = getPagBankConfig();
   if (!pagbank.token) {
-    res.status(503).json({ error: 'Webhook PagBank não configurado.' });
+    sendError(res, new HttpError(503, 'Webhook PagBank não configurado.', 'PAGBANK_NOT_CONFIGURED'));
     return;
   }
 
   const rawBody = (req as RawBodyRequest).rawBody;
   const authenticityToken = req.get('x-authenticity-token')?.trim();
   if (typeof rawBody !== 'string' || !authenticityToken || !/^[a-f0-9]{64}$/i.test(authenticityToken)) {
-    res.status(401).json({ error: 'Notificação não autenticada.' });
+    sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
     return;
   }
 
   if (!verifyPagBankAuthenticity(pagbank.token, rawBody, authenticityToken)) {
-    res.status(401).json({ error: 'Notificação não autenticada.' });
+    sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
     return;
   }
 
@@ -1183,8 +1266,11 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
     try {
       db = getAdminServices().db;
     } catch (error) {
-      console.error('[SERVER] Firebase Admin indisponível para webhook:', error);
-      res.status(503).json({ error: 'Webhook temporariamente indisponível.' });
+      logEvent('error', 'firebase_admin_unavailable_for_webhook', {
+        request_id: responseRequestId(res),
+        error,
+      });
+      sendError(res, new HttpError(503, 'Webhook temporariamente indisponível.', 'WEBHOOK_UNAVAILABLE'));
       return;
     }
     const orderRef = db.collection('orders').doc(event.referenceId);
@@ -1205,7 +1291,11 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
       const currentOrder = orderSnapshot.data() as PlainRecord;
       const validationError = validatePagBankWebhookEvent(event, currentOrder);
       if (validationError) {
-        console.error(`[SERVER] Webhook rejeitado para ${event.referenceId}: ${validationError}`);
+        logEvent('warn', 'pagbank_webhook_rejected', {
+          request_id: responseRequestId(res),
+          order_id: event.referenceId,
+          reason: validationError,
+        });
         throw new HttpError(422, 'A notificação não corresponde aos dados do pedido.');
       }
 
@@ -1245,16 +1335,46 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
     res.status(200).json({ received: true, duplicate, applied });
   } catch (error) {
     if (error instanceof SyntaxError) {
-      res.status(400).json({ error: 'Notificação inválida.' });
+      sendError(res, new HttpError(400, 'Notificação inválida.', 'INVALID_WEBHOOK_JSON'));
       return;
     }
     if (error instanceof HttpError) {
-      res.status(error.status).json({ error: error.publicMessage });
+      sendError(res, error);
       return;
     }
-    console.error('[SERVER] Erro ao processar webhook PagBank:', error);
-    res.status(500).json({ error: 'Erro ao processar notificação.' });
+    logEvent('error', 'pagbank_webhook_processing_failed', {
+      request_id: responseRequestId(res),
+      error,
+    });
+    sendError(res, new HttpError(500, 'Erro ao processar notificação.', 'WEBHOOK_PROCESSING_FAILED'));
   }
+});
+
+app.use('/api', (_req, res) => {
+  sendError(res, new HttpError(404, 'Rota da API não encontrada.', 'API_ROUTE_NOT_FOUND'));
+});
+
+app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    next(error);
+    return;
+  }
+
+  const parserError = error as { status?: unknown; type?: unknown };
+  if (parserError.status === 413 || parserError.type === 'entity.too.large') {
+    sendError(res, new HttpError(413, 'O corpo da requisição excede o limite permitido.', 'PAYLOAD_TOO_LARGE'));
+    return;
+  }
+  if (error instanceof SyntaxError && parserError.type === 'entity.parse.failed') {
+    sendError(res, new HttpError(400, 'O corpo da requisição contém JSON inválido.', 'INVALID_JSON'));
+    return;
+  }
+  if (error instanceof HttpError) {
+    sendError(res, error);
+    return;
+  }
+
+  sendError(res, error);
 });
 
 export default app;

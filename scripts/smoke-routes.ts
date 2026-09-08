@@ -61,8 +61,20 @@ try {
   assert.equal(health.status, 200);
   assert.match(health.headers.get('content-type') || '', /application\/json/);
   assert.match(health.headers.get('cache-control') || '', /no-store/);
+  assert.match(health.headers.get('x-request-id') || '', /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/);
+  assert.equal(health.headers.get('x-powered-by'), null);
+  assert.equal(health.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(health.headers.get('x-permitted-cross-domain-policies'), 'none');
+  assert.match(health.headers.get('strict-transport-security') || '', /max-age=31536000/);
   const healthBody = await health.json() as { status?: unknown };
   assert.equal(healthBody.status, 'ok');
+
+  const missingApiRoute = await fetch(`${baseUrl}/api/rota-inexistente`);
+  assert.equal(missingApiRoute.status, 404);
+  assert.match(missingApiRoute.headers.get('content-type') || '', /application\/json/);
+  const missingApiBody = await missingApiRoute.json() as { code?: unknown; request_id?: unknown };
+  assert.equal(missingApiBody.code, 'API_ROUTE_NOT_FOUND');
+  assert.equal(missingApiRoute.headers.get('x-request-id'), missingApiBody.request_id);
 
   let homeHtml = '';
   for (const route of publicRoutes) {
@@ -93,7 +105,7 @@ try {
   assert.equal(sitemap.status, 200);
   assert.match(await sitemap.text(), /<loc>https:\/\/www\.gblgrafica\.com\.br\/politica-de-privacidade<\/loc>/);
 
-  console.log(`Smoke test aprovado: saúde, ${publicRoutes.length} rotas públicas, robots.txt e sitemap.xml.`);
+  console.log(`Smoke test aprovado: saúde, contrato da API, ${publicRoutes.length} rotas públicas, robots.txt e sitemap.xml.`);
 } catch (error) {
   if (serverOutput.trim()) console.error(serverOutput.trim());
   throw error;

@@ -1,4 +1,5 @@
 import type { FulfillmentStatus } from '../lib/orderStatus';
+import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import { auth } from '../firebase';
 
 export async function updateOrderFulfillment(
@@ -16,8 +17,8 @@ export async function updateOrderFulfillment(
     },
     body: JSON.stringify({ fulfillmentStatus }),
   });
-  const data = await response.json().catch(() => ({})) as { error?: unknown };
+  const data = await response.json().catch(() => ({})) as ApiErrorPayload;
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível atualizar o pedido.');
+    throw new Error(apiErrorMessage(data, 'Não foi possível atualizar o pedido.'));
   }
 }

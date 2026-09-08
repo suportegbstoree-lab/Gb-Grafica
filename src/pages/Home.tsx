@@ -12,6 +12,7 @@ import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
 import { validateCheckoutForm } from '../lib/checkoutForm';
 import { createHostedCheckout, isTrustedPagBankPaymentUrl } from '../services/checkoutService';
 import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
+import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -191,9 +192,8 @@ export default function Home({ products, config, categories, promotions, cart, s
         neighborhood?: unknown;
         city?: unknown;
         state?: unknown;
-        error?: unknown;
-      };
-      if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Não foi possível calcular o frete.');
+      } & ApiErrorPayload;
+      if (!response.ok) throw new Error(apiErrorMessage(data, 'Não foi possível calcular o frete.'));
       if (typeof data.address !== 'string' || typeof data.amount_cents !== 'number') {
         throw new Error('A cotação de frete retornou dados inválidos.');
       }

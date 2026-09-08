@@ -34,14 +34,17 @@ test('envia o token e retorna o checkout hospedado', async () => {
 });
 
 test('propaga a mensagem pública de erro da API simulada', async () => {
-  const fakeFetch = async () => new Response(JSON.stringify({ error: 'CPF recusado.' }), {
+  const fakeFetch = async () => new Response(JSON.stringify({
+    error: 'CPF recusado.',
+    request_id: 'trace-checkout-1234',
+  }), {
     status: 422,
     headers: { 'Content-Type': 'application/json' },
   });
 
   await assert.rejects(
     createHostedCheckout({}, 'token-teste', fakeFetch),
-    /CPF recusado/,
+    /CPF recusado\. Referência: trace-checkout-1234/,
   );
 });
 
