@@ -182,6 +182,11 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Evidências temporárias da homologação são exclusivas do servidor.
+    match /_pagbankHomologation/{captureId} {
+      allow read, write: if false;
+    }
+
     match /{path=**} {
       allow read, write: if false;
     }

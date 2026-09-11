@@ -37,6 +37,10 @@ import {
   trustedPagBankPayLink,
 } from './checkoutSecurity.js';
 import { verifyPagBankAuthenticity } from './pagbankAuthenticity.js';
+import {
+  savePagBankCheckoutEvidence,
+  savePagBankWebhookEvidence,
+} from './pagbankHomologation.js';
 import { isCurrentLegalAcceptance, LEGAL_VERSIONS } from '../lib/legal.js';
 import {
   logEvent,
@@ -841,6 +845,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
   let orderRef: DocumentReference | null = null;
   let requestRef: DocumentReference | null = null;
   let ownsRequest = false;
+  let checkoutBodyForEvidence: PlainRecord | null = null;
+  let checkoutRequestSentAt = '';
 
   try {
     const pagbank = getPagBankConfig();
@@ -1033,8 +1039,11 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
         };
       }
 
+      const checkoutRequestUrl = `${pagbank.baseUrl}/checkouts`;
+      checkoutBodyForEvidence = checkoutBody;
+      checkoutRequestSentAt = new Date().toISOString();
       const response = await axios.post<PagBankCheckoutResponse>(
-        `${pagbank.baseUrl}/checkouts`,
+        checkoutRequestUrl,
         checkoutBody,
         {
           headers: {
@@ -1048,6 +1057,33 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       );
 
       const checkoutId = textValue(response.data?.id, 100);
+      try {
+        const captured = await savePagBankCheckoutEvidence(db, {
+          orderId,
+          ...(checkoutId ? { checkoutId } : {}),
+          requestId,
+          requestUrl: checkoutRequestUrl,
+          requestBody: checkoutBody,
+          requestSentAt: checkoutRequestSentAt,
+          responseStatus: response.status,
+          responseBody: response.data,
+          responseReceivedAt: new Date().toISOString(),
+        });
+        if (captured) {
+          logEvent('info', 'pagbank_homologation_checkout_captured', {
+            request_id: responseRequestId(res),
+            order_id: orderId,
+            checkout_id: checkoutId,
+          });
+        }
+      } catch (captureError) {
+        logEvent('error', 'pagbank_homologation_capture_failed', {
+          request_id: responseRequestId(res),
+          order_id: orderId,
+          stage: 'checkout_response',
+          error: captureError,
+        });
+      }
       const payLink = trustedPagBankPayLink(
         response.data?.links?.find(link => link.rel === 'PAY')?.href,
         pagbank.environment,
@@ -1079,6 +1115,34 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
         init_point: payLink,
       });
     } catch (error) {
+      if (checkoutBodyForEvidence && checkoutRequestSentAt && axios.isAxiosError(error)) {
+        try {
+          const captured = await savePagBankCheckoutEvidence(db, {
+            orderId,
+            requestId,
+            requestUrl: `${pagbank.baseUrl}/checkouts`,
+            requestBody: checkoutBodyForEvidence,
+            requestSentAt: checkoutRequestSentAt,
+            responseStatus: error.response?.status ?? null,
+            responseBody: error.response?.data ?? { error: 'O PagBank não retornou uma resposta HTTP.' },
+            responseReceivedAt: new Date().toISOString(),
+          });
+          if (captured) {
+            logEvent('warn', 'pagbank_homologation_error_captured', {
+              request_id: responseRequestId(res),
+              order_id: orderId,
+              provider_status: error.response?.status ?? null,
+            });
+          }
+        } catch (captureError) {
+          logEvent('error', 'pagbank_homologation_capture_failed', {
+            request_id: responseRequestId(res),
+            order_id: orderId,
+            stage: 'checkout_error',
+            error: captureError,
+          });
+        }
+      }
       await db.runTransaction(async transaction => {
         const snapshot = await transaction.get(orderRef!);
         if (!snapshot.exists || snapshot.data()?.paymentStatus === 'pago') return;
@@ -1255,6 +1319,7 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
     return;
   }
 
+  const webhookRequestReceivedAt = new Date().toISOString();
   try {
     const payload = JSON.parse(rawBody) as PlainRecord;
     const event = parsePagBankWebhookEvent(payload);
@@ -1332,7 +1397,37 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
       transaction.set(orderRef, update, { merge: true });
     });
 
-    res.status(200).json({ received: true, duplicate, applied });
+    const webhookResponseBody = { received: true, duplicate, applied };
+    try {
+      const webhookUrl = `${getPublicAppUrl(req)}/api/webhook/pagbank`;
+      const captured = await savePagBankWebhookEvidence(db, {
+        orderId: event.referenceId,
+        eventHash,
+        requestUrl: webhookUrl,
+        contentType: req.get('content-type') || 'application/json',
+        requestBody: payload,
+        requestReceivedAt: webhookRequestReceivedAt,
+        responseStatus: 200,
+        responseBody: webhookResponseBody,
+        responseSentAt: new Date().toISOString(),
+      });
+      if (captured) {
+        logEvent('info', 'pagbank_homologation_webhook_captured', {
+          request_id: responseRequestId(res),
+          order_id: event.referenceId,
+          provider_id: event.providerId,
+          provider_status: event.providerStatus,
+        });
+      }
+    } catch (captureError) {
+      logEvent('error', 'pagbank_homologation_capture_failed', {
+        request_id: responseRequestId(res),
+        order_id: event.referenceId,
+        stage: 'webhook',
+        error: captureError,
+      });
+    }
+    res.status(200).json(webhookResponseBody);
   } catch (error) {
     if (error instanceof SyntaxError) {
       sendError(res, new HttpError(400, 'Notificação inválida.', 'INVALID_WEBHOOK_JSON'));

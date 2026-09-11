@@ -79,6 +79,8 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 
 O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos do servidor. Não use prefixo `VITE_` nesses segredos.
 
+`PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção. A captura é recusada pelo código sempre que `PAGBANK_ENV=production`.
+
 ## Firebase
 
 - Adicione `localhost` e os domínios publicados em Authentication → Settings → Authorized domains.
@@ -86,7 +88,7 @@ O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos d
 - Confirme que `FIREBASE_STORAGE_BUCKET` corresponde ao `storageBucket` de `firebase-applet-config.json`.
 - Publique `firestore.rules` e `storage.rules` antes de liberar o checkout.
 - A coleção `promocoes` precisa das regras desta versão para aparecer na loja.
-- Configure uma política TTL para o campo `expiresAt` das coleções `_rateLimits` e `_checkoutRequests` para remover registros técnicos vencidos.
+- Configure uma política TTL para o campo `expiresAt` das coleções `_rateLimits`, `_checkoutRequests` e `_pagbankHomologation` para remover registros técnicos vencidos.
 
 O `firebase.json` aponta explicitamente para o banco Firestore nomeado usado pelo projeto. Antes de publicar, selecione o projeto Firebase correto e confira o diff das regras:
 
@@ -120,6 +122,45 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - Atualizações financeiras usam transação Firestore.
 - Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido.
 - Pagamento e andamento operacional são armazenados separadamente.
+
+## Evidências para homologação PagBank
+
+O modo de homologação registra a comunicação real do servidor com o Checkout PagBank e os webhooks autenticados. Ele não registra o token do PagBank nem a assinatura do webhook e só funciona em Sandbox.
+
+Use um ambiente local ou Preview isolado com:
+
+```dotenv
+PAGBANK_ENV=sandbox
+PAGBANK_TOKEN=seu_token_sandbox
+PAGBANK_HOMOLOGATION_CAPTURE=true
+```
+
+Não use dados pessoais ou cartões reais. Crie um checkout novo para cada meio que será demonstrado — cartão, Pix e boleto — e conclua o fluxo no Checkout Sandbox. Depois de receber os webhooks, exporte os três pedidos em um único anexo:
+
+```bash
+npm run pagbank:homologation:export -- \
+  --order GB-PEDIDO-CARTAO \
+  --order GB-PEDIDO-PIX \
+  --order GB-PEDIDO-BOLETO
+```
+
+Também é possível definir o nome do arquivo:
+
+```bash
+npm run pagbank:homologation:export -- \
+  --orders GB-PEDIDO-CARTAO,GB-PEDIDO-PIX,GB-PEDIDO-BOLETO \
+  --output anexo-homologacao-pagbank.txt
+```
+
+O exportador lê a coleção técnica `_pagbankHomologation` usando Firebase Admin e produz um `.txt` com:
+
+- endpoint, método e headers seguros do request;
+- body exato enviado a `/checkouts`;
+- status e body exatos retornados pelo PagBank;
+- requests reais dos webhooks autenticados;
+- responses reais devolvidos pela aplicação.
+
+O arquivo exportado é ignorado pelo Git. Revise-o antes do envio e confirme que os três meios aparecem. Ao terminar, volte `PAGBANK_HOMOLOGATION_CAPTURE` para `false` e remova a variável do ambiente de homologação.
 
 ## Documentos comerciais
 

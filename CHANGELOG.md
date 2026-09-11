@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-09 — Evidências reais para homologação PagBank
+
+- Criado modo de captura disponível somente quando o PagBank está em Sandbox e a ativação é explícita.
+- Registrados o request efetivamente enviado a `/checkouts` e o response efetivamente devolvido pelo PagBank.
+- Registrados webhooks autenticados e a resposta HTTP real fornecida pela aplicação.
+- Removidos automaticamente o token `Authorization`, a assinatura de autenticidade e eventuais segredos aninhados.
+- Armazenadas as evidências em coleção técnica bloqueada pelas regras do Firestore e preparada para TTL de 14 dias.
+- Adicionado exportador que combina vários pedidos em um único `.txt` pronto para anexar à homologação.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
 ## 2026-09-08 — Observabilidade e contrato de segurança da API
 
 - Adicionado `X-Request-Id` a todas as respostas e correlação automática entre erros apresentados ao usuário e logs do servidor.

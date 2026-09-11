@@ -18,7 +18,8 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:smoke": "node --import tsx scripts/smoke-routes.ts",
-    "admin:set": "tsx scripts/set-admin-claim.ts"
+    "admin:set": "tsx scripts/set-admin-claim.ts",
+    "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
