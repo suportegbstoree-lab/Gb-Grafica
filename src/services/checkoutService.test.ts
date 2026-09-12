@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createHostedCheckout, isTrustedPagBankPaymentUrl } from './checkoutService';
+import {
+  createHostedCheckout,
+  isTrustedPagBankPaymentUrl,
+  refreshHostedPaymentStatus,
+} from './checkoutService';
 
 test('aceita somente endereços HTTPS de pagamento do PagBank', () => {
   assert.equal(isTrustedPagBankPaymentUrl('https://pagamento.sandbox.pagbank.com.br/pagamento?code=teste'), true);
@@ -69,5 +73,46 @@ test('recusa redirecionamento externo mesmo em resposta 201', async () => {
   await assert.rejects(
     createHostedCheckout({}, 'token-teste', fakeFetch),
     /não retornou o link de pagamento/,
+  );
+});
+
+test('consulta o status autenticado e interpreta pagamento reconciliado', async () => {
+  let receivedRequest: { input: RequestInfo | URL; init?: RequestInit } | undefined;
+  const fakeFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    receivedRequest = { input, init };
+    return new Response(JSON.stringify({
+      order_id: 'GB-4861A9396DD84E739195',
+      status: 'pago',
+      pagbank_status: 'PAID',
+      reconciled: true,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  const result = await refreshHostedPaymentStatus(
+    'GB-4861A9396DD84E739195',
+    'firebase-token',
+    fakeFetch,
+  );
+
+  assert.equal(receivedRequest?.input, '/api/payment-status/GB-4861A9396DD84E739195');
+  assert.equal(receivedRequest?.init?.method, 'GET');
+  assert.equal((receivedRequest?.init?.headers as Record<string, string>).Authorization, 'Bearer firebase-token');
+  assert.deepEqual(result, {
+    orderId: 'GB-4861A9396DD84E739195',
+    status: 'pago',
+    pagbankStatus: 'PAID',
+    reconciled: true,
+  });
+});
+
+test('rejeita status desconhecido retornado pela API', async () => {
+  const fakeFetch = async () => new Response(JSON.stringify({
+    order_id: 'GB-4861A9396DD84E739195',
+    status: 'inventado',
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  await assert.rejects(
+    refreshHostedPaymentStatus('GB-4861A9396DD84E739195', 'firebase-token', fakeFetch),
+    /estado de pagamento inválido/,
   );
 });

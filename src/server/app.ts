@@ -30,7 +30,9 @@ import {
   parsePagBankWebhookEvent,
   shouldApplyPaymentStatus,
   validatePagBankWebhookEvent,
+  type PagBankWebhookEvent,
 } from './pagbankWebhook.js';
+import { reconcilePagBankCheckout } from './pagbankReconciliation.js';
 import {
   checkoutRequestDocumentId,
   normalizeCheckoutRequestId,
@@ -676,6 +678,115 @@ function currentFulfillmentStatus(order: PlainRecord): FulfillmentStatus {
     : legacyFulfillmentStatus(order.status, order.paymentStatus as PaymentStatus | undefined);
 }
 
+function paymentUpdateFromEvent(
+  currentOrder: PlainRecord,
+  event: PagBankWebhookEvent,
+  eventAt: string,
+): PlainRecord {
+  const update: PlainRecord = {
+    paymentStatus: event.paymentStatus,
+    pagbankStatus: event.providerStatus,
+    pagbankLastEventAt: eventAt,
+    ...(event.providerId.startsWith('CHEC_') ? { pagbankCheckoutId: event.providerId } : {}),
+    ...(event.providerId.startsWith('ORDE_') ? { pagbankOrderId: event.providerId } : {}),
+    ...(event.chargeId ? { pagbankChargeId: event.chargeId } : {}),
+  };
+
+  if (event.paymentStatus === 'pago') {
+    const fulfillment = currentFulfillmentStatus(currentOrder);
+    update.status = 'Pago';
+    if (fulfillment === 'aguardando_pagamento') {
+      update.fulfillmentStatus = 'pagamento_confirmado';
+    }
+  }
+  return update;
+}
+
+async function reconcileStoredOrderPayment(
+  db: ReturnType<typeof getAdminServices>['db'],
+  orderId: string,
+  initialOrder: PlainRecord,
+  pagbank: ReturnType<typeof getPagBankConfig>,
+): Promise<{ paymentStatus: unknown; pagbankStatus: unknown; reconciled: boolean }> {
+  const checkoutId = textValue(initialOrder.pagbankCheckoutId, 110);
+  if (!pagbank.token || !checkoutId || initialOrder.paymentStatus === 'pago') {
+    return {
+      paymentStatus: initialOrder.paymentStatus || 'pendente',
+      pagbankStatus: initialOrder.pagbankStatus || null,
+      reconciled: false,
+    };
+  }
+
+  const lookup = await reconcilePagBankCheckout({
+    baseUrl: pagbank.baseUrl,
+    token: pagbank.token,
+    checkoutId,
+    referenceId: orderId,
+  });
+  const event = lookup.event;
+  const firstProviderOrderId = lookup.providerOrderIds[0];
+  const orderRef = db.collection('orders').doc(orderId);
+
+  if (!event) {
+    if (firstProviderOrderId && !initialOrder.pagbankOrderId) {
+      await orderRef.set({ pagbankOrderId: firstProviderOrderId }, { merge: true });
+    }
+    return {
+      paymentStatus: initialOrder.paymentStatus || 'pendente',
+      pagbankStatus: lookup.checkoutStatus || initialOrder.pagbankStatus || null,
+      reconciled: false,
+    };
+  }
+
+  const eventAt = new Date().toISOString();
+  const eventHash = createHash('sha256').update([
+    'provider-reconciliation',
+    event.providerId,
+    event.chargeId,
+    event.providerStatus,
+  ].join(':'), 'utf8').digest('hex');
+  const eventRef = orderRef.collection('pagbankEvents').doc(eventHash);
+  let paymentStatus: unknown = initialOrder.paymentStatus || 'pendente';
+  let pagbankStatus: unknown = initialOrder.pagbankStatus || null;
+  let reconciled = false;
+
+  await db.runTransaction(async transaction => {
+    const orderSnapshot = await transaction.get(orderRef);
+    const eventSnapshot = await transaction.get(eventRef);
+    if (!orderSnapshot.exists) throw new Error('Pedido desapareceu durante a reconciliação.');
+    const currentOrder = orderSnapshot.data() as PlainRecord;
+    paymentStatus = currentOrder.paymentStatus || 'pendente';
+    pagbankStatus = currentOrder.pagbankStatus || null;
+
+    const validationError = validatePagBankWebhookEvent(event, currentOrder);
+    if (validationError) throw new Error(`Reconciliação PagBank rejeitada: ${validationError}`);
+    if (eventSnapshot.exists) return;
+
+    const applied = shouldApplyPaymentStatus(currentOrder.paymentStatus, event.paymentStatus);
+    transaction.create(eventRef, {
+      providerId: event.providerId,
+      ...(event.chargeId ? { chargeId: event.chargeId } : {}),
+      providerStatus: event.providerStatus,
+      ...(event.paymentStatus ? { paymentStatus: event.paymentStatus } : {}),
+      ...(event.amountCents !== null ? { amountCents: event.amountCents } : {}),
+      ...(event.currency ? { currency: event.currency } : {}),
+      kind: event.kind,
+      source: 'provider_reconciliation',
+      applied,
+      receivedAt: eventAt,
+    });
+
+    if (!applied || !event.paymentStatus) return;
+    const update = paymentUpdateFromEvent(currentOrder, event, eventAt);
+    transaction.set(orderRef, update, { merge: true });
+    paymentStatus = event.paymentStatus;
+    pagbankStatus = event.providerStatus;
+    reconciled = true;
+  });
+
+  return { paymentStatus, pagbankStatus, reconciled };
+}
+
 async function userIsAdmin(
   firebaseUser: Awaited<ReturnType<typeof requireFirebaseUser>>,
   db: ReturnType<typeof getAdminServices>['db'],
@@ -1187,10 +1298,33 @@ app.get('/api/payment-status/:orderId', async (req, res) => {
     const order = snapshot.data() as PlainRecord;
     if (order.userId !== firebaseUser.uid) throw new HttpError(403, 'Você não pode consultar este pedido.');
 
+    let result = {
+      paymentStatus: order.paymentStatus || 'pendente',
+      pagbankStatus: order.pagbankStatus || null,
+      reconciled: false,
+    };
+    try {
+      result = await reconcileStoredOrderPayment(db, orderId, order, getPagBankConfig());
+      if (result.reconciled) {
+        logEvent('info', 'pagbank_payment_reconciled', {
+          request_id: responseRequestId(res),
+          order_id: orderId,
+          provider_status: result.pagbankStatus,
+        });
+      }
+    } catch (reconciliationError) {
+      logEvent('warn', 'pagbank_payment_reconciliation_failed', {
+        request_id: responseRequestId(res),
+        order_id: orderId,
+        error: reconciliationError,
+      });
+    }
+
     res.json({
       order_id: orderId,
-      status: order.paymentStatus || 'pendente',
-      pagbank_status: order.pagbankStatus || null,
+      status: result.paymentStatus,
+      pagbank_status: result.pagbankStatus,
+      reconciled: result.reconciled,
     });
   } catch (error) {
     sendError(res, error);
@@ -1310,11 +1444,30 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
   const rawBody = (req as RawBodyRequest).rawBody;
   const authenticityToken = req.get('x-authenticity-token')?.trim();
   if (typeof rawBody !== 'string' || !authenticityToken || !/^[a-f0-9]{64}$/i.test(authenticityToken)) {
+    logEvent('warn', 'pagbank_webhook_authentication_failed', {
+      request_id: requestRequestId(req),
+      reason: typeof rawBody !== 'string'
+        ? 'raw_body_missing'
+        : !authenticityToken
+          ? 'header_missing'
+          : 'header_format_invalid',
+      authenticity_header_present: Boolean(authenticityToken),
+      raw_body_bytes: typeof rawBody === 'string' ? Buffer.byteLength(rawBody, 'utf8') : 0,
+      content_type: req.get('content-type') || null,
+    });
     sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
     return;
   }
 
   if (!verifyPagBankAuthenticity(pagbank.token, rawBody, authenticityToken)) {
+    logEvent('warn', 'pagbank_webhook_authentication_failed', {
+      request_id: requestRequestId(req),
+      reason: 'signature_mismatch',
+      authenticity_header_present: true,
+      raw_body_bytes: Buffer.byteLength(rawBody, 'utf8'),
+      body_sha256: createHash('sha256').update(rawBody, 'utf8').digest('hex'),
+      content_type: req.get('content-type') || null,
+    });
     sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
     return;
   }
@@ -1378,22 +1531,7 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
       });
 
       if (!applied || !event.paymentStatus) return;
-      const update: PlainRecord = {
-        paymentStatus: event.paymentStatus,
-        pagbankStatus: event.providerStatus,
-        pagbankLastEventAt: new Date().toISOString(),
-        ...(event.providerId.startsWith('CHEC_') ? { pagbankCheckoutId: event.providerId } : {}),
-        ...(event.providerId.startsWith('ORDE_') ? { pagbankOrderId: event.providerId } : {}),
-        ...(event.chargeId ? { pagbankChargeId: event.chargeId } : {}),
-      };
-
-      if (event.paymentStatus === 'pago') {
-        const fulfillment = currentFulfillmentStatus(currentOrder);
-        update.status = 'Pago';
-        if (fulfillment === 'aguardando_pagamento') {
-          update.fulfillmentStatus = 'pagamento_confirmado';
-        }
-      }
+      const update = paymentUpdateFromEvent(currentOrder, event, new Date().toISOString());
       transaction.set(orderRef, update, { merge: true });
     });
 

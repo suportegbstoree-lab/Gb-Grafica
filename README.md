@@ -121,6 +121,10 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O webhook é deduplicado pelo hash do corpo recebido.
 - Atualizações financeiras usam transação Firestore.
 - Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido.
+- Webhooks sem assinatura válida são recusados e nunca alteram o pedido.
+- No retorno do Checkout, uma rota autenticada consulta o checkout e as cobranças diretamente no PagBank como mecanismo de reconciliação.
+- A reconciliação usa somente identificadores já vinculados ao pedido e constrói os endpoints no servidor, sem seguir URLs recebidas do navegador ou do payload.
+- Eventos reconciliados também são deduplicados e passam pelas mesmas validações de valor, moeda e transição de estado aplicadas ao webhook.
 - Pagamento e andamento operacional são armazenados separadamente.
 
 ## Evidências para homologação PagBank

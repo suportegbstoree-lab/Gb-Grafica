@@ -10,7 +10,11 @@ import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderSta
 import { removePendingArtwork, requestArtworkUrl, uploadArtwork, type UploadedArtwork } from '../services/artworkService';
 import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
 import { validateCheckoutForm } from '../lib/checkoutForm';
-import { createHostedCheckout, isTrustedPagBankPaymentUrl } from '../services/checkoutService';
+import {
+  createHostedCheckout,
+  isTrustedPagBankPaymentUrl,
+  refreshHostedPaymentStatus,
+} from '../services/checkoutService';
 import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
@@ -108,6 +112,7 @@ export default function Home({ products, config, categories, promotions, cart, s
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [acceptedLegalTerms, setAcceptedLegalTerms] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [pagbankReturnOrderId, setPagbankReturnOrderId] = useState<string | null>(null);
   const checkoutLock = useRef(false);
   const shouldReduceMotion = useReducedMotion();
 
@@ -355,14 +360,66 @@ export default function Home({ products, config, categories, promotions, cart, s
     const pagbankReturn = params.get('pagbank') === 'return';
     const orderId = params.get('orderId');
 
-    if (pagbankReturn && orderId) {
+    if (pagbankReturn && orderId && /^GB-[A-Z0-9]{8,64}$/.test(orderId)) {
       setCart([]);
       setIsOrdersOpen(true);
+      setPagbankReturnOrderId(orderId);
       localStorage.removeItem('gb_pending_order');
-      setNotice({ type: 'info', message: 'Retorno recebido. O pagamento será confirmado automaticamente pelo PagBank.' });
+      setNotice({ type: 'info', message: 'Retorno recebido. Confirmando o pagamento com o PagBank...' });
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (!user || !pagbankReturnOrderId) return;
+    let cancelled = false;
+
+    const refreshPayment = async () => {
+      try {
+        const idToken = await user.getIdToken();
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          const result = await refreshHostedPaymentStatus(pagbankReturnOrderId, idToken);
+          if (cancelled) return;
+
+          if (result.status === 'pago') {
+            setNotice({ type: 'success', message: 'Pagamento confirmado. Seu pedido já foi liberado para produção.' });
+            setPagbankReturnOrderId(null);
+            return;
+          }
+          if (['recusado', 'cancelado', 'expirado', 'erro'].includes(result.status)) {
+            setNotice({ type: 'error', message: 'O pagamento não foi concluído. Consulte o pedido para tentar novamente.' });
+            setPagbankReturnOrderId(null);
+            return;
+          }
+          if (attempt < 3) {
+            await new Promise(resolve => window.setTimeout(resolve, 3_000));
+          }
+        }
+
+        if (!cancelled) {
+          setNotice({
+            type: 'info',
+            message: 'O pagamento ainda está sendo processado. O status será atualizado em Meus Pedidos.',
+          });
+          setPagbankReturnOrderId(null);
+        }
+      } catch (error) {
+        console.error('Payment status refresh error:', error);
+        if (!cancelled) {
+          setNotice({
+            type: 'info',
+            message: 'Retorno recebido. A confirmação ainda pode levar alguns instantes; acompanhe em Meus Pedidos.',
+          });
+          setPagbankReturnOrderId(null);
+        }
+      }
+    };
+
+    void refreshPayment();
+    return () => {
+      cancelled = true;
+    };
+  }, [pagbankReturnOrderId, user]);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [logoError, setLogoError] = useState(false);

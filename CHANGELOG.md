@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-12 — Reconciliação segura de pagamentos PagBank
+
+- Confirmado em teste real que o Sandbox pode entregar o webhook com assinatura ausente ou incompatível, apesar de registrar a cobrança como `PAID`.
+- Mantida obrigatória a validação SHA-256 dos webhooks; notificações não autenticadas continuam sem permissão para alterar pedidos.
+- Adicionada reconciliação autenticada consultando o Checkout e o Pedido diretamente na API PagBank.
+- Validados checkout, referência interna, identificadores do provedor, valor e moeda antes de confirmar qualquer pagamento no Firebase.
+- Adicionada deduplicação dos eventos obtidos por reconciliação e preservada a proteção contra regressão de status.
+- O retorno do Checkout passa a consultar o status automaticamente e repetir a verificação durante alguns segundos quando o pagamento ainda estiver em processamento.
+- Adicionado diagnóstico seguro que distingue header ausente, formato inválido e assinatura divergente sem registrar token ou corpo do webhook.
+- Substituído o cliente HTTP da reconciliação por uma implementação cujas exceções não carregam headers de autorização.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
 ## 2026-09-09 — Evidências reais para homologação PagBank
 
 - Criado modo de captura disponível somente quando o PagBank está em Sandbox e a ativação é explícita.
