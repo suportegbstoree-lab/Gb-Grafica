@@ -27,6 +27,7 @@ import {
   type PaymentStatus,
 } from '../lib/orderStatus.js';
 import {
+  pagBankBuyerFeeCents,
   parsePagBankWebhookEvent,
   shouldApplyPaymentStatus,
   validatePagBankWebhookEvent,
@@ -683,6 +684,7 @@ function paymentUpdateFromEvent(
   event: PagBankWebhookEvent,
   eventAt: string,
 ): PlainRecord {
+  const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
   const update: PlainRecord = {
     paymentStatus: event.paymentStatus,
     pagbankStatus: event.providerStatus,
@@ -690,6 +692,9 @@ function paymentUpdateFromEvent(
     ...(event.providerId.startsWith('CHEC_') ? { pagbankCheckoutId: event.providerId } : {}),
     ...(event.providerId.startsWith('ORDE_') ? { pagbankOrderId: event.providerId } : {}),
     ...(event.chargeId ? { pagbankChargeId: event.chargeId } : {}),
+    ...(event.paymentMethod ? { pagbankPaymentMethod: event.paymentMethod } : {}),
+    ...(event.amountCents !== null ? { pagbankChargedAmountCents: event.amountCents } : {}),
+    ...(buyerFeeCents !== null ? { pagbankBuyerFeeCents: buyerFeeCents } : {}),
   };
 
   if (event.paymentStatus === 'pago') {
@@ -763,6 +768,7 @@ async function reconcileStoredOrderPayment(
     if (eventSnapshot.exists) return;
 
     const applied = shouldApplyPaymentStatus(currentOrder.paymentStatus, event.paymentStatus);
+    const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
     transaction.create(eventRef, {
       providerId: event.providerId,
       ...(event.chargeId ? { chargeId: event.chargeId } : {}),
@@ -770,6 +776,8 @@ async function reconcileStoredOrderPayment(
       ...(event.paymentStatus ? { paymentStatus: event.paymentStatus } : {}),
       ...(event.amountCents !== null ? { amountCents: event.amountCents } : {}),
       ...(event.currency ? { currency: event.currency } : {}),
+      ...(event.paymentMethod ? { paymentMethod: event.paymentMethod } : {}),
+      ...(buyerFeeCents !== null ? { buyerFeeCents } : {}),
       kind: event.kind,
       source: 'provider_reconciliation',
       applied,
@@ -1518,6 +1526,7 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
       }
 
       applied = shouldApplyPaymentStatus(currentOrder.paymentStatus, event.paymentStatus);
+      const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
       transaction.create(eventRef, {
         providerId: event.providerId,
         ...(event.chargeId ? { chargeId: event.chargeId } : {}),
@@ -1525,6 +1534,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
         ...(event.paymentStatus ? { paymentStatus: event.paymentStatus } : {}),
         ...(event.amountCents !== null ? { amountCents: event.amountCents } : {}),
         ...(event.currency ? { currency: event.currency } : {}),
+        ...(event.paymentMethod ? { paymentMethod: event.paymentMethod } : {}),
+        ...(buyerFeeCents !== null ? { buyerFeeCents } : {}),
         kind: event.kind,
         applied,
         receivedAt: new Date().toISOString(),

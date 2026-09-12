@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  pagBankBuyerFeeCents,
   parsePagBankWebhookEvent,
   shouldApplyPaymentStatus,
   validatePagBankWebhookEvent,
@@ -13,6 +14,7 @@ const paidPayload = {
     id: 'CHAR_123',
     status: 'PAID',
     amount: { value: 840, currency: 'BRL' },
+    payment_method: { type: 'CREDIT_CARD' },
   }],
 };
 
@@ -22,6 +24,7 @@ test('interpreta uma notificação de pagamento do PagBank', () => {
   assert.equal(event.referenceId, 'GB-123');
   assert.equal(event.paymentStatus, 'pago');
   assert.equal(event.amountCents, 840);
+  assert.equal(event.paymentMethod, 'CREDIT_CARD');
 });
 
 test('rejeita confirmação com valor ou moeda divergentes', () => {
@@ -32,6 +35,43 @@ test('rejeita confirmação com valor ou moeda divergentes', () => {
     validatePagBankWebhookEvent({ ...event, currency: 'USD' }, { totalCents: 840 }),
     'Moeda do pagamento diverge do pedido.',
   );
+});
+
+test('aceita somente o acréscimo exato do boleto hospedado', () => {
+  const boletoEvent = parsePagBankWebhookEvent({
+    ...paidPayload,
+    charges: [{
+      ...paidPayload.charges[0],
+      amount: { value: 940, currency: 'BRL' },
+      payment_method: { type: 'BOLETO' },
+    }],
+  });
+  assert.ok(boletoEvent);
+  assert.equal(validatePagBankWebhookEvent(boletoEvent, { totalCents: 840 }), null);
+  assert.equal(pagBankBuyerFeeCents(boletoEvent, { totalCents: 840 }), 100);
+
+  assert.equal(
+    validatePagBankWebhookEvent({ ...boletoEvent, amountCents: 939 }, { totalCents: 840 }),
+    'Valor pago diverge do pedido.',
+  );
+  assert.equal(
+    validatePagBankWebhookEvent({ ...boletoEvent, amountCents: 941 }, { totalCents: 840 }),
+    'Valor pago diverge do pedido.',
+  );
+});
+
+test('não aceita acréscimo nem subpagamento em cartão ou PIX', () => {
+  const event = parsePagBankWebhookEvent(paidPayload);
+  assert.ok(event);
+  assert.equal(
+    validatePagBankWebhookEvent({ ...event, amountCents: 940 }, { totalCents: 840 }),
+    'Valor pago diverge do pedido.',
+  );
+  assert.equal(
+    validatePagBankWebhookEvent({ ...event, amountCents: 800, paymentMethod: 'PIX' }, { totalCents: 840 }),
+    'Valor pago diverge do pedido.',
+  );
+  assert.equal(pagBankBuyerFeeCents({ ...event, amountCents: 940 }, { totalCents: 840 }), null);
 });
 
 test('rejeita identificador PagBank diferente do pedido salvo', () => {

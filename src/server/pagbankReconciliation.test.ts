@@ -58,6 +58,7 @@ test('reconcilia checkout e cobrança paga consultando apenas URLs construídas 
   assert.equal(result.event?.paymentStatus, 'pago');
   assert.equal(result.event?.amountCents, 840);
   assert.equal(result.event?.currency, 'BRL');
+  assert.equal(result.event?.paymentMethod, 'CREDIT_CARD');
   assert.equal(result.event?.providerId, providerOrderId);
 });
 

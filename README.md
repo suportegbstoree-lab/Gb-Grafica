@@ -120,11 +120,11 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - A mesma chave é enviada ao PagBank no header `x-idempotency-key`.
 - O webhook é deduplicado pelo hash do corpo recebido.
 - Atualizações financeiras usam transação Firestore.
-- Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido.
+- Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido. Cartão e Pix exigem o valor exato; no boleto do Checkout Hospedado também é reconhecido exclusivamente o acréscimo de R$ 1,00 devolvido pelo PagBank ao comprador.
 - Webhooks sem assinatura válida são recusados e nunca alteram o pedido.
 - No retorno do Checkout, uma rota autenticada consulta o checkout e as cobranças diretamente no PagBank como mecanismo de reconciliação.
 - A reconciliação usa somente identificadores já vinculados ao pedido e constrói os endpoints no servidor, sem seguir URLs recebidas do navegador ou do payload.
-- Eventos reconciliados também são deduplicados e passam pelas mesmas validações de valor, moeda e transição de estado aplicadas ao webhook.
+- Eventos reconciliados também são deduplicados e passam pelas mesmas validações de valor, moeda, método e transição de estado aplicadas ao webhook.
 - Pagamento e andamento operacional são armazenados separadamente.
 
 ## Evidências para homologação PagBank

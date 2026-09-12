@@ -2,6 +2,9 @@
 
 ## 2026-09-12 — Reconciliação segura de pagamentos PagBank
 
+- Corrigida a reconciliação de boletos do Checkout Hospedado que retornam cobrança exatamente R$ 1,00 acima do valor dos itens.
+- O acréscimo é aceito somente quando o método confirmado pelo PagBank é `BOLETO`; cartão e Pix continuam exigindo igualdade exata e qualquer subpagamento permanece bloqueado.
+- Registrados método, total efetivamente cobrado e acréscimo do comprador no pedido e no evento financeiro para auditoria.
 - Confirmado em teste real que o Sandbox pode entregar o webhook com assinatura ausente ou incompatível, apesar de registrar a cobrança como `PAID`.
 - Mantida obrigatória a validação SHA-256 dos webhooks; notificações não autenticadas continuam sem permissão para alterar pedidos.
 - Adicionada reconciliação autenticada consultando o Checkout e o Pedido diretamente na API PagBank.
