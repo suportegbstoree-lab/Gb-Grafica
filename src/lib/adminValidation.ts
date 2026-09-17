@@ -1,6 +1,10 @@
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
-import { isProductCustomizationType, productRequiresText } from './textCustomization';
+import {
+  isProductCustomizationType,
+  normalizePersonalizationFonts,
+  productRequiresText,
+} from './textCustomization';
 
 export const ADMIN_LIMITS = {
   categoryName: 80,
@@ -64,8 +68,9 @@ export function generateProductCombinations(attributes: ProductAttribute[]): str
 }
 
 export function validateCategoryDraft(
-  draft: { nome: string; icon: string },
+  draft: Partial<Category> & { nome: string; icon?: string },
   categories: Category[],
+  currentId?: string,
 ): ValidationResult<Category> {
   const nome = normalizedSpaces(draft.nome);
   const icon = normalizedText(draft.icon);
@@ -75,13 +80,18 @@ export function validateCategoryDraft(
   }
   if (icon && !isSafeAdminUrl(icon)) return { ok: false, message: 'A URL do ícone da categoria é inválida.' };
 
-  const id = slugifyDocumentId(nome);
+  const id = currentId || slugifyDocumentId(nome);
   if (!id) return { ok: false, message: 'O nome da categoria não gera um identificador válido.' };
   const duplicate = categories.some(category => (
-    category.id === id || category.nome.trim().toLocaleLowerCase('pt-BR') === nome.toLocaleLowerCase('pt-BR')
+    category.id !== currentId && (
+      category.id === id || category.nome.trim().toLocaleLowerCase('pt-BR') === nome.toLocaleLowerCase('pt-BR')
+    )
   ));
   if (duplicate) return { ok: false, message: 'Já existe uma categoria com esse nome.' };
-  return { ok: true, value: { id, nome, icon } };
+  const ordem = Number.isInteger(draft.ordem) && Number(draft.ordem) >= 0
+    ? Number(draft.ordem)
+    : categories.length;
+  return { ok: true, value: { id, nome, icon, ordem } };
 }
 
 export function validateProductDraft(
@@ -183,18 +193,78 @@ export function validateProductDraft(
   };
 }
 
-export function validatePromotionDraft(draft: Partial<Promocao>): ValidationResult<Omit<Promocao, 'id'>> {
+function productConfiguredPrices(product: Anuncio): number[] {
+  const rawValues = product.atributos.length > 0
+    ? Object.values(product.combinacoes)
+    : [product.preco_base];
+  return rawValues
+    .map(parseMoneyToCents)
+    .filter((value): value is number => value !== null && value > 0);
+}
+
+export function validatePromotionDraft(
+  draft: Partial<Promocao>,
+  products: Anuncio[] = [],
+  categories: Category[] = [],
+): ValidationResult<Omit<Promocao, 'id'>> {
   const titulo = normalizedSpaces(draft.titulo);
   const imagem = normalizedText(draft.imagem);
-  const link = normalizedText(draft.link);
-  if (!titulo || !imagem) return { ok: false, message: 'Preencha o título e a imagem da promoção.' };
+  if (!titulo) return { ok: false, message: 'Informe o título da promoção.' };
   if (titulo.length > ADMIN_LIMITS.promotionTitle) {
     return { ok: false, message: `O título deve ter no máximo ${ADMIN_LIMITS.promotionTitle} caracteres.` };
   }
-  if (!isSafeAdminUrl(imagem) || (link && !isSafeAdminUrl(link))) {
-    return { ok: false, message: 'A promoção contém uma URL inválida.' };
+  if (imagem && !isSafeAdminUrl(imagem)) return { ok: false, message: 'A imagem da promoção possui uma URL inválida.' };
+
+  if (draft.alvoTipo !== 'produto' && draft.alvoTipo !== 'categoria') {
+    return { ok: false, message: 'Escolha se a promoção será aplicada a um produto ou a uma categoria.' };
   }
-  return { ok: true, value: { titulo, imagem, link, ativa: draft.ativa ?? true } };
+  const target = draft.alvoTipo === 'produto'
+    ? products.find(product => product.id === draft.alvoId)
+    : categories.find(category => category.id === draft.alvoId);
+  if (!target) return { ok: false, message: 'Selecione um produto ou categoria cadastrada para a promoção.' };
+
+  if (draft.descontoTipo !== 'percentual' && draft.descontoTipo !== 'valor_fixo') {
+    return { ok: false, message: 'Escolha o tipo de desconto.' };
+  }
+
+  let descontoPercentual: number | undefined;
+  let descontoFixoCentavos: number | undefined;
+  if (draft.descontoTipo === 'percentual') {
+    const value = Number(draft.descontoPercentual);
+    if (!Number.isFinite(value) || value <= 0 || value >= 100) {
+      return { ok: false, message: 'O desconto percentual deve ser maior que 0 e menor que 100.' };
+    }
+    descontoPercentual = Math.round(value * 100) / 100;
+  } else {
+    const value = Number(draft.descontoFixoCentavos);
+    if (!Number.isInteger(value) || value <= 0) {
+      return { ok: false, message: 'Informe um valor fixo de desconto válido.' };
+    }
+    const targetedProducts = draft.alvoTipo === 'produto'
+      ? products.filter(product => product.id === draft.alvoId)
+      : products.filter(product => product.categoria === target.nome);
+    const configuredPrices = targetedProducts.flatMap(productConfiguredPrices);
+    if (configuredPrices.length > 0 && configuredPrices.some(price => value >= price)) {
+      return { ok: false, message: 'O desconto fixo precisa ser menor que todos os preços atingidos pela promoção.' };
+    }
+    descontoFixoCentavos = value;
+  }
+
+  return {
+    ok: true,
+    value: {
+      titulo,
+      imagem,
+      link: draft.alvoTipo === 'produto' ? `#produto-${target.id}` : '#produtos',
+      ativa: draft.ativa ?? true,
+      alvoTipo: draft.alvoTipo,
+      alvoId: target.id,
+      alvoNome: target.nome,
+      descontoTipo: draft.descontoTipo,
+      ...(descontoPercentual !== undefined ? { descontoPercentual } : {}),
+      ...(descontoFixoCentavos !== undefined ? { descontoFixoCentavos } : {}),
+    },
+  };
 }
 
 export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteConfig> {
@@ -221,7 +291,11 @@ export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteCon
   if (normalized.email_privacidade && !isValidEmail(normalized.email_privacidade)) {
     return { ok: false, message: 'O e-mail de privacidade é inválido.' };
   }
-  return { ok: true, value: normalized };
+  const fonts = normalizePersonalizationFonts(config.fontes_personalizacao);
+  if ((config.fontes_personalizacao || []).length !== fonts.length) {
+    return { ok: false, message: 'Revise as fontes de personalização: há nome, identificador, família ou URL inválidos ou duplicados.' };
+  }
+  return { ok: true, value: { ...normalized, fontes_personalizacao: fonts } };
 }
 
 function canonicalize(value: unknown): unknown {

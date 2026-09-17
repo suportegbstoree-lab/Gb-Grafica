@@ -51,6 +51,7 @@ import {
 } from './pagbankWebhookFallback.js';
 import { isCurrentLegalAcceptance, LEGAL_VERSIONS } from '../lib/legal.js';
 import {
+  activePersonalizationFonts,
   isProductCustomizationType,
   legacyTextCustomization,
   normalizeTextCustomization,
@@ -59,6 +60,8 @@ import {
   textCustomizationFingerprint,
   type TextCustomization,
 } from '../lib/textCustomization.js';
+import { promotionalPrice } from '../lib/promotions.js';
+import type { Anuncio, Promocao } from '../types.js';
 import {
   logEvent,
   requestObservability,
@@ -87,6 +90,9 @@ interface NormalizedCartItem {
     nome: string;
     imagem: string;
     preco: string;
+    precoOriginal?: string;
+    promocaoId?: string;
+    descontoPercentual?: number;
     selecoes: Record<string, string>;
     quantidade: number;
     arquivoPath?: string;
@@ -200,7 +206,7 @@ app.use((_req, res, next) => {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     res.setHeader(
       'Content-Security-Policy',
-      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://accounts.google.com https://*.firebaseapp.com; upgrade-insecure-requests",
+      "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://firebasestorage.googleapis.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com; frame-src https://accounts.google.com https://*.firebaseapp.com; upgrade-insecure-requests",
     );
   }
   next();
@@ -474,13 +480,22 @@ async function normalizeCart(
     throw new HttpError(422, 'Há um item inválido no carrinho.');
   }
 
-  const snapshots = await Promise.all(itemInputs.map(async (item) => {
+  const [configSnapshot, promotionsSnapshot, snapshots] = await Promise.all([
+    db.collection('config').doc('main').get(),
+    db.collection('promocoes').get(),
+    Promise.all(itemInputs.map(async (item) => {
     const productId = textValue(item.productId, 100);
     if (!productId || !/^[A-Za-z0-9_-]+$/.test(productId)) {
       throw new HttpError(422, 'Produto inválido no carrinho.');
     }
     return { item, productId, snapshot: await db.collection('anuncios').doc(productId).get() };
-  }));
+    })),
+  ]);
+  const configuredFonts = activePersonalizationFonts(configSnapshot.data()?.fontes_personalizacao);
+  const promotions = promotionsSnapshot.docs.map(snapshot => ({
+    id: snapshot.id,
+    ...snapshot.data(),
+  } as Promocao));
 
   const normalizedItems: NormalizedCartItem[] = [];
   let subtotalCents = 0;
@@ -541,11 +556,19 @@ async function normalizeCart(
       throw new HttpError(422, `A combinação escolhida de ${productName} está sem preço.`);
     }
     const rawPrice = normalizedAttributes.length > 0 ? combinations[combinationKey] : product.preco_base;
-    const unitAmount = parseMoneyToCents(rawPrice);
+    const originalUnitAmount = parseMoneyToCents(rawPrice);
 
-    if (unitAmount === null || unitAmount <= 0 || unitAmount > 999999900) {
+    if (originalUnitAmount === null || originalUnitAmount <= 0 || originalUnitAmount > 999999900) {
       throw new HttpError(422, `O preço de ${productName} está inválido.`);
     }
+
+    const productCategory = textValue(product.categoria, 100);
+    const appliedPromotion = promotionalPrice(
+      originalUnitAmount,
+      { id: productId, categoria: productCategory } as Pick<Anuncio, 'id' | 'categoria'>,
+      promotions,
+    );
+    const unitAmount = appliedPromotion?.finalCents ?? originalUnitAmount;
 
     const lineAmount = unitAmount * quantity;
     subtotalCents += lineAmount;
@@ -594,12 +617,15 @@ async function normalizeCart(
 
     let textCustomization: TextCustomization | null = null;
     if (requiresText) {
+      if (configuredFonts.length === 0) {
+        throw new HttpError(422, `As fontes de personalização de ${productName} ainda não foram configuradas.`);
+      }
       const hasStructuredCustomization = item.personalizacaoTexto !== undefined;
-      textCustomization = normalizeTextCustomization(item.personalizacaoTexto);
+      textCustomization = normalizeTextCustomization(item.personalizacaoTexto, configuredFonts);
       if (hasStructuredCustomization && !textCustomization) {
         throw new HttpError(422, `A personalização de texto de ${productName} é inválida.`);
       }
-      textCustomization ||= legacyTextCustomization(item.textoPersonalizado);
+      textCustomization ||= legacyTextCustomization(item.textoPersonalizado, configuredFonts);
       if (!textCustomization) {
         throw new HttpError(422, `Informe o texto, a fonte e a posição da personalização de ${productName}.`);
       }
@@ -616,6 +642,11 @@ async function normalizeCart(
         nome: productName,
         imagem: productImage || '',
         preco: price,
+        ...(appliedPromotion ? {
+          precoOriginal: (originalUnitAmount / 100).toFixed(2),
+          promocaoId: appliedPromotion.promotion.id,
+          descontoPercentual: appliedPromotion.percentage,
+        } : {}),
         selecoes: selections,
         quantidade: quantity,
         ...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),

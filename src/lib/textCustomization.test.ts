@@ -7,31 +7,41 @@ import {
   productRequiresArtwork,
   productRequiresText,
   textCustomizationFingerprint,
+  type PersonalizationFont,
 } from './textCustomization';
+
+const fonts: PersonalizationFont[] = [
+  { id: 'georgia', nome: 'Georgia', cssFamily: 'Georgia, serif', ativo: true },
+  { id: 'arial', nome: 'Arial', cssFamily: 'Arial, sans-serif', ativo: true },
+];
 
 test('normaliza texto, fonte e posição em porcentagem', () => {
   assert.deepEqual(normalizeTextCustomization({
     texto: '  Rise   Kujikawa  ',
     fonte: 'georgia',
     posicao: { x: 12.34, y: 87.66 },
-  }), {
+  }, fonts), {
     texto: 'Rise Kujikawa',
     fonte: 'georgia',
+    fonteNome: 'Georgia',
+    fonteCssFamily: 'Georgia, serif',
     posicao: { x: 12.3, y: 87.7 },
   });
 });
 
 test('rejeita fonte, texto e coordenadas manipuladas', () => {
-  assert.equal(normalizeTextCustomization({ texto: '', fonte: 'arial', posicao: { x: 50, y: 50 } }), null);
-  assert.equal(normalizeTextCustomization({ texto: 'A', fonte: 'injetada', posicao: { x: 50, y: 50 } }), null);
-  assert.equal(normalizeTextCustomization({ texto: 'A', fonte: 'arial', posicao: { x: -1, y: 50 } }), null);
-  assert.equal(normalizeTextCustomization({ texto: 'A'.repeat(MAX_CUSTOM_TEXT_LENGTH + 1), fonte: 'arial', posicao: { x: 50, y: 50 } }), null);
+  assert.equal(normalizeTextCustomization({ texto: '', fonte: 'arial', posicao: { x: 50, y: 50 } }, fonts), null);
+  assert.equal(normalizeTextCustomization({ texto: 'A', fonte: 'injetada', posicao: { x: 50, y: 50 } }, fonts), null);
+  assert.equal(normalizeTextCustomization({ texto: 'A', fonte: 'arial', posicao: { x: -1, y: 50 } }, fonts), null);
+  assert.equal(normalizeTextCustomization({ texto: 'A'.repeat(MAX_CUSTOM_TEXT_LENGTH + 1), fonte: 'arial', posicao: { x: 50, y: 50 } }, fonts), null);
 });
 
 test('converte personalização legada para fonte e posição padrão', () => {
-  assert.deepEqual(legacyTextCustomization('  Nome antigo  '), {
+  assert.deepEqual(legacyTextCustomization('  Nome antigo  ', fonts), {
     texto: 'Nome antigo',
-    fonte: 'arial',
+    fonte: 'georgia',
+    fonteNome: 'Georgia',
+    fonteCssFamily: 'Georgia, serif',
     posicao: { x: 50, y: 50 },
   });
 });

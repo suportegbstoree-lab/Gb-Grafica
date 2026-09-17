@@ -1,7 +1,7 @@
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
-import type { ProductCustomizationType, TextCustomization } from './lib/textCustomization';
+import type { PersonalizationFont, ProductCustomizationType, TextCustomization } from './lib/textCustomization';
 
-export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, ProductCustomizationType, TextCustomization };
+export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationFont, ProductCustomizationType, TextCustomization };
 
 export interface ProductAttribute {
   nome: string;
@@ -30,6 +30,9 @@ export interface CartItem {
   preco: string;
   selecoes: Record<string, string>;
   quantidade: number;
+  precoOriginal?: string;
+  promocaoId?: string;
+  descontoPercentual?: number;
   arquivoUrl?: string;
   arquivoPath?: string;
   arquivoNome?: string;
@@ -84,14 +87,24 @@ export interface Category {
   id: string;
   nome: string;
   icon?: string;
+  ordem?: number;
 }
+
+export type PromotionTargetType = 'produto' | 'categoria';
+export type PromotionDiscountType = 'percentual' | 'valor_fixo';
 
 export interface Promocao {
   id: string;
   titulo: string;
-  imagem: string;
+  imagem?: string;
   link?: string;
   ativa: boolean;
+  alvoTipo?: PromotionTargetType;
+  alvoId?: string;
+  alvoNome?: string;
+  descontoTipo?: PromotionDiscountType;
+  descontoPercentual?: number;
+  descontoFixoCentavos?: number;
 }
 
 export interface SiteConfig {
@@ -116,4 +129,5 @@ export interface SiteConfig {
   email_atendimento?: string;
   email_privacidade?: string;
   prazo_producao?: string;
+  fontes_personalizacao?: PersonalizationFont[];
 }

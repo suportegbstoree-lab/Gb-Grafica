@@ -2,9 +2,14 @@ node_modules/
 build/
 dist/
 coverage/
-.personal_infos
+playwright-report/
+test-results/
+blob-report/
 .DS_Store
 *.log
+*pagbank-homologacao*.txt
+*homologacao-pagbank*.txt
 .env*
 !.env.example
 .secret.json
+.personal_infos

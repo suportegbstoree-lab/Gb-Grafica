@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
 import Home from '../pages/Home';
-import Admin, { type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
+import Admin, { type AdminAssetStorage, type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
 
 const FIXTURE_CONFIG: SiteConfig = {
   logo_url: '/logo.png',
@@ -25,11 +25,15 @@ const FIXTURE_CONFIG: SiteConfig = {
   email_atendimento: 'atendimento@example.com',
   email_privacidade: 'privacidade@example.com',
   prazo_producao: 'De 2 a 5 dias úteis após a aprovação da arte',
+  fontes_personalizacao: [
+    { id: 'arial', nome: 'Arial', cssFamily: 'Arial, Helvetica, sans-serif', ativo: true },
+    { id: 'georgia', nome: 'Georgia', cssFamily: 'Georgia, serif', ativo: true },
+  ],
 };
 
 const FIXTURE_CATEGORIES: Category[] = [
-  { id: 'personalizados', nome: 'Personalizados', icon: '' },
-  { id: 'livros-de-receita', nome: 'Livros de Receita', icon: '' },
+  { id: 'personalizados', nome: 'Personalizados', icon: '', ordem: 0 },
+  { id: 'livros-de-receita', nome: 'Livros de Receita', icon: '', ordem: 1 },
 ];
 
 const FIXTURE_PRODUCTS: Anuncio[] = [
@@ -61,7 +65,18 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
 ];
 
 const FIXTURE_PROMOTIONS: Promocao[] = [
-  { id: 'promo-teste', titulo: 'Promoção de teste', imagem: '/logo.png', link: '#produtos', ativa: true },
+  {
+    id: 'promo-teste',
+    titulo: 'Promoção de teste',
+    imagem: '/logo.png',
+    link: '#produto-1yi50l93z',
+    ativa: true,
+    alvoTipo: 'produto',
+    alvoId: '1yi50l93z',
+    alvoNome: 'Carimbo',
+    descontoTipo: 'percentual',
+    descontoPercentual: 10,
+  },
 ];
 
 const FIXTURE_ORDERS: Order[] = [
@@ -172,6 +187,29 @@ function AdminFixture() {
     },
   }), []);
 
+  const adminAssetStorage = React.useMemo<AdminAssetStorage>(() => ({
+    async uploadImage(scope, ownerId, file) {
+      const uploadId = crypto.randomUUID().replace(/-/g, '');
+      return {
+        path: `catalog/${scope}/${ownerId}/${uploadId}.png`,
+        url: `https://example.com/${scope}/${ownerId}/${uploadId}.png`,
+        name: file.name,
+      };
+    },
+    async uploadFont(fontId, file) {
+      const uploadId = crypto.randomUUID().replace(/-/g, '');
+      return {
+        path: `catalog/fonts/${fontId}/${uploadId}.woff2`,
+        url: `https://example.com/fonts/${fontId}/${uploadId}.woff2`,
+        name: file.name,
+      };
+    },
+    async deleteAsset() {},
+    pathFromUrl() {
+      return null;
+    },
+  }), []);
+
   return (
     <div data-testid="e2e-admin">
       <Admin
@@ -184,6 +222,7 @@ function AdminFixture() {
         promotions={promotions}
         persistence={persistence}
         catalogImageStorage={catalogImageStorage}
+        adminAssetStorage={adminAssetStorage}
         onLogout={() => setLastAction('logout')}
       />
       <output hidden data-testid="e2e-admin-action">{lastAction}</output>

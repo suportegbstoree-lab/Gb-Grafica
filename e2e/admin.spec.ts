@@ -111,12 +111,14 @@ test('rejeita promoção insegura e persiste uma promoção válida', async ({ p
   await page.getByRole('button', { name: 'Nova Promoção' }).click();
   const editor = page.getByRole('dialog', { name: 'Nova Promoção' });
   await editor.getByLabel('Título da Promoção').fill('Promoção E2E');
-  await editor.getByLabel('Banner URL').fill('javascript:alert(1)');
+  await editor.getByText('Usar URL externa').click();
+  await editor.getByLabel('URL externa do banner da promoção').fill('javascript:alert(1)');
   await editor.getByRole('button', { name: 'Salvar Promoção' }).click();
   await expect(page.getByRole('alert')).toContainText('URL inválida');
 
-  await editor.getByLabel('Banner URL').fill('/logo.png');
-  await editor.getByLabel('Link de Destino (Opcional)').fill('/#produtos');
+  await editor.getByLabel('URL externa do banner da promoção').fill('/logo.png');
+  await editor.getByLabel('Produto').selectOption('1yi50l93z');
+  await editor.getByLabel('Desconto (%)').fill('15');
   await editor.getByRole('button', { name: 'Salvar Promoção' }).click();
   await expect(editor).toHaveCount(0);
   await expect(page.getByText('Promoção E2E', { exact: true })).toBeVisible();

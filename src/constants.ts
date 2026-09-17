@@ -17,7 +17,8 @@ export const INITIAL_CONFIG: SiteConfig = {
   endereco_comercial: "",
   email_atendimento: "",
   email_privacidade: "",
-  prazo_producao: ""
+  prazo_producao: "",
+  fontes_personalizacao: []
 };
 
 export const INITIAL_CATEGORIES = [
@@ -30,7 +31,7 @@ export const INITIAL_CATEGORIES = [
   { nome: "Adesivos de Parede", icon: "https://cdn-icons-png.flaticon.com/512/2910/2910791.png" },
   { nome: "Luminárias", icon: "https://cdn-icons-png.flaticon.com/512/2590/2590525.png" },
   { nome: "Painéis Educativos", icon: "https://cdn-icons-png.flaticon.com/512/2618/2618245.png" }
-];
+].map((category, ordem) => ({ ...category, ordem }));
 
 export const INITIAL_PRODUCTS: Anuncio[] = [
   {

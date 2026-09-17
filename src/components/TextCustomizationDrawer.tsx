@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom';
 import { Check, Move, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import {
+  activePersonalizationFonts,
   DEFAULT_TEXT_CUSTOMIZATION,
   MAX_CUSTOM_TEXT_LENGTH,
   normalizeTextCustomization,
-  TEXT_FONT_OPTIONS,
   textFontCssFamily,
+  type PersonalizationFont,
   type TextCustomization,
 } from '../lib/textCustomization';
 
@@ -15,6 +16,7 @@ interface TextCustomizationDrawerProps {
   productName: string;
   previewImage: string;
   fieldLabel: string;
+  fonts: PersonalizationFont[];
   initialValue: TextCustomization | null;
   onClose: () => void;
   onSave: (value: TextCustomization) => void;
@@ -28,13 +30,24 @@ export default function TextCustomizationDrawer({
   productName,
   previewImage,
   fieldLabel,
+  fonts,
   initialValue,
   onClose,
   onSave,
 }: TextCustomizationDrawerProps) {
-  const [draft, setDraft] = useState<TextCustomization>(() => initialValue
-    ? structuredClone(initialValue)
-    : structuredClone(DEFAULT_TEXT_CUSTOMIZATION));
+  const availableFonts = React.useMemo(() => activePersonalizationFonts(fonts), [fonts]);
+  const [draft, setDraft] = useState<TextCustomization>(() => {
+    const initialFont = availableFonts.find(font => font.id === initialValue?.fonte) || availableFonts[0];
+    return {
+      ...(initialValue ? structuredClone(initialValue) : structuredClone(DEFAULT_TEXT_CUSTOMIZATION)),
+      fonte: initialFont?.id || '',
+      ...(initialFont ? {
+        fonteNome: initialFont.nome,
+        fonteCssFamily: initialFont.cssFamily,
+        ...(initialFont.arquivoUrl ? { fonteArquivoUrl: initialFont.arquivoUrl } : {}),
+      } : {}),
+    };
+  });
   const [error, setError] = useState('');
   const drawerRef = useRef<HTMLElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
@@ -133,7 +146,7 @@ export default function TextCustomizationDrawer({
   };
 
   const save = () => {
-    const normalized = normalizeTextCustomization(draft);
+    const normalized = normalizeTextCustomization(draft, availableFonts);
     if (!normalized) {
       setError(`Informe um texto de até ${MAX_CUSTOM_TEXT_LENGTH} caracteres, uma fonte e uma posição válida.`);
       return;
@@ -195,19 +208,30 @@ export default function TextCustomizationDrawer({
           <fieldset className="space-y-3">
             <legend className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Fonte</legend>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {TEXT_FONT_OPTIONS.map(option => (
+              {availableFonts.map(option => (
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => setDraft(current => ({ ...current, fonte: option.id }))}
+                  onClick={() => setDraft(current => ({
+                    ...current,
+                    fonte: option.id,
+                    fonteNome: option.nome,
+                    fonteCssFamily: option.cssFamily,
+                    fonteArquivoUrl: option.arquivoUrl,
+                  }))}
                   aria-pressed={draft.fonte === option.id}
                   className={`rounded-xl border px-3 py-3 text-sm transition-colors ${draft.fonte === option.id ? 'border-pink-400 bg-pink-50 text-pink-700' : 'border-gray-200 bg-white text-gray-600 hover:border-pink-200'}`}
                   style={{ fontFamily: option.cssFamily }}
                 >
-                  {option.label}
+                  {option.nome}
                 </button>
               ))}
             </div>
+            {availableFonts.length === 0 && (
+              <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-800">
+                Nenhuma fonte foi disponibilizada pela loja. A personalização precisa ser configurada no painel administrativo.
+              </div>
+            )}
           </fieldset>
 
           <div className="space-y-3">
@@ -236,7 +260,7 @@ export default function TextCustomizationDrawer({
                 style={{
                   left: `${draft.posicao.x}%`,
                   top: `${draft.posicao.y}%`,
-                  fontFamily: textFontCssFamily(draft.fonte),
+                  fontFamily: textFontCssFamily(draft.fonte, availableFonts, draft.fonteCssFamily),
                   fontSize: previewFontSize,
                 }}
               >
@@ -254,7 +278,7 @@ export default function TextCustomizationDrawer({
 
         <footer className="grid grid-cols-2 gap-3 border-t border-gray-100 bg-gray-50/70 p-5 sm:px-8">
           <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-600 hover:border-gray-300">Cancelar</button>
-          <button type="button" onClick={save} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500">
+          <button type="button" onClick={save} disabled={availableFonts.length === 0} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
             <Check size={16} /> Aplicar
           </button>
         </footer>

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, Package, Layout, List, Settings, LogOut, Clock, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
@@ -8,7 +8,7 @@ import { db, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, logout
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
-import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
+import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus, ORDER_QUEUE_ORDER, orderQueueFor, orderQueueLabel, type OrderQueue } from '../lib/orderStatus';
 import { requestArtworkUrl } from '../services/artworkService';
 import {
   removeCatalogImage,
@@ -31,6 +31,16 @@ import {
   validateSiteConfig,
 } from '../lib/adminValidation';
 import { textFontCssFamily, textFontLabel } from '../lib/textCustomization';
+import { normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
+import {
+  removeAdminAsset,
+  storedAdminAssetPath,
+  uploadAdminFont,
+  uploadAdminImage,
+  type UploadedAdminAsset,
+} from '../services/adminAssetService';
+import type { AdminImageScope } from '../lib/adminAsset';
+import { formattedDiscountPercentage } from '../lib/promotions';
 
 type AdminTab = 'products' | 'categories' | 'config' | 'orders' | 'promotions';
 
@@ -45,6 +55,13 @@ export interface AdminCatalogImageStorage {
   pathFromUrl: (url: string, productId?: string) => string | null;
 }
 
+export interface AdminAssetStorage {
+  uploadImage: (scope: AdminImageScope, ownerId: string, file: File) => Promise<UploadedAdminAsset>;
+  uploadFont: (fontId: string, file: File) => Promise<UploadedAdminAsset>;
+  deleteAsset: (path: string) => Promise<void>;
+  pathFromUrl: (url: string) => string | null;
+}
+
 export interface AdminProps {
   products: Anuncio[];
   config: SiteConfig;
@@ -55,6 +72,7 @@ export interface AdminProps {
   promotions: Promocao[];
   persistence?: AdminPersistence;
   catalogImageStorage?: AdminCatalogImageStorage;
+  adminAssetStorage?: AdminAssetStorage;
   onLogout?: () => void | Promise<void>;
 }
 
@@ -81,6 +99,13 @@ const FIREBASE_CATALOG_IMAGE_STORAGE: AdminCatalogImageStorage = {
   pathFromUrl: storedCatalogImagePath,
 };
 
+const FIREBASE_ADMIN_ASSET_STORAGE: AdminAssetStorage = {
+  uploadImage: uploadAdminImage,
+  uploadFont: uploadAdminFont,
+  deleteAsset: removeAdminAsset,
+  pathFromUrl: storedAdminAssetPath,
+};
+
 const BENEFIT_FIELDS = [
   { number: 1, title: 'beneficio1_titulo', description: 'beneficio1_desc' },
   { number: 2, title: 'beneficio2_titulo', description: 'beneficio2_desc' },
@@ -96,6 +121,27 @@ const LEGAL_FIELD_LABELS: Record<string, string> = {
   prazo_producao: 'prazo de produção',
 };
 
+const ORDER_QUEUE_STYLES: Record<OrderQueue, string> = {
+  aguardando_pagamento: 'text-amber-400 border-amber-500/30',
+  pagamento_confirmado: 'text-green-400 border-green-500/30',
+  em_producao: 'text-blue-400 border-blue-500/30',
+  pronto_retirada: 'text-purple-400 border-purple-500/30',
+  entregue: 'text-gray-400 border-gray-700',
+};
+
+function adminPersistenceError(error: unknown, fallback: string): string {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  if (code.endsWith('permission-denied')) {
+    return 'O Firebase recusou a gravação. Publique as regras atuais e saia e entre novamente para renovar a permissão administrativa.';
+  }
+  if (code.endsWith('unauthenticated')) return 'Sua sessão expirou. Saia e entre novamente no painel.';
+  if (code.endsWith('unavailable')) return 'O Firebase está indisponível ou sem conexão. Tente novamente em instantes.';
+  if (code.endsWith('invalid-argument')) return 'O Firebase recusou um campo do cadastro. Atualize a página e revise os dados informados.';
+  return fallback;
+}
+
 export default function Admin({
   products,
   config,
@@ -106,6 +152,7 @@ export default function Admin({
   promotions,
   persistence = FIREBASE_PERSISTENCE,
   catalogImageStorage = FIREBASE_CATALOG_IMAGE_STORAGE,
+  adminAssetStorage = FIREBASE_ADMIN_ASSET_STORAGE,
   onLogout = logout,
 }: AdminProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
@@ -116,7 +163,16 @@ export default function Admin({
   const [configDirty, setConfigDirty] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationState | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [newCategory, setNewCategory] = useState({ nome: '', icon: '' });
+  const [categoryDraft, setCategoryDraft] = useState<Partial<Category> & { nome: string; icon: string }>({ nome: '', icon: '' });
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [categoryUpload, setCategoryUpload] = useState<UploadedAdminAsset | null>(null);
+  const [promotionUpload, setPromotionUpload] = useState<UploadedAdminAsset | null>(null);
+  const [configUploads, setConfigUploads] = useState<Partial<Record<'logo_url' | 'banner_principal', UploadedAdminAsset>>>({});
+  const [isUploadingAdminAsset, setIsUploadingAdminAsset] = useState(false);
+  const [configDraft, setConfigDraft] = useState<SiteConfig>(() => structuredClone(config));
+  const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
+  const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
+  const [collapsedOrderQueues, setCollapsedOrderQueues] = useState<Set<OrderQueue>>(() => new Set(['entregue']));
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -125,7 +181,7 @@ export default function Admin({
   const [sessionCatalogUploads, setSessionCatalogUploads] = useState<UploadedCatalogImage[]>([]);
   const [isUploadingCatalogImages, setIsUploadingCatalogImages] = useState(false);
   const originalProductImagesRef = React.useRef<{ productId: string; urls: string[] } | null>(null);
-  const missingCommercialFields = missingLegalBusinessFields(config);
+  const missingCommercialFields = missingLegalBusinessFields(configDraft);
 
   usePageMetadata({
     title: 'Painel administrativo | GB Gráfica',
@@ -144,6 +200,10 @@ export default function Admin({
       return () => clearTimeout(timer);
     }
   }, [successMessage, errorMessage]);
+
+  React.useEffect(() => {
+    if (!configDirty) setConfigDraft(structuredClone(config));
+  }, [config]);
   const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
   const [showAttrForm, setShowAttrForm] = useState(false);
   const [showBulkImageForm, setShowBulkImageForm] = useState(false);
@@ -180,6 +240,13 @@ export default function Admin({
     if (failed) throw failed.reason;
   }, [catalogImageStorage]);
 
+  const deleteAdminPaths = React.useCallback(async (paths: string[]) => {
+    const uniquePaths = [...new Set(paths.filter(Boolean))];
+    const results = await Promise.allSettled(uniquePaths.map(path => adminAssetStorage.deleteAsset(path)));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }, [adminAssetStorage]);
+
   const discardProductEditor = React.useCallback(async () => {
     await deleteCatalogPaths(sessionCatalogUploads.map(upload => upload.path));
     forceCloseProductEditor();
@@ -204,9 +271,27 @@ export default function Admin({
 
   const openPromotionEditor = (draft: Partial<Promocao>) => {
     const copy = structuredClone(draft);
+    copy.alvoTipo ||= 'produto';
+    copy.descontoTipo ||= 'percentual';
+    if (copy.descontoTipo === 'percentual' && copy.descontoPercentual === undefined) {
+      copy.descontoPercentual = 10;
+    }
     setEditingPromotion(copy);
     setPromotionBaseline(draftFingerprint(copy));
+    setPromotionDiscountInput(
+      copy.descontoTipo === 'valor_fixo' && Number.isInteger(copy.descontoFixoCentavos)
+        ? (Number(copy.descontoFixoCentavos) / 100).toFixed(2).replace('.', ',')
+        : '',
+    );
+    setPromotionUpload(null);
   };
+
+  const discardPromotionEditor = React.useCallback(async () => {
+    if (promotionUpload) await deleteAdminPaths([promotionUpload.path]);
+    setPromotionUpload(null);
+    setPromotionDiscountInput('');
+    forceClosePromotionEditor();
+  }, [deleteAdminPaths, forceClosePromotionEditor, promotionUpload]);
 
   const hasUnsavedProduct = Boolean(
     editingProduct && productBaseline !== null && draftFingerprint(editingProduct) !== productBaseline,
@@ -241,12 +326,15 @@ export default function Admin({
         message: 'As mudanças feitas nesta promoção ainda não foram salvas.',
         confirmLabel: 'Descartar',
         danger: true,
-        onConfirm: forceClosePromotionEditor,
+        onConfirm: discardPromotionEditor,
       });
       return;
     }
-    forceClosePromotionEditor();
-  }, [editingPromotion, forceClosePromotionEditor, isSaving, promotionBaseline]);
+    void discardPromotionEditor().catch(error => {
+      console.error('Não foi possível limpar o banner temporário da promoção:', error);
+      setErrorMessage('Não foi possível fechar o editor de promoção.');
+    });
+  }, [discardPromotionEditor, editingPromotion, isSaving, promotionBaseline]);
 
   const requestCloseProductEditorRef = React.useRef(requestCloseProductEditor);
   const requestClosePromotionEditorRef = React.useRef(requestClosePromotionEditor);
@@ -266,7 +354,12 @@ export default function Admin({
         message: 'As alterações feitas nas configurações serão perdidas.',
         confirmLabel: 'Sair sem salvar',
         danger: true,
-        onConfirm: () => {
+        onConfirm: async () => {
+          await deleteAdminPaths(Object.values(configUploads)
+            .filter((upload): upload is UploadedAdminAsset => Boolean(upload))
+            .map(upload => upload.path));
+          setConfigUploads({});
+          setConfigDraft(structuredClone(config));
           setConfigDirty(false);
           setActiveTab(nextTab);
         },
@@ -429,10 +522,10 @@ export default function Admin({
     const formData = new FormData(e.currentTarget);
     const updatedConfig: SiteConfig = {
       ...config,
-      logo_url: formData.get('logo_url') as string,
+      logo_url: configDraft.logo_url,
       telefone1: formData.get('telefone1') as string,
       telefone2: formData.get('telefone2') as string,
-      banner_principal: formData.get('banner_principal') as string,
+      banner_principal: configDraft.banner_principal,
       banner_titulo: formData.get('banner_titulo') as string,
       banner_subtitulo: formData.get('banner_subtitulo') as string,
       banner_botao: formData.get('banner_botao') as string,
@@ -442,8 +535,7 @@ export default function Admin({
       beneficio2_desc: formData.get('beneficio2_desc') as string,
       beneficio3_titulo: formData.get('beneficio3_titulo') as string,
       beneficio3_desc: formData.get('beneficio3_desc') as string,
-      pix_chave: String(formData.get('pix_chave') || '').trim(),
-      pix_beneficiario: String(formData.get('pix_beneficiario') || '').trim(),
+      fontes_personalizacao: configDraft.fontes_personalizacao || [],
       razao_social: String(formData.get('razao_social') || '').trim(),
       documento_fiscal: String(formData.get('documento_fiscal') || '').trim(),
       endereco_comercial: String(formData.get('endereco_comercial') || '').trim(),
@@ -461,33 +553,240 @@ export default function Admin({
     setIsSaving(true);
     try {
       await persistence.setDocument('config', 'main', validation.value);
+      const usedConfigUrls = new Set([validation.value.logo_url, validation.value.banner_principal]);
+      const unusedConfigPaths = Object.values(configUploads)
+        .filter((upload): upload is UploadedAdminAsset => Boolean(upload))
+        .filter(upload => !usedConfigUrls.has(upload.url))
+        .map(upload => upload.path);
+      const replacedAssetPaths = [
+        config.logo_url && config.logo_url !== validation.value.logo_url ? adminAssetStorage.pathFromUrl(config.logo_url) : null,
+        config.banner_principal !== validation.value.banner_principal ? adminAssetStorage.pathFromUrl(config.banner_principal) : null,
+      ].filter((path): path is string => Boolean(path));
+      if (unusedConfigPaths.length > 0 || replacedAssetPaths.length > 0) {
+        try {
+          await deleteAdminPaths([...unusedConfigPaths, ...replacedAssetPaths]);
+        } catch (cleanupError) {
+          console.error('Configurações salvas, mas um arquivo substituído não pôde ser removido:', cleanupError);
+        }
+      }
+      setConfigDraft(validation.value);
+      setConfigUploads({});
       setConfigDirty(false);
       setSuccessMessage('Configurações salvas com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'config/main');
-      setErrorMessage('Não foi possível salvar as configurações.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível salvar as configurações.'));
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Category Handlers
-  const handleAddCategory = async () => {
-    if (isSaving) return;
+  const handleConfigImageUpload = async (
+    field: 'logo_url' | 'banner_principal',
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || isUploadingAdminAsset) return;
+    setIsUploadingAdminAsset(true);
     setErrorMessage(null);
-    const validation = validateCategoryDraft(newCategory, categories);
+    try {
+      const uploaded = await adminAssetStorage.uploadImage('site', field === 'logo_url' ? 'logo' : 'banner', file);
+      const previousPendingUpload = configUploads[field];
+      if (previousPendingUpload) await deleteAdminPaths([previousPendingUpload.path]);
+      setConfigUploads(current => ({ ...current, [field]: uploaded }));
+      setConfigDraft(current => ({ ...current, [field]: uploaded.url }));
+      setConfigDirty(true);
+      setSuccessMessage('Imagem enviada. Salve as configurações para publicar.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a imagem.');
+    } finally {
+      setIsUploadingAdminAsset(false);
+    }
+  };
+
+  const addSystemFont = () => {
+    const nome = newSystemFont.nome.trim();
+    const cssFamily = newSystemFont.cssFamily.trim();
+    const id = slugifyDocumentId(nome).slice(0, 64);
+    if (!nome || !cssFamily || !id) {
+      setErrorMessage('Informe o nome e a família CSS da fonte.');
+      return;
+    }
+    const nextFonts = [...(configDraft.fontes_personalizacao || []), { id, nome, cssFamily, ativo: true }];
+    if (normalizePersonalizationFonts(nextFonts).length !== nextFonts.length) {
+      setErrorMessage('A fonte possui dados inválidos ou já existe na lista.');
+      return;
+    }
+    setConfigDraft(current => ({ ...current, fontes_personalizacao: nextFonts }));
+    setNewSystemFont({ nome: '', cssFamily: '' });
+    setConfigDirty(true);
+  };
+
+  const handleFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || isUploadingAdminAsset) return;
+    const nome = file.name.replace(/\.woff2$/i, '').replace(/[-_]+/g, ' ').trim() || 'Fonte personalizada';
+    const baseId = slugifyDocumentId(nome).slice(0, 48) || 'fonte';
+    const existingIds = new Set((configDraft.fontes_personalizacao || []).map(font => font.id));
+    let id = baseId;
+    let suffix = 2;
+    while (existingIds.has(id)) {
+      id = `${baseId.slice(0, 58)}-${suffix}`;
+      suffix += 1;
+    }
+    setIsUploadingAdminAsset(true);
+    setErrorMessage(null);
+    try {
+      const uploaded = await adminAssetStorage.uploadFont(id, file);
+      const font: PersonalizationFont = {
+        id,
+        nome,
+        cssFamily: `GBFont_${id.replace(/-/g, '_')}`,
+        arquivoUrl: uploaded.url,
+        ativo: true,
+      };
+      setConfigDraft(current => ({
+        ...current,
+        fontes_personalizacao: [...(current.fontes_personalizacao || []), font],
+      }));
+      setConfigDirty(true);
+      setSuccessMessage('Fonte enviada. Salve as configurações para disponibilizá-la.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a fonte.');
+    } finally {
+      setIsUploadingAdminAsset(false);
+    }
+  };
+
+  const updateConfiguredFont = (index: number, patch: Partial<PersonalizationFont>) => {
+    setConfigDraft(current => ({
+      ...current,
+      fontes_personalizacao: (current.fontes_personalizacao || []).map((font, fontIndex) => (
+        fontIndex === index ? { ...font, ...patch } : font
+      )),
+    }));
+    setConfigDirty(true);
+  };
+
+  const removeConfiguredFont = (index: number) => {
+    setConfigDraft(current => ({
+      ...current,
+      fontes_personalizacao: (current.fontes_personalizacao || []).filter((_, fontIndex) => fontIndex !== index),
+    }));
+    setConfigDirty(true);
+  };
+
+  // Category Handlers
+  const resetCategoryEditor = async (removePendingUpload = false) => {
+    if (removePendingUpload && categoryUpload) await deleteAdminPaths([categoryUpload.path]);
+    setCategoryDraft({ nome: '', icon: '' });
+    setEditingCategoryId(null);
+    setCategoryUpload(null);
+  };
+
+  const handleCategoryIconUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || isUploadingAdminAsset) return;
+    const ownerId = editingCategoryId || slugifyDocumentId(categoryDraft.nome);
+    if (!ownerId) {
+      setErrorMessage('Informe o nome da categoria antes de enviar o ícone.');
+      return;
+    }
+    setIsUploadingAdminAsset(true);
+    setErrorMessage(null);
+    try {
+      const uploaded = await adminAssetStorage.uploadImage('categories', ownerId, file);
+      if (categoryUpload) await deleteAdminPaths([categoryUpload.path]);
+      setCategoryUpload(uploaded);
+      setCategoryDraft(current => ({ ...current, icon: uploaded.url }));
+      setSuccessMessage('Ícone enviado. Salve a categoria para concluir.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar o ícone.');
+    } finally {
+      setIsUploadingAdminAsset(false);
+    }
+  };
+
+  const handleSaveCategory = async () => {
+    if (isSaving || isUploadingAdminAsset) return;
+    setErrorMessage(null);
+    const validation = validateCategoryDraft(categoryDraft, categories, editingCategoryId || undefined);
     if (validation.ok === false) {
       setErrorMessage(validation.message);
       return;
     }
+    const previousCategory = editingCategoryId
+      ? categories.find(category => category.id === editingCategoryId)
+      : undefined;
     setIsSaving(true);
     try {
       await persistence.setDocument('categories', validation.value.id, validation.value);
-      setNewCategory({ nome: '', icon: '' });
-      setSuccessMessage('Categoria adicionada.');
+      if (previousCategory && previousCategory.nome !== validation.value.nome) {
+        await Promise.all([
+          ...products
+            .filter(product => product.categoria === previousCategory.nome)
+            .map(product => persistence.setDocument('anuncios', product.id, {
+              ...product,
+              categoria: validation.value.nome,
+            })),
+          ...promotions
+            .filter(promotion => promotion.alvoTipo === 'categoria' && promotion.alvoId === previousCategory.id)
+            .map(promotion => persistence.setDocument('promocoes', promotion.id, {
+              ...promotion,
+              alvoNome: validation.value.nome,
+            })),
+        ]);
+      }
+      const oldIconPath = previousCategory?.icon && previousCategory.icon !== validation.value.icon
+        ? adminAssetStorage.pathFromUrl(previousCategory.icon)
+        : null;
+      const unusedUploadPath = categoryUpload && categoryUpload.url !== validation.value.icon
+        ? categoryUpload.path
+        : null;
+      let cleanupFailed = false;
+      try {
+        await deleteAdminPaths([oldIconPath, unusedUploadPath].filter((path): path is string => Boolean(path)));
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        console.error('Categoria salva, mas um ícone substituído não pôde ser removido:', cleanupError);
+      }
+      await resetCategoryEditor(false);
+      setSuccessMessage(cleanupFailed
+        ? 'Categoria salva, mas um ícone antigo não pôde ser removido do Storage.'
+        : previousCategory ? 'Categoria atualizada.' : 'Categoria adicionada.');
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, `categories/${validation.value.id}`);
-      setErrorMessage('Não foi possível adicionar a categoria.');
+      handleFirestoreError(error, previousCategory ? OperationType.UPDATE : OperationType.CREATE, `categories/${validation.value.id}`);
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível salvar a categoria.'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const startCategoryEdit = (category: Category) => {
+    setEditingCategoryId(category.id);
+    setCategoryDraft({ ...category, icon: category.icon || '' });
+    setCategoryUpload(null);
+  };
+
+  const moveCategory = async (categoryId: string, direction: -1 | 1) => {
+    if (isSaving) return;
+    const currentIndex = categories.findIndex(category => category.id === categoryId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= categories.length) return;
+    const reordered = [...categories];
+    [reordered[currentIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[currentIndex]];
+    setIsSaving(true);
+    try {
+      await Promise.all(reordered.map((category, ordem) => (
+        persistence.setDocument('categories', category.id, { ...category, ordem })
+      )));
+      setSuccessMessage('Ordem das categorias atualizada.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'categories');
+      setErrorMessage('Não foi possível reorganizar as categorias.');
     } finally {
       setIsSaving(false);
     }
@@ -497,10 +796,12 @@ export default function Admin({
     const category = categories.find(item => item.id === catId);
     try {
       await persistence.deleteDocument('categories', catId);
+      const iconPath = category?.icon ? adminAssetStorage.pathFromUrl(category.icon) : null;
+      if (iconPath) await deleteAdminPaths([iconPath]);
       setSuccessMessage('Categoria excluída.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `categories/${catId}`);
-      setErrorMessage('Não foi possível excluir a categoria.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir a categoria.'));
     }
   };
 
@@ -508,6 +809,10 @@ export default function Admin({
     const category = categories.find(item => item.id === catId);
     if (category && products.some(product => product.categoria === category.nome)) {
       setErrorMessage('Esta categoria ainda possui produtos. Mova-os antes de excluir.');
+      return;
+    }
+    if (promotions.some(promotion => promotion.alvoTipo === 'categoria' && promotion.alvoId === catId)) {
+      setErrorMessage('Esta categoria ainda possui uma promoção vinculada. Edite ou exclua a promoção primeiro.');
       return;
     }
     setConfirmation({
@@ -629,7 +934,7 @@ export default function Admin({
         : 'Anúncio salvo com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar anúncio:', error);
-      setErrorMessage('Não foi possível salvar o anúncio. Verifique os campos e tente novamente.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível salvar o anúncio. Verifique os campos e tente novamente.'));
       handleFirestoreError(error, OperationType.WRITE, `anuncios/${id}`);
     } finally {
       setIsSaving(false);
@@ -657,7 +962,7 @@ export default function Admin({
         : 'Anúncio excluído com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
-      setErrorMessage('Não foi possível excluir o anúncio.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir o anúncio.'));
     }
   };
 
@@ -683,6 +988,15 @@ export default function Admin({
     }
   };
 
+  const toggleOrderQueue = (queue: OrderQueue) => {
+    setCollapsedOrderQueues(current => {
+      const next = new Set(current);
+      if (next.has(queue)) next.delete(queue);
+      else next.add(queue);
+      return next;
+    });
+  };
+
   const handleOpenArtwork = async (orderId: string, itemId: string) => {
     try {
       const url = await requestArtworkUrl(orderId, itemId);
@@ -694,11 +1008,34 @@ export default function Admin({
   };
 
   // Promotion Handlers
+  const handlePromotionImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !editingPromotion || isUploadingAdminAsset) return;
+    const ownerId = editingPromotion.id || slugifyDocumentId(editingPromotion.titulo || '') || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    setIsUploadingAdminAsset(true);
+    setErrorMessage(null);
+    try {
+      const uploaded = await adminAssetStorage.uploadImage('promotions', ownerId, file);
+      if (promotionUpload) await deleteAdminPaths([promotionUpload.path]);
+      setPromotionUpload(uploaded);
+      setEditingPromotion(current => current ? { ...current, imagem: uploaded.url } : current);
+      setSuccessMessage('Banner enviado. Salve a promoção para concluir.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar o banner.');
+    } finally {
+      setIsUploadingAdminAsset(false);
+    }
+  };
+
   const handleSavePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPromotion || isSaving) return;
     setErrorMessage(null);
-    const validation = validatePromotionDraft(editingPromotion);
+    const promotionDraft = editingPromotion.descontoTipo === 'valor_fixo'
+      ? { ...editingPromotion, descontoFixoCentavos: parseMoneyToCents(promotionDiscountInput) ?? undefined }
+      : editingPromotion;
+    const validation = validatePromotionDraft(promotionDraft, products, categories);
     if (validation.ok === false) {
       setErrorMessage(validation.message);
       return;
@@ -713,10 +1050,27 @@ export default function Admin({
     setIsSaving(true);
     try {
       await persistence.setDocument('promocoes', id, promotionToSave);
+      const previousPromotion = promotions.find(promotion => promotion.id === id);
+      const previousImagePath = previousPromotion?.imagem && previousPromotion.imagem !== promotionToSave.imagem
+        ? adminAssetStorage.pathFromUrl(previousPromotion.imagem)
+        : null;
+      const unusedUploadPath = promotionUpload && promotionUpload.url !== promotionToSave.imagem
+        ? promotionUpload.path
+        : null;
+      let cleanupFailed = false;
+      try {
+        await deleteAdminPaths([previousImagePath, unusedUploadPath].filter((path): path is string => Boolean(path)));
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        console.error('Promoção salva, mas um banner substituído não pôde ser removido:', cleanupError);
+      }
+      setPromotionUpload(null);
       forceClosePromotionEditor();
-      setSuccessMessage('Promoção salva com sucesso!');
+      setSuccessMessage(cleanupFailed
+        ? 'Promoção salva, mas um banner antigo não pôde ser removido do Storage.'
+        : 'Promoção salva com sucesso!');
     } catch (error) {
-      setErrorMessage('Erro ao salvar promoção.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível salvar a promoção.'));
       handleFirestoreError(error, OperationType.WRITE, `promocoes/${id}`);
     } finally {
       setIsSaving(false);
@@ -724,12 +1078,15 @@ export default function Admin({
   };
 
   const deletePromotion = async (id: string) => {
+    const promotion = promotions.find(item => item.id === id);
     try {
       await persistence.deleteDocument('promocoes', id);
+      const imagePath = promotion?.imagem ? adminAssetStorage.pathFromUrl(promotion.imagem) : null;
+      if (imagePath) await deleteAdminPaths([imagePath]);
       setSuccessMessage('Promoção excluída com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `promocoes/${id}`);
-      setErrorMessage('Não foi possível excluir a promoção.');
+      setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir a promoção.'));
     }
   };
 
@@ -939,47 +1296,75 @@ export default function Admin({
             <h2 className="text-2xl font-bold">Categorias e Navegação</h2>
 
             <div className="bg-[#111111] border border-gray-800 p-6 rounded-xl space-y-4">
+              <div>
+                <h3 className="font-bold">{editingCategoryId ? 'Editar categoria' : 'Nova categoria'}</h3>
+                <p className="mt-1 text-xs text-gray-500">O ícone pode ser enviado do computador e a ordem abaixo controla a navegação da loja.</p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label htmlFor="new-category-name" className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
+                  <label htmlFor="category-name" className="text-xs font-bold uppercase tracking-widest text-gray-500">Nome da Categoria</label>
                   <input
-                    id="new-category-name"
+                    id="category-name"
                     type="text"
                     maxLength={ADMIN_LIMITS.categoryName}
-                    value={newCategory.nome}
-                    onChange={(e) => setNewCategory({ ...newCategory, nome: e.target.value })}
+                    value={categoryDraft.nome}
+                    onChange={(e) => setCategoryDraft(current => ({ ...current, nome: e.target.value }))}
                     placeholder="Ex: Etiquetas p/ Objetos"
                     className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
                 <div className="space-y-2">
-                  <label htmlFor="new-category-icon" className="text-xs font-bold uppercase tracking-widest text-gray-500">URL do Ícone (PNG)</label>
-                  <input
-                    id="new-category-icon"
-                    type="text"
-                    value={newCategory.icon}
-                    onChange={(e) => setNewCategory({ ...newCategory, icon: e.target.value })}
-                    placeholder="https://cdn-icons-png.flaticon.com/..."
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                  />
-                  <p className="text-[10px] text-gray-500 mt-1">Informe uma URL HTTPS estável para o ícone.</p>
+                  <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Ícone</span>
+                  <div className="flex items-center gap-3">
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
+                      {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                      {isUploadingAdminAsset ? 'Enviando...' : 'Enviar do computador'}
+                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleCategoryIconUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+                    </label>
+                    {categoryDraft.icon && <img src={categoryDraft.icon} alt="Prévia do ícone" className="h-12 w-12 rounded-lg border border-gray-800 bg-white object-contain p-1" />}
+                  </div>
+                  <details className="text-xs text-gray-500">
+                    <summary className="cursor-pointer hover:text-gray-300">Usar URL externa</summary>
+                    <input
+                      type="text"
+                      inputMode="url"
+                      autoComplete="url"
+                      spellCheck={false}
+                      aria-label="URL externa do ícone"
+                      value={categoryDraft.icon}
+                      onChange={(e) => setCategoryDraft(current => ({ ...current, icon: e.target.value }))}
+                      placeholder="https://exemplo.com/icone.png"
+                      className="mt-2 w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                    />
+                  </details>
                 </div>
               </div>
-              <button onClick={handleAddCategory} disabled={isSaving} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full md:w-auto disabled:opacity-50">
-                {isSaving ? 'Adicionando...' : 'Adicionar Categoria'}
-              </button>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button type="button" onClick={handleSaveCategory} disabled={isSaving || isUploadingAdminAsset} className="bg-[#ff4d79] px-8 py-3 rounded-lg font-bold hover:bg-[#e6004c] w-full sm:w-auto disabled:opacity-50">
+                  {isSaving ? 'Salvando...' : editingCategoryId ? 'Salvar Categoria' : 'Adicionar Categoria'}
+                </button>
+                {editingCategoryId && (
+                  <button type="button" onClick={() => void resetCategoryEditor(true)} disabled={isSaving || isUploadingAdminAsset} className="px-8 py-3 rounded-lg border border-gray-700 font-bold hover:bg-gray-800 disabled:opacity-50">
+                    Cancelar edição
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {categories.map(cat => (
+            <div className="space-y-3">
+              {categories.map((cat, index) => (
                 <div key={cat.id} className="bg-[#111111] border border-gray-800 p-4 rounded-lg flex justify-between items-center group">
                   <div className="flex items-center gap-4">
+                    <span className="w-6 text-center text-xs font-black text-gray-600">{index + 1}</span>
                     {cat.icon && <img src={cat.icon} alt="" className="w-8 h-8 object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
                     <span className="font-bold text-sm uppercase tracking-wider">{cat.nome}</span>
                   </div>
-                  <button onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="text-gray-500 hover:text-red-500 transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100">
-                    <Trash2 size={18} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button type="button" onClick={() => void moveCategory(cat.id, -1)} disabled={index === 0 || isSaving} aria-label={`Mover ${cat.nome} para cima`} className="p-2 text-gray-500 hover:text-white disabled:opacity-20"><ArrowUp size={16} /></button>
+                    <button type="button" onClick={() => void moveCategory(cat.id, 1)} disabled={index === categories.length - 1 || isSaving} aria-label={`Mover ${cat.nome} para baixo`} className="p-2 text-gray-500 hover:text-white disabled:opacity-20"><ArrowDown size={16} /></button>
+                    <button type="button" onClick={() => startCategoryEdit(cat)} aria-label={`Editar ${cat.nome}`} className="p-2 text-gray-500 hover:text-[#ff4d79]"><Edit2 size={16} /></button>
+                    <button type="button" onClick={() => handleDeleteCategory(cat.id)} aria-label={`Excluir ${cat.nome}`} className="p-2 text-gray-500 hover:text-red-500 transition-colors"><Trash2 size={16} /></button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -987,128 +1372,131 @@ export default function Admin({
         )}
 
         {activeTab === 'orders' && (
-          <div className="space-y-12">
-            <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
+          <div className="space-y-8">
+            <div>
+              <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
+              <p className="mt-2 text-sm text-gray-500">As filas seguem a prioridade operacional. Clique no título para minimizar uma etapa.</p>
+            </div>
             {!ordersReady && <div role="status" className="text-sm text-gray-400 flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Carregando pedidos...</div>}
             {ordersError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{ordersError}</div>}
-
-            {/* Pedidos Pagos */}
-            <div className="space-y-6">
-              <div className="flex items-center gap-3 border-b border-green-500/30 pb-2">
-                <CheckCircle2 className="text-green-500" size={20} />
-                <h3 className="text-lg font-bold text-green-500">Pedidos com pagamento confirmado</h3>
-              </div>
-
-              <div className="space-y-4">
-                {orders.filter(isPaymentConfirmed).length === 0 ? (
-                  <div className="text-gray-600 text-sm italic">Nenhum pedido pago encontrado.</div>
-                ) : (
-                  orders.filter(isPaymentConfirmed).map(order => (
-                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Pedidos Pendentes */}
-            <div className="space-y-6 pt-8">
-              <div className="flex items-center gap-3 border-b border-yellow-500/30 pb-2">
-                <Clock className="text-yellow-500" size={20} />
-                <h3 className="text-lg font-bold text-yellow-500">Pedidos Pendentes (Falta Pagamento)</h3>
-              </div>
-
-              <div className="space-y-4">
-                {orders.filter(order => !isPaymentConfirmed(order)).length === 0 ? (
-                  <div className="text-gray-600 text-sm italic">Nenhum pedido pendente encontrado.</div>
-                ) : (
-                  orders.filter(order => !isPaymentConfirmed(order)).map(order => (
-                    <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
-                  ))
-                )}
-              </div>
-            </div>
+            {ORDER_QUEUE_ORDER.map(queue => {
+              const queueOrders = orders.filter(order => orderQueueFor(order) === queue);
+              const collapsed = collapsedOrderQueues.has(queue);
+              return (
+                <section key={queue} className="rounded-xl border border-gray-800 bg-[#0d0d0d] p-4 sm:p-6">
+                  <button
+                    type="button"
+                    onClick={() => toggleOrderQueue(queue)}
+                    aria-expanded={!collapsed}
+                    className={`flex w-full items-center justify-between border-b pb-3 text-left ${ORDER_QUEUE_STYLES[queue]}`}
+                  >
+                    <span className="flex items-center gap-3">
+                      <Package size={20} />
+                      <span className="text-lg font-bold">{orderQueueLabel(queue)}</span>
+                      <span className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-black text-gray-300">{queueOrders.length}</span>
+                    </span>
+                    {collapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                  </button>
+                  {!collapsed && (
+                    <div className="mt-5 space-y-4">
+                      {queueOrders.length === 0 ? (
+                        <div className="text-sm italic text-gray-600">Nenhum pedido nesta etapa.</div>
+                      ) : queueOrders.map(order => (
+                        <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
         )}
 
         {activeTab === 'config' && (
-          <div className="max-w-4xl space-y-8">
-            <div className="flex justify-between items-center">
+          <div className="max-w-5xl space-y-8">
+            <div>
               <h2 className="text-2xl font-bold">Configurações do Site</h2>
+              <p className="mt-2 text-sm text-gray-500">Identidade, atendimento, conteúdo da página inicial, personalização e dados legais.</p>
             </div>
 
-            <form key={JSON.stringify(config)} onSubmit={handleSaveConfig} onChange={() => setConfigDirty(true)} className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label htmlFor="logo_url_input" className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do Site (URL)</label>
-                  <input
-                    id="logo_url_input"
-                    name="logo_url"
-                    defaultValue={config.logo_url}
-                    placeholder="https://exemplo.com/logo.png"
-                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                  />
-                  {config.logo_url && (
-                    <div className="mt-2 w-16 h-16 bg-white rounded-lg flex items-center justify-center p-2 border border-gray-800">
-                      <img src={resolvePublicImage(config.logo_url)} alt="Prévia do logo" className="max-w-full max-h-full object-contain" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+            <form key={draftFingerprint(config)} onSubmit={handleSaveConfig} onChange={() => setConfigDirty(true)} className="space-y-8">
+              <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-6">
+                <div className="flex items-center gap-3">
+                  <Image className="text-[#ff4d79]" size={20} />
+                  <div><h3 className="font-bold">Identidade visual e banner</h3><p className="text-xs text-gray-500">Arquivos enviados ficam no Storage do projeto.</p></div>
+                </div>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  <div className="space-y-3">
+                    <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Logo do site</span>
+                    <div className="flex items-center gap-4">
+                      <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
+                        {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar logo
+                        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('logo_url', event)} disabled={isUploadingAdminAsset} className="sr-only" />
+                      </label>
+                      {configDraft.logo_url && <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-gray-800 bg-white p-2"><img src={resolvePublicImage(configDraft.logo_url)} alt="Prévia do logo" className="max-h-full max-w-full object-contain" /></div>}
                     </div>
-                  )}
-                  <p className="text-[10px] text-gray-600 italic">Esta URL também será usada como o ícone da aba do navegador.</p>
+                    <details className="text-xs text-gray-500"><summary className="cursor-pointer hover:text-gray-300">Usar URL externa</summary><input type="text" inputMode="url" autoComplete="url" spellCheck={false} aria-label="URL externa do logo" value={configDraft.logo_url || ''} onChange={event => { setConfigDraft(current => ({ ...current, logo_url: event.target.value })); setConfigDirty(true); }} className="mt-2 w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></details>
+                  </div>
+                  <div className="space-y-3">
+                    <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do banner principal</span>
+                    <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
+                      {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar banner
+                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('banner_principal', event)} disabled={isUploadingAdminAsset} className="sr-only" />
+                    </label>
+                    {configDraft.banner_principal && <img src={configDraft.banner_principal} alt="Prévia do banner" className="h-28 w-full rounded-lg border border-gray-800 object-cover" />}
+                    <details className="text-xs text-gray-500"><summary className="cursor-pointer hover:text-gray-300">Usar URL externa</summary><input type="text" inputMode="url" autoComplete="url" spellCheck={false} aria-label="URL externa do banner principal" value={configDraft.banner_principal} onChange={event => { setConfigDraft(current => ({ ...current, banner_principal: event.target.value })); setConfigDirty(true); }} className="mt-2 w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></details>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="config-phone-1" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 1</label>
-                  <input id="config-phone-1" name="telefone1" type="tel" defaultValue={config.telefone1} autoComplete="tel" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="space-y-2"><label htmlFor="config-banner-title" className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label><input id="config-banner-title" name="banner_titulo" defaultValue={config.banner_titulo} maxLength={160} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
+                  <div className="space-y-2"><label htmlFor="config-banner-subtitle" className="text-xs font-bold uppercase tracking-widest text-gray-500">Subtítulo</label><input id="config-banner-subtitle" name="banner_subtitulo" defaultValue={config.banner_subtitulo} maxLength={300} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
+                  <div className="space-y-2"><label htmlFor="config-banner-button" className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do botão</label><input id="config-banner-button" name="banner_botao" defaultValue={config.banner_botao} maxLength={80} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="config-phone-2" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp 2</label>
-                  <input id="config-phone-2" name="telefone2" type="tel" defaultValue={config.telefone2} autoComplete="tel" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="banner_principal_input" className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do Banner Principal (URL)</label>
-                  <input
-                    id="banner_principal_input"
-                    name="banner_principal"
-                    defaultValue={config.banner_principal}
-                    placeholder="https://exemplo.com/banner.jpg"
-                    className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="config-banner-title" className="text-xs font-bold uppercase tracking-widest text-gray-500">Título do Banner</label>
-                  <input id="config-banner-title" name="banner_titulo" defaultValue={config.banner_titulo} maxLength={160} placeholder="Ex: Impressão com Amor e Cuidado" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="config-banner-subtitle" className="text-xs font-bold uppercase tracking-widest text-gray-500">Subtítulo do Banner</label>
-                  <input id="config-banner-subtitle" name="banner_subtitulo" defaultValue={config.banner_subtitulo} maxLength={300} placeholder="Ex: Produtos personalizados para eternizar..." className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
-                </div>
-                <div className="space-y-2">
-                  <label htmlFor="config-banner-button" className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do Botão do Banner</label>
-                  <input id="config-banner-button" name="banner_botao" defaultValue={config.banner_botao} maxLength={80} placeholder="Ex: Ver Produtos" className="w-full bg-[#111111] border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]" />
-                </div>
+              </section>
+
+              <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+                <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-5">
+                  <div className="flex items-center gap-3"><Settings className="text-[#ff4d79]" size={20} /><h3 className="font-bold">Atendimento</h3></div>
+                  <div className="space-y-2"><label htmlFor="config-phone-1" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp principal</label><input id="config-phone-1" name="telefone1" type="tel" defaultValue={config.telefone1} autoComplete="tel" className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
+                  <div className="space-y-2"><label htmlFor="config-phone-2" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp alternativo</label><input id="config-phone-2" name="telefone2" type="tel" defaultValue={config.telefone2} autoComplete="tel" className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
+                </section>
+                <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-5">
+                  <div className="flex items-center gap-3"><Sparkles className="text-[#ff4d79]" size={20} /><h3 className="font-bold">Benefícios da loja</h3></div>
+                  {BENEFIT_FIELDS.map(benefit => (
+                    <div key={benefit.number} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input aria-label={`Título do benefício ${benefit.number}`} name={benefit.title} defaultValue={config[benefit.title]} maxLength={100} placeholder={`Título ${benefit.number}`} className="rounded border border-gray-800 bg-black px-3 py-2 text-sm" />
+                      <input aria-label={`Descrição do benefício ${benefit.number}`} name={benefit.description} defaultValue={config[benefit.description]} maxLength={180} placeholder="Descrição" className="rounded border border-gray-800 bg-black px-3 py-2 text-sm" />
+                    </div>
+                  ))}
+                </section>
               </div>
 
-              <div className="space-y-6">
-                {BENEFIT_FIELDS.map(benefit => (
-                  <div key={benefit.number} className="p-6 bg-[#111111] border border-gray-800 rounded-xl space-y-4">
-                    <div id={`benefit-${benefit.number}-label`} className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">Benefício {benefit.number}</div>
-                    <input aria-labelledby={`benefit-${benefit.number}-label`} aria-label={`Título do benefício ${benefit.number}`} name={benefit.title} defaultValue={config[benefit.title]} maxLength={100} placeholder="Título" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                    <input aria-labelledby={`benefit-${benefit.number}-label`} aria-label={`Descrição do benefício ${benefit.number}`} name={benefit.description} defaultValue={config[benefit.description]} maxLength={180} placeholder="Descrição" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                  </div>
-                ))}
-
-                <div className="p-6 bg-[#111111] border border-pink-500/20 rounded-xl space-y-4">
-                  <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest">PIX manual (legado — não usado no Checkout PagBank)</div>
-                  <div className="space-y-2">
-                    <label htmlFor="config-pix-key" className="text-xs text-gray-500 font-medium">Chave PIX</label>
-                    <input id="config-pix-key" name="pix_chave" defaultValue={config.pix_chave} maxLength={160} placeholder="CPF, E-mail, Celular ou Chave Aleatória" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                  </div>
-                  <div className="space-y-2">
-                    <label htmlFor="config-pix-beneficiary" className="text-xs text-gray-500 font-medium">Nome do Beneficiário</label>
-                    <input id="config-pix-beneficiary" name="pix_beneficiario" defaultValue={config.pix_beneficiario} maxLength={160} placeholder="Nome Completo ou Razão Social" className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm" />
-                  </div>
+              <section className="rounded-xl border border-purple-500/30 bg-[#111111] p-6 space-y-6">
+                <div className="flex items-center gap-3"><Type className="text-purple-400" size={20} /><div><h3 className="font-bold">Fontes da personalização</h3><p className="text-xs text-gray-500">Somente as fontes ativas aparecem para o cliente. Nenhuma opção é predefinida pelo código.</p></div></div>
+                <div className="space-y-3">
+                  {(configDraft.fontes_personalizacao || []).map((font, index) => (
+                    <div key={font.id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-800 bg-black p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
+                      <input aria-label={`Nome da fonte ${index + 1}`} value={font.nome} onChange={event => updateConfiguredFont(index, { nome: event.target.value })} className="rounded border border-gray-800 bg-[#111111] px-3 py-2 text-sm" />
+                      <div className="min-w-0"><div style={{ fontFamily: font.cssFamily }} className="truncate text-lg">Texto de exemplo</div><div className="truncate text-[10px] text-gray-600">{font.arquivoUrl ? 'Arquivo WOFF2' : font.cssFamily}</div></div>
+                      <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><input type="checkbox" checked={font.ativo} onChange={event => updateConfiguredFont(index, { ativo: event.target.checked })} className="accent-[#ff4d79]" /> Ativa</label>
+                      <button type="button" onClick={() => removeConfiguredFont(index)} aria-label={`Remover fonte ${font.nome}`} className="p-2 text-gray-500 hover:text-red-500"><Trash2 size={17} /></button>
+                    </div>
+                  ))}
+                  {(configDraft.fontes_personalizacao || []).length === 0 && <p className="rounded-lg border border-dashed border-gray-800 p-5 text-sm text-gray-500">Nenhuma fonte cadastrada. Produtos com texto ficam indisponíveis até que ao menos uma fonte ativa seja salva.</p>}
                 </div>
-              </div>
+                <div className="grid grid-cols-1 gap-4 border-t border-gray-800 pt-5 md:grid-cols-[1fr_1fr_auto]">
+                  <input aria-label="Nome da nova fonte do sistema" value={newSystemFont.nome} onChange={event => setNewSystemFont(current => ({ ...current, nome: event.target.value }))} placeholder="Nome exibido, ex.: Montserrat" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
+                  <input aria-label="Família CSS da nova fonte" value={newSystemFont.cssFamily} onChange={event => setNewSystemFont(current => ({ ...current, cssFamily: event.target.value }))} placeholder="Família CSS, ex.: Montserrat, sans-serif" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
+                  <button type="button" onClick={addSystemFont} className="rounded-lg border border-gray-700 px-5 py-3 text-xs font-bold hover:bg-gray-800">Adicionar fonte do sistema</button>
+                </div>
+                <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-purple-500 px-5 py-3 text-xs font-bold text-white hover:bg-purple-600">
+                  {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar arquivo WOFF2
+                  <input type="file" accept=".woff2,font/woff2,application/font-woff2" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+                </label>
+                <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
+              </section>
 
-              <section className="md:col-span-2 p-6 bg-[#111111] border border-amber-500/30 rounded-xl space-y-6">
+              <section className="p-6 bg-[#111111] border border-amber-500/30 rounded-xl space-y-6">
                 <div className="space-y-2">
                   <h3 className="text-sm font-bold uppercase tracking-widest text-amber-400">Dados comerciais e documentos legais</h3>
                   <p className="text-xs leading-relaxed text-gray-500">
@@ -1151,8 +1539,8 @@ export default function Admin({
                 </div>
               </section>
 
-              <div className="md:col-span-2 pt-8">
-                <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20 disabled:opacity-50 flex items-center justify-center gap-2">
+              <div className="flex justify-end border-t border-gray-800 pt-6">
+                <button type="submit" disabled={isSaving || isUploadingAdminAsset} className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20 disabled:opacity-50 flex items-center justify-center gap-2">
                   {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Todas as Configurações'}
                 </button>
               </div>
@@ -1165,7 +1553,15 @@ export default function Admin({
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Gerenciar Promoções</h2>
               <button
-                onClick={() => openPromotionEditor({ titulo: '', imagem: '', link: '', ativa: true })}
+                onClick={() => openPromotionEditor({
+                  titulo: '',
+                  imagem: '',
+                  ativa: true,
+                  alvoTipo: 'produto',
+                  alvoId: products[0]?.id || '',
+                  descontoTipo: 'percentual',
+                  descontoPercentual: 10,
+                })}
                 className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
               >
                 <Plus size={18} /> Nova Promoção
@@ -1176,7 +1572,11 @@ export default function Admin({
               {promotions.map(promo => (
                 <div key={promo.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   <div className="aspect-[21/9] relative">
-                    <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+                    {promo.imagem ? (
+                      <img src={promo.imagem} alt={promo.titulo} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center bg-black text-gray-700"><Image size={36} /></div>
+                    )}
                     <div className="absolute inset-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-4">
                       <button type="button" onClick={() => openPromotionEditor(promo)} aria-label={`Editar ${promo.titulo}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
@@ -1191,7 +1591,14 @@ export default function Admin({
                   </div>
                   <div className="p-4">
                     <h3 className="font-bold text-sm mb-1">{promo.titulo}</h3>
-                    {promo.link && <div className="text-[10px] text-gray-500 truncate">{promo.link}</div>}
+                    <div className="text-[10px] text-gray-500 truncate">{promo.alvoNome || 'Promoção antiga sem alvo configurado'}</div>
+                    <div className="mt-2 text-xs font-black text-[#ff4d79]">
+                      {promo.descontoTipo === 'percentual' && promo.descontoPercentual
+                        ? `${formattedDiscountPercentage(promo.descontoPercentual)}% OFF`
+                        : promo.descontoTipo === 'valor_fixo' && promo.descontoFixoCentavos
+                          ? `${formatMoney(promo.descontoFixoCentavos / 100)} de desconto`
+                          : 'Desconto ainda não configurado'}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1827,7 +2234,7 @@ export default function Admin({
               aria-labelledby="promotion-editor-title"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="relative bg-[#111111] border border-gray-800 w-full max-w-lg rounded-2xl shadow-2xl p-4 sm:p-8"
+              className="relative bg-[#111111] border border-gray-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-4 sm:p-8"
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="promotion-editor-title" className="text-xl font-bold">{editingPromotion.id ? 'Editar Promoção' : 'Nova Promoção'}</h3>
@@ -1839,33 +2246,122 @@ export default function Admin({
                   <label htmlFor="promotion-title" className="text-xs font-bold text-gray-500 uppercase">Título da Promoção</label>
                   <input
                     id="promotion-title"
-                      required
-                      value={editingPromotion.titulo}
-                      maxLength={199}
+                    required
+                    value={editingPromotion.titulo || ''}
+                    maxLength={199}
                     onChange={e => setEditingPromotion({...editingPromotion, titulo: e.target.value})}
                     className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="promotion-image" className="text-xs font-bold text-gray-500 uppercase">Banner URL</label>
-                  <input
-                    id="promotion-image"
-                    required
-                    value={editingPromotion.imagem}
-                    onChange={e => setEditingPromotion({...editingPromotion, imagem: e.target.value})}
-                    placeholder="https://exemplo.com/promo.jpg"
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                  />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label htmlFor="promotion-target-type" className="text-xs font-bold text-gray-500 uppercase">Aplicar em</label>
+                    <select
+                      id="promotion-target-type"
+                      value={editingPromotion.alvoTipo || 'produto'}
+                      onChange={event => setEditingPromotion({
+                        ...editingPromotion,
+                        alvoTipo: event.target.value as Promocao['alvoTipo'],
+                        alvoId: '',
+                      })}
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                    >
+                      <option value="produto">Produto</option>
+                      <option value="categoria">Categoria</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="promotion-target" className="text-xs font-bold text-gray-500 uppercase">
+                      {editingPromotion.alvoTipo === 'categoria' ? 'Categoria' : 'Produto'}
+                    </label>
+                    <select
+                      id="promotion-target"
+                      required
+                      value={editingPromotion.alvoId || ''}
+                      onChange={event => setEditingPromotion({ ...editingPromotion, alvoId: event.target.value })}
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                    >
+                      <option value="">Selecionar</option>
+                      {(editingPromotion.alvoTipo === 'categoria' ? categories : products).map(target => (
+                        <option key={target.id} value={target.id}>{target.nome}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label htmlFor="promotion-link" className="text-xs font-bold text-gray-500 uppercase">Link de Destino (Opcional)</label>
-                  <input
-                    id="promotion-link"
-                    value={editingPromotion.link || ''}
-                    onChange={e => setEditingPromotion({...editingPromotion, link: e.target.value})}
-                    placeholder="https://..."
-                    className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                  />
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label htmlFor="promotion-discount-type" className="text-xs font-bold text-gray-500 uppercase">Tipo de desconto</label>
+                    <select
+                      id="promotion-discount-type"
+                      value={editingPromotion.descontoTipo || 'percentual'}
+                      onChange={event => {
+                        const descontoTipo = event.target.value as Promocao['descontoTipo'];
+                        setEditingPromotion({ ...editingPromotion, descontoTipo });
+                        setPromotionDiscountInput('');
+                      }}
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                    >
+                      <option value="percentual">Porcentagem</option>
+                      <option value="valor_fixo">Valor fixo retirado</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="promotion-discount" className="text-xs font-bold text-gray-500 uppercase">
+                      {editingPromotion.descontoTipo === 'valor_fixo' ? 'Valor retirado (R$)' : 'Desconto (%)'}
+                    </label>
+                    {editingPromotion.descontoTipo === 'valor_fixo' ? (
+                      <input
+                        id="promotion-discount"
+                        required
+                        inputMode="decimal"
+                        value={promotionDiscountInput}
+                        onChange={event => setPromotionDiscountInput(event.target.value)}
+                        placeholder="10,00"
+                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                      />
+                    ) : (
+                      <input
+                        id="promotion-discount"
+                        required
+                        type="number"
+                        min="0.01"
+                        max="99.99"
+                        step="0.01"
+                        value={editingPromotion.descontoPercentual ?? ''}
+                        onChange={event => setEditingPromotion({ ...editingPromotion, descontoPercentual: Number(event.target.value) })}
+                        placeholder="10"
+                        className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-3 rounded-xl border border-gray-800 bg-black/40 p-4">
+                  <div>
+                    <div className="text-xs font-bold uppercase text-gray-500">Banner da promoção (opcional)</div>
+                    <p className="mt-1 text-[10px] text-gray-600">Se enviado, também aparece no carrossel principal e leva ao item ou categoria selecionada.</p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
+                      {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                      {isUploadingAdminAsset ? 'Enviando...' : 'Enviar banner'}
+                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handlePromotionImageUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+                    </label>
+                    {editingPromotion.imagem && <img src={editingPromotion.imagem} alt="Prévia do banner" className="h-16 w-32 rounded-lg border border-gray-800 object-cover" />}
+                  </div>
+                  <details className="text-xs text-gray-500">
+                    <summary className="cursor-pointer hover:text-gray-300">Usar URL externa</summary>
+                    <input
+                      type="text"
+                      inputMode="url"
+                      autoComplete="url"
+                      spellCheck={false}
+                      aria-label="URL externa do banner da promoção"
+                      value={editingPromotion.imagem || ''}
+                      onChange={event => setEditingPromotion({ ...editingPromotion, imagem: event.target.value })}
+                      placeholder="https://exemplo.com/promocao.jpg"
+                      className="mt-2 w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
+                    />
+                  </details>
                 </div>
                 <div className="flex items-center gap-3">
                   <input
@@ -1879,7 +2375,7 @@ export default function Admin({
                 </div>
 
                 <div className="pt-4 flex gap-4">
-                  <button type="submit" disabled={isSaving} className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                  <button type="submit" disabled={isSaving || isUploadingAdminAsset} className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                     {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Promoção'}
                   </button>
                   <button type="button" onClick={requestClosePromotionEditor} className="px-6 py-3 border border-gray-800 rounded-lg font-bold hover:bg-gray-800 transition-colors">
@@ -2051,7 +2547,7 @@ function OrderCard({
                     <div className="text-[9px] font-bold uppercase tracking-widest text-[#ff4d79]">Personalização para produção</div>
                     <div className="mt-2 break-words text-xs font-bold text-white">Texto: {item.personalizacaoTexto.texto}</div>
                     <div className="mt-1 text-[10px] text-gray-400">
-                      Fonte: {textFontLabel(item.personalizacaoTexto.fonte)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                      Fonte: {textFontLabel(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
                     </div>
                     <div className="relative mt-3 aspect-video w-full max-w-[240px] overflow-hidden rounded-md border border-gray-700 bg-gray-900">
                       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:20px_20px]" />
@@ -2060,7 +2556,7 @@ function OrderCard({
                         style={{
                           left: `${item.personalizacaoTexto.posicao.x}%`,
                           top: `${item.personalizacaoTexto.posicao.y}%`,
-                          fontFamily: textFontCssFamily(item.personalizacaoTexto.fonte),
+                          fontFamily: textFontCssFamily(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteCssFamily),
                         }}
                       >
                         {item.personalizacaoTexto.texto}

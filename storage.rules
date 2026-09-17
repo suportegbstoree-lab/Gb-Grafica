@@ -22,6 +22,10 @@ service firebase.storage {
       );
     }
 
+    function isValidAdminOwner(ownerId) {
+      return ownerId.matches('^[A-Za-z0-9_-]{1,100}$');
+    }
+
     match /artworks/{userId}/pending/{fileName} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null &&
@@ -50,6 +54,38 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 8 * 1024 * 1024 &&
         isValidCatalogImage(fileName, request.resource.contentType) &&
+        request.resource.metadata.keys().hasAll(['uploadedBy']) &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /catalog/{scope}/{ownerId}/{fileName} {
+      allow get: if scope in ['categories', 'site', 'promotions'];
+      allow list: if isAdmin() && scope in ['categories', 'site', 'promotions'];
+      allow create: if isAdmin() &&
+        scope in ['categories', 'site', 'promotions'] &&
+        isValidAdminOwner(ownerId) &&
+        resource == null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 8 * 1024 * 1024 &&
+        isValidCatalogImage(fileName, request.resource.contentType) &&
+        request.resource.metadata.keys().hasAll(['uploadedBy']) &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin() && scope in ['categories', 'site', 'promotions'];
+    }
+
+    match /catalog/fonts/{fontId}/{fileName} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidAdminOwner(fontId) &&
+        resource == null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 3 * 1024 * 1024 &&
+        request.resource.contentType == 'font/woff2' &&
+        fileName.matches('^[a-f0-9]{32}[.]woff2$') &&
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;

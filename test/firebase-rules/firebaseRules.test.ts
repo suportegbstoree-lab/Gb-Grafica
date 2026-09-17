@@ -13,6 +13,7 @@ import {
 const PROJECT_ID = 'demo-gb-grafica-rules';
 const MAX_ARTWORK_BYTES = 15 * 1024 * 1024;
 const MAX_CATALOG_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_ADMIN_FONT_BYTES = 3 * 1024 * 1024;
 
 let testEnvironment: RulesTestEnvironment | undefined;
 
@@ -92,6 +93,21 @@ function validProduct(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function validPromotion(overrides: Record<string, unknown> = {}) {
+  return {
+    titulo: 'Oferta',
+    imagem: 'https://example.com/oferta.jpg',
+    ativa: true,
+    alvoTipo: 'produto',
+    alvoId: 'produto-1',
+    alvoNome: 'Carimbo',
+    descontoTipo: 'percentual',
+    descontoPercentual: 10,
+    link: '#produto-produto-1',
+    ...overrides,
+  };
+}
+
 function validOrder(userId: string, overrides: Record<string, unknown> = {}) {
   return {
     userId,
@@ -127,8 +143,8 @@ after(async () => {
 test('Firestore: catálogo e configuração são públicos somente para leitura', async () => {
   await seedDocuments([
     ['anuncios/produto-1', validProduct()],
-    ['categories/carimbos', { nome: 'Carimbos' }],
-    ['promocoes/promocao-1', { titulo: 'Oferta', imagem: 'https://example.com/oferta.jpg', ativa: true }],
+    ['categories/carimbos', { nome: 'Carimbos', ordem: 0 }],
+    ['promocoes/promocao-1', validPromotion()],
     ['config/main', { telefone1: '(16) 99999-9999' }],
   ]);
 
@@ -158,12 +174,8 @@ test('Firestore: custom claim administrativa gerencia documentos válidos do cat
 
   await assertSucceeds(firestore.doc('anuncios/produto-1').set(validProduct()));
   await assertSucceeds(firestore.doc('anuncios/produto-1').update({ desc: 'Descrição atualizada' }));
-  await assertSucceeds(firestore.doc('categories/carimbos').set({ nome: 'Carimbos' }));
-  await assertSucceeds(firestore.doc('promocoes/promocao-1').set({
-    titulo: 'Oferta',
-    imagem: 'https://example.com/oferta.jpg',
-    ativa: true,
-  }));
+  await assertSucceeds(firestore.doc('categories/carimbos').set({ nome: 'Carimbos', icon: '', ordem: 0 }));
+  await assertSucceeds(firestore.doc('promocoes/promocao-1').set(validPromotion()));
   await assertSucceeds(firestore.doc('config/main').set({ telefone1: '(16) 99999-9999' }));
   await assertSucceeds(firestore.doc('anuncios/produto-1').delete());
 });
@@ -187,6 +199,12 @@ test('Firestore: administrador não grava documentos de catálogo inválidos', a
     imagem: 'https://example.com/oferta.jpg',
     ativa: true,
   }));
+  await assertFails(firestore.doc('promocoes/desconto-invalido').set(validPromotion({ descontoPercentual: 100 })));
+  await assertSucceeds(firestore.doc('promocoes/desconto-fixo').set(validPromotion({
+    descontoTipo: 'valor_fixo',
+    descontoPercentual: null,
+    descontoFixoCentavos: 500,
+  })));
   await assertSucceeds(firestore.doc('anuncios/texto-e-arte').set(validProduct({ tipoInput: 'texto_arte' })));
   await assertFails(firestore.doc('anuncios/tipo-invalido').set(validProduct({ tipoInput: 'inventado' })));
 });
@@ -537,6 +555,49 @@ test('Storage: imagem existente do catálogo não pode ser sobrescrita', async (
     new Uint8Array([2]),
     catalogImageMetadata('admin-claim', 'image/jpeg'),
   ));
+  await assertSucceeds(reference.delete());
+});
+
+test('Storage: imagens administrativas são públicas e somente administrador altera', async () => {
+  const adminStorage = authenticatedContext('admin-claim', { admin: true }).storage();
+  const userStorage = authenticatedContext('alice').storage();
+  const publicStorage = environment().unauthenticatedContext().storage();
+
+  for (const [scope, owner] of [['categories', 'livros'], ['site', 'logo'], ['promotions', 'oferta']] as const) {
+    const objectPath = `catalog/${scope}/${owner}/${scope[0].repeat(32)}.png`;
+    const adminReference = adminStorage.ref(objectPath);
+    await assertUploadFails(userStorage.ref(objectPath).put(
+      new Uint8Array([1]),
+      catalogImageMetadata('alice', 'image/png'),
+    ));
+    await assertUploadSucceeds(adminReference.put(
+      new Uint8Array([1, 2, 3]),
+      catalogImageMetadata('admin-claim', 'image/png'),
+    ));
+    await assertSucceeds(publicStorage.ref(objectPath).getMetadata());
+    await assertSucceeds(adminReference.delete());
+  }
+});
+
+test('Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos', async () => {
+  const validPath = `catalog/fonts/montserrat/${'f1'.repeat(16)}.woff2`;
+  const adminStorage = authenticatedContext('admin-claim', { admin: true }).storage();
+  const userStorage = authenticatedContext('alice').storage();
+  const metadata = catalogImageMetadata('admin-claim', 'font/woff2');
+
+  await assertUploadFails(userStorage.ref(validPath).put(new Uint8Array([1]), metadata));
+  await assertUploadFails(adminStorage.ref('catalog/fonts/montserrat/fonte.woff2').put(new Uint8Array([1]), metadata));
+  await assertUploadFails(adminStorage.ref(`catalog/fonts/montserrat/${'f2'.repeat(16)}.woff2`).put(
+    new Uint8Array([1]),
+    catalogImageMetadata('admin-claim', 'font/ttf'),
+  ));
+  await assertUploadFails(adminStorage.ref(`catalog/fonts/montserrat/${'f3'.repeat(16)}.woff2`).put(
+    new Uint8Array(MAX_ADMIN_FONT_BYTES + 1),
+    metadata,
+  ));
+  const reference = adminStorage.ref(validPath);
+  await assertUploadSucceeds(reference.put(new Uint8Array([1, 2, 3, 4]), metadata));
+  await assertSucceeds(environment().unauthenticatedContext().storage().ref(validPath).getMetadata());
   await assertSucceeds(reference.delete());
 });
 

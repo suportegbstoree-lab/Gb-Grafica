@@ -14,6 +14,7 @@ import {
 import { LEGAL_ROUTES, type LegalDocumentId } from './lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage } from './lib/seo';
 import { normalizeTextCustomization } from './lib/textCustomization';
+import PersonalizationFontLoader from './components/PersonalizationFontLoader';
 
 const Admin = lazy(() => import('./pages/Admin'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
@@ -131,8 +132,14 @@ export default function App() {
       setProductsReady(true);
     });
 
-    const unsubCategories = onSnapshot(query(collection(db, 'categories'), orderBy('nome')), (snapshot) => {
-      setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category)));
+    const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      const nextCategories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Category));
+      nextCategories.sort((first, second) => {
+        const firstOrder = Number.isInteger(first.ordem) ? Number(first.ordem) : Number.MAX_SAFE_INTEGER;
+        const secondOrder = Number.isInteger(second.ordem) ? Number(second.ordem) : Number.MAX_SAFE_INTEGER;
+        return firstOrder - secondOrder || first.nome.localeCompare(second.nome, 'pt-BR');
+      });
+      setCategories(nextCategories);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'categories'));
 
     const unsubPromotions = onSnapshot(query(collection(db, 'promocoes'), orderBy('titulo')), (snapshot) => {
@@ -222,6 +229,7 @@ export default function App() {
 
   return (
     <Router>
+      <PersonalizationFontLoader fonts={config.fontes_personalizacao || []} />
       <Routes>
         <Route
           path="/"

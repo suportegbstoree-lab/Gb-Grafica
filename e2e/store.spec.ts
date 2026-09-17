@@ -98,6 +98,8 @@ test('configura texto, fonte e posição e envia os dados estruturados ao checko
     personalizacaoTexto: {
       texto: 'Receitas da Família',
       fonte: 'georgia',
+      fonteNome: 'Georgia',
+      fonteCssFamily: 'Georgia, serif',
       posicao: { x: 75, y: 25 },
     },
   }));

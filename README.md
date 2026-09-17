@@ -96,8 +96,10 @@ O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos d
 O `firebase.json` aponta explicitamente para o banco Firestore nomeado usado pelo projeto. Antes de publicar, selecione o projeto Firebase correto e confira o diff das regras:
 
 ```bash
-npx firebase deploy --project gen-lang-client-0631415673 --only firestore,storage
+npx firebase deploy --project gen-lang-client-0631415673 --only firestore:rules,storage
 ```
+
+Os testes E2E usam persistência e uploads simulados. Portanto, um teste E2E aprovado não confirma as permissões do projeto real. Se o painel funcionar em `/__e2e/admin`, mas o upload real devolver `storage/unauthorized` ou a gravação devolver `permission-denied`, publique os dois arquivos de regras com o comando acima, saia da conta administrativa e entre novamente para renovar o token com a claim.
 
 ### Administrador
 
@@ -121,7 +123,8 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 ### Personalização de texto
 
 - O painel permite configurar produtos como `Texto`, `Upload de Arte`, `Texto + Imagem` ou sem personalização.
-- O cliente informa o texto em um drawer, escolhe uma das fontes permitidas e posiciona o conteúdo por clique, arraste ou teclado em uma prévia.
+- As fontes disponíveis são administradas em Configurações. É possível cadastrar uma família CSS instalada no sistema ou enviar WOFF2 de até 3 MB; nenhuma opção comercial é fixada no código.
+- O cliente informa o texto em um drawer, escolhe uma das fontes ativas e posiciona o conteúdo por clique, arraste ou teclado em uma prévia.
 - O pedido armazena texto, fonte e posição proporcional em porcentagem, além do texto simples mantido para compatibilidade.
 - O servidor valida os dados estruturados e inclui a personalização na identidade do item, evitando juntar no carrinho versões visualmente diferentes.
 - A área administrativa apresenta os dados e um mapa de posição para a equipe de produção; quando houver imagem, a arte privada continua disponível pelo botão de download assinado.
@@ -134,6 +137,14 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - Arquivos recebem nome aleatório, extensão coerente com o MIME e não podem ser sobrescritos.
 - Uploads feitos durante uma edição são removidos se o administrador descartar o formulário; imagens substituídas também são limpas depois do salvamento.
 - URLs externas existentes continuam aceitas para manter compatibilidade com o catálogo antigo.
+
+### Categorias, identidade e promoções
+
+- Ícones de categoria, logo, banner principal e banners de promoção aceitam JPG, PNG e WebP de até 8 MB.
+- Categorias podem ser renomeadas e ordenadas no painel; a loja usa o campo `ordem` e mantém itens antigos sem esse campo ao final da lista.
+- Promoções exigem um produto ou categoria como alvo e desconto percentual ou fixo. Se houver mais de uma promoção aplicável, somente o menor preço é usado; descontos não são acumulados.
+- O navegador exibe a promoção, mas o preço final é recalculado no servidor antes de criar o pedido e o Checkout PagBank.
+- Arquivos públicos administrativos ficam em `catalog/categories`, `catalog/site`, `catalog/promotions` e `catalog/fonts`; somente administrador pode criar, listar ou excluir.
 
 ## Integridade do checkout
 

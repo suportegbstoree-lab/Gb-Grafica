@@ -35,7 +35,7 @@ test('normaliza categoria e bloqueia duplicidade', () => {
   const valid = validateCategoryDraft({ nome: '  Livros   de Receita ', icon: '/logo.png' }, categories);
   assert.deepEqual(valid, {
     ok: true,
-    value: { id: 'livros-de-receita', nome: 'Livros de Receita', icon: '/logo.png' },
+    value: { id: 'livros-de-receita', nome: 'Livros de Receita', icon: '/logo.png', ordem: 1 },
   });
   assert.equal(validateCategoryDraft({ nome: 'carimbos', icon: '' }, categories).ok, false);
 });
@@ -72,8 +72,33 @@ test('limita combinações de atributos antes da gravação', () => {
 });
 
 test('valida promoções e seus links', () => {
-  assert.equal(validatePromotionDraft({ titulo: 'Oferta', imagem: '/logo.png', link: '/produtos', ativa: true }).ok, true);
-  assert.equal(validatePromotionDraft({ titulo: 'Oferta', imagem: 'data:text/html,x', ativa: true }).ok, false);
+  const product = { ...validProduct, id: 'produto-1' } as Anuncio;
+  assert.equal(validatePromotionDraft({
+    titulo: 'Oferta',
+    imagem: '/logo.png',
+    ativa: true,
+    alvoTipo: 'produto',
+    alvoId: product.id,
+    descontoTipo: 'percentual',
+    descontoPercentual: 10,
+  }, [product], categories).ok, true);
+  assert.equal(validatePromotionDraft({
+    titulo: 'Oferta',
+    imagem: 'data:text/html,x',
+    ativa: true,
+    alvoTipo: 'produto',
+    alvoId: product.id,
+    descontoTipo: 'percentual',
+    descontoPercentual: 10,
+  }, [product], categories).ok, false);
+  assert.equal(validatePromotionDraft({
+    titulo: 'Oferta fixa inválida',
+    ativa: true,
+    alvoTipo: 'produto',
+    alvoId: product.id,
+    descontoTipo: 'valor_fixo',
+    descontoFixoCentavos: 840,
+  }, [product], categories).ok, false);
 });
 
 test('valida telefones, banner e e-mails da configuração', () => {
