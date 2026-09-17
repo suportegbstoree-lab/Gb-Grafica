@@ -1,23 +1,5 @@
 # Changelog
 
-## 2026-09-17 — Gestão operacional do painel administrativo
-
-- Categorias agora podem ser editadas sem trocar o identificador do documento; renomeações atualizam os produtos e as promoções vinculadas.
-- Adicionados upload de ícone pelo computador e controles para ordenar a navegação das categorias.
-- Pedidos passaram a ser organizados em cinco filas recolhíveis: aguardando pagamento, pagamento confirmado, em produção, pronto para retirada e entregue.
-- Mantida a separação interna entre situação financeira e andamento de produção, impedindo que uma ação administrativa simule confirmação de pagamento.
-- Promoções agora possuem alvo obrigatório por produto ou categoria e desconto percentual ou valor fixo.
-- A loja exibe preço original riscado, preço promocional e porcentagem calculada, inclusive quando o desconto foi informado em reais.
-- O servidor recalcula a melhor promoção diretamente dos documentos do Firestore e ignora preços ou identificadores promocionais enviados pelo navegador.
-- Logo, banner principal, banners promocionais e ícones de categoria agora aceitam upload de JPG, PNG ou WebP no painel.
-- Removida da interface a configuração de PIX manual legada; o checkout continua exclusivamente hospedado no PagBank.
-- A área de configurações foi reorganizada em identidade visual, atendimento, benefícios, fontes de personalização e dados legais.
-- Fontes de personalização passaram a ser cadastradas no painel, como família CSS ou arquivo WOFF2; não existe mais uma lista selecionável definida no código.
-- A política de segurança de conteúdo passou a liberar fontes somente do próprio site, dados embutidos e Firebase Storage.
-- Arquivos administrativos usam caminhos restritos, nomes aleatórios, limite de tamanho, conferência de assinatura no navegador e escrita exclusiva para administrador no Storage.
-- Adicionados testes para descontos, filas operacionais, fontes e caminhos de arquivos administrativos.
-- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
-
 ## 2026-09-17 — Personalização visual de texto e arte obrigatória
 
 - Removida da loja a opção de enviar a arte posteriormente pelo WhatsApp.

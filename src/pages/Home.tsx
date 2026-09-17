@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao, type PersonalizationFont } from '../types';
+import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from '../types';
 import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, FirebaseUser } from '../firebase';
 import { createCartItemId, formatBrazilianPhone, formatCpf, formatMoney, isHttpUrl, isValidBrazilianPhone, isValidCpf, parseMoneyToCents } from '../lib/commerce';
@@ -19,32 +19,14 @@ import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePage
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import TextCustomizationDrawer from '../components/TextCustomizationDrawer';
 import {
-  activePersonalizationFonts,
   productRequiresArtwork,
   productRequiresText,
   textCustomizationFingerprint,
   textFontLabel,
   type TextCustomization,
 } from '../lib/textCustomization';
-import { formattedDiscountPercentage, promotionalPrice } from '../lib/promotions';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
-
-interface HomeSlide {
-  image?: string;
-  title?: string;
-  link: string;
-  targetType?: Promocao['alvoTipo'];
-  targetName?: string;
-}
-
-function productPriceForSelections(product: Anuncio, selections: Record<string, string>): number | null {
-  if (!product.atributos.every(attribute => selections[attribute.nome])) return null;
-  const rawPrice = product.atributos.length === 0
-    ? product.preco_base
-    : product.combinacoes[product.atributos.map(attribute => selections[attribute.nome]).join('|')];
-  return parseMoneyToCents(rawPrice);
-}
 
 function openExternal(url: string) {
   const openedWindow = window.open(url, '_blank', 'noopener,noreferrer');
@@ -151,15 +133,13 @@ export default function Home({ products, config, categories, promotions, cart, s
   });
   useStructuredData('gb-store-structured-data', storeStructuredData);
 
-  const slides = useMemo<HomeSlide[]>(() => {
-    const availableSlides: HomeSlide[] = [
+  const slides = useMemo(() => {
+    const availableSlides = [
       { image: config.banner_principal, title: config.banner_titulo, link: '' },
       ...promotions.filter(promotion => promotion.ativa).map(promotion => ({
         image: promotion.imagem,
         title: promotion.titulo,
         link: promotion.link || '',
-        targetType: promotion.alvoTipo,
-        targetName: promotion.alvoNome,
       })),
     ].filter(slide => Boolean(slide.image?.trim()));
 
@@ -183,31 +163,6 @@ export default function Home({ products, config, categories, promotions, cart, s
   }, 0), [cart]);
   const hasInvalidCartPrice = cart.some(item => parseMoneyToCents(item.preco) === null);
   const totalCents = subtotalCents + (deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : 0);
-
-  React.useEffect(() => {
-    setCart(current => current.map(item => {
-      const product = products.find(candidate => candidate.id === item.productId);
-      if (!product) return item;
-      const originalCents = productPriceForSelections(product, item.selecoes);
-      if (originalCents === null || originalCents <= 0) return item;
-      const discount = promotionalPrice(originalCents, product, promotions);
-      const nextPrice = ((discount?.finalCents ?? originalCents) / 100).toFixed(2);
-      const nextOriginal = discount ? (originalCents / 100).toFixed(2) : undefined;
-      const nextPromotionId = discount?.promotion.id;
-      const nextPercentage = discount?.percentage;
-      if (
-        item.preco === nextPrice && item.precoOriginal === nextOriginal &&
-        item.promocaoId === nextPromotionId && item.descontoPercentual === nextPercentage
-      ) return item;
-      return {
-        ...item,
-        preco: nextPrice,
-        precoOriginal: nextOriginal,
-        promocaoId: nextPromotionId,
-        descontoPercentual: nextPercentage,
-      };
-    }));
-  }, [products, promotions, setCart]);
 
   React.useEffect(() => {
     if (slides.length <= 1) {
@@ -534,15 +489,6 @@ export default function Home({ products, config, categories, promotions, cart, s
       const target = new URL(activeSlide.link);
       if (target.origin === window.location.origin) window.location.assign(target.href);
       else openExternal(target.href);
-      return;
-    }
-    if (activeSlide.targetType === 'categoria' && activeSlide.targetName) {
-      setActiveCategory(activeSlide.targetName);
-      window.requestAnimationFrame(scrollToProducts);
-      return;
-    }
-    if (activeSlide.link.startsWith('#')) {
-      document.getElementById(activeSlide.link.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
     scrollToProducts();
@@ -935,8 +881,6 @@ export default function Home({ products, config, categories, promotions, cart, s
                   onRequireLogin={handleLogin}
                   onAddToCart={addToCart}
                   onNotify={setNotice}
-                  promotions={promotions}
-                  fonts={config.fontes_personalizacao || []}
                 />
               ))}
             </div>
@@ -1038,7 +982,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                           <div className="mt-2 rounded-lg border border-pink-100 bg-pink-50/70 px-3 py-2 text-[10px] text-gray-600">
                             <div className="font-bold text-pink-600">Texto: {item.personalizacaoTexto.texto}</div>
                             <div className="mt-1">
-                              Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                              Fonte: {textFontLabel(item.personalizacaoTexto.fonte)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
                             </div>
                           </div>
                         ) : item.textoPersonalizado ? (
@@ -1067,14 +1011,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                               +
                             </button>
                           </div>
-                          <span className="text-right font-bold text-pink-500">
-                            {item.precoOriginal && (
-                              <span className="mb-0.5 block text-[10px] font-medium text-gray-400 line-through">
-                                {formatMoney(((parseMoneyToCents(item.precoOriginal) || 0) * item.quantidade) / 100)}
-                              </span>
-                            )}
-                            {formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}
-                          </span>
+                          <span className="font-bold text-pink-500">{formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}</span>
                         </div>
                       </div>
                     </div>
@@ -1392,7 +1329,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                           </div>
                           {item.personalizacaoTexto ? (
                             <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
-                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textFontLabel(item.personalizacaoTexto.fonte)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
                             </div>
                           ) : item.textoPersonalizado ? (
                             <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
@@ -1608,16 +1545,12 @@ function ProductCard({
   onRequireLogin,
   onAddToCart,
   onNotify,
-  promotions,
-  fonts,
 }: {
   product: Anuncio;
   user: FirebaseUser | null;
   onRequireLogin: () => Promise<boolean>;
   onAddToCart: (item: CartItem) => void;
   onNotify: (notice: Notice) => void;
-  promotions: Promocao[];
-  fonts: PersonalizationFont[];
   key?: string;
 }) {
   const [selections, setSelections] = useState<Record<string, string>>({});
@@ -1704,12 +1637,8 @@ function ProductCard({
     return product.combinacoes[key] || null;
   };
 
-  const rawPrice = currentPrice();
-  const originalPriceCents = parseMoneyToCents(rawPrice);
-  const discount = originalPriceCents === null ? null : promotionalPrice(originalPriceCents, product, promotions);
-  const priceCents = discount?.finalCents ?? originalPriceCents;
-  const price = priceCents === null ? rawPrice : (priceCents / 100).toFixed(2);
-  const availableFonts = activePersonalizationFonts(fonts);
+  const price = currentPrice();
+  const priceCents = parseMoneyToCents(price);
   const requiresArtwork = productRequiresArtwork(product.tipoInput);
   const requiresText = productRequiresText(product.tipoInput);
   const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork)) &&
@@ -1734,11 +1663,6 @@ function ProductCard({
       nome: product.nome,
       imagem: product.imagem,
       preco: (priceCents / 100).toFixed(2),
-      ...(discount ? {
-        precoOriginal: (discount.originalCents / 100).toFixed(2),
-        promocaoId: discount.promotion.id,
-        descontoPercentual: discount.percentage,
-      } : {}),
       selecoes: { ...selections },
       quantidade: 1,
       arquivoPath: uploadedArtwork?.path,
@@ -1756,7 +1680,6 @@ function ProductCard({
   return (
     <>
     <motion.article
-      id={`produto-${product.id}`}
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
@@ -1885,7 +1808,7 @@ function ProductCard({
                   <div className="rounded-xl border border-pink-200 bg-pink-50/70 p-4">
                     <div className="break-words text-sm font-bold text-gray-900">{textCustomization.texto}</div>
                     <div className="mt-2 text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                      {textFontLabel(textCustomization.fonte, fonts, textCustomization.fonteNome)} · X {textCustomization.posicao.x}% · Y {textCustomization.posicao.y}%
+                      {textFontLabel(textCustomization.fonte)} · X {textCustomization.posicao.x}% · Y {textCustomization.posicao.y}%
                     </div>
                     <button
                       type="button"
@@ -1898,17 +1821,10 @@ function ProductCard({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (availableFonts.length === 0) {
-                        onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
-                        return;
-                      }
-                      setIsTextDrawerOpen(true);
-                    }}
-                    disabled={availableFonts.length === 0}
-                    className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200 bg-pink-50 px-4 py-4 text-xs font-bold text-pink-600 transition-colors hover:border-pink-400 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+                    onClick={() => setIsTextDrawerOpen(true)}
+                    className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200 bg-pink-50 px-4 py-4 text-xs font-bold text-pink-600 transition-colors hover:border-pink-400"
                   >
-                    <FileText size={16} /> {availableFonts.length === 0 ? 'Fontes indisponíveis' : 'Personalizar texto'}
+                    <FileText size={16} /> Personalizar texto
                   </button>
                 )}
               </div>
@@ -1922,19 +1838,9 @@ function ProductCard({
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Preço</span>
               <div className="text-3xl font-black text-gray-900">
                 {price && priceCents !== null && priceCents > 0 ? (
-                  <div>
-                    {discount && (
-                      <div className="mb-1 flex items-center gap-2 text-xs">
-                        <span className="font-semibold text-gray-400 line-through">{formatMoney(discount.originalCents / 100)}</span>
-                        <span className="rounded-full bg-pink-100 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-pink-600">
-                          {formattedDiscountPercentage(discount.percentage)}% OFF
-                        </span>
-                      </div>
-                    )}
-                    <span className="flex items-center gap-1">
-                      <span className="text-sm font-normal text-gray-400">R$</span> {formatMoney(price).replace(/^R\$\s*/, '')}
-                    </span>
-                  </div>
+                  <span className="flex items-center gap-1">
+                    <span className="text-sm font-normal text-gray-400">R$</span> {formatMoney(price).replace(/^R\$\s*/, '')}
+                  </span>
                 ) : (
                   <span className="text-sm text-pink-500 font-bold uppercase tracking-widest animate-pulse">
                     {isFullySelected ? 'Preço não configurado' : (product.preco_base || 'Selecione as opções')}
@@ -2025,7 +1931,6 @@ function ProductCard({
         previewImage={artworkPreviewUrl || activeImage || product.imagem || DEFAULT_LOGO_URL}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
         initialValue={textCustomization}
-        fonts={fonts}
         onClose={() => setIsTextDrawerOpen(false)}
         onSave={value => {
           setTextCustomization(value);

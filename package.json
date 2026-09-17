@@ -21,9 +21,7 @@
     "test:e2e:headed": "playwright test --headed",
     "test:smoke": "node --import tsx scripts/smoke-routes.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
-    "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts",
-    "test:rules:unit": "node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts",
-    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only firestore,storage \"npm run test:rules:unit\""
+    "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -63,9 +61,9 @@
   "allowScripts": {
     "@firebase/util@1.15.0": true,
     "@firebase/util@1.15.3": true,
-    "esbuild@0.27.7": true,
-    "esbuild@0.25.12": true,
     "protobufjs@7.6.6": true,
-    "re2@1.26.1": true
+    "re2@1.26.1": true,
+    "@google/genai@1.52.0": true,
+    "esbuild@0.28.2": true
   }
 }
