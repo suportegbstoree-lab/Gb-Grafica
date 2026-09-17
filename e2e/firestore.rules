@@ -16,7 +16,7 @@ service cloud.firestore {
     //   - preco_base: string (optional)
     //   - atributos: list of objects (optional)
     //   - combinacoes: map (optional)
-    //   - tipoInput: string (optional, enum: arte, texto, nenhum)
+    //   - tipoInput: string (optional, enum: arte, texto, texto_arte, nenhum)
     //   - labelTexto: string (optional)
     //
     // Collection: categories
@@ -96,7 +96,7 @@ service cloud.firestore {
              data.desc is string && data.desc.size() < 1000 &&
              data.categoria is string &&
              data.imagem is string &&
-             (!('tipoInput' in data) || data.tipoInput in ['arte', 'texto', 'nenhum']) &&
+             (!('tipoInput' in data) || data.tipoInput in ['arte', 'texto', 'texto_arte', 'nenhum']) &&
              (!('labelTexto' in data) || data.labelTexto is string);
     }
 
