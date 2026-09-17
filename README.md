@@ -1,6 +1,6 @@
 # GB Gráfica
 
-Loja virtual em React/Vite com catálogo e administração no Firebase, autenticação Google, upload privado de artes e Checkout PagBank hospedado. A API Express valida usuário, endereço, produtos, combinações, preços e notificações financeiras no servidor.
+Loja virtual em React/Vite com catálogo e administração no Firebase, autenticação Google, imagens de produtos hospedadas no Cloud Storage, upload privado de artes e Checkout PagBank hospedado. A API Express valida usuário, endereço, produtos, combinações, preços e notificações financeiras no servidor.
 
 ## Rodar localmente
 
@@ -33,11 +33,14 @@ npx playwright install --with-deps chromium
 
 ```bash
 npm test
+npm run test:rules
 npm run lint
 npm run build
 npm run test:smoke
 npm run test:e2e
 ```
+
+`npm run test:rules` requer Java 21 e inicia emuladores descartáveis do Firestore e do Storage com um projeto fictício `demo-*`. A suíte valida acesso público, propriedade dos dados, permissão administrativa, isolamento de pedidos, uploads privados e imagens públicas do catálogo sem acessar o Firebase real.
 
 O smoke test inicia o bundle de produção em uma porta local e valida `/api/health`, a loja, as sete páginas comerciais, `robots.txt` e `sitemap.xml`. Os testes unitários simulam respostas do checkout sem chamar Firebase ou PagBank. Os testes E2E abrem a loja e o painel administrativo em desktop e mobile com dados isolados e APIs simuladas; não escrevem no Firebase nem criam checkout real no PagBank.
 
@@ -93,7 +96,7 @@ O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos d
 O `firebase.json` aponta explicitamente para o banco Firestore nomeado usado pelo projeto. Antes de publicar, selecione o projeto Firebase correto e confira o diff das regras:
 
 ```bash
-firebase deploy --project gen-lang-client-0631415673 --only firestore,storage
+npx firebase deploy --project gen-lang-client-0631415673 --only firestore,storage
 ```
 
 ### Administrador
@@ -113,6 +116,15 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O navegador envia diretamente ao Cloud Storage usando `storage.rules`.
 - O pedido guarda apenas o caminho privado do arquivo.
 - Cliente e administrador recebem um link assinado de cinco minutos através da API.
+
+### Imagens do catálogo
+
+- O cadastro de produtos aceita JPG, PNG e WebP enviados pelo computador, com até 8 MB por arquivo.
+- A imagem principal e várias imagens de galeria são hospedadas em `catalog/products/{productId}`.
+- A leitura individual é pública porque essas imagens aparecem na vitrine; gravação, listagem e exclusão exigem a custom claim `admin: true`.
+- Arquivos recebem nome aleatório, extensão coerente com o MIME e não podem ser sobrescritos.
+- Uploads feitos durante uma edição são removidos se o administrador descartar o formulário; imagens substituídas também são limpas depois do salvamento.
+- URLs externas existentes continuam aceitas para manter compatibilidade com o catálogo antigo.
 
 ## Integridade do checkout
 

@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
 import Home from '../pages/Home';
-import Admin, { type AdminPersistence } from '../pages/Admin';
+import Admin, { type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
 
 const FIXTURE_CONFIG: SiteConfig = {
   logo_url: '/logo.png',
@@ -156,6 +156,22 @@ function AdminFixture() {
     },
   }), []);
 
+  const catalogImageStorage = React.useMemo<AdminCatalogImageStorage>(() => ({
+    async uploadImage(productId, file) {
+      const uploadId = crypto.randomUUID().replace(/-/g, '');
+      const path = `catalog/products/${productId}/${uploadId}.png`;
+      return {
+        path,
+        url: `https://example.com/${productId}/${uploadId}.png`,
+        name: file.name,
+      };
+    },
+    async deleteImage() {},
+    pathFromUrl() {
+      return null;
+    },
+  }), []);
+
   return (
     <div data-testid="e2e-admin">
       <Admin
@@ -167,6 +183,7 @@ function AdminFixture() {
         ordersError={null}
         promotions={promotions}
         persistence={persistence}
+        catalogImageStorage={catalogImageStorage}
         onLogout={() => setLastAction('logout')}
       />
       <output hidden data-testid="e2e-admin-action">{lastAction}</output>

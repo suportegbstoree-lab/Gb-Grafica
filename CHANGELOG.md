@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-17 — Correção do cadastro e upload de imagens do catálogo
+
+- Corrigida a perda de foco que enviava o cursor de volta ao botão de fechar após cada caractere digitado no editor de produtos.
+- O gerenciamento de foco agora reage somente à abertura e ao fechamento dos diálogos, sem remontar a interação a cada alteração do rascunho.
+- Adicionado upload pelo computador para a imagem principal e para múltiplas imagens da galeria de produtos.
+- Mantida a entrada por URL como alternativa compatível com os produtos já cadastrados.
+- Permitidos somente JPG, PNG e WebP de até 8 MB, com nome aleatório, MIME coerente, metadado do administrador e bloqueio de sobrescrita.
+- Imagens do catálogo passaram a ter leitura pública individual, enquanto criação, listagem e exclusão exigem custom claim `admin: true`.
+- Uploads descartados, substituídos e pertencentes a produtos excluídos recebem limpeza automática no Cloud Storage.
+- Adicionados testes unitários, de regras Firebase e de navegador para formatos, caminhos, permissões, upload e digitação contínua.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
+## 2026-09-17 — Testes automatizados das regras Firebase
+
+- Criada suíte isolada nos emuladores do Firestore e do Cloud Storage usando exclusivamente um projeto fictício `demo-*`.
+- Adicionados 25 cenários para acesso público, autenticação, propriedade, consultas de pedidos, custom claim administrativa, função administrativa legada e bloqueio das coleções técnicas.
+- Confirmado que pedidos e subcoleções financeiras não podem ser criados, alterados ou excluídos diretamente por clientes, inclusive por uma sessão administrativa.
+- Cobertos uploads privados por proprietário, anonimato, isolamento entre usuários, metadado `ownerId`, MIME, limite de 15 MB, caminhos de pedidos e formatos PDF, JPG, PNG e WebP.
+- Exigido nome aleatório de 32 caracteres hexadecimais e correspondência entre extensão e MIME para novas artes pendentes.
+- Corrigida uma brecha identificada pela suíte em que uma segunda gravação poderia sobrescrever uma arte pendente; a criação agora exige explicitamente que o objeto ainda não exista.
+- Integrados os testes de regras ao CI com Node.js 22 e Java 21.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
 ## 2026-09-12 — Reconciliação segura de pagamentos PagBank
 
 - Mantida a validação oficial `SHA-256(token-payload)` para notificações que chegam com `x-authenticity-token` válido.

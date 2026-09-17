@@ -1,13 +1,36 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.get('admin', false) == true;
+    }
+
+    function isValidPendingArtwork(fileName, contentType) {
+      return contentType is string && (
+        (contentType == 'application/pdf' && fileName.matches('^[a-f0-9]{32}[.]pdf$')) ||
+        (contentType == 'image/jpeg' && fileName.matches('^[a-f0-9]{32}[.]jpg$')) ||
+        (contentType == 'image/png' && fileName.matches('^[a-f0-9]{32}[.]png$')) ||
+        (contentType == 'image/webp' && fileName.matches('^[a-f0-9]{32}[.]webp$'))
+      );
+    }
+
+    function isValidCatalogImage(fileName, contentType) {
+      return contentType is string && (
+        (contentType == 'image/jpeg' && fileName.matches('^[a-f0-9]{32}[.]jpg$')) ||
+        (contentType == 'image/png' && fileName.matches('^[a-f0-9]{32}[.]png$')) ||
+        (contentType == 'image/webp' && fileName.matches('^[a-f0-9]{32}[.]webp$'))
+      );
+    }
+
     match /artworks/{userId}/pending/{fileName} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null &&
         request.auth.uid == userId &&
+        resource == null &&
         request.resource.size > 0 &&
         request.resource.size <= 15 * 1024 * 1024 &&
-        request.resource.contentType.matches('^(application/pdf|image/jpeg|image/png|image/webp)$') &&
+        isValidPendingArtwork(fileName, request.resource.contentType) &&
+        request.resource.metadata.keys().hasAll(['ownerId']) &&
         request.resource.metadata.ownerId == request.auth.uid;
       allow update: if false;
       allow delete: if request.auth != null && request.auth.uid == userId;
@@ -16,6 +39,21 @@ service firebase.storage {
     match /artworks/{userId}/orders/{allPaths=**} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow write: if false;
+    }
+
+    match /catalog/products/{productId}/{fileName} {
+      // Imagens do catálogo são públicas; listagem e alterações continuam restritas.
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        resource == null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 8 * 1024 * 1024 &&
+        isValidCatalogImage(fileName, request.resource.contentType) &&
+        request.resource.metadata.keys().hasAll(['uploadedBy']) &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     match /{allPaths=**} {

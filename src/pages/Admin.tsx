@@ -10,9 +10,16 @@ import { generateDescriptionFromTitle, improveTitle, improveDescription, generat
 import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
 import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
 import { requestArtworkUrl } from '../services/artworkService';
+import {
+  removeCatalogImage,
+  storedCatalogImagePath,
+  uploadCatalogImage,
+  type UploadedCatalogImage,
+} from '../services/catalogImageService';
 import { updateOrderFulfillment } from '../services/orderService';
 import { missingLegalBusinessFields } from '../lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata } from '../lib/seo';
+import { isAllowedCatalogImage, MAX_CATALOG_IMAGE_BYTES } from '../lib/catalogImage';
 import ConfirmDialog from '../components/ConfirmDialog';
 import {
   ADMIN_LIMITS,
@@ -31,6 +38,12 @@ export interface AdminPersistence {
   deleteDocument: (collectionName: string, documentId: string) => Promise<void>;
 }
 
+export interface AdminCatalogImageStorage {
+  uploadImage: (productId: string, file: File) => Promise<UploadedCatalogImage>;
+  deleteImage: (path: string) => Promise<void>;
+  pathFromUrl: (url: string, productId?: string) => string | null;
+}
+
 export interface AdminProps {
   products: Anuncio[];
   config: SiteConfig;
@@ -40,6 +53,7 @@ export interface AdminProps {
   ordersError: string | null;
   promotions: Promocao[];
   persistence?: AdminPersistence;
+  catalogImageStorage?: AdminCatalogImageStorage;
   onLogout?: () => void | Promise<void>;
 }
 
@@ -58,6 +72,12 @@ const FIREBASE_PERSISTENCE: AdminPersistence = {
   async deleteDocument(collectionName, documentId) {
     await deleteDoc(doc(db, collectionName, documentId));
   },
+};
+
+const FIREBASE_CATALOG_IMAGE_STORAGE: AdminCatalogImageStorage = {
+  uploadImage: uploadCatalogImage,
+  deleteImage: removeCatalogImage,
+  pathFromUrl: storedCatalogImagePath,
 };
 
 const BENEFIT_FIELDS = [
@@ -84,6 +104,7 @@ export default function Admin({
   ordersError,
   promotions,
   persistence = FIREBASE_PERSISTENCE,
+  catalogImageStorage = FIREBASE_CATALOG_IMAGE_STORAGE,
   onLogout = logout,
 }: AdminProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
@@ -99,6 +120,10 @@ export default function Admin({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [productStorageId, setProductStorageId] = useState<string | null>(null);
+  const [sessionCatalogUploads, setSessionCatalogUploads] = useState<UploadedCatalogImage[]>([]);
+  const [isUploadingCatalogImages, setIsUploadingCatalogImages] = useState(false);
+  const originalProductImagesRef = React.useRef<{ productId: string; urls: string[] } | null>(null);
   const missingCommercialFields = missingLegalBusinessFields(config);
 
   usePageMetadata({
@@ -134,6 +159,10 @@ export default function Admin({
   const forceCloseProductEditor = React.useCallback(() => {
     setEditingProduct(null);
     setProductBaseline(null);
+    setProductStorageId(null);
+    setSessionCatalogUploads([]);
+    setIsUploadingCatalogImages(false);
+    originalProductImagesRef.current = null;
     setShowAttrForm(false);
     setShowBulkImageForm(false);
     setShowCustomAiPrompt(false);
@@ -143,6 +172,18 @@ export default function Admin({
     setNewAttr({ nome: '', opcoes: '' });
   }, []);
 
+  const deleteCatalogPaths = React.useCallback(async (paths: string[]) => {
+    const uniquePaths = [...new Set(paths.filter(Boolean))];
+    const results = await Promise.allSettled(uniquePaths.map(path => catalogImageStorage.deleteImage(path)));
+    const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failed) throw failed.reason;
+  }, [catalogImageStorage]);
+
+  const discardProductEditor = React.useCallback(async () => {
+    await deleteCatalogPaths(sessionCatalogUploads.map(upload => upload.path));
+    forceCloseProductEditor();
+  }, [deleteCatalogPaths, forceCloseProductEditor, sessionCatalogUploads]);
+
   const forceClosePromotionEditor = React.useCallback(() => {
     setEditingPromotion(null);
     setPromotionBaseline(null);
@@ -150,8 +191,14 @@ export default function Admin({
 
   const openProductEditor = (draft: Partial<Anuncio>) => {
     const copy = structuredClone(draft);
+    const storageId = copy.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const originalUrls = [copy.imagem, ...(copy.imagens || [])]
+      .filter((value): value is string => typeof value === 'string' && Boolean(value));
     setEditingProduct(copy);
     setProductBaseline(draftFingerprint(copy));
+    setProductStorageId(storageId);
+    setSessionCatalogUploads([]);
+    originalProductImagesRef.current = { productId: storageId, urls: originalUrls };
   };
 
   const openPromotionEditor = (draft: Partial<Promocao>) => {
@@ -168,19 +215,22 @@ export default function Admin({
   );
 
   const requestCloseProductEditor = React.useCallback(() => {
-    if (isSaving) return;
+    if (isSaving || isUploadingCatalogImages) return;
     if (editingProduct && productBaseline !== null && draftFingerprint(editingProduct) !== productBaseline) {
       setConfirmation({
         title: 'Descartar alterações?',
         message: 'As mudanças feitas neste produto ainda não foram salvas.',
         confirmLabel: 'Descartar',
         danger: true,
-        onConfirm: forceCloseProductEditor,
+        onConfirm: discardProductEditor,
       });
       return;
     }
-    forceCloseProductEditor();
-  }, [editingProduct, forceCloseProductEditor, isSaving, productBaseline]);
+    void discardProductEditor().catch(error => {
+      console.error('Não foi possível limpar as imagens temporárias do catálogo:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível fechar o editor de produto.');
+    });
+  }, [discardProductEditor, editingProduct, isSaving, isUploadingCatalogImages, productBaseline]);
 
   const requestClosePromotionEditor = React.useCallback(() => {
     if (isSaving) return;
@@ -196,6 +246,16 @@ export default function Admin({
     }
     forceClosePromotionEditor();
   }, [editingPromotion, forceClosePromotionEditor, isSaving, promotionBaseline]);
+
+  const requestCloseProductEditorRef = React.useRef(requestCloseProductEditor);
+  const requestClosePromotionEditorRef = React.useRef(requestClosePromotionEditor);
+  requestCloseProductEditorRef.current = requestCloseProductEditor;
+  requestClosePromotionEditorRef.current = requestClosePromotionEditor;
+
+  const productEditorOpen = editingProduct !== null;
+  const promotionEditorOpen = editingPromotion !== null;
+  const confirmationOpen = confirmation !== null;
+  const aiPreviewOpen = aiPreview !== null;
 
   const requestTabChange = (nextTab: AdminTab) => {
     if (nextTab === activeTab) return;
@@ -264,8 +324,8 @@ export default function Admin({
         if (aiPreview) setAiPreview(null);
         else if (showCustomAiPrompt) setShowCustomAiPrompt(false);
         else if (showBulkImageForm) setShowBulkImageForm(false);
-        else if (editingProduct) requestCloseProductEditor();
-        else if (editingPromotion) requestClosePromotionEditor();
+        else if (productEditorOpen) requestCloseProductEditorRef.current();
+        else if (promotionEditorOpen) requestClosePromotionEditorRef.current();
         return;
       }
 
@@ -300,7 +360,7 @@ export default function Admin({
       document.body.style.overflow = previousOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [editingProduct, editingPromotion, confirmation, aiPreview, showCustomAiPrompt, showBulkImageForm, requestCloseProductEditor, requestClosePromotionEditor]);
+  }, [productEditorOpen, promotionEditorOpen, confirmationOpen, aiPreviewOpen, showCustomAiPrompt, showBulkImageForm]);
 
   const handleAiAction = async (action: 'generate' | 'improveTitle' | 'improveDescription' | 'custom', prompt?: string) => {
     if (!editingProduct) return;
@@ -459,9 +519,75 @@ export default function Admin({
   };
 
   // Product Handlers
+  const uploadCatalogFiles = async (files: File[]): Promise<UploadedCatalogImage[]> => {
+    if (!editingProduct || !productStorageId || isUploadingCatalogImages) return [];
+    if (files.length === 0) return [];
+
+    const invalidFile = files.find(file => !isAllowedCatalogImage(file.type, file.size));
+    if (invalidFile) {
+      throw new Error(`“${invalidFile.name}” não é JPG, PNG ou WebP válido de até ${MAX_CATALOG_IMAGE_BYTES / 1024 / 1024} MB.`);
+    }
+
+    setIsUploadingCatalogImages(true);
+    const uploaded: UploadedCatalogImage[] = [];
+    try {
+      for (const file of files) {
+        uploaded.push(await catalogImageStorage.uploadImage(productStorageId, file));
+      }
+      setSessionCatalogUploads(current => [...current, ...uploaded]);
+      return uploaded;
+    } catch (error) {
+      await Promise.allSettled(uploaded.map(image => catalogImageStorage.deleteImage(image.path)));
+      throw error;
+    } finally {
+      setIsUploadingCatalogImages(false);
+    }
+  };
+
+  const handleMainImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setErrorMessage(null);
+    try {
+      const [uploaded] = await uploadCatalogFiles([file]);
+      if (!uploaded) return;
+      setEditingProduct(current => current ? { ...current, imagem: uploaded.url } : current);
+      setSuccessMessage('Imagem principal enviada. Salve o produto para concluir.');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a imagem principal.');
+    }
+  };
+
+  const handleGalleryImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files: File[] = event.currentTarget.files ? Array.from(event.currentTarget.files) : [];
+    event.target.value = '';
+    if (files.length === 0 || !editingProduct) return;
+
+    const availableSlots = ADMIN_LIMITS.galleryImages - (editingProduct.imagens?.length || 0);
+    if (files.length > availableSlots) {
+      setErrorMessage(`A galeria aceita no máximo ${ADMIN_LIMITS.galleryImages} imagens. Restam ${Math.max(availableSlots, 0)} espaços.`);
+      return;
+    }
+
+    setErrorMessage(null);
+    try {
+      const uploaded = await uploadCatalogFiles(files);
+      if (uploaded.length === 0) return;
+      setEditingProduct(current => current ? {
+        ...current,
+        imagens: [...(current.imagens || []), ...uploaded.map(image => image.url)],
+      } : current);
+      setSuccessMessage(`${uploaded.length} ${uploaded.length === 1 ? 'imagem adicionada' : 'imagens adicionadas'} à galeria. Salve o produto para concluir.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar as imagens da galeria.');
+    }
+  };
+
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct || isSaving) return;
+    if (!editingProduct || isSaving || isUploadingCatalogImages) return;
     setErrorMessage(null);
     const validation = validateProductDraft(editingProduct, categories, products);
     if (validation.ok === false) {
@@ -469,7 +595,7 @@ export default function Admin({
       return;
     }
 
-    const id = editingProduct.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const id = editingProduct.id || productStorageId || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
     const productToSave: Anuncio = {
       ...validation.value,
       id,
@@ -478,8 +604,28 @@ export default function Admin({
     setIsSaving(true);
     try {
       await persistence.setDocument('anuncios', id, productToSave);
+      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || [])]);
+      const original = originalProductImagesRef.current;
+      const staleOriginalPaths = original
+        ? original.urls
+          .filter(url => !finalUrls.has(url))
+          .map(url => catalogImageStorage.pathFromUrl(url, original.productId))
+          .filter((path): path is string => Boolean(path))
+        : [];
+      const unusedSessionPaths = sessionCatalogUploads
+        .filter(upload => !finalUrls.has(upload.url))
+        .map(upload => upload.path);
+      let cleanupFailed = false;
+      try {
+        await deleteCatalogPaths([...staleOriginalPaths, ...unusedSessionPaths]);
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        console.error('Produto salvo, mas houve falha ao limpar imagens substituídas:', cleanupError);
+      }
       forceCloseProductEditor();
-      setSuccessMessage('Anúncio salvo com sucesso!');
+      setSuccessMessage(cleanupFailed
+        ? 'Produto salvo, mas uma imagem antiga não pôde ser removida do Storage.'
+        : 'Anúncio salvo com sucesso!');
     } catch (error) {
       console.error('Erro ao salvar anúncio:', error);
       setErrorMessage('Não foi possível salvar o anúncio. Verifique os campos e tente novamente.');
@@ -490,9 +636,24 @@ export default function Admin({
   };
 
   const deleteProduct = async (id: string) => {
+    const product = products.find(item => item.id === id);
     try {
       await persistence.deleteDocument('anuncios', id);
-      setSuccessMessage('Anúncio excluído com sucesso!');
+      const catalogPaths = product
+        ? [product.imagem, ...(product.imagens || [])]
+          .map(url => catalogImageStorage.pathFromUrl(url, id))
+          .filter((path): path is string => Boolean(path))
+        : [];
+      let cleanupFailed = false;
+      try {
+        await deleteCatalogPaths(catalogPaths);
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        console.error('Produto excluído, mas houve falha ao limpar suas imagens:', cleanupError);
+      }
+      setSuccessMessage(cleanupFailed
+        ? 'Produto excluído, mas uma imagem não pôde ser removida do Storage.'
+        : 'Anúncio excluído com sucesso!');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
       setErrorMessage('Não foi possível excluir o anúncio.');
@@ -1059,7 +1220,7 @@ export default function Admin({
             >
               <div className="flex justify-between items-center mb-8">
                 <h3 id="product-editor-title" className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
-                <button type="button" onClick={requestCloseProductEditor} aria-label="Fechar editor de produto"><X size={24} /></button>
+                <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} aria-label="Fechar editor de produto" className="disabled:opacity-50"><X size={24} /></button>
               </div>
 
               <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -1148,13 +1309,44 @@ export default function Admin({
                   </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label htmlFor="product-main-image" className="text-xs font-bold text-gray-500 uppercase">Imagem Principal (URL)</label>
+                      <span className="text-xs font-bold text-gray-500 uppercase">Imagem Principal</span>
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <label className={cn(
+                          "flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-3 text-xs font-bold transition-colors",
+                          isUploadingCatalogImages
+                            ? "cursor-wait border-gray-800 bg-black text-gray-600"
+                            : "border-[#ff4d79]/50 bg-[#ff4d79]/10 text-[#ff4d79] hover:border-[#ff4d79]",
+                        )}>
+                          {isUploadingCatalogImages ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                          {isUploadingCatalogImages ? 'Enviando...' : 'Selecionar do computador'}
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={handleMainImageUpload}
+                            disabled={isUploadingCatalogImages}
+                            aria-label="Selecionar imagem principal do computador"
+                            className="sr-only"
+                          />
+                        </label>
+                        {editingProduct.imagem && (
+                          <div className="h-20 w-28 shrink-0 overflow-hidden rounded-lg border border-gray-800 bg-black">
+                            <img
+                              src={editingProduct.imagem}
+                              alt="Prévia da imagem principal"
+                              className="h-full w-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-gray-500">JPG, PNG ou WebP, até 8 MB. A imagem será hospedada no Firebase Storage.</p>
+                      <label htmlFor="product-main-image" className="text-[10px] font-bold text-gray-600 uppercase">Imagem Principal (URL)</label>
                       <input
                         id="product-main-image"
                         required
-                        value={editingProduct.imagem}
-                        onChange={e => setEditingProduct({...editingProduct, imagem: e.target.value})}
-                        placeholder="https://exemplo.com/capa.jpg"
+                        value={editingProduct.imagem || ''}
+                        onChange={e => setEditingProduct(current => current ? { ...current, imagem: e.target.value } : current)}
+                        placeholder="Preenchida automaticamente após o upload ou cole uma URL"
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                       />
                     </div>
@@ -1162,14 +1354,37 @@ export default function Admin({
                     <div className="space-y-2">
                       <div className="flex justify-between items-center">
                         <span className="text-xs font-bold text-gray-500 uppercase">Galeria de Fotos (Opcional)</span>
-                        <button
-                          type="button"
-                          onClick={() => setShowBulkImageForm(true)}
-                          className="text-[#ff4d79] text-[10px] font-bold hover:underline"
-                        >
-                          + Adicionar Várias
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <label
+                            htmlFor="product-gallery-files"
+                            className={cn(
+                              "cursor-pointer text-[10px] font-bold hover:underline",
+                              isUploadingCatalogImages ? "pointer-events-none text-gray-600" : "text-[#ff4d79]",
+                            )}
+                          >
+                            + Do computador
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowBulkImageForm(true)}
+                            disabled={isUploadingCatalogImages}
+                            className="text-gray-500 text-[10px] font-bold hover:text-[#ff4d79] hover:underline disabled:opacity-50"
+                          >
+                            + Por URL
+                          </button>
+                        </div>
                       </div>
+
+                      <input
+                        id="product-gallery-files"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        onChange={handleGalleryImageUpload}
+                        disabled={isUploadingCatalogImages}
+                        aria-label="Adicionar imagens do computador à galeria"
+                        className="sr-only"
+                      />
 
                       <div className="grid grid-cols-4 gap-2">
                         {editingProduct.imagens?.map((img, idx) => (
@@ -1199,14 +1414,18 @@ export default function Admin({
                             </button>
                           </div>
                         ))}
-                        <button
-                          type="button"
-                          onClick={() => setShowBulkImageForm(true)}
+                        <label
+                          htmlFor="product-gallery-files"
                           aria-label="Adicionar imagem à galeria"
-                          className="aspect-square border border-dashed border-gray-700 rounded flex items-center justify-center text-gray-500 hover:border-[#ff4d79] hover:text-[#ff4d79] transition-colors"
+                          className={cn(
+                            "aspect-square border border-dashed border-gray-700 rounded flex items-center justify-center text-gray-500 transition-colors",
+                            isUploadingCatalogImages
+                              ? "cursor-wait opacity-50"
+                              : "cursor-pointer hover:border-[#ff4d79] hover:text-[#ff4d79]",
+                          )}
                         >
-                          <Plus size={20} />
-                        </button>
+                          {isUploadingCatalogImages ? <Loader2 size={20} className="animate-spin" /> : <Plus size={20} />}
+                        </label>
                       </div>
                     </div>
                   </div>
@@ -1372,9 +1591,9 @@ export default function Admin({
                 </div>
 
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
-                  <button type="button" onClick={requestCloseProductEditor} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white">Cancelar</button>
-                  <button type="submit" disabled={isSaving} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
-                    {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} {isSaving ? 'Salvando...' : 'Salvar Produto'}
+                  <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white disabled:opacity-50">Cancelar</button>
+                  <button type="submit" disabled={isSaving || isUploadingCatalogImages} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
+                    {(isSaving || isUploadingCatalogImages) ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />} {isUploadingCatalogImages ? 'Enviando imagem...' : isSaving ? 'Salvando...' : 'Salvar Produto'}
                   </button>
                 </div>
               </form>

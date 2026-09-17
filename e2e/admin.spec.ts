@@ -5,6 +5,40 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('e2e-admin')).toBeAttached();
 });
 
+test('mantém o foco e permite digitação contínua no cadastro de produto', async ({ page }) => {
+  await page.getByRole('button', { name: 'Novo Produto' }).click();
+  const editor = page.getByRole('dialog', { name: 'Novo Produto' });
+  const productName = editor.getByLabel('Nome do Produto');
+
+  await productName.click();
+  for (const character of 'Produto completo') {
+    await page.keyboard.type(character);
+    await expect(productName).toBeFocused();
+  }
+
+  await expect(productName).toHaveValue('Produto completo');
+});
+
+test('envia imagem principal e galeria pelo computador', async ({ page }) => {
+  await page.getByRole('button', { name: 'Novo Produto' }).click();
+  const editor = page.getByRole('dialog', { name: 'Novo Produto' });
+
+  await editor.getByLabel('Selecionar imagem principal do computador').setInputFiles({
+    name: 'capa.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  });
+  await expect(editor.getByLabel('Imagem Principal (URL)')).toHaveValue(/^https:\/\/example\.com\//);
+  await expect(editor.getByAltText('Prévia da imagem principal')).toBeVisible();
+
+  await editor.getByLabel('Adicionar imagens do computador à galeria').setInputFiles({
+    name: 'detalhe.webp',
+    mimeType: 'image/webp',
+    buffer: Buffer.from('RIFF0000WEBP'),
+  });
+  await expect(editor.locator('img[src^="https://example.com/"]')).toHaveCount(2);
+});
+
 test('avisa antes de descartar alterações de um produto', async ({ page }) => {
   await page.getByRole('button', { name: 'Novo Produto' }).click();
   const editor = page.getByRole('dialog', { name: 'Novo Produto' });
