@@ -99,6 +99,20 @@ O `firebase.json` aponta explicitamente para o banco Firestore nomeado usado pel
 npx firebase deploy --project gen-lang-client-0631415673 --only firestore:rules,storage
 ```
 
+A geração do modelo composto precisa ler os bytes da imagem pelo navegador. Configure uma vez o CORS do bucket usando o arquivo versionado `firebase-storage-cors.json`:
+
+```bash
+gcloud storage buckets update \
+  gs://gen-lang-client-0631415673.firebasestorage.app \
+  --cors-file=firebase-storage-cors.json
+
+gcloud storage buckets describe \
+  gs://gen-lang-client-0631415673.firebasestorage.app \
+  --format="default(cors_config)"
+```
+
+O CORS permite a leitura web; ele não torna arquivos privados públicos nem substitui `storage.rules`. A configuração usa `GET` e `HEAD`, enquanto as permissões de cada objeto continuam sendo decididas pelas regras e pelos links assinados.
+
 Os testes E2E usam persistência e uploads simulados. Portanto, um teste E2E aprovado não confirma as permissões do projeto real. Se o painel funcionar em `/__e2e/admin`, mas o upload real devolver `storage/unauthorized` ou a gravação devolver `permission-denied`, publique os dois arquivos de regras com o comando acima, saia da conta administrativa e entre novamente para renovar o token com a claim.
 
 ### Administrador
@@ -125,9 +139,11 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O painel permite configurar produtos como `Texto`, `Upload de Arte`, `Texto + Imagem` ou sem personalização.
 - As fontes disponíveis são administradas em Configurações. É possível cadastrar uma família CSS instalada no sistema ou enviar WOFF2 de até 3 MB; nenhuma opção comercial é fixada no código.
 - O cliente informa o texto em um drawer, escolhe uma das fontes ativas e posiciona o conteúdo por clique, arraste ou teclado em uma prévia.
-- O pedido armazena texto, fonte e posição proporcional em porcentagem, além do texto simples mantido para compatibilidade.
-- O servidor valida os dados estruturados e inclui a personalização na identidade do item, evitando juntar no carrinho versões visualmente diferentes.
-- A área administrativa apresenta os dados e um mapa de posição para a equipe de produção; quando houver imagem, a arte privada continua disponível pelo botão de download assinado.
+- Ao aplicar, o navegador produz uma imagem raster já composta com fundo, texto, fonte e posição e a envia para a área privada do Cloud Storage.
+- Produtos `Texto + Imagem` aceitam JPG, PNG ou WebP como arte de origem. PDF permanece disponível apenas para produtos de upload sem texto, pois não pode ser composto no navegador.
+- O pedido armazena o modelo pronto e também texto, fonte e posição como metadados de auditoria e compatibilidade.
+- O servidor exige o arquivo composto, valida formato, assinatura, proprietário e metadado técnico e o move para o caminho definitivo do pedido.
+- Cliente e administrador acessam o modelo por URL assinada de cinco minutos. No painel, a produção abre a imagem pronta; quando existir arte original, ela permanece disponível separadamente.
 
 ### Imagens do catálogo
 

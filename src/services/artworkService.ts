@@ -4,8 +4,13 @@ import {
   artworkExtension,
   isAllowedArtwork,
   MAX_ARTWORK_BYTES,
+  matchesArtworkSignature,
   sanitizeArtworkName,
 } from '../lib/artwork';
+import {
+  isComposablePersonalizationImage,
+  MAX_PERSONALIZATION_MODEL_BYTES,
+} from '../lib/personalizationModel';
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
 export interface UploadedArtwork {
@@ -31,6 +36,37 @@ export async function uploadArtwork(file: File): Promise<UploadedArtwork> {
     customMetadata: {
       ownerId: user.uid,
       originalName,
+      kind: 'source-artwork',
+    },
+  });
+
+  return { path, name: originalName };
+}
+
+export async function uploadPersonalizationModel(blob: Blob, preferredName: string): Promise<UploadedArtwork> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Faça login antes de gerar o modelo personalizado.');
+  if (!isComposablePersonalizationImage(blob.type, blob.size)) {
+    throw new Error(`O modelo deve ser PNG, JPG ou WebP e ter no máximo ${MAX_PERSONALIZATION_MODEL_BYTES / 1024 / 1024} MB.`);
+  }
+  const header = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  if (!matchesArtworkSignature(blob.type, header)) {
+    throw new Error('O conteúdo do modelo personalizado é inválido.');
+  }
+
+  const extension = artworkExtension(blob.type);
+  if (!extension || extension === 'pdf') throw new Error('O formato do modelo personalizado não é permitido.');
+  const uploadId = crypto.randomUUID().replace(/-/g, '');
+  const path = `artworks/${user.uid}/pending/${uploadId}.${extension}`;
+  const baseName = sanitizeArtworkName(preferredName).replace(/\.[^.]+$/, '').slice(0, 110) || 'modelo';
+  const originalName = `${baseName}.${extension}`;
+
+  await uploadBytes(ref(storage, path), blob, {
+    contentType: blob.type,
+    customMetadata: {
+      ownerId: user.uid,
+      originalName,
+      kind: 'personalization-model',
     },
   });
 
@@ -67,6 +103,16 @@ export async function requestArtworkUrl(orderId: string, itemId: string): Promis
   );
   if (typeof data.url !== 'string' || !data.url.startsWith('https://')) {
     throw new Error('O servidor não retornou um link válido para a arte.');
+  }
+  return data.url;
+}
+
+export async function requestPersonalizationModelUrl(orderId: string, itemId: string): Promise<string> {
+  const data = await authenticatedRequest<{ url?: unknown }>(
+    `/api/orders/${encodeURIComponent(orderId)}/model/${encodeURIComponent(itemId)}`,
+  );
+  if (typeof data.url !== 'string' || !data.url.startsWith('https://')) {
+    throw new Error('O servidor não retornou um link válido para o modelo personalizado.');
   }
   return data.url;
 }

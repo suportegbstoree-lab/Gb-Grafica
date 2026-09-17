@@ -60,10 +60,22 @@ export function isPendingArtworkPath(value: unknown, userId: string): value is s
   return new RegExp(`^artworks/${escapeRegExp(userId)}/pending/[a-f0-9]{32}\\.(pdf|jpg|png|webp)$`).test(value);
 }
 
+export function isPendingPersonalizationModelPath(value: unknown, userId: string): value is string {
+  if (typeof value !== 'string' || !userId) return false;
+  return new RegExp(`^artworks/${escapeRegExp(userId)}/pending/[a-f0-9]{32}\\.(jpg|png|webp)$`).test(value);
+}
+
 export function isOrderArtworkPath(value: unknown, userId: string, orderId: string): value is string {
   if (typeof value !== 'string' || !userId || !orderId) return false;
   return new RegExp(
     `^artworks/${escapeRegExp(userId)}/orders/${escapeRegExp(orderId)}/[A-Za-z0-9_-]{1,150}/[a-f0-9]{32}\\.(pdf|jpg|png|webp)$`,
+  ).test(value);
+}
+
+export function isOrderPersonalizationModelPath(value: unknown, userId: string, orderId: string): value is string {
+  if (typeof value !== 'string' || !userId || !orderId) return false;
+  return new RegExp(
+    `^artworks/${escapeRegExp(userId)}/orders/${escapeRegExp(orderId)}/[A-Za-z0-9_-]{1,150}/[a-f0-9]{32}\\.(jpg|png|webp)$`,
   ).test(value);
 }
 

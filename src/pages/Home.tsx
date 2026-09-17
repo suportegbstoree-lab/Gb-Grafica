@@ -7,7 +7,14 @@ import { cn } from '../lib/utils';
 import { loginWithGoogle, logout, FirebaseUser } from '../firebase';
 import { createCartItemId, formatBrazilianPhone, formatCpf, formatMoney, isHttpUrl, isValidBrazilianPhone, isValidCpf, parseMoneyToCents } from '../lib/commerce';
 import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
-import { removePendingArtwork, requestArtworkUrl, uploadArtwork, type UploadedArtwork } from '../services/artworkService';
+import {
+  removePendingArtwork,
+  requestArtworkUrl,
+  requestPersonalizationModelUrl,
+  uploadArtwork,
+  uploadPersonalizationModel,
+  type UploadedArtwork,
+} from '../services/artworkService';
 import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
 import { validateCheckoutForm } from '../lib/checkoutForm';
 import {
@@ -27,6 +34,11 @@ import {
   type TextCustomization,
 } from '../lib/textCustomization';
 import { formattedDiscountPercentage, promotionalPrice } from '../lib/promotions';
+import {
+  isComposablePersonalizationImage,
+  personalizationModelName,
+} from '../lib/personalizationModel';
+import type { ComposedPersonalizationModel } from '../services/personalizationModelService';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -98,6 +110,16 @@ interface ShippingInfo {
   state: string;
 }
 
+export interface PersonalizationModelStorage {
+  uploadModel: (model: ComposedPersonalizationModel, name: string) => Promise<UploadedArtwork>;
+  deleteModel: (path: string) => Promise<void>;
+}
+
+const FIREBASE_PERSONALIZATION_MODEL_STORAGE: PersonalizationModelStorage = {
+  uploadModel: (model, name) => uploadPersonalizationModel(model.blob, name),
+  deleteModel: removePendingArtwork,
+};
+
 interface HomeProps {
   products: Anuncio[];
   config: SiteConfig;
@@ -113,9 +135,26 @@ interface HomeProps {
   ordersReady: boolean;
   ordersError: string | null;
   onCheckoutRedirect?: (url: string) => void;
+  personalizationModelStorage?: PersonalizationModelStorage;
 }
 
-export default function Home({ products, config, categories, promotions, cart, setCart, orders, user, isAdmin, productsReady, productsError, ordersReady, ordersError, onCheckoutRedirect }: HomeProps) {
+export default function Home({
+  products,
+  config,
+  categories,
+  promotions,
+  cart,
+  setCart,
+  orders,
+  user,
+  isAdmin,
+  productsReady,
+  productsError,
+  ordersReady,
+  ordersError,
+  onCheckoutRedirect,
+  personalizationModelStorage = FIREBASE_PERSONALIZATION_MODEL_STORAGE,
+}: HomeProps) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
@@ -304,11 +343,13 @@ export default function Home({ products, config, categories, promotions, cart, s
   const removeFromCart = (id: string) => {
     const item = cart.find(candidate => candidate.id === id);
     setCart(prev => prev.filter(i => i.id !== id));
-    if (item?.arquivoPath?.includes('/pending/')) {
-      void removePendingArtwork(item.arquivoPath).catch(error => {
-        console.error('Não foi possível remover a arte temporária:', error);
-      });
-    }
+    const pendingPaths = [item?.arquivoPath, item?.modeloPath]
+      .filter((path): path is string => Boolean(path?.includes('/pending/')));
+    void Promise.allSettled(pendingPaths.map(path => removePendingArtwork(path))).then(results => {
+      if (results.some(result => result.status === 'rejected')) {
+        console.error('Não foi possível remover todos os arquivos temporários do item.');
+      }
+    });
   };
 
   const openOrderArtwork = async (orderId: string, itemId: string) => {
@@ -319,6 +360,18 @@ export default function Home({ products, config, categories, promotions, cart, s
       setNotice({
         type: 'error',
         message: error instanceof Error ? error.message : 'Não foi possível abrir a arte.',
+      });
+    }
+  };
+
+  const openOrderModel = async (orderId: string, itemId: string) => {
+    try {
+      const url = await requestPersonalizationModelUrl(orderId, itemId);
+      openExternal(url);
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Não foi possível abrir o modelo personalizado.',
       });
     }
   };
@@ -373,6 +426,8 @@ export default function Home({ products, config, categories, promotions, cart, s
           selecoes: item.selecoes,
           arquivoPath: item.arquivoPath || '',
           arquivoNome: item.arquivoNome || '',
+          modeloPath: item.modeloPath || '',
+          modeloNome: item.modeloNome || '',
           textoPersonalizado: item.textoPersonalizado || '',
           personalizacaoTexto: item.personalizacaoTexto,
         })),
@@ -520,7 +575,7 @@ export default function Home({ products, config, categories, promotions, cart, s
 
   const handleLogout = async () => {
     const pendingArtworks = cart
-      .map(item => item.arquivoPath)
+      .flatMap(item => [item.arquivoPath, item.modeloPath])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     await Promise.allSettled(pendingArtworks.map(removePendingArtwork));
     setCart([]);
@@ -937,6 +992,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                   onNotify={setNotice}
                   promotions={promotions}
                   fonts={config.fontes_personalizacao || []}
+                  personalizationModelStorage={personalizationModelStorage}
                 />
               ))}
             </div>
@@ -1038,8 +1094,9 @@ export default function Home({ products, config, categories, promotions, cart, s
                           <div className="mt-2 rounded-lg border border-pink-100 bg-pink-50/70 px-3 py-2 text-[10px] text-gray-600">
                             <div className="font-bold text-pink-600">Texto: {item.personalizacaoTexto.texto}</div>
                             <div className="mt-1">
-                              Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                              Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)}
                             </div>
+                            {item.modeloNome && <div className="mt-1 font-bold text-green-700">Modelo composto: {item.modeloNome}</div>}
                           </div>
                         ) : item.textoPersonalizado ? (
                           <div className="mt-2 text-[10px] font-bold text-pink-600">Personalização: {item.textoPersonalizado}</div>
@@ -1392,7 +1449,7 @@ export default function Home({ products, config, categories, promotions, cart, s
                           </div>
                           {item.personalizacaoTexto ? (
                             <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
-                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)}
                             </div>
                           ) : item.textoPersonalizado ? (
                             <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
@@ -1406,6 +1463,15 @@ export default function Home({ products, config, categories, promotions, cart, s
                               className="text-[9px] text-green-600 flex items-center gap-1 font-black uppercase tracking-wider hover:underline"
                             >
                               <FileText size={10} /> Abrir arte enviada
+                            </button>
+                          )}
+                          {item.modeloPath && (
+                            <button
+                              type="button"
+                              onClick={() => openOrderModel(order.id, item.id)}
+                              className="text-[9px] text-purple-600 flex items-center gap-1 font-black uppercase tracking-wider hover:underline"
+                            >
+                              <FileText size={10} /> Abrir modelo composto
                             </button>
                           )}
                           {item.artePendente && (
@@ -1610,6 +1676,7 @@ function ProductCard({
   onNotify,
   promotions,
   fonts,
+  personalizationModelStorage,
 }: {
   product: Anuncio;
   user: FirebaseUser | null;
@@ -1618,10 +1685,13 @@ function ProductCard({
   onNotify: (notice: Notice) => void;
   promotions: Promocao[];
   fonts: PersonalizationFont[];
+  personalizationModelStorage: PersonalizationModelStorage;
   key?: string;
 }) {
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [uploadedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
+  const [artworkSourceFile, setArtworkSourceFile] = useState<File | null>(null);
+  const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
   const [isUploadingArtwork, setIsUploadingArtwork] = useState(false);
   const [artworkPreviewUrl, setArtworkPreviewUrl] = useState<string | null>(null);
   const [textCustomization, setTextCustomization] = useState<TextCustomization | null>(null);
@@ -1630,6 +1700,9 @@ function ProductCard({
 
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
+  const availableFonts = activePersonalizationFonts(fonts);
+  const requiresArtwork = productRequiresArtwork(product.tipoInput);
+  const requiresText = productRequiresText(product.tipoInput);
 
   // Sincroniza a imagem ativa se o produto mudar (ex: edição no admin)
   React.useEffect(() => {
@@ -1660,6 +1733,13 @@ function ProductCard({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    if (requiresText && !isComposablePersonalizationImage(file.type, file.size)) {
+      onNotify({
+        type: 'error',
+        message: 'Produtos com texto sobre a arte exigem uma imagem JPG, PNG ou WebP. PDF continua disponível para produtos sem texto.',
+      });
+      return;
+    }
     const nextPreviewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
 
     if (!user) {
@@ -1674,9 +1754,14 @@ function ProductCard({
     try {
       const nextArtwork = await uploadArtwork(file);
       const previousArtwork = uploadedArtwork;
+      const previousModel = uploadedModel;
       setUploadedArtwork(nextArtwork);
+      setArtworkSourceFile(file);
       setArtworkPreviewUrl(nextPreviewUrl);
       if (previousArtwork) void removePendingArtwork(previousArtwork.path).catch(() => undefined);
+      if (previousModel) void personalizationModelStorage.deleteModel(previousModel.path).catch(() => undefined);
+      setUploadedModel(null);
+      setTextCustomization(null);
       onNotify({ type: 'success', message: 'Arte enviada com segurança.' });
     } catch (error) {
       if (nextPreviewUrl) URL.revokeObjectURL(nextPreviewUrl);
@@ -1691,8 +1776,12 @@ function ProductCard({
 
   const removeArtwork = () => {
     if (uploadedArtwork) void removePendingArtwork(uploadedArtwork.path).catch(() => undefined);
+    if (uploadedModel) void personalizationModelStorage.deleteModel(uploadedModel.path).catch(() => undefined);
     setUploadedArtwork(null);
+    setArtworkSourceFile(null);
+    setUploadedModel(null);
     setArtworkPreviewUrl(null);
+    setTextCustomization(null);
   };
 
   const isFullySelected = product.atributos.every(attr => selections[attr.nome]);
@@ -1709,11 +1798,24 @@ function ProductCard({
   const discount = originalPriceCents === null ? null : promotionalPrice(originalPriceCents, product, promotions);
   const priceCents = discount?.finalCents ?? originalPriceCents;
   const price = priceCents === null ? rawPrice : (priceCents / 100).toFixed(2);
-  const availableFonts = activePersonalizationFonts(fonts);
-  const requiresArtwork = productRequiresArtwork(product.tipoInput);
-  const requiresText = productRequiresText(product.tipoInput);
   const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork)) &&
-    (!requiresText || Boolean(textCustomization));
+    (!requiresText || Boolean(textCustomization && uploadedModel));
+
+  const openTextCustomizer = async () => {
+    if (availableFonts.length === 0) {
+      onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
+      return;
+    }
+    if (requiresArtwork && (!uploadedArtwork || !artworkSourceFile)) {
+      onNotify({ type: 'error', message: 'Envie a imagem antes de posicionar o texto.' });
+      return;
+    }
+    if (!user) {
+      const loggedIn = await onRequireLogin();
+      if (!loggedIn) return;
+    }
+    setIsTextDrawerOpen(true);
+  };
 
   const handleAdd = () => {
     if (!isFullySelected || !price || priceCents === null || priceCents <= 0) return;
@@ -1726,8 +1828,17 @@ function ProductCard({
       onNotify({ type: 'error', message: 'Configure o texto, a fonte e a posição da personalização.' });
       return;
     }
+    if (requiresText && !uploadedModel) {
+      onNotify({ type: 'error', message: 'Gere o modelo composto antes de adicionar este produto ao carrinho.' });
+      return;
+    }
     const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
-    const cartId = createCartItemId(product.id, selections, customizationFingerprint, uploadedArtwork?.path || '');
+    const cartId = createCartItemId(
+      product.id,
+      selections,
+      customizationFingerprint,
+      uploadedArtwork?.path || uploadedModel?.path || '',
+    );
     onAddToCart({
       id: cartId,
       productId: product.id,
@@ -1743,12 +1854,16 @@ function ProductCard({
       quantidade: 1,
       arquivoPath: uploadedArtwork?.path,
       arquivoNome: uploadedArtwork?.name,
+      modeloPath: uploadedModel?.path,
+      modeloNome: uploadedModel?.name,
       textoPersonalizado: textCustomization?.texto,
       personalizacaoTexto: textCustomization || undefined,
     });
 
     // Reset after adding
     setUploadedArtwork(null);
+    setArtworkSourceFile(null);
+    setUploadedModel(null);
     setArtworkPreviewUrl(null);
     setTextCustomization(null);
   };
@@ -1867,14 +1982,16 @@ function ProductCard({
                     {isUploadingArtwork ? 'Enviando...' : 'Selecionar arquivo'}
                     <input
                       type="file"
-                      accept="application/pdf,image/png,image/jpeg,image/webp"
+                      accept={requiresText ? 'image/png,image/jpeg,image/webp' : 'application/pdf,image/png,image/jpeg,image/webp'}
                       onChange={handleArtworkFile}
                       disabled={isUploadingArtwork}
                       className="sr-only"
                     />
                   </label>
                 )}
-                <p className="mt-2 text-[9px] text-gray-400 leading-tight">PDF, PNG, JPG ou WebP, até 15 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.</p>
+                <p className="mt-2 text-[9px] text-gray-400 leading-tight">
+                  {requiresText ? 'PNG, JPG ou WebP' : 'PDF, PNG, JPG ou WebP'}, até 15 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
+                </p>
               </div>
             )}
 
@@ -1885,11 +2002,12 @@ function ProductCard({
                   <div className="rounded-xl border border-pink-200 bg-pink-50/70 p-4">
                     <div className="break-words text-sm font-bold text-gray-900">{textCustomization.texto}</div>
                     <div className="mt-2 text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                      {textFontLabel(textCustomization.fonte, fonts, textCustomization.fonteNome)} · X {textCustomization.posicao.x}% · Y {textCustomization.posicao.y}%
+                      {textFontLabel(textCustomization.fonte, fonts, textCustomization.fonteNome)}
                     </div>
+                    {uploadedModel && <div className="mt-2 text-[9px] font-black uppercase tracking-wider text-green-700">Modelo composto pronto</div>}
                     <button
                       type="button"
-                      onClick={() => setIsTextDrawerOpen(true)}
+                      onClick={() => void openTextCustomizer()}
                       className="mt-3 text-[10px] font-black uppercase tracking-widest text-pink-600 hover:underline"
                     >
                       Editar texto e posição
@@ -1898,17 +2016,15 @@ function ProductCard({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (availableFonts.length === 0) {
-                        onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
-                        return;
-                      }
-                      setIsTextDrawerOpen(true);
-                    }}
-                    disabled={availableFonts.length === 0}
+                    onClick={() => void openTextCustomizer()}
+                    disabled={availableFonts.length === 0 || (requiresArtwork && !uploadedArtwork)}
                     className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200 bg-pink-50 px-4 py-4 text-xs font-bold text-pink-600 transition-colors hover:border-pink-400 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
                   >
-                    <FileText size={16} /> {availableFonts.length === 0 ? 'Fontes indisponíveis' : 'Personalizar texto'}
+                    <FileText size={16} /> {availableFonts.length === 0
+                      ? 'Fontes indisponíveis'
+                      : requiresArtwork && !uploadedArtwork
+                        ? 'Envie a imagem primeiro'
+                        : 'Personalizar texto'}
                   </button>
                 )}
               </div>
@@ -2023,13 +2139,23 @@ function ProductCard({
       <TextCustomizationDrawer
         productName={product.nome}
         previewImage={artworkPreviewUrl || activeImage || product.imagem || DEFAULT_LOGO_URL}
+        previewSource={artworkSourceFile || undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
         initialValue={textCustomization}
         fonts={fonts}
         onClose={() => setIsTextDrawerOpen(false)}
-        onSave={value => {
+        onSave={async (value, model) => {
+          const nextModel = await personalizationModelStorage.uploadModel(
+            model,
+            personalizationModelName(product.nome, uploadedArtwork?.name),
+          );
+          const previousModel = uploadedModel;
           setTextCustomization(value);
+          setUploadedModel(nextModel);
           setIsTextDrawerOpen(false);
+          if (previousModel) {
+            void personalizationModelStorage.deleteModel(previousModel.path).catch(() => undefined);
+          }
         }}
       />
     )}

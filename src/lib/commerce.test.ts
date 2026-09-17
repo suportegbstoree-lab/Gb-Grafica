@@ -40,6 +40,8 @@ test('gera IDs seguros para documentos e diferencia personalizações do carrinh
   const base = createCartItemId('produto', { Tamanho: 'P' }, 'Ana', '');
   const same = createCartItemId('produto', { Tamanho: 'P' }, 'Ana', '');
   const different = createCartItemId('produto', { Tamanho: 'P' }, 'Bia', '');
+  const differentModel = createCartItemId('produto', { Tamanho: 'P' }, 'Ana', 'artworks/user/pending/modelo.webp');
   assert.equal(base, same);
   assert.notEqual(base, different);
+  assert.notEqual(base, differentModel);
 });

@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Move, X } from 'lucide-react';
 import { motion } from 'motion/react';
+import { personalizationTextScale } from '../lib/personalizationModel';
 import {
   activePersonalizationFonts,
   DEFAULT_TEXT_CUSTOMIZATION,
@@ -11,15 +12,20 @@ import {
   type PersonalizationFont,
   type TextCustomization,
 } from '../lib/textCustomization';
+import {
+  composePersonalizationModel,
+  type ComposedPersonalizationModel,
+} from '../services/personalizationModelService';
 
 interface TextCustomizationDrawerProps {
   productName: string;
   previewImage: string;
+  previewSource?: Blob;
   fieldLabel: string;
   fonts: PersonalizationFont[];
   initialValue: TextCustomization | null;
   onClose: () => void;
-  onSave: (value: TextCustomization) => void;
+  onSave: (value: TextCustomization, model: ComposedPersonalizationModel) => void | Promise<void>;
 }
 
 function clampPosition(value: number): number {
@@ -29,6 +35,7 @@ function clampPosition(value: number): number {
 export default function TextCustomizationDrawer({
   productName,
   previewImage,
+  previewSource,
   fieldLabel,
   fonts,
   initialValue,
@@ -49,10 +56,16 @@ export default function TextCustomizationDrawer({
     };
   });
   const [error, setError] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [previewAspectRatio, setPreviewAspectRatio] = useState(1);
+  const [previewWidth, setPreviewWidth] = useState(480);
   const drawerRef = useRef<HTMLElement>(null);
+  const previewRef = useRef<HTMLButtonElement>(null);
   const textInputRef = useRef<HTMLInputElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const generatingRef = useRef(isGenerating);
+  generatingRef.current = isGenerating;
   const activePointerRef = useRef<number | null>(null);
   const titleId = React.useId();
   const instructionsId = React.useId();
@@ -66,7 +79,7 @@ export default function TextCustomizationDrawer({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        closeRef.current();
+        if (!generatingRef.current) closeRef.current();
         return;
       }
       if (event.key !== 'Tab' || !drawerRef.current) return;
@@ -92,6 +105,16 @@ export default function TextCustomizationDrawer({
       document.body.style.overflow = previousOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
+  }, []);
+
+  React.useEffect(() => {
+    if (!previewRef.current || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width;
+      if (width && Number.isFinite(width)) setPreviewWidth(width);
+    });
+    observer.observe(previewRef.current);
+    return () => observer.disconnect();
   }, []);
 
   const updatePositionFromPointer = (element: HTMLElement, clientX: number, clientY: number) => {
@@ -145,22 +168,36 @@ export default function TextCustomizationDrawer({
     }));
   };
 
-  const save = () => {
+  const save = async () => {
     const normalized = normalizeTextCustomization(draft, availableFonts);
     if (!normalized) {
       setError(`Informe um texto de até ${MAX_CUSTOM_TEXT_LENGTH} caracteres, uma fonte e uma posição válida.`);
       return;
     }
-    onSave(normalized);
+    setIsGenerating(true);
+    setError('');
+    try {
+      const model = await composePersonalizationModel({
+        source: previewSource || previewImage,
+        customization: normalized,
+        fonts: availableFonts,
+      });
+      await onSave(normalized, model);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Não foi possível gerar o modelo personalizado.');
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
-  const previewFontSize = draft.texto.length > 80 ? 14 : draft.texto.length > 40 ? 18 : 24;
+  const previewFontSize = Math.max(14, Math.round(previewWidth * personalizationTextScale(draft.texto)));
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex justify-end">
       <motion.button
         type="button"
         aria-label="Fechar personalização de texto"
+        disabled={isGenerating}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         onClick={onClose}
@@ -181,7 +218,7 @@ export default function TextCustomizationDrawer({
             <p className="text-[9px] font-black uppercase tracking-[0.2em] text-pink-500">{productName}</p>
             <h3 id={titleId} className="mt-1 text-xl font-black text-gray-900">Personalizar texto</h3>
           </div>
-          <button type="button" onClick={onClose} aria-label="Fechar personalização" className="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-pink-500">
+          <button type="button" onClick={onClose} disabled={isGenerating} aria-label="Fechar personalização" className="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
             <X size={22} />
           </button>
         </header>
@@ -240,10 +277,11 @@ export default function TextCustomizationDrawer({
                 <div className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">Posição do texto</div>
                 <p id={instructionsId} className="mt-1 text-[10px] leading-relaxed text-gray-400">Clique ou arraste na prévia. Com o teclado, use as setas; Shift move 5%.</p>
               </div>
-              <div className="shrink-0 text-[9px] font-black uppercase tracking-wider text-pink-500">X {draft.posicao.x}% · Y {draft.posicao.y}%</div>
+              <div className="shrink-0 text-[9px] font-black uppercase tracking-wider text-pink-500">Prévia do modelo</div>
             </div>
 
             <button
+              ref={previewRef}
               type="button"
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
@@ -252,16 +290,31 @@ export default function TextCustomizationDrawer({
               onKeyDown={handlePreviewKeyDown}
               aria-describedby={instructionsId}
               aria-label={`Prévia da posição do texto: ${draft.posicao.x}% horizontal e ${draft.posicao.y}% vertical`}
-              className="relative block aspect-square w-full touch-none overflow-hidden rounded-2xl border-2 border-gray-200 bg-gray-100 text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100"
+              style={{ aspectRatio: previewAspectRatio }}
+              className="relative block max-h-[60vh] w-full touch-none overflow-hidden rounded-2xl border-2 border-gray-200 bg-gray-100 text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100"
             >
-              <img src={previewImage} alt="" draggable={false} className="pointer-events-none h-full w-full select-none object-contain" referrerPolicy="no-referrer" />
+              <img
+                src={previewImage}
+                alt=""
+                draggable={false}
+                className="pointer-events-none h-full w-full select-none object-contain"
+                referrerPolicy="no-referrer"
+                onLoad={event => {
+                  const image = event.currentTarget;
+                  if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                    setPreviewAspectRatio(image.naturalWidth / image.naturalHeight);
+                  }
+                }}
+              />
               <span
-                className="pointer-events-none absolute max-w-[90%] -translate-x-1/2 -translate-y-1/2 break-words rounded-md border border-white/70 bg-black/45 px-2 py-1 text-center font-bold leading-tight text-white shadow-lg"
+                className="pointer-events-none absolute max-w-[90%] -translate-x-1/2 -translate-y-1/2 break-words text-center font-bold leading-[1.18] text-white"
                 style={{
                   left: `${draft.posicao.x}%`,
                   top: `${draft.posicao.y}%`,
                   fontFamily: textFontCssFamily(draft.fonte, availableFonts, draft.fonteCssFamily),
                   fontSize: previewFontSize,
+                  WebkitTextStroke: `${Math.max(1, previewFontSize * 0.1)}px rgba(0, 0, 0, 0.88)`,
+                  paintOrder: 'stroke fill',
                 }}
               >
                 {draft.texto.trim() || 'Seu texto'}
@@ -270,16 +323,16 @@ export default function TextCustomizationDrawer({
                 <Move size={11} /> Arraste para posicionar
               </span>
             </button>
-            <p className="text-[9px] leading-relaxed text-gray-400">A prévia representa a posição proporcional na arte. A equipe de produção receberá o texto, a fonte e as coordenadas exatas.</p>
+            <p className="text-[9px] leading-relaxed text-gray-400">Ao aplicar, o site gera e armazena uma imagem privada já composta com a arte, o texto e a fonte escolhida.</p>
           </div>
 
           {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">{error}</div>}
         </div>
 
         <footer className="grid grid-cols-2 gap-3 border-t border-gray-100 bg-gray-50/70 p-5 sm:px-8">
-          <button type="button" onClick={onClose} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-600 hover:border-gray-300">Cancelar</button>
-          <button type="button" onClick={save} disabled={availableFonts.length === 0} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
-            <Check size={16} /> Aplicar
+          <button type="button" onClick={onClose} disabled={isGenerating} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-600 hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-40">Cancelar</button>
+          <button type="button" onClick={() => void save()} disabled={availableFonts.length === 0 || isGenerating} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
+            <Check size={16} /> {isGenerating ? 'Gerando modelo...' : 'Aplicar e gerar modelo'}
           </button>
         </footer>
       </motion.aside>

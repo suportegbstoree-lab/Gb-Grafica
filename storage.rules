@@ -14,6 +14,15 @@ service firebase.storage {
       );
     }
 
+    function isValidPendingArtworkKind(kind, contentType) {
+      return kind == 'source-artwork' ||
+        (kind == 'personalization-model' && contentType in [
+          'image/jpeg',
+          'image/png',
+          'image/webp'
+        ]);
+    }
+
     function isValidCatalogImage(fileName, contentType) {
       return contentType is string && (
         (contentType == 'image/jpeg' && fileName.matches('^[a-f0-9]{32}[.]jpg$')) ||
@@ -34,8 +43,9 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 15 * 1024 * 1024 &&
         isValidPendingArtwork(fileName, request.resource.contentType) &&
-        request.resource.metadata.keys().hasAll(['ownerId']) &&
-        request.resource.metadata.ownerId == request.auth.uid;
+        request.resource.metadata.keys().hasAll(['ownerId', 'kind']) &&
+        request.resource.metadata.ownerId == request.auth.uid &&
+        isValidPendingArtworkKind(request.resource.metadata.kind, request.resource.contentType);
       allow update: if false;
       allow delete: if request.auth != null && request.auth.uid == userId;
     }

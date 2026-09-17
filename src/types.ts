@@ -36,6 +36,8 @@ export interface CartItem {
   arquivoUrl?: string;
   arquivoPath?: string;
   arquivoNome?: string;
+  modeloPath?: string;
+  modeloNome?: string;
   artePendente?: boolean;
   textoPersonalizado?: string;
   personalizacaoTexto?: TextCustomization;
@@ -121,8 +123,6 @@ export interface SiteConfig {
   beneficio2_desc: string;
   beneficio3_titulo: string;
   beneficio3_desc: string;
-  pix_chave?: string;
-  pix_beneficiario?: string;
   razao_social?: string;
   documento_fiscal?: string;
   endereco_comercial?: string;

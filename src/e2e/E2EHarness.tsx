@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
-import Home from '../pages/Home';
+import Home, { type PersonalizationModelStorage } from '../pages/Home';
 import Admin, { type AdminAssetStorage, type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
 
 const FIXTURE_CONFIG: SiteConfig = {
@@ -31,6 +31,8 @@ const FIXTURE_CONFIG: SiteConfig = {
   ],
 };
 
+const FIXTURE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
 const FIXTURE_CATEGORIES: Category[] = [
   { id: 'personalizados', nome: 'Personalizados', icon: '', ordem: 0 },
   { id: 'livros-de-receita', nome: 'Livros de Receita', icon: '', ordem: 1 },
@@ -42,7 +44,7 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
     nome: 'Carimbo',
     desc: 'Carimbo personalizado',
     categoria: 'Personalizados',
-    imagem: '/logo.png',
+    imagem: FIXTURE_IMAGE,
     imagens: [],
     preco_base: '8,40',
     atributos: [],
@@ -54,7 +56,7 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
     nome: 'Livro de Receitas Personalizado',
     desc: 'Livro de receitas com capa dura e nome personalizado.',
     categoria: 'Livros de Receita',
-    imagem: '/logo.png',
+    imagem: FIXTURE_IMAGE,
     imagens: [],
     preco_base: '39,90',
     atributos: [],
@@ -116,6 +118,16 @@ const FIXTURE_USER = {
 function StoreFixture() {
   const [cart, setCart] = React.useState<CartItem[]>([]);
   const [checkoutRedirect, setCheckoutRedirect] = React.useState('');
+  const personalizationModelStorage = React.useMemo<PersonalizationModelStorage>(() => ({
+    async uploadModel(_model, name) {
+      const uploadId = crypto.randomUUID().replace(/-/g, '');
+      return {
+        path: `artworks/e2e-user/pending/${uploadId}.webp`,
+        name,
+      };
+    },
+    async deleteModel() {},
+  }), []);
 
   return (
     <div data-testid="e2e-store">
@@ -134,6 +146,7 @@ function StoreFixture() {
         ordersReady
         ordersError={null}
         onCheckoutRedirect={setCheckoutRedirect}
+        personalizationModelStorage={personalizationModelStorage}
       />
       <output hidden data-testid="e2e-checkout-redirect">{checkoutRedirect}</output>
     </div>

@@ -54,12 +54,17 @@ async function seedStorageObject(
   });
 }
 
-function artworkMetadata(ownerId: string, contentType: string) {
+function artworkMetadata(
+  ownerId: string,
+  contentType: string,
+  kind: 'source-artwork' | 'personalization-model' = 'source-artwork',
+) {
   return {
     contentType,
     customMetadata: {
       ownerId,
       originalName: 'arte-do-cliente.pdf',
+      kind,
     },
   };
 }
@@ -388,6 +393,29 @@ test('Storage: upload exige ownerId correspondente ao usuário autenticado', asy
   await assertUploadFails(aliceStorage.ref(wrongOwnerPath).put(
     new Uint8Array([1]),
     artworkMetadata('bob', 'application/pdf'),
+  ));
+});
+
+test('Storage: modelo composto exige tipo raster e metadado técnico', async () => {
+  const storage = authenticatedContext('alice').storage();
+  const validModel = storage.ref(`artworks/alice/pending/${'0'.repeat(32)}.webp`);
+
+  await assertUploadSucceeds(validModel.put(
+    new Uint8Array([1]),
+    artworkMetadata('alice', 'image/webp', 'personalization-model'),
+  ));
+  await assertSucceeds(validModel.delete());
+
+  await assertUploadFails(storage.ref(`artworks/alice/pending/${'a0'.repeat(16)}.pdf`).put(
+    new Uint8Array([1]),
+    artworkMetadata('alice', 'application/pdf', 'personalization-model'),
+  ));
+  await assertUploadFails(storage.ref(`artworks/alice/pending/${'b0'.repeat(16)}.png`).put(
+    new Uint8Array([1]),
+    {
+      contentType: 'image/png',
+      customMetadata: { ownerId: 'alice' },
+    },
   ));
 });
 

@@ -10,7 +10,7 @@
 - A loja exibe preço original riscado, preço promocional e porcentagem calculada, inclusive quando o desconto foi informado em reais.
 - O servidor recalcula a melhor promoção diretamente dos documentos do Firestore e ignora preços ou identificadores promocionais enviados pelo navegador.
 - Logo, banner principal, banners promocionais e ícones de categoria agora aceitam upload de JPG, PNG ou WebP no painel.
-- Removida da interface a configuração de PIX manual legada; o checkout continua exclusivamente hospedado no PagBank.
+- Removida da interface e das próximas gravações da configuração a chave de PIX manual legada; o checkout continua exclusivamente hospedado no PagBank.
 - A área de configurações foi reorganizada em identidade visual, atendimento, benefícios, fontes de personalização e dados legais.
 - Fontes de personalização passaram a ser cadastradas no painel, como família CSS ou arquivo WOFF2; não existe mais uma lista selecionável definida no código.
 - A política de segurança de conteúdo passou a liberar fontes somente do próprio site, dados embutidos e Firebase Storage.
@@ -25,12 +25,16 @@
 - Produtos configurados para receber arte agora só podem entrar no carrinho depois do upload privado do arquivo.
 - Adicionado ao painel administrativo o tipo de personalização `Texto + Imagem`, combinando arquivo obrigatório e texto configurável.
 - Criado drawer acessível para o cliente informar o texto, escolher entre fontes permitidas e posicioná-lo por clique, arraste ou teclado em uma prévia do produto ou da arte enviada.
-- Texto, identificador da fonte e coordenadas proporcionais X/Y passam a compor a identidade do item no carrinho e são enviados ao servidor como dados estruturados.
-- O servidor normaliza e valida o tipo de personalização, a fonte, o limite do texto, as coordenadas e a presença da arte antes de criar o pedido.
-- O carrinho e a área de pedidos do cliente exibem um resumo da personalização escolhida.
-- O painel administrativo exibe para produção o texto, a fonte, as coordenadas e um mapa proporcional da posição, mantendo o download privado da arte separado.
+- Ao aplicar a personalização, o navegador agora renderiza a imagem e o texto escolhido em um arquivo raster único, preservando proporção, fonte e posição visual.
+- O modelo composto é enviado de forma privada ao Cloud Storage, com identificação técnica própria, limite de 15 MB, conferência de assinatura e caminho vinculado ao usuário.
+- Adicionada configuração versionada de CORS do Firebase Storage e uma segunda estratégia de carregamento para imagens que abrem no navegador, mas têm o `fetch` bloqueado pela origem.
+- Texto, fonte e posição continuam registrados como metadados de auditoria, mas a produção recebe o modelo visual já composto em vez de depender de um mapa de coordenadas.
+- O servidor exige e valida o modelo para qualquer produto com texto, confere proprietário, MIME, assinatura e metadado técnico e o copia para o caminho definitivo do pedido.
+- Cliente e administrador abrem o modelo por uma URL assinada de cinco minutos; o painel mantém a arte original separada quando o produto exige upload do cliente.
+- O carrinho e a área de pedidos do cliente exibem um resumo da personalização e identificam quando o modelo composto está pronto.
+- Modelos distintos passam a gerar itens distintos no carrinho, e cópias parciais são removidas se a preparação do pedido falhar.
 - Pedidos antigos com texto simples ou arte pendente continuam legíveis, sem reabrir a opção removida para novas compras.
-- Adicionados testes unitários, de regras e de navegador para o novo tipo combinado e para o fluxo de texto até o payload do checkout.
+- Adicionados testes unitários, de regras e de navegador para o novo tipo combinado, o arquivo composto e o fluxo completo até o payload do checkout.
 - Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
 
 ## 2026-09-17 — Correção do cadastro e upload de imagens do catálogo

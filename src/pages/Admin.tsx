@@ -9,7 +9,7 @@ import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
 import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus, ORDER_QUEUE_ORDER, orderQueueFor, orderQueueLabel, type OrderQueue } from '../lib/orderStatus';
-import { requestArtworkUrl } from '../services/artworkService';
+import { requestArtworkUrl, requestPersonalizationModelUrl } from '../services/artworkService';
 import {
   removeCatalogImage,
   storedCatalogImagePath,
@@ -30,7 +30,7 @@ import {
   validatePromotionDraft,
   validateSiteConfig,
 } from '../lib/adminValidation';
-import { textFontCssFamily, textFontLabel } from '../lib/textCustomization';
+import { textFontLabel } from '../lib/textCustomization';
 import { normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
 import {
   removeAdminAsset,
@@ -521,7 +521,6 @@ export default function Admin({
     setErrorMessage(null);
     const formData = new FormData(e.currentTarget);
     const updatedConfig: SiteConfig = {
-      ...config,
       logo_url: configDraft.logo_url,
       telefone1: formData.get('telefone1') as string,
       telefone2: formData.get('telefone2') as string,
@@ -1007,6 +1006,16 @@ export default function Admin({
     }
   };
 
+  const handleOpenModel = async (orderId: string, itemId: string) => {
+    try {
+      const url = await requestPersonalizationModelUrl(orderId, itemId);
+      const opened = window.open(url, '_blank', 'noopener,noreferrer');
+      if (opened) opened.opener = null;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível abrir o modelo composto.');
+    }
+  };
+
   // Promotion Handlers
   const handlePromotionImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1402,7 +1411,13 @@ export default function Admin({
                       {queueOrders.length === 0 ? (
                         <div className="text-sm italic text-gray-600">Nenhum pedido nesta etapa.</div>
                       ) : queueOrders.map(order => (
-                        <OrderCard key={order.id} order={order} handleStatusChange={handleStatusChange} handleOpenArtwork={handleOpenArtwork} />
+                        <OrderCard
+                          key={order.id}
+                          order={order}
+                          handleStatusChange={handleStatusChange}
+                          handleOpenArtwork={handleOpenArtwork}
+                          handleOpenModel={handleOpenModel}
+                        />
                       ))}
                     </div>
                   )}
@@ -2436,10 +2451,12 @@ function OrderCard({
   order,
   handleStatusChange,
   handleOpenArtwork,
+  handleOpenModel,
 }: {
   order: Order;
   handleStatusChange: (id: string, status: FulfillmentStatus) => void;
   handleOpenArtwork: (orderId: string, itemId: string) => void;
+  handleOpenModel: (orderId: string, itemId: string) => void;
   key?: string;
 }) {
   const paymentConfirmed = isPaymentConfirmed(order);
@@ -2547,22 +2564,21 @@ function OrderCard({
                     <div className="text-[9px] font-bold uppercase tracking-widest text-[#ff4d79]">Personalização para produção</div>
                     <div className="mt-2 break-words text-xs font-bold text-white">Texto: {item.personalizacaoTexto.texto}</div>
                     <div className="mt-1 text-[10px] text-gray-400">
-                      Fonte: {textFontLabel(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteNome)} · Posição: X {item.personalizacaoTexto.posicao.x}% / Y {item.personalizacaoTexto.posicao.y}%
+                      Fonte: {textFontLabel(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteNome)}
                     </div>
-                    <div className="relative mt-3 aspect-video w-full max-w-[240px] overflow-hidden rounded-md border border-gray-700 bg-gray-900">
-                      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:20px_20px]" />
-                      <span
-                        className="absolute max-w-[90%] -translate-x-1/2 -translate-y-1/2 break-words rounded border border-[#ff4d79]/40 bg-black/70 px-2 py-1 text-center text-xs font-bold text-white"
-                        style={{
-                          left: `${item.personalizacaoTexto.posicao.x}%`,
-                          top: `${item.personalizacaoTexto.posicao.y}%`,
-                          fontFamily: textFontCssFamily(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteCssFamily),
-                        }}
+                    {item.modeloPath ? (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenModel(order.id, item.id)}
+                        className="mt-3 inline-flex items-center gap-1 rounded-md border border-[#ff4d79]/30 bg-[#ff4d79]/10 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-[#ff8cab] transition-colors hover:bg-[#ff4d79]/20"
                       >
-                        {item.personalizacaoTexto.texto}
-                      </span>
-                    </div>
-                    <div className="mt-2 text-[9px] text-gray-500">Mapa proporcional da posição informada pelo cliente.</div>
+                        <Image size={12} /> Abrir modelo composto
+                      </button>
+                    ) : (
+                      <div className="mt-2 text-[10px] font-bold text-amber-400">
+                        Pedido antigo sem modelo composto: confira os dados de personalização antes da produção
+                      </div>
+                    )}
                   </div>
                 ) : item.textoPersonalizado ? (
                   <div className="mt-1 text-[10px] font-bold text-[#ff4d79]">

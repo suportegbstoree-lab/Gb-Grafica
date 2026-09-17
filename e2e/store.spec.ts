@@ -58,7 +58,7 @@ test('calcula frete e preenche o endereço retornado pela API simulada', async (
   await expect(cart.getByText('R$ 12.90', { exact: true })).toHaveCount(2);
 });
 
-test('configura texto, fonte e posição e envia os dados estruturados ao checkout', async ({ page }) => {
+test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checkout', async ({ page }) => {
   const products = page.locator('#produtos');
   const productCard = products.locator('article').filter({
     has: page.getByRole('heading', { name: 'Livro de Receitas Personalizado' }),
@@ -74,15 +74,17 @@ test('configura texto, fonte e posição e envia os dados estruturados ao checko
   expect(bounds).not.toBeNull();
   await page.mouse.click(bounds!.x + bounds!.width * 0.75, bounds!.y + bounds!.height * 0.25);
   await expect(preview).toHaveAttribute('aria-label', /75% horizontal e 25% vertical/);
-  await drawer.getByRole('button', { name: 'Aplicar' }).click();
+  await drawer.getByRole('button', { name: 'Aplicar e gerar modelo' }).click();
 
   await expect(productCard.getByText('Receitas da Família')).toBeVisible();
-  await expect(productCard.getByText(/Georgia · X 75% · Y 25%/)).toBeVisible();
+  await expect(productCard.getByText(/Georgia/)).toBeVisible();
+  await expect(productCard.getByText('Modelo composto pronto')).toBeVisible();
   await productCard.getByRole('button', { name: 'Adicionar ao Carrinho' }).click();
 
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await expect(cart.getByText('Texto: Receitas da Família')).toBeVisible();
-  await expect(cart.getByText(/Fonte: Georgia · Posição: X 75% \/ Y 25%/)).toBeVisible();
+  await expect(cart.getByText('Fonte: Georgia')).toBeVisible();
+  await expect(cart.getByText('Modelo composto')).toBeVisible();
   await cart.getByRole('button', { name: 'Retirar na Loja' }).click();
   await cart.getByLabel('Nome completo').fill('Cliente Teste');
   await cart.getByLabel(/CPF do pagador/).fill('52998224725');
@@ -94,6 +96,8 @@ test('configura texto, fonte e posição e envia os dados estruturados ao checko
   const payload = (await checkoutRequest).postDataJSON();
   expect(payload.items[0]).toEqual(expect.objectContaining({
     productId: 'livro-receitas',
+    modeloPath: expect.stringMatching(/^artworks\/e2e-user\/pending\/[a-f0-9]{32}[.]webp$/),
+    modeloNome: 'Livro-de-Receitas-Personalizado-modelo.webp',
     textoPersonalizado: 'Receitas da Família',
     personalizacaoTexto: {
       texto: 'Receitas da Família',

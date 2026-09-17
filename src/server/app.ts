@@ -13,10 +13,13 @@ import {
 import {
   isAllowedArtwork,
   isOrderArtworkPath,
+  isOrderPersonalizationModelPath,
   isPendingArtworkPath,
+  isPendingPersonalizationModelPath,
   matchesArtworkSignature,
   sanitizeArtworkName,
 } from '../lib/artwork.js';
+import { isComposablePersonalizationImage } from '../lib/personalizationModel.js';
 import {
   allowedFulfillmentTransitions,
   isFulfillmentStatus,
@@ -97,6 +100,8 @@ interface NormalizedCartItem {
     quantidade: number;
     arquivoPath?: string;
     arquivoNome?: string;
+    modeloPath?: string;
+    modeloNome?: string;
     textoPersonalizado?: string;
     personalizacaoTexto?: TextCustomization;
   };
@@ -582,7 +587,9 @@ async function normalizeCart(
     const requiresArtwork = productRequiresArtwork(productType);
     const requiresText = productRequiresText(productType);
     const artworkPath = requiresArtwork ? textValue(item.arquivoPath, 300) : '';
+    const modelPath = requiresText ? textValue(item.modeloPath, 300) : '';
     let artworkName = '';
+    let modelName = '';
 
     if (requiresArtwork) {
       if (item.artePendente === true) {
@@ -599,7 +606,10 @@ async function normalizeCart(
         const [metadata] = await artworkFile.getMetadata();
         const size = Number(metadata.size);
         const ownerId = metadata.metadata?.ownerId;
-        if (!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId) {
+        if (
+          !isAllowedArtwork(metadata.contentType, size) || ownerId !== userId ||
+          (requiresText && !isComposablePersonalizationImage(metadata.contentType, size))
+        ) {
           throw new HttpError(422, `O arquivo enviado para ${productName} não é permitido.`);
         }
         const [prefix] = await artworkFile.download({ start: 0, end: 15, validation: false });
@@ -629,10 +639,40 @@ async function normalizeCart(
       if (!textCustomization) {
         throw new HttpError(422, `Informe o texto, a fonte e a posição da personalização de ${productName}.`);
       }
+
+      if (!modelPath) {
+        throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
+      }
+      if (!isPendingPersonalizationModelPath(modelPath, userId) || modelPath === artworkPath) {
+        throw new HttpError(422, `O modelo composto de ${productName} é inválido.`);
+      }
+      try {
+        const modelFile = bucket.file(modelPath);
+        const [metadata] = await modelFile.getMetadata();
+        const size = Number(metadata.size);
+        const ownerId = metadata.metadata?.ownerId;
+        const kind = metadata.metadata?.kind;
+        if (
+          !isComposablePersonalizationImage(metadata.contentType, size) ||
+          ownerId !== userId || kind !== 'personalization-model'
+        ) {
+          throw new HttpError(422, `O modelo composto de ${productName} não é permitido.`);
+        }
+        const [prefix] = await modelFile.download({ start: 0, end: 15, validation: false });
+        if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
+          throw new HttpError(422, `O conteúdo do modelo composto de ${productName} é inválido.`);
+        }
+        modelName = sanitizeArtworkName(
+          textValue(item.modeloNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'modelo.webp',
+        );
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(422, `Não foi possível validar o modelo composto de ${productName}. Gere-o novamente.`);
+      }
     }
     const customText = textCustomization?.texto;
     const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
-    const cartId = createCartItemId(productId, selections, customizationFingerprint, artworkPath);
+    const cartId = createCartItemId(productId, selections, customizationFingerprint, artworkPath || modelPath);
     const price = (unitAmount / 100).toFixed(2);
 
     normalizedItems.push({
@@ -650,6 +690,7 @@ async function normalizeCart(
         selecoes: selections,
         quantidade: quantity,
         ...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
+        ...(modelPath ? { modeloPath: modelPath, modeloNome: modelName } : {}),
         ...(textCustomization ? {
           textoPersonalizado: customText,
           personalizacaoTexto: textCustomization,
@@ -711,28 +752,54 @@ async function copyArtworksToOrder(
   services: ReturnType<typeof getAdminServices>,
   userId: string,
   orderId: string,
-): Promise<string[]> {
+): Promise<{ pendingPaths: string[]; orderPaths: string[] }> {
   const pendingPaths: string[] = [];
+  const orderPaths: string[] = [];
 
-  for (const item of items) {
-    const sourcePath = item.cartItem.arquivoPath;
-    if (!sourcePath) continue;
-    if (!isPendingArtworkPath(sourcePath, userId)) {
-      throw new HttpError(422, `A arte de ${item.cartItem.nome} não está mais disponível.`);
+  try {
+    for (const item of items) {
+      const assets = [
+        { field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, model: false },
+        { field: 'modeloPath' as const, path: item.cartItem.modeloPath, model: true },
+      ];
+
+      for (const asset of assets) {
+        const sourcePath = asset.path;
+        if (!sourcePath) continue;
+        const isValidSource = asset.model
+          ? isPendingPersonalizationModelPath(sourcePath, userId)
+          : isPendingArtworkPath(sourcePath, userId);
+        if (!isValidSource) {
+          throw new HttpError(422, `${asset.model ? 'O modelo composto' : 'A arte'} de ${item.cartItem.nome} não está mais disponível.`);
+        }
+
+        const fileName = sourcePath.split('/').at(-1) || '';
+        const destinationPath = `artworks/${userId}/orders/${orderId}/${item.cartItem.id}/${fileName}`;
+        const isValidDestination = asset.model
+          ? isOrderPersonalizationModelPath(destinationPath, userId, orderId)
+          : isOrderArtworkPath(destinationPath, userId, orderId);
+        if (!isValidDestination) {
+          throw new HttpError(500, `Não foi possível preparar o destino ${asset.model ? 'do modelo' : 'da arte'}.`);
+        }
+
+        await services.bucket.file(sourcePath).copy(services.bucket.file(destinationPath));
+        item.cartItem[asset.field] = destinationPath;
+        pendingPaths.push(sourcePath);
+        orderPaths.push(destinationPath);
+      }
     }
-
-    const fileName = sourcePath.split('/').at(-1) || '';
-    const destinationPath = `artworks/${userId}/orders/${orderId}/${item.cartItem.id}/${fileName}`;
-    if (!isOrderArtworkPath(destinationPath, userId, orderId)) {
-      throw new HttpError(500, 'Não foi possível preparar o destino da arte.');
+  } catch (error) {
+    const cleanupResults = await Promise.allSettled(orderPaths.map(path => services.bucket.file(path).delete()));
+    if (cleanupResults.some(result => result.status === 'rejected')) {
+      logEvent('error', 'checkout_partial_artwork_cleanup_failed', {
+        order_id: orderId,
+        copied_files: orderPaths.length,
+      });
     }
-
-    await services.bucket.file(sourcePath).copy(services.bucket.file(destinationPath));
-    item.cartItem.arquivoPath = destinationPath;
-    pendingPaths.push(sourcePath);
+    throw error;
   }
 
-  return pendingPaths;
+  return { pendingPaths, orderPaths };
 }
 
 function currentFulfillmentStatus(order: PlainRecord): FulfillmentStatus {
@@ -1138,6 +1205,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
   let orderRef: DocumentReference | null = null;
   let requestRef: DocumentReference | null = null;
   let ownsRequest = false;
+  let orderCreated = false;
+  let copiedOrderPaths: string[] = [];
   let checkoutBodyForEvidence: PlainRecord | null = null;
   let checkoutRequestSentAt = '';
 
@@ -1235,12 +1304,14 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     }
     ownsRequest = true;
 
-    const pendingArtworkPaths = await copyArtworksToOrder(
+    const copiedArtworks = await copyArtworksToOrder(
       normalizedCart.items,
       services,
       firebaseUser.uid,
       orderId,
     );
+    const pendingArtworkPaths = copiedArtworks.pendingPaths;
+    copiedOrderPaths = copiedArtworks.orderPaths;
     const publicAppUrl = getPublicAppUrl(req);
     const webhookUrl = `${publicAppUrl}/api/webhook/pagbank`;
     const returnUrl = `${publicAppUrl}/?pagbank=return&orderId=${encodeURIComponent(orderId)}`;
@@ -1281,6 +1352,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       clienteTelefone: phone.digits,
       legalAcceptance,
     });
+    orderCreated = true;
 
     try {
       const checkoutBody: PlainRecord = {
@@ -1456,7 +1528,24 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       throw error;
     }
   } catch (error) {
-    if (ownsRequest && requestRef && !orderRef) {
+    if (ownsRequest && requestRef && !orderCreated) {
+      if (copiedOrderPaths.length > 0) {
+        try {
+          const { bucket } = getAdminServices();
+          const cleanupResults = await Promise.allSettled(
+            copiedOrderPaths.map(path => bucket.file(path).delete()),
+          );
+          if (cleanupResults.some(result => result.status === 'rejected')) {
+            throw new Error('Ao menos um arquivo definitivo não pôde ser removido.');
+          }
+        } catch (cleanupError) {
+          logEvent('error', 'checkout_artwork_cleanup_failed', {
+            request_id: responseRequestId(res),
+            copied_files: copiedOrderPaths.length,
+            error: cleanupError,
+          });
+        }
+      }
       await requestRef.set({ status: 'failed', failedAt: new Date().toISOString() }, { merge: true }).catch(() => undefined);
     }
     sendError(res, error);
@@ -1605,6 +1694,48 @@ app.get('/api/orders/:orderId/artwork/:itemId', async (req, res) => {
       responseDisposition: 'attachment',
     });
     res.json({ url, expires_in: 300, filename: textValue(item?.arquivoNome, 120) || 'arte' });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.get('/api/orders/:orderId/model/:itemId', async (req, res) => {
+  try {
+    const firebaseUser = await requireFirebaseUser(req);
+    const services = getAdminServices();
+    const { db, bucket } = services;
+    enforceRateLimit(`personalization-model:${firebaseUser.uid}`, 20, 60_000);
+    await enforceDistributedRateLimit(db, `personalization-model:${firebaseUser.uid}`, 60, 60_000);
+
+    const orderId = textValue(req.params.orderId, 64);
+    const itemId = textValue(req.params.itemId, 150);
+    if (!orderId || !itemId || !/^[A-Za-z0-9_-]+$/.test(orderId) || !/^[A-Za-z0-9_-]+$/.test(itemId)) {
+      throw new HttpError(400, 'Pedido ou item inválido.');
+    }
+
+    const snapshot = await db.collection('orders').doc(orderId).get();
+    if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
+    const order = snapshot.data() as PlainRecord;
+    if (order.userId !== firebaseUser.uid && !(await userIsAdmin(firebaseUser, db))) {
+      throw new HttpError(403, 'Você não pode acessar este modelo personalizado.');
+    }
+
+    const items = Array.isArray(order.itens) ? order.itens.filter(isPlainRecord) : [];
+    const item = items.find(candidate => candidate.id === itemId);
+    const modelPath = item?.modeloPath;
+    if (!isOrderPersonalizationModelPath(modelPath, String(order.userId || ''), orderId)) {
+      throw new HttpError(404, 'Este item não possui um modelo composto armazenado.');
+    }
+
+    const file = bucket.file(modelPath);
+    const [exists] = await file.exists();
+    if (!exists) throw new HttpError(404, 'O modelo composto não está mais disponível.');
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 5 * 60_000,
+      responseDisposition: 'inline',
+    });
+    res.json({ url, expires_in: 300, filename: textValue(item?.modeloNome, 120) || 'modelo.webp' });
   } catch (error) {
     sendError(res, error);
   }

@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   isAllowedArtwork,
   isOrderArtworkPath,
+  isOrderPersonalizationModelPath,
   isPendingArtworkPath,
+  isPendingPersonalizationModelPath,
   MAX_ARTWORK_BYTES,
   matchesArtworkSignature,
   sanitizeArtworkName,
@@ -34,4 +36,13 @@ test('restringe a arte ao usuário e pedido correspondentes', () => {
   assert.equal(isOrderArtworkPath(ordered, 'user-1', 'GB-123'), true);
   assert.equal(isOrderArtworkPath(ordered, 'user-1', 'GB-999'), false);
   assert.equal(sanitizeArtworkName('../../arquivo\u0000.pdf'), '..-..-arquivo.pdf');
+});
+
+test('restringe o modelo composto a imagens privadas do usuário e pedido', () => {
+  const fileName = `${'b2'.repeat(16)}.webp`;
+  assert.equal(isPendingPersonalizationModelPath(`artworks/alice/pending/${fileName}`, 'alice'), true);
+  assert.equal(isPendingPersonalizationModelPath(`artworks/alice/pending/${'b2'.repeat(16)}.pdf`, 'alice'), false);
+  assert.equal(isPendingPersonalizationModelPath(`artworks/bob/pending/${fileName}`, 'alice'), false);
+  assert.equal(isOrderPersonalizationModelPath(`artworks/alice/orders/GB-123/item-1/${fileName}`, 'alice', 'GB-123'), true);
+  assert.equal(isOrderPersonalizationModelPath(`artworks/alice/orders/GB-OUTRO/item-1/${fileName}`, 'alice', 'GB-123'), false);
 });
