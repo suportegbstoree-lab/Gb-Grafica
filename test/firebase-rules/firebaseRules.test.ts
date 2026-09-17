@@ -591,8 +591,17 @@ test('Storage: imagens administrativas são públicas e somente administrador al
   const userStorage = authenticatedContext('alice').storage();
   const publicStorage = environment().unauthenticatedContext().storage();
 
+<<<<<<< HEAD
 for (const [scope, owner] of [['categories', 'livros'], ['site', 'logo'], ['promotions', 'oferta']] as const) {
     const objectPath = `catalog/${scope}/${owner}/${scope[0].repeat(32)}.png`;
+=======
+  for (const [scope, owner, uploadIdCharacter] of [
+    ['categories', 'livros', 'a'],
+    ['site', 'logo', 'b'],
+    ['promotions', 'oferta', 'c'],
+  ] as const) {
+    const objectPath = `catalog/${scope}/${owner}/${uploadIdCharacter.repeat(32)}.png`;
+>>>>>>> 503350f (fix(personalization): corrige CORS ao gerar modelo composto)
     const adminReference = adminStorage.ref(objectPath);
     await assertUploadFails(userStorage.ref(objectPath).put(
       new Uint8Array([1]),
