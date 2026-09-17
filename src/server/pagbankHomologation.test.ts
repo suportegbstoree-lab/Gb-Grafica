@@ -185,30 +185,6 @@ test('monta evidência do webhook com assinatura removida', () => {
     (request.headers as Record<string, string>)['x-authenticity-token'],
     '[REDACTED]',
   );
-  assert.equal(evidence.verification, 'signature');
-});
-
-test('identifica webhook confirmado por consulta sem inventar header ausente', () => {
-  const evidence = buildPagBankWebhookEvidence({
-    orderId,
-    eventHash: 'd'.repeat(64),
-    requestUrl: 'https://www.gblgrafica.com.br/api/webhook/pagbank',
-    contentType: 'application/json',
-    requestBody: { id: 'ORDE_123', reference_id: orderId, charges: [{ status: 'PAID' }] },
-    requestReceivedAt: '2026-09-09T12:05:00.000Z',
-    responseStatus: 200,
-    responseBody: { received: true, verified_by: 'provider_lookup', applied: true },
-    responseSentAt: '2026-09-09T12:05:00.100Z',
-    verification: 'provider_lookup',
-    authenticityHeaderPresent: false,
-  });
-
-  const request = evidence.request as Record<string, unknown>;
-  assert.equal(evidence.verification, 'provider_lookup');
-  assert.equal(
-    (request.headers as Record<string, string>)['x-authenticity-token'],
-    '[NOT PROVIDED]',
-  );
 });
 
 test('formata anexo com request, response, meios e webhook reais', () => {
@@ -247,7 +223,6 @@ test('formata anexo com request, response, meios e webhook reais', () => {
   assert.match(report, /HTTP 201/);
   assert.match(report, new RegExp(checkoutId));
   assert.match(report, /WEBHOOK 1 — REQUEST RECEBIDO DO PAGBANK/);
-  assert.match(report, /Verificação: assinatura SHA-256 válida/);
   assert.match(report, /Authorization: Bearer \[REDACTED\]/);
 });
 

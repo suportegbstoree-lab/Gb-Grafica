@@ -25,16 +25,11 @@
 
 ## 2026-09-12 — Reconciliação segura de pagamentos PagBank
 
-- Mantida a validação oficial `SHA-256(token-payload)` para notificações que chegam com `x-authenticity-token` válido.
-- Notificações cuja assinatura esteja ausente ou divergente passam a funcionar somente como gatilho para uma consulta autenticada ao Checkout PagBank; nenhum estado recebido no corpo não autenticado é aplicado diretamente.
-- A confirmação alternativa exige que referência, pedido, cobrança, estado, valor, moeda e método coincidam com o evento obtido diretamente da API PagBank.
-- Adicionados limites locais e persistentes específicos para impedir abuso das consultas alternativas.
-- Evidências de homologação agora distinguem assinatura SHA-256 válida de confirmação independente pela API PagBank e não inventam um header que não tenha sido recebido.
 - Corrigida a reconciliação de boletos do Checkout Hospedado que retornam cobrança exatamente R$ 1,00 acima do valor dos itens.
 - O acréscimo é aceito somente quando o método confirmado pelo PagBank é `BOLETO`; cartão e Pix continuam exigindo igualdade exata e qualquer subpagamento permanece bloqueado.
 - Registrados método, total efetivamente cobrado e acréscimo do comprador no pedido e no evento financeiro para auditoria.
 - Confirmado em teste real que o Sandbox pode entregar o webhook com assinatura ausente ou incompatível, apesar de registrar a cobrança como `PAID`.
-- Notificações não autenticadas continuam sem permissão para alterar pedidos com os dados recebidos; apenas a resposta consultada com o token secreto do servidor pode ser aplicada.
+- Mantida obrigatória a validação SHA-256 dos webhooks; notificações não autenticadas continuam sem permissão para alterar pedidos.
 - Adicionada reconciliação autenticada consultando o Checkout e o Pedido diretamente na API PagBank.
 - Validados checkout, referência interna, identificadores do provedor, valor e moeda antes de confirmar qualquer pagamento no Firebase.
 - Adicionada deduplicação dos eventos obtidos por reconciliação e preservada a proteção contra regressão de status.
