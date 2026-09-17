@@ -1,0 +1,281 @@
+i  emulators: Starting emulators: firestore, storage
+i  emulators: Detected demo project ID "demo-gb-grafica-rules", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
+✔  firestore: Firestore Emulator was started in standard edition.
+✔  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: npm run test:rules:unit
+TAP version 13
+# [2026-09-17T16:12:12.944Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a519 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L165, false for 'create' @ L201, false for 'update' @ L165, false for 'update' @ L201
+# Subtest: Firestore: catálogo e configuração são públicos somente para leitura
+ok 1 - Firestore: catálogo e configuração são públicos somente para leitura
+  ---
+  duration_ms: 2995.202451
+  type: 'test'
+  ...
+# [2026-09-17T16:12:13.243Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a51b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L147:32 for 'create' @ L147, false for 'create' @ L201, evaluation error at L147:32 for 'update' @ L147, false for 'update' @ L201, false for 'create' @ L147, false for 'create' @ L201
+# [2026-09-17T16:12:13.284Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a51c error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L147:32 for 'update' @ L147, false for 'update' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# [2026-09-17T16:12:13.337Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a51d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L154:24 for 'delete' @ L154, false for 'delete' @ L201, false for 'delete' @ L154, false for 'delete' @ L201
+# [2026-09-17T16:12:13.400Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a51e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L165:23 for 'create' @ L165, false for 'create' @ L201, evaluation error at L165:23 for 'update' @ L165, false for 'update' @ L201, false for 'create' @ L165, false for 'create' @ L201
+# Subtest: Firestore: usuário comum não altera catálogo nem configuração
+ok 2 - Firestore: usuário comum não altera catálogo nem configuração
+  ---
+  duration_ms: 453.618239
+  type: 'test'
+  ...
+# Subtest: Firestore: custom claim administrativa gerencia documentos válidos do catálogo
+ok 3 - Firestore: custom claim administrativa gerencia documentos válidos do catálogo
+  ---
+  duration_ms: 205.521805
+  type: 'test'
+  ...
+# Subtest: Firestore: perfil legado com role admin mantém o acesso administrativo
+ok 4 - Firestore: perfil legado com role admin mantém o acesso administrativo
+  ---
+  duration_ms: 201.639772
+  type: 'test'
+  ...
+# [2026-09-17T16:12:13.877Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a522 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L147, false for 'create' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# [2026-09-17T16:12:13.902Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a523 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L153, false for 'create' @ L201, false for 'update' @ L153, false for 'update' @ L201
+# [2026-09-17T16:12:13.924Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a524 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L159, false for 'create' @ L201, false for 'update' @ L159, false for 'update' @ L201
+# [2026-09-17T16:12:13.952Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a525 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L159, false for 'create' @ L201, false for 'update' @ L159, false for 'update' @ L201
+# [2026-09-17T16:12:14.016Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a526 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L147, false for 'create' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# Subtest: Firestore: administrador não grava documentos de catálogo inválidos
+ok 5 - Firestore: administrador não grava documentos de catálogo inválidos
+  ---
+  duration_ms: 206.040424
+  type: 'test'
+  ...
+# Subtest: Firestore: pedido só pode ser lido pelo proprietário ou por administrador
+ok 6 - Firestore: pedido só pode ser lido pelo proprietário ou por administrador
+  ---
+  duration_ms: 268.98583
+  type: 'test'
+  ...
+# Subtest: Firestore: consulta de pedidos exige filtro do proprietário para usuário comum
+ok 7 - Firestore: consulta de pedidos exige filtro do proprietário para usuário comum
+  ---
+  duration_ms: 206.824192
+  type: 'test'
+  ...
+# [2026-09-17T16:12:14.575Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a531 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L171, false for 'create' @ L201, false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:12:14.614Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a532 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L171, false for 'create' @ L201, false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:12:14.640Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a533 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:12:14.670Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a534 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:12:14.683Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a535 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L173, false for 'delete' @ L201
+# Subtest: Firestore: nenhum cliente altera pedidos diretamente, inclusive administrador
+ok 8 - Firestore: nenhum cliente altera pedidos diretamente, inclusive administrador
+  ---
+  duration_ms: 192.869709
+  type: 'test'
+  ...
+# [2026-09-17T16:12:14.789Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a539 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L176, false for 'create' @ L201, false for 'update' @ L176, false for 'update' @ L201
+# [2026-09-17T16:12:14.808Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a53a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L176, false for 'create' @ L201, false for 'update' @ L176, false for 'update' @ L201
+# Subtest: Firestore: subcoleções de pedidos permanecem exclusivas do servidor
+ok 9 - Firestore: subcoleções de pedidos permanecem exclusivas do servidor
+  ---
+  duration_ms: 122.833697
+  type: 'test'
+  ...
+# [2026-09-17T16:12:14.910Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a53b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L182:24 for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# Subtest: Firestore: usuário cria somente o próprio perfil básico
+ok 10 - Firestore: usuário cria somente o próprio perfil básico
+  ---
+  duration_ms: 101.04394
+  type: 'test'
+  ...
+# [2026-09-17T16:12:14.980Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a53c error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L182:24 for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# [2026-09-17T16:12:15.010Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a53d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# [2026-09-17T16:12:15.039Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a53e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# Subtest: Firestore: usuário não pode se promover nem falsificar UID ou e-mail
+ok 11 - Firestore: usuário não pode se promover nem falsificar UID ou e-mail
+  ---
+  duration_ms: 130.841112
+  type: 'test'
+  ...
+# [2026-09-17T16:12:15.139Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a540 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:12:15.162Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a541 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:12:15.183Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a542 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# Subtest: Firestore: atualização do próprio perfil preserva campos de identidade e função
+ok 12 - Firestore: atualização do próprio perfil preserva campos de identidade e função
+  ---
+  duration_ms: 144.153265
+  type: 'test'
+  ...
+# [2026-09-17T16:12:15.345Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a545 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:12:15.373Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a546 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L192:24 for 'delete' @ L192, false for 'delete' @ L201, false for 'delete' @ L192, false for 'delete' @ L201
+# Subtest: Firestore: perfis alheios são privados e somente administrador pode gerenciá-los
+ok 13 - Firestore: perfis alheios são privados e somente administrador pode gerenciá-los
+  ---
+  duration_ms: 270.781265
+  type: 'test'
+  ...
+# [2026-09-17T16:12:15.523Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a54a error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# [2026-09-17T16:12:15.543Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a54b error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# [2026-09-17T16:12:15.558Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a54c error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L197, false for 'create' @ L201, false for 'update' @ L197, false for 'update' @ L201
+# [2026-09-17T16:12:15.580Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x64a9a54d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# Subtest: Firestore: coleções técnicas e caminhos desconhecidos são inacessíveis ao cliente
+ok 14 - Firestore: coleções técnicas e caminhos desconhecidos são inacessíveis ao cliente
+  ---
+  duration_ms: 124.443122
+  type: 'test'
+  ...
+# Subtest: Storage: usuário anônimo não envia, lê ou remove arte pendente
+ok 15 - Storage: usuário anônimo não envia, lê ou remove arte pendente
+  ---
+  duration_ms: 272.658132
+  type: 'test'
+  ...
+# Subtest: Storage: proprietário envia, lê e remove a própria arte pendente
+ok 16 - Storage: proprietário envia, lê e remove a própria arte pendente
+  ---
+  duration_ms: 58.712371
+  type: 'test'
+  ...
+# Subtest: Storage: um usuário não acessa a pasta pendente de outro
+ok 17 - Storage: um usuário não acessa a pasta pendente de outro
+  ---
+  duration_ms: 76.219042
+  type: 'test'
+  ...
+# Subtest: Storage: upload exige ownerId correspondente ao usuário autenticado
+ok 18 - Storage: upload exige ownerId correspondente ao usuário autenticado
+  ---
+  duration_ms: 52.546468
+  type: 'test'
+  ...
+# Subtest: Storage: modelo composto exige tipo raster e metadado técnico
+ok 19 - Storage: modelo composto exige tipo raster e metadado técnico
+  ---
+  duration_ms: 80.449014
+  type: 'test'
+  ...
+# Subtest: Storage: upload rejeita arquivo vazio, tipo proibido e limite excedido
+ok 20 - Storage: upload rejeita arquivo vazio, tipo proibido e limite excedido
+  ---
+  duration_ms: 259.622573
+  type: 'test'
+  ...
+# Subtest: Storage: limite exato de 15 MB continua permitido
+ok 21 - Storage: limite exato de 15 MB continua permitido
+  ---
+  duration_ms: 203.374615
+  type: 'test'
+  ...
+# Subtest: Storage: nome gerado e extensão precisam corresponder ao MIME
+ok 22 - Storage: nome gerado e extensão precisam corresponder ao MIME
+  ---
+  duration_ms: 31.479351
+  type: 'test'
+  ...
+# Subtest: Storage: PDF, JPG, PNG e WebP válidos permanecem aceitos
+ok 23 - Storage: PDF, JPG, PNG e WebP válidos permanecem aceitos
+  ---
+  duration_ms: 96.620493
+  type: 'test'
+  ...
+# Subtest: Storage: arquivo pendente existente não pode ser sobrescrito
+ok 24 - Storage: arquivo pendente existente não pode ser sobrescrito
+  ---
+  duration_ms: 50.207188
+  type: 'test'
+  ...
+# Subtest: Storage: arte vinculada ao pedido é somente leitura para o proprietário
+ok 25 - Storage: arte vinculada ao pedido é somente leitura para o proprietário
+  ---
+  duration_ms: 66.051645
+  type: 'test'
+  ...
+# Subtest: Storage: imagem do catálogo é pública somente para leitura individual
+ok 26 - Storage: imagem do catálogo é pública somente para leitura individual
+  ---
+  duration_ms: 39.420598
+  type: 'test'
+  ...
+# Subtest: Storage: somente claim administrativa envia e remove imagens válidas do catálogo
+ok 27 - Storage: somente claim administrativa envia e remove imagens válidas do catálogo
+  ---
+  duration_ms: 53.410804
+  type: 'test'
+  ...
+# Subtest: Storage: imagem de catálogo valida tamanho, MIME, nome e metadados
+ok 28 - Storage: imagem de catálogo valida tamanho, MIME, nome e metadados
+  ---
+  duration_ms: 190.448379
+  type: 'test'
+  ...
+# Subtest: Storage: imagem existente do catálogo não pode ser sobrescrita
+ok 29 - Storage: imagem existente do catálogo não pode ser sobrescrita
+  ---
+  duration_ms: 51.210471
+  type: 'test'
+  ...
+# Subtest: Storage: imagens administrativas são públicas e somente administrador altera
+not ok 30 - Storage: imagens administrativas são públicas e somente administrador altera
+  ---
+  duration_ms: 74.033732
+  type: 'test'
+  location: '/home/hendo/Codes/Gb-Grafica/test/firebase-rules/firebaseRules.test.ts:1:20754'
+  failureType: 'testCodeFailure'
+  error: "Firebase Storage: User does not have permission to access 'catalog/site/logo/ssssssssssssssssssssssssssssssss.png'. (storage/unauthorized)"
+  code: 'storage/unauthorized'
+  name: 'FirebaseError'
+  ...
+# Subtest: Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos
+ok 31 - Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos
+  ---
+  duration_ms: 147.881953
+  type: 'test'
+  ...
+# Subtest: Storage: caminhos fora das áreas autorizadas são bloqueados
+ok 32 - Storage: caminhos fora das áreas autorizadas são bloqueados
+  ---
+  duration_ms: 50.183941
+  type: 'test'
+  ...
+1..32
+# tests 32
+# suites 0
+# pass 31
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 8061.249271
+⚠  Script exited unsuccessfully (code 1)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+i  storage: Stopping Storage Emulator
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator
+
+Error: Script "npm run test:rules:unit" exited with code 1
