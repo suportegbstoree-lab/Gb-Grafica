@@ -591,8 +591,12 @@ test('Storage: imagens administrativas são públicas e somente administrador al
   const userStorage = authenticatedContext('alice').storage();
   const publicStorage = environment().unauthenticatedContext().storage();
 
-  for (const [scope, owner] of [['categories', 'livros'], ['site', 'logo'], ['promotions', 'oferta']] as const) {
-    const objectPath = `catalog/${scope}/${owner}/${scope[0].repeat(32)}.png`;
+  for (const [scope, owner, uploadIdCharacter] of [
+    ['categories', 'livros', 'a'],
+    ['site', 'logo', 'b'],
+    ['promotions', 'oferta', 'c'],
+  ] as const) {
+    const objectPath = `catalog/${scope}/${owner}/${uploadIdCharacter.repeat(32)}.png`;
     const adminReference = adminStorage.ref(objectPath);
     await assertUploadFails(userStorage.ref(objectPath).put(
       new Uint8Array([1]),
@@ -605,6 +609,11 @@ test('Storage: imagens administrativas são públicas e somente administrador al
     await assertSucceeds(publicStorage.ref(objectPath).getMetadata());
     await assertSucceeds(adminReference.delete());
   }
+
+  await assertUploadFails(adminStorage.ref('catalog/site/logo/logo.png').put(
+    new Uint8Array([1]),
+    catalogImageMetadata('admin-claim', 'image/png'),
+  ));
 });
 
 test('Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos', async () => {
