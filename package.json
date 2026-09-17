@@ -36,10 +36,17 @@
     "firebase": "^12.11.0",
     "firebase-admin": "^14.4.0",
     "lucide-react": "^1.47.0",
+<<<<<<< HEAD
     "motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.14.0",
+=======
+    "motion": "^13.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+>>>>>>> 80d2c02 (Upgrade react-router-dom)
     "tailwind-merge": "^3.5.0",
     "tsx": "^4.21.0",
     "vite": "^6.2.0"
