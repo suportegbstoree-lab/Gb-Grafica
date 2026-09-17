@@ -57,8 +57,12 @@
     "@types/node": "^22.20.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+<<<<<<< HEAD
 >>>>>>> 0ae432f (Upgrade @types/express)
     "autoprefixer": "^10.4.21",
+=======
+    "autoprefixer": "^10.6.1",
+>>>>>>> 9b5014b (Upgrade autoprefixer)
     "firebase-tools": "15.30.1",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2"
