@@ -1,4 +1,6 @@
-import { sanitizeArtworkName } from './artwork';
+// Este módulo também é executado pela Function ESM da Vercel. A extensão .js
+// é obrigatória em imports relativos após a transpiração de TypeScript.
+import { sanitizeArtworkName } from './artwork.js';
 
 export const PERSONALIZATION_MODEL_MIME_TYPE = 'image/webp';
 export const MAX_PERSONALIZATION_MODEL_BYTES = 15 * 1024 * 1024;
@@ -60,4 +62,3 @@ export function personalizationModelName(productName: string, sourceName?: strin
     .slice(0, 90) || 'personalizacao';
   return `${normalized}-modelo.webp`;
 }
-
