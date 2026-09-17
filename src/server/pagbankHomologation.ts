@@ -31,6 +31,8 @@ export interface WebhookEvidenceInput {
   responseStatus: number;
   responseBody: unknown;
   responseSentAt: string;
+  verification?: 'signature' | 'provider_lookup';
+  authenticityHeaderPresent?: boolean;
 }
 
 export function isPagBankHomologationCaptureEnabled(
@@ -89,12 +91,15 @@ export function buildPagBankWebhookEvidence(input: WebhookEvidenceInput): PlainR
   return {
     captured_at: input.requestReceivedAt,
     event_hash: input.eventHash,
+    verification: input.verification || 'signature',
     request: {
       method: 'POST',
       url: input.requestUrl,
       headers: {
         'Content-Type': input.contentType || 'application/json',
-        'x-authenticity-token': '[REDACTED]',
+        'x-authenticity-token': input.authenticityHeaderPresent === false
+          ? '[NOT PROVIDED]'
+          : '[REDACTED]',
       },
       body: sanitizeEvidenceValue(input.requestBody),
     },
@@ -211,7 +216,7 @@ export function formatPagBankHomologationReport(
       : [];
 
     if (!webhooks.length) {
-      lines.push('WEBHOOKS: nenhum webhook autenticado foi capturado para este pedido.', '');
+      lines.push('WEBHOOKS: nenhum webhook validado foi capturado para este pedido.', '');
       return;
     }
 
@@ -222,6 +227,7 @@ export function formatPagBankHomologationReport(
         `WEBHOOK ${webhookIndex + 1} — REQUEST RECEBIDO DO PAGBANK`,
         `${stringValue(webhookRequest.method) || 'POST'} ${stringValue(webhookRequest.url)}`,
         `Captured-At: ${stringValue(webhook.captured_at)}`,
+        `Verificação: ${webhookVerificationLabel(webhook.verification)}`,
         formatHeaders(webhookRequest.headers),
         '',
         formatJson(webhookRequest.body),
@@ -237,6 +243,12 @@ export function formatPagBankHomologationReport(
   });
 
   return `${lines.join('\n').trim()}\n`;
+}
+
+function webhookVerificationLabel(value: unknown): string {
+  return value === 'provider_lookup'
+    ? 'consulta autenticada à API PagBank'
+    : 'assinatura SHA-256 válida';
 }
 
 function sanitizeEvidenceValue(

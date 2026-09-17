@@ -51,6 +51,8 @@ test('bloqueia produto duplicado, categoria inexistente e texto sem rótulo', ()
   assert.equal(validateProductDraft(validProduct, categories, existing).ok, false);
   assert.equal(validateProductDraft({ ...validProduct, categoria: 'Outra' }, categories, []).ok, false);
   assert.equal(validateProductDraft({ ...validProduct, tipoInput: 'texto', labelTexto: '' }, categories, []).ok, false);
+  assert.equal(validateProductDraft({ ...validProduct, tipoInput: 'texto_arte', labelTexto: '' }, categories, []).ok, false);
+  assert.equal(validateProductDraft({ ...validProduct, tipoInput: 'texto_arte', labelTexto: 'Nome' }, categories, []).ok, true);
 });
 
 test('limita combinações de atributos antes da gravação', () => {

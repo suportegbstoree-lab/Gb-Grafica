@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-17 — Gestão operacional do painel administrativo
+
+- Categorias agora podem ser editadas sem trocar o identificador do documento; renomeações atualizam os produtos e as promoções vinculadas.
+- Adicionados upload de ícone pelo computador e controles para ordenar a navegação das categorias.
+- Pedidos passaram a ser organizados em cinco filas recolhíveis: aguardando pagamento, pagamento confirmado, em produção, pronto para retirada e entregue.
+- Mantida a separação interna entre situação financeira e andamento de produção, impedindo que uma ação administrativa simule confirmação de pagamento.
+- Promoções agora possuem alvo obrigatório por produto ou categoria e desconto percentual ou valor fixo.
+- A loja exibe preço original riscado, preço promocional e porcentagem calculada, inclusive quando o desconto foi informado em reais.
+- O servidor recalcula a melhor promoção diretamente dos documentos do Firestore e ignora preços ou identificadores promocionais enviados pelo navegador.
+- Logo, banner principal, banners promocionais e ícones de categoria agora aceitam upload de JPG, PNG ou WebP no painel.
+- Removida da interface a configuração de PIX manual legada; o checkout continua exclusivamente hospedado no PagBank.
+- A área de configurações foi reorganizada em identidade visual, atendimento, benefícios, fontes de personalização e dados legais.
+- Fontes de personalização passaram a ser cadastradas no painel, como família CSS ou arquivo WOFF2; não existe mais uma lista selecionável definida no código.
+- A política de segurança de conteúdo passou a liberar fontes somente do próprio site, dados embutidos e Firebase Storage.
+- Arquivos administrativos usam caminhos restritos, nomes aleatórios, limite de tamanho, conferência de assinatura no navegador e escrita exclusiva para administrador no Storage.
+- Adicionados testes para descontos, filas operacionais, fontes e caminhos de arquivos administrativos.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
+## 2026-09-17 — Personalização visual de texto e arte obrigatória
+
+- Removida da loja a opção de enviar a arte posteriormente pelo WhatsApp.
+- Produtos configurados para receber arte agora só podem entrar no carrinho depois do upload privado do arquivo.
+- Adicionado ao painel administrativo o tipo de personalização `Texto + Imagem`, combinando arquivo obrigatório e texto configurável.
+- Criado drawer acessível para o cliente informar o texto, escolher entre fontes permitidas e posicioná-lo por clique, arraste ou teclado em uma prévia do produto ou da arte enviada.
+- Texto, identificador da fonte e coordenadas proporcionais X/Y passam a compor a identidade do item no carrinho e são enviados ao servidor como dados estruturados.
+- O servidor normaliza e valida o tipo de personalização, a fonte, o limite do texto, as coordenadas e a presença da arte antes de criar o pedido.
+- O carrinho e a área de pedidos do cliente exibem um resumo da personalização escolhida.
+- O painel administrativo exibe para produção o texto, a fonte, as coordenadas e um mapa proporcional da posição, mantendo o download privado da arte separado.
+- Pedidos antigos com texto simples ou arte pendente continuam legíveis, sem reabrir a opção removida para novas compras.
+- Adicionados testes unitários, de regras e de navegador para o novo tipo combinado e para o fluxo de texto até o payload do checkout.
+- Mantida intacta a folha global `src/index.css` e preservada a identidade visual da loja.
+
 ## 2026-09-17 — Correção do cadastro e upload de imagens do catálogo
 
 - Corrigida a perda de foco que enviava o cursor de volta ao botão de fechar após cada caractere digitado no editor de produtos.
@@ -25,11 +57,16 @@
 
 ## 2026-09-12 — Reconciliação segura de pagamentos PagBank
 
+- Mantida a validação oficial `SHA-256(token-payload)` para notificações que chegam com `x-authenticity-token` válido.
+- Notificações cuja assinatura esteja ausente ou divergente passam a funcionar somente como gatilho para uma consulta autenticada ao Checkout PagBank; nenhum estado recebido no corpo não autenticado é aplicado diretamente.
+- A confirmação alternativa exige que referência, pedido, cobrança, estado, valor, moeda e método coincidam com o evento obtido diretamente da API PagBank.
+- Adicionados limites locais e persistentes específicos para impedir abuso das consultas alternativas.
+- Evidências de homologação agora distinguem assinatura SHA-256 válida de confirmação independente pela API PagBank e não inventam um header que não tenha sido recebido.
 - Corrigida a reconciliação de boletos do Checkout Hospedado que retornam cobrança exatamente R$ 1,00 acima do valor dos itens.
 - O acréscimo é aceito somente quando o método confirmado pelo PagBank é `BOLETO`; cartão e Pix continuam exigindo igualdade exata e qualquer subpagamento permanece bloqueado.
 - Registrados método, total efetivamente cobrado e acréscimo do comprador no pedido e no evento financeiro para auditoria.
 - Confirmado em teste real que o Sandbox pode entregar o webhook com assinatura ausente ou incompatível, apesar de registrar a cobrança como `PAID`.
-- Mantida obrigatória a validação SHA-256 dos webhooks; notificações não autenticadas continuam sem permissão para alterar pedidos.
+- Notificações não autenticadas continuam sem permissão para alterar pedidos com os dados recebidos; apenas a resposta consultada com o token secreto do servidor pode ser aplicada.
 - Adicionada reconciliação autenticada consultando o Checkout e o Pedido diretamente na API PagBank.
 - Validados checkout, referência interna, identificadores do provedor, valor e moeda antes de confirmar qualquer pagamento no Firebase.
 - Adicionada deduplicação dos eventos obtidos por reconciliação e preservada a proteção contra regressão de status.

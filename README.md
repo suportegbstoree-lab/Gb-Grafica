@@ -116,6 +116,15 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O navegador envia diretamente ao Cloud Storage usando `storage.rules`.
 - O pedido guarda apenas o caminho privado do arquivo.
 - Cliente e administrador recebem um link assinado de cinco minutos através da API.
+- A arte deve ser anexada antes de o produto entrar no carrinho; não existe envio posterior pelo WhatsApp em novas compras.
+
+### Personalização de texto
+
+- O painel permite configurar produtos como `Texto`, `Upload de Arte`, `Texto + Imagem` ou sem personalização.
+- O cliente informa o texto em um drawer, escolhe uma das fontes permitidas e posiciona o conteúdo por clique, arraste ou teclado em uma prévia.
+- O pedido armazena texto, fonte e posição proporcional em porcentagem, além do texto simples mantido para compatibilidade.
+- O servidor valida os dados estruturados e inclui a personalização na identidade do item, evitando juntar no carrinho versões visualmente diferentes.
+- A área administrativa apresenta os dados e um mapa de posição para a equipe de produção; quando houver imagem, a arte privada continua disponível pelo botão de download assinado.
 
 ### Imagens do catálogo
 
@@ -133,7 +142,9 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O webhook é deduplicado pelo hash do corpo recebido.
 - Atualizações financeiras usam transação Firestore.
 - Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido. Cartão e Pix exigem o valor exato; no boleto do Checkout Hospedado também é reconhecido exclusivamente o acréscimo de R$ 1,00 devolvido pelo PagBank ao comprador.
-- Webhooks sem assinatura válida são recusados e nunca alteram o pedido.
+- Webhooks com assinatura válida seguem a verificação oficial `SHA-256(token-payload)` sobre o corpo bruto.
+- Se o Sandbox omitir ou enviar uma assinatura divergente, o payload é descartado como fonte de verdade e serve apenas para acionar uma consulta autenticada ao PagBank. Somente o evento devolvido pela API pode alterar o pedido.
+- A consulta alternativa possui limites locais e persistentes e exige coincidência dos identificadores e dados financeiros antes de registrar a notificação como evidência.
 - No retorno do Checkout, uma rota autenticada consulta o checkout e as cobranças diretamente no PagBank como mecanismo de reconciliação.
 - A reconciliação usa somente identificadores já vinculados ao pedido e constrói os endpoints no servidor, sem seguir URLs recebidas do navegador ou do payload.
 - Eventos reconciliados também são deduplicados e passam pelas mesmas validações de valor, moeda, método e transição de estado aplicadas ao webhook.
@@ -141,7 +152,7 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 
 ## Evidências para homologação PagBank
 
-O modo de homologação registra a comunicação real do servidor com o Checkout PagBank e os webhooks autenticados. Ele não registra o token do PagBank nem a assinatura do webhook e só funciona em Sandbox.
+O modo de homologação registra a comunicação real do servidor com o Checkout PagBank e os webhooks validados por assinatura ou por consulta autenticada à API PagBank. Ele não registra o token do PagBank nem a assinatura do webhook e só funciona em Sandbox.
 
 Use um ambiente local ou Preview isolado com:
 
@@ -173,7 +184,7 @@ O exportador lê a coleção técnica `_pagbankHomologation` usando Firebase Adm
 - endpoint, método e headers seguros do request;
 - body exato enviado a `/checkouts`;
 - status e body exatos retornados pelo PagBank;
-- requests reais dos webhooks autenticados;
+- requests reais dos webhooks e o método usado para verificá-los;
 - responses reais devolvidos pela aplicação.
 
 O arquivo exportado é ignorado pelo Git. Revise-o antes do envio e confirme que os três meios aparecem. Ao terminar, volte `PAGBANK_HOMOLOGATION_CAPTURE` para `false` e remova a variável do ambiente de homologação.

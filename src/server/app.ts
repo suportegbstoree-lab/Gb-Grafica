@@ -39,12 +39,26 @@ import {
   normalizeCheckoutRequestId,
   trustedPagBankPayLink,
 } from './checkoutSecurity.js';
-import { verifyPagBankAuthenticity } from './pagbankAuthenticity.js';
+import { pagBankAuthenticityFailureReason } from './pagbankAuthenticity.js';
+import type { PagBankAuthenticityFailureReason } from './pagbankAuthenticity.js';
 import {
   savePagBankCheckoutEvidence,
   savePagBankWebhookEvidence,
 } from './pagbankHomologation.js';
+import {
+  pagBankNotificationMatchesProviderEvent,
+  parsePagBankNotificationForProviderLookup,
+} from './pagbankWebhookFallback.js';
 import { isCurrentLegalAcceptance, LEGAL_VERSIONS } from '../lib/legal.js';
+import {
+  isProductCustomizationType,
+  legacyTextCustomization,
+  normalizeTextCustomization,
+  productRequiresArtwork,
+  productRequiresText,
+  textCustomizationFingerprint,
+  type TextCustomization,
+} from '../lib/textCustomization.js';
 import {
   logEvent,
   requestObservability,
@@ -77,8 +91,8 @@ interface NormalizedCartItem {
     quantidade: number;
     arquivoPath?: string;
     arquivoNome?: string;
-    artePendente?: boolean;
     textoPersonalizado?: string;
+    personalizacaoTexto?: TextCustomization;
   };
   checkoutItem: {
     reference_id: string;
@@ -95,6 +109,13 @@ interface PagBankCheckoutResponse {
   id?: string;
   status?: string;
   links?: Array<{ rel?: string; href?: string }>;
+}
+
+interface StoredPaymentReconciliationResult {
+  paymentStatus: unknown;
+  pagbankStatus: unknown;
+  reconciled: boolean;
+  providerEvent: PagBankWebhookEvent | null;
 }
 
 class HttpError extends Error {
@@ -534,50 +555,58 @@ async function normalizeCart(
 
     const productImage = httpUrl(product.imagem);
     const productDescription = textValue(product.desc, 255) || productName;
-    const productType = product.tipoInput === 'arte' || product.tipoInput === 'texto'
-      ? product.tipoInput
-      : 'nenhum';
-    const artworkPath = productType === 'arte' ? textValue(item.arquivoPath, 300) : '';
-    const artworkPending = productType === 'arte' && item.artePendente === true;
+    const productType = isProductCustomizationType(product.tipoInput) ? product.tipoInput : 'nenhum';
+    const requiresArtwork = productRequiresArtwork(productType);
+    const requiresText = productRequiresText(productType);
+    const artworkPath = requiresArtwork ? textValue(item.arquivoPath, 300) : '';
     let artworkName = '';
 
-    if (productType === 'arte') {
-      if (artworkPath && artworkPending) {
-        throw new HttpError(422, `Escolha entre enviar agora ou enviar depois a arte de ${productName}.`);
+    if (requiresArtwork) {
+      if (item.artePendente === true) {
+        throw new HttpError(422, `O envio posterior de arte não está disponível para ${productName}.`);
       }
-      if (!artworkPath && !artworkPending) {
-        throw new HttpError(422, `Envie a arte de ${productName} ou marque que enviará depois.`);
+      if (!artworkPath) {
+        throw new HttpError(422, `Envie a arte de ${productName} antes de adicionar o produto ao pedido.`);
       }
-      if (artworkPath) {
-        if (!isPendingArtworkPath(artworkPath, userId)) {
-          throw new HttpError(422, `O arquivo enviado para ${productName} é inválido.`);
+      if (!isPendingArtworkPath(artworkPath, userId)) {
+        throw new HttpError(422, `O arquivo enviado para ${productName} é inválido.`);
+      }
+      try {
+        const artworkFile = bucket.file(artworkPath);
+        const [metadata] = await artworkFile.getMetadata();
+        const size = Number(metadata.size);
+        const ownerId = metadata.metadata?.ownerId;
+        if (!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId) {
+          throw new HttpError(422, `O arquivo enviado para ${productName} não é permitido.`);
         }
-        try {
-          const artworkFile = bucket.file(artworkPath);
-          const [metadata] = await artworkFile.getMetadata();
-          const size = Number(metadata.size);
-          const ownerId = metadata.metadata?.ownerId;
-          if (!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId) {
-            throw new HttpError(422, `O arquivo enviado para ${productName} não é permitido.`);
-          }
-          const [prefix] = await artworkFile.download({ start: 0, end: 15, validation: false });
-          if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
-            throw new HttpError(422, `O conteúdo do arquivo enviado para ${productName} não corresponde ao formato informado.`);
-          }
-          artworkName = sanitizeArtworkName(
-            textValue(item.arquivoNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'arte',
-          );
-        } catch (error) {
-          if (error instanceof HttpError) throw error;
-          throw new HttpError(422, `Não foi possível validar a arte de ${productName}. Envie o arquivo novamente.`);
+        const [prefix] = await artworkFile.download({ start: 0, end: 15, validation: false });
+        if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
+          throw new HttpError(422, `O conteúdo do arquivo enviado para ${productName} não corresponde ao formato informado.`);
         }
+        artworkName = sanitizeArtworkName(
+          textValue(item.arquivoNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'arte',
+        );
+      } catch (error) {
+        if (error instanceof HttpError) throw error;
+        throw new HttpError(422, `Não foi possível validar a arte de ${productName}. Envie o arquivo novamente.`);
       }
     }
-    const customText = productType === 'texto' ? textValue(item.textoPersonalizado, 500) : undefined;
-    if (productType === 'texto' && !customText) {
-      throw new HttpError(422, `Informe a personalização de ${productName}.`);
+
+    let textCustomization: TextCustomization | null = null;
+    if (requiresText) {
+      const hasStructuredCustomization = item.personalizacaoTexto !== undefined;
+      textCustomization = normalizeTextCustomization(item.personalizacaoTexto);
+      if (hasStructuredCustomization && !textCustomization) {
+        throw new HttpError(422, `A personalização de texto de ${productName} é inválida.`);
+      }
+      textCustomization ||= legacyTextCustomization(item.textoPersonalizado);
+      if (!textCustomization) {
+        throw new HttpError(422, `Informe o texto, a fonte e a posição da personalização de ${productName}.`);
+      }
     }
-    const cartId = createCartItemId(productId, selections, customText, artworkPath || String(artworkPending));
+    const customText = textCustomization?.texto;
+    const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
+    const cartId = createCartItemId(productId, selections, customizationFingerprint, artworkPath);
     const price = (unitAmount / 100).toFixed(2);
 
     normalizedItems.push({
@@ -590,8 +619,10 @@ async function normalizeCart(
         selecoes: selections,
         quantidade: quantity,
         ...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
-        ...(artworkPending ? { artePendente: true } : {}),
-        ...(customText ? { textoPersonalizado: customText } : {}),
+        ...(textCustomization ? {
+          textoPersonalizado: customText,
+          personalizacaoTexto: textCustomization,
+        } : {}),
       },
       checkoutItem: {
         reference_id: productId.slice(0, 64),
@@ -712,13 +743,19 @@ async function reconcileStoredOrderPayment(
   orderId: string,
   initialOrder: PlainRecord,
   pagbank: ReturnType<typeof getPagBankConfig>,
-): Promise<{ paymentStatus: unknown; pagbankStatus: unknown; reconciled: boolean }> {
+  options: { forceProviderLookup?: boolean } = {},
+): Promise<StoredPaymentReconciliationResult> {
   const checkoutId = textValue(initialOrder.pagbankCheckoutId, 110);
-  if (!pagbank.token || !checkoutId || initialOrder.paymentStatus === 'pago') {
+  if (
+    !pagbank.token ||
+    !checkoutId ||
+    (initialOrder.paymentStatus === 'pago' && !options.forceProviderLookup)
+  ) {
     return {
       paymentStatus: initialOrder.paymentStatus || 'pendente',
       pagbankStatus: initialOrder.pagbankStatus || null,
       reconciled: false,
+      providerEvent: null,
     };
   }
 
@@ -740,6 +777,7 @@ async function reconcileStoredOrderPayment(
       paymentStatus: initialOrder.paymentStatus || 'pendente',
       pagbankStatus: lookup.checkoutStatus || initialOrder.pagbankStatus || null,
       reconciled: false,
+      providerEvent: null,
     };
   }
 
@@ -792,7 +830,112 @@ async function reconcileStoredOrderPayment(
     reconciled = true;
   });
 
-  return { paymentStatus, pagbankStatus, reconciled };
+  return { paymentStatus, pagbankStatus, reconciled, providerEvent: event };
+}
+
+async function processPagBankWebhookByProviderLookup(
+  req: express.Request,
+  res: express.Response,
+  rawBody: string,
+  authenticityFailure: PagBankAuthenticityFailureReason,
+  authenticityHeaderPresent: boolean,
+  pagbank: ReturnType<typeof getPagBankConfig>,
+  requestReceivedAt: string,
+): Promise<void> {
+  const parsed = parsePagBankNotificationForProviderLookup(rawBody);
+  if (!parsed) {
+    throw new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED');
+  }
+
+  const { db } = getAdminServices();
+  enforceRateLimit(`webhook-provider-lookup:${req.ip || 'unknown'}`, 10, 60_000);
+  await enforceDistributedRateLimit(
+    db,
+    `webhook-provider-lookup:${parsed.event.referenceId}`,
+    12,
+    5 * 60_000,
+  );
+
+  const orderRef = db.collection('orders').doc(parsed.event.referenceId);
+  const orderSnapshot = await orderRef.get();
+  if (!orderSnapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
+  const currentOrder = orderSnapshot.data() as PlainRecord;
+
+  const result = await reconcileStoredOrderPayment(
+    db,
+    parsed.event.referenceId,
+    currentOrder,
+    pagbank,
+    { forceProviderLookup: true },
+  );
+  if (
+    !result.providerEvent ||
+    !pagBankNotificationMatchesProviderEvent(parsed.event, result.providerEvent)
+  ) {
+    logEvent('warn', 'pagbank_webhook_provider_lookup_mismatch', {
+      request_id: responseRequestId(res),
+      order_id: parsed.event.referenceId,
+      authenticity_failure: authenticityFailure,
+      received_provider_id: parsed.event.providerId,
+      received_status: parsed.event.providerStatus,
+      provider_id: result.providerEvent?.providerId || null,
+      provider_status: result.providerEvent?.providerStatus || null,
+    });
+    throw new HttpError(
+      503,
+      'A confirmação independente da notificação ainda não está disponível.',
+      'WEBHOOK_PROVIDER_VERIFICATION_PENDING',
+    );
+  }
+
+  const responseBody = {
+    received: true,
+    verified_by: 'provider_lookup',
+    applied: result.reconciled,
+  };
+  const eventHash = createHash('sha256').update(rawBody, 'utf8').digest('hex');
+
+  try {
+    const captured = await savePagBankWebhookEvidence(db, {
+      orderId: parsed.event.referenceId,
+      eventHash,
+      requestUrl: `${getPublicAppUrl(req)}/api/webhook/pagbank`,
+      contentType: req.get('content-type') || 'application/json',
+      requestBody: parsed.payload,
+      requestReceivedAt,
+      responseStatus: 200,
+      responseBody,
+      responseSentAt: new Date().toISOString(),
+      verification: 'provider_lookup',
+      authenticityHeaderPresent,
+    });
+    if (captured) {
+      logEvent('info', 'pagbank_homologation_webhook_captured', {
+        request_id: responseRequestId(res),
+        order_id: parsed.event.referenceId,
+        provider_id: result.providerEvent.providerId,
+        provider_status: result.providerEvent.providerStatus,
+        verification: 'provider_lookup',
+      });
+    }
+  } catch (captureError) {
+    logEvent('error', 'pagbank_homologation_capture_failed', {
+      request_id: responseRequestId(res),
+      order_id: parsed.event.referenceId,
+      stage: 'webhook_provider_lookup',
+      error: captureError,
+    });
+  }
+
+  logEvent('info', 'pagbank_webhook_verified_by_provider_lookup', {
+    request_id: responseRequestId(res),
+    order_id: parsed.event.referenceId,
+    provider_id: result.providerEvent.providerId,
+    provider_status: result.providerEvent.providerStatus,
+    authenticity_failure: authenticityFailure,
+    applied: result.reconciled,
+  });
+  res.status(200).json(responseBody);
 }
 
 async function userIsAdmin(
@@ -1449,42 +1592,64 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
     return;
   }
 
+  const webhookRequestReceivedAt = new Date().toISOString();
   const rawBody = (req as RawBodyRequest).rawBody;
   const authenticityToken = req.get('x-authenticity-token')?.trim();
-  if (typeof rawBody !== 'string' || !authenticityToken || !/^[a-f0-9]{64}$/i.test(authenticityToken)) {
+  const authenticityFailure = pagBankAuthenticityFailureReason(
+    pagbank.token,
+    rawBody,
+    authenticityToken,
+  );
+
+  if (authenticityFailure) {
     logEvent('warn', 'pagbank_webhook_authentication_failed', {
       request_id: requestRequestId(req),
-      reason: typeof rawBody !== 'string'
-        ? 'raw_body_missing'
-        : !authenticityToken
-          ? 'header_missing'
-          : 'header_format_invalid',
+      reason: authenticityFailure,
       authenticity_header_present: Boolean(authenticityToken),
       raw_body_bytes: typeof rawBody === 'string' ? Buffer.byteLength(rawBody, 'utf8') : 0,
+      ...(typeof rawBody === 'string' && rawBody
+        ? { body_sha256: createHash('sha256').update(rawBody, 'utf8').digest('hex') }
+        : {}),
       content_type: req.get('content-type') || null,
     });
-    sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
+
+    if (typeof rawBody !== 'string' || !rawBody) {
+      sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
+      return;
+    }
+
+    try {
+      await processPagBankWebhookByProviderLookup(
+        req,
+        res,
+        rawBody,
+        authenticityFailure,
+        Boolean(authenticityToken),
+        pagbank,
+        webhookRequestReceivedAt,
+      );
+    } catch (error) {
+      if (error instanceof HttpError) {
+        sendError(res, error);
+      } else {
+        logEvent('error', 'pagbank_webhook_provider_lookup_failed', {
+          request_id: responseRequestId(res),
+          error,
+        });
+        sendError(res, new HttpError(
+          503,
+          'Não foi possível confirmar a notificação diretamente no PagBank.',
+          'WEBHOOK_PROVIDER_LOOKUP_FAILED',
+        ));
+      }
+    }
     return;
   }
 
-  if (!verifyPagBankAuthenticity(pagbank.token, rawBody, authenticityToken)) {
-    logEvent('warn', 'pagbank_webhook_authentication_failed', {
-      request_id: requestRequestId(req),
-      reason: 'signature_mismatch',
-      authenticity_header_present: true,
-      raw_body_bytes: Buffer.byteLength(rawBody, 'utf8'),
-      body_sha256: createHash('sha256').update(rawBody, 'utf8').digest('hex'),
-      content_type: req.get('content-type') || null,
-    });
-    sendError(res, new HttpError(401, 'Notificação não autenticada.', 'WEBHOOK_NOT_AUTHENTICATED'));
-    return;
-  }
-
-  const webhookRequestReceivedAt = new Date().toISOString();
   try {
     const payload = JSON.parse(rawBody) as PlainRecord;
     const event = parsePagBankWebhookEvent(payload);
-    if (!event || !/^[A-Za-z0-9_-]+$/.test(event.referenceId)) {
+    if (!event || !/^GB-[A-Z0-9]{8,64}$/.test(event.referenceId)) {
       throw new HttpError(400, 'Notificação sem pedido válido.');
     }
 
@@ -1559,6 +1724,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
         responseStatus: 200,
         responseBody: webhookResponseBody,
         responseSentAt: new Date().toISOString(),
+        verification: 'signature',
+        authenticityHeaderPresent: true,
       });
       if (captured) {
         logEvent('info', 'pagbank_homologation_webhook_captured', {

@@ -1,5 +1,6 @@
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
+import { isProductCustomizationType, productRequiresText } from './textCustomization';
 
 export const ADMIN_LIMITS = {
   categoryName: 80,
@@ -93,6 +94,9 @@ export function validateProductDraft(
   const categoria = normalizedSpaces(draft.categoria);
   const imagem = normalizedText(draft.imagem);
   const precoBase = normalizedText(draft.preco_base);
+  if (draft.tipoInput !== undefined && !isProductCustomizationType(draft.tipoInput)) {
+    return { ok: false, message: 'Selecione um tipo de personalização válido.' };
+  }
   const tipoInput = draft.tipoInput || 'nenhum';
   const labelTexto = normalizedSpaces(draft.labelTexto);
 
@@ -158,7 +162,7 @@ export function validateProductDraft(
       return { ok: false, message: 'Defina um preço base válido e maior que zero.' };
     }
   }
-  if (tipoInput === 'texto' && !labelTexto) {
+  if (productRequiresText(tipoInput) && !labelTexto) {
     return { ok: false, message: 'Informe o rótulo do texto que o cliente deverá preencher.' };
   }
 

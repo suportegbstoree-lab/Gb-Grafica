@@ -187,6 +187,8 @@ test('Firestore: administrador não grava documentos de catálogo inválidos', a
     imagem: 'https://example.com/oferta.jpg',
     ativa: true,
   }));
+  await assertSucceeds(firestore.doc('anuncios/texto-e-arte').set(validProduct({ tipoInput: 'texto_arte' })));
+  await assertFails(firestore.doc('anuncios/tipo-invalido').set(validProduct({ tipoInput: 'inventado' })));
 });
 
 test('Firestore: pedido só pode ser lido pelo proprietário ou por administrador', async () => {

@@ -1,6 +1,7 @@
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
+import type { ProductCustomizationType, TextCustomization } from './lib/textCustomization';
 
-export type { DeliveryMethod, FulfillmentStatus, PaymentStatus };
+export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, ProductCustomizationType, TextCustomization };
 
 export interface ProductAttribute {
   nome: string;
@@ -17,7 +18,7 @@ export interface Anuncio {
   preco_base: string;
   atributos: ProductAttribute[];
   combinacoes: Record<string, string>;
-  tipoInput?: 'arte' | 'texto' | 'nenhum';
+  tipoInput?: ProductCustomizationType;
   labelTexto?: string;
 }
 
@@ -34,6 +35,7 @@ export interface CartItem {
   arquivoNome?: string;
   artePendente?: boolean;
   textoPersonalizado?: string;
+  personalizacaoTexto?: TextCustomization;
 }
 
 export interface DeliveryAddress {

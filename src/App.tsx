@@ -13,6 +13,7 @@ import {
 } from './firebase';
 import { LEGAL_ROUTES, type LegalDocumentId } from './lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage } from './lib/seo';
+import { normalizeTextCustomization } from './lib/textCustomization';
 
 const Admin = lazy(() => import('./pages/Admin'));
 const LegalPage = lazy(() => import('./pages/LegalPage'));
@@ -23,14 +24,22 @@ function restoreCart(): CartItem[] {
     const parsed = JSON.parse(localStorage.getItem('gb_cart') || '[]');
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.filter((item): item is CartItem => (
-      typeof item === 'object' && item !== null &&
-      typeof item.id === 'string' &&
-      typeof item.productId === 'string' &&
-      typeof item.nome === 'string' &&
-      typeof item.preco === 'string' &&
-      Number.isInteger(item.quantidade) && item.quantidade > 0
-    ));
+    return parsed.flatMap((item): CartItem[] => {
+      if (
+        typeof item !== 'object' || item === null ||
+        typeof item.id !== 'string' ||
+        typeof item.productId !== 'string' ||
+        typeof item.nome !== 'string' ||
+        typeof item.preco !== 'string' ||
+        !Number.isInteger(item.quantidade) || item.quantidade <= 0
+      ) return [];
+
+      const personalizacaoTexto = normalizeTextCustomization(item.personalizacaoTexto);
+      return [{
+        ...item,
+        ...(personalizacaoTexto ? { personalizacaoTexto } : { personalizacaoTexto: undefined }),
+      } as CartItem];
+    });
   } catch {
     localStorage.removeItem('gb_cart');
     return [];
