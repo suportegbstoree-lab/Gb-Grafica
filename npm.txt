@@ -1,0 +1,936 @@
+===== npm run lint =====
+npm notice run gb-grafica-store@0.0.0 lint
+npm notice run tsc --noEmit
+
+===== npm test =====
+npm notice run gb-grafica-store@0.0.0 test
+npm notice run node --import tsx --test src/**/*.test.ts
+TAP version 13
+# Subtest: gera apenas caminhos administrativos restritos
+ok 1 - gera apenas caminhos administrativos restritos
+  ---
+  duration_ms: 1.319417
+  type: 'test'
+  ...
+# Subtest: valida arquivo WOFF2 pelo MIME, tamanho e assinatura
+ok 2 - valida arquivo WOFF2 pelo MIME, tamanho e assinatura
+  ---
+  duration_ms: 0.449472
+  type: 'test'
+  ...
+# Subtest: extrai somente arquivo do bucket Firebase esperado
+ok 3 - extrai somente arquivo do bucket Firebase esperado
+  ---
+  duration_ms: 0.468514
+  type: 'test'
+  ...
+# Subtest: aceita somente URLs HTTP(S) ou caminhos locais seguros
+ok 4 - aceita somente URLs HTTP(S) ou caminhos locais seguros
+  ---
+  duration_ms: 1.278671
+  type: 'test'
+  ...
+# Subtest: normaliza categoria e bloqueia duplicidade
+ok 5 - normaliza categoria e bloqueia duplicidade
+  ---
+  duration_ms: 2.027077
+  type: 'test'
+  ...
+# Subtest: valida e normaliza um produto simples
+ok 6 - valida e normaliza um produto simples
+  ---
+  duration_ms: 0.655134
+  type: 'test'
+  ...
+# Subtest: bloqueia produto duplicado, categoria inexistente e texto sem rótulo
+ok 7 - bloqueia produto duplicado, categoria inexistente e texto sem rótulo
+  ---
+  duration_ms: 0.443175
+  type: 'test'
+  ...
+# Subtest: limita combinações de atributos antes da gravação
+ok 8 - limita combinações de atributos antes da gravação
+  ---
+  duration_ms: 0.580148
+  type: 'test'
+  ...
+# Subtest: valida promoções e seus links
+ok 9 - valida promoções e seus links
+  ---
+  duration_ms: 0.522559
+  type: 'test'
+  ...
+# Subtest: valida telefones, banner e e-mails da configuração
+ok 10 - valida telefones, banner e e-mails da configuração
+  ---
+  duration_ms: 0.688244
+  type: 'test'
+  ...
+# Subtest: fingerprint é estável para objetos com chaves em ordens diferentes
+ok 11 - fingerprint é estável para objetos com chaves em ordens diferentes
+  ---
+  duration_ms: 1.161052
+  type: 'test'
+  ...
+# Subtest: acrescenta a referência segura retornada pela API
+ok 12 - acrescenta a referência segura retornada pela API
+  ---
+  duration_ms: 1.086132
+  type: 'test'
+  ...
+# Subtest: ignora referência inválida e usa mensagem pública ou fallback
+ok 13 - ignora referência inválida e usa mensagem pública ou fallback
+  ---
+  duration_ms: 0.24012
+  type: 'test'
+  ...
+# Subtest: aceita somente formatos e tamanhos permitidos para arte
+ok 14 - aceita somente formatos e tamanhos permitidos para arte
+  ---
+  duration_ms: 0.966952
+  type: 'test'
+  ...
+# Subtest: confere a assinatura real do arquivo, não apenas o MIME declarado
+ok 15 - confere a assinatura real do arquivo, não apenas o MIME declarado
+  ---
+  duration_ms: 0.271656
+  type: 'test'
+  ...
+# Subtest: restringe a arte ao usuário e pedido correspondentes
+ok 16 - restringe a arte ao usuário e pedido correspondentes
+  ---
+  duration_ms: 0.501009
+  type: 'test'
+  ...
+# Subtest: restringe o modelo composto a imagens privadas do usuário e pedido
+ok 17 - restringe o modelo composto a imagens privadas do usuário e pedido
+  ---
+  duration_ms: 0.353382
+  type: 'test'
+  ...
+# Subtest: aceita somente imagens seguras do catálogo dentro do limite
+ok 18 - aceita somente imagens seguras do catálogo dentro do limite
+  ---
+  duration_ms: 1.876081
+  type: 'test'
+  ...
+# Subtest: confere a assinatura binária das imagens do catálogo
+ok 19 - confere a assinatura binária das imagens do catálogo
+  ---
+  duration_ms: 0.300498
+  type: 'test'
+  ...
+# Subtest: reconhece apenas caminhos de catálogo gerados pela aplicação
+ok 20 - reconhece apenas caminhos de catálogo gerados pela aplicação
+  ---
+  duration_ms: 0.453289
+  type: 'test'
+  ...
+# Subtest: extrai o caminho somente de URL Firebase pertencente ao bucket e produto esperados
+ok 21 - extrai o caminho somente de URL Firebase pertencente ao bucket e produto esperados
+  ---
+  duration_ms: 0.451206
+  type: 'test'
+  ...
+# Subtest: normaliza o nome original sem permitir caminhos
+ok 22 - normaliza o nome original sem permitir caminhos
+  ---
+  duration_ms: 0.290049
+  type: 'test'
+  ...
+# Subtest: normaliza um formulário válido de checkout
+ok 23 - normaliza um formulário válido de checkout
+  ---
+  duration_ms: 2.401332
+  type: 'test'
+  ...
+# Subtest: bloqueia checkout sem aceite jurídico
+ok 24 - bloqueia checkout sem aceite jurídico
+  ---
+  duration_ms: 0.200617
+  type: 'test'
+  ...
+# Subtest: bloqueia dados pessoais inválidos
+ok 25 - bloqueia dados pessoais inválidos
+  ---
+  duration_ms: 0.272276
+  type: 'test'
+  ...
+# Subtest: bloqueia entrega sem cotação ou endereço completo
+ok 26 - bloqueia entrega sem cotação ou endereço completo
+  ---
+  duration_ms: 0.212371
+  type: 'test'
+  ...
+# Subtest: permite retirada sem cotação ou endereço
+ok 27 - permite retirada sem cotação ou endereço
+  ---
+  duration_ms: 0.251445
+  type: 'test'
+  ...
+# Subtest: bloqueia preço inválido antes da chamada de pagamento
+ok 28 - bloqueia preço inválido antes da chamada de pagamento
+  ---
+  duration_ms: 0.198341
+  type: 'test'
+  ...
+# Subtest: converte valores monetários brasileiros e decimais para centavos
+ok 29 - converte valores monetários brasileiros e decimais para centavos
+  ---
+  duration_ms: 1.397447
+  type: 'test'
+  ...
+# Subtest: valida e formata CPF
+ok 30 - valida e formata CPF
+  ---
+  duration_ms: 0.475131
+  type: 'test'
+  ...
+# Subtest: valida e formata telefone brasileiro
+ok 31 - valida e formata telefone brasileiro
+  ---
+  duration_ms: 0.343477
+  type: 'test'
+  ...
+# Subtest: gera IDs seguros para documentos e diferencia personalizações do carrinho
+ok 32 - gera IDs seguros para documentos e diferencia personalizações do carrinho
+  ---
+  duration_ms: 0.61184
+  type: 'test'
+  ...
+# Subtest: aceita somente a versão jurídica atualmente publicada
+ok 33 - aceita somente a versão jurídica atualmente publicada
+  ---
+  duration_ms: 0.975684
+  type: 'test'
+  ...
+# Subtest: identifica dados comerciais obrigatórios ausentes
+ok 34 - identifica dados comerciais obrigatórios ausentes
+  ---
+  duration_ms: 1.067351
+  type: 'test'
+  ...
+# Subtest: não permite produção ou envio antes do pagamento
+ok 35 - não permite produção ou envio antes do pagamento
+  ---
+  duration_ms: 1.633808
+  type: 'test'
+  ...
+# Subtest: aplica o fluxo operacional conforme a entrega
+ok 36 - aplica o fluxo operacional conforme a entrega
+  ---
+  duration_ms: 0.215083
+  type: 'test'
+  ...
+# Subtest: mantém compatibilidade com pedidos antigos
+ok 37 - mantém compatibilidade com pedidos antigos
+  ---
+  duration_ms: 0.395148
+  type: 'test'
+  ...
+# Subtest: organiza as filas administrativas por prioridade operacional
+ok 38 - organiza as filas administrativas por prioridade operacional
+  ---
+  duration_ms: 0.322885
+  type: 'test'
+  ...
+# Subtest: aceita apenas imagem raster segura para compor o modelo
+ok 39 - aceita apenas imagem raster segura para compor o modelo
+  ---
+  duration_ms: 1.006567
+  type: 'test'
+  ...
+# Subtest: reduz imagens enormes preservando a proporção
+ok 40 - reduz imagens enormes preservando a proporção
+  ---
+  duration_ms: 0.953776
+  type: 'test'
+  ...
+# Subtest: gera nome seguro e reduz o texto conforme o comprimento
+ok 41 - gera nome seguro e reduz o texto conforme o comprimento
+  ---
+  duration_ms: 0.549258
+  type: 'test'
+  ...
+# Subtest: aplica promoção por produto ou categoria somente quando ativa
+ok 42 - aplica promoção por produto ou categoria somente quando ativa
+  ---
+  duration_ms: 1.147754
+  type: 'test'
+  ...
+# Subtest: calcula percentual e valor fixo em centavos
+ok 43 - calcula percentual e valor fixo em centavos
+  ---
+  duration_ms: 1.122668
+  type: 'test'
+  ...
+# Subtest: seleciona o menor preço sem acumular promoções
+ok 44 - seleciona o menor preço sem acumular promoções
+  ---
+  duration_ms: 0.206826
+  type: 'test'
+  ...
+# Subtest: ignora desconto inválido ou maior que o preço
+ok 45 - ignora desconto inválido ou maior que o preço
+  ---
+  duration_ms: 0.347126
+  type: 'test'
+  ...
+# Subtest: absoluteSiteUrl normaliza rotas públicas
+ok 46 - absoluteSiteUrl normaliza rotas públicas
+  ---
+  duration_ms: 1.48931
+  type: 'test'
+  ...
+# Subtest: resolvePublicImage rejeita protocolos inseguros e substitui o PNG local corrompido
+ok 47 - resolvePublicImage rejeita protocolos inseguros e substitui o PNG local corrompido
+  ---
+  duration_ms: 0.288957
+  type: 'test'
+  ...
+# Subtest: buildStoreStructuredData omite dados comerciais ainda vazios
+ok 48 - buildStoreStructuredData omite dados comerciais ainda vazios
+  ---
+  duration_ms: 1.41894
+  type: 'test'
+  ...
+# Subtest: normaliza texto, fonte e posição em porcentagem
+ok 49 - normaliza texto, fonte e posição em porcentagem
+  ---
+  duration_ms: 1.923402
+  type: 'test'
+  ...
+# Subtest: rejeita fonte, texto e coordenadas manipuladas
+ok 50 - rejeita fonte, texto e coordenadas manipuladas
+  ---
+  duration_ms: 0.485066
+  type: 'test'
+  ...
+# Subtest: converte personalização legada para fonte e posição padrão
+ok 51 - converte personalização legada para fonte e posição padrão
+  ---
+  duration_ms: 0.286835
+  type: 'test'
+  ...
+# Subtest: distingue requisitos de arte, texto e combinação
+ok 52 - distingue requisitos de arte, texto e combinação
+  ---
+  duration_ms: 0.234073
+  type: 'test'
+  ...
+# Subtest: fingerprint diferencia fonte e posição do mesmo texto
+ok 53 - fingerprint diferencia fonte e posição do mesmo texto
+  ---
+  duration_ms: 0.242178
+  type: 'test'
+  ...
+# Subtest: normaliza UUID e mantém a tentativa idempotente por usuário
+ok 54 - normaliza UUID e mantém a tentativa idempotente por usuário
+  ---
+  duration_ms: 1.422658
+  type: 'test'
+  ...
+# Subtest: aceita somente links hospedados nos domínios PagBank esperados
+ok 55 - aceita somente links hospedados nos domínios PagBank esperados
+  ---
+  duration_ms: 0.265532
+  type: 'test'
+  ...
+# Subtest: aplica headers de segurança e propaga um request ID válido
+ok 56 - aplica headers de segurança e propaga um request ID válido
+  ---
+  duration_ms: 30.27604
+  type: 'test'
+  ...
+# Subtest: autoriza somente origens configuradas e expõe o request ID
+ok 57 - autoriza somente origens configuradas e expõe o request ID
+  ---
+  duration_ms: 12.25026
+  type: 'test'
+  ...
+# Subtest: responde corretamente ao preflight permitido
+ok 58 - responde corretamente ao preflight permitido
+  ---
+  duration_ms: 4.712138
+  type: 'test'
+  ...
+# Subtest: rejeita JSON malformado sem expor o handler padrão do Express
+ok 59 - rejeita JSON malformado sem expor o handler padrão do Express
+  ---
+  duration_ms: 19.549823
+  type: 'test'
+  ...
+# Subtest: rejeita payload acima de 256 KB
+ok 60 - rejeita payload acima de 256 KB
+  ---
+  duration_ms: 7.91916
+  type: 'test'
+  ...
+# Subtest: rejeita corpo com mídia diferente de JSON
+ok 61 - rejeita corpo com mídia diferente de JSON
+  ---
+  duration_ms: 5.650087
+  type: 'test'
+  ...
+# Subtest: inclui código e referência em falha operacional conhecida
+ok 62 - inclui código e referência em falha operacional conhecida
+  ---
+  duration_ms: 7.398898
+  type: 'test'
+  ...
+# Subtest: rotas desconhecidas da API devolvem JSON 404 em vez do aplicativo React
+ok 63 - rotas desconhecidas da API devolvem JSON 404 em vez do aplicativo React
+  ---
+  duration_ms: 5.896995
+  type: 'test'
+  ...
+# Subtest: preserva request ID seguro e substitui valores inválidos
+ok 64 - preserva request ID seguro e substitui valores inválidos
+  ---
+  duration_ms: 1.700185
+  type: 'test'
+  ...
+# Subtest: remove credenciais e dados pessoais de estruturas aninhadas
+ok 65 - remove credenciais e dados pessoais de estruturas aninhadas
+  ---
+  duration_ms: 3.767775
+  type: 'test'
+  ...
+# Subtest: limita estruturas circulares e não permite sobrescrever os campos-base do log
+ok 66 - limita estruturas circulares e não permite sobrescrever os campos-base do log
+  ---
+  duration_ms: 1.100148
+  type: 'test'
+  ...
+# Subtest: valida a autenticidade e rejeita corpo adulterado
+ok 67 - valida a autenticidade e rejeita corpo adulterado
+  ---
+  duration_ms: 1.492269
+  type: 'test'
+  ...
+# Subtest: classifica falhas de autenticidade sem registrar assinatura ou payload
+ok 68 - classifica falhas de autenticidade sem registrar assinatura ou payload
+  ---
+  duration_ms: 0.316664
+  type: 'test'
+  ...
+# Subtest: captura de homologação só pode ser ativada em Sandbox
+ok 69 - captura de homologação só pode ser ativada em Sandbox
+  ---
+  duration_ms: 1.124373
+  type: 'test'
+  ...
+# Subtest: não toca no Firestore quando a aplicação está em produção
+ok 70 - não toca no Firestore quando a aplicação está em produção
+  ---
+  duration_ms: 0.31431
+  type: 'test'
+  ...
+# Subtest: grava checkout e primeiro webhook somente na coleção técnica
+ok 71 - grava checkout e primeiro webhook somente na coleção técnica
+  ---
+  duration_ms: 2.709787
+  type: 'test'
+  ...
+# Subtest: monta evidência real do checkout sem armazenar Authorization
+ok 72 - monta evidência real do checkout sem armazenar Authorization
+  ---
+  duration_ms: 0.528582
+  type: 'test'
+  ...
+# Subtest: recusa captura de checkout fora do endpoint Sandbox
+ok 73 - recusa captura de checkout fora do endpoint Sandbox
+  ---
+  duration_ms: 0.612439
+  type: 'test'
+  ...
+# Subtest: monta evidência do webhook com assinatura removida
+ok 74 - monta evidência do webhook com assinatura removida
+  ---
+  duration_ms: 0.303553
+  type: 'test'
+  ...
+# Subtest: identifica webhook confirmado por consulta sem inventar header ausente
+ok 75 - identifica webhook confirmado por consulta sem inventar header ausente
+  ---
+  duration_ms: 0.308226
+  type: 'test'
+  ...
+# Subtest: formata anexo com request, response, meios e webhook reais
+ok 76 - formata anexo com request, response, meios e webhook reais
+  ---
+  duration_ms: 0.933582
+  type: 'test'
+  ...
+# Subtest: reconcilia checkout e cobrança paga consultando apenas URLs construídas pelo servidor
+ok 77 - reconcilia checkout e cobrança paga consultando apenas URLs construídas pelo servidor
+  ---
+  duration_ms: 3.163728
+  type: 'test'
+  ...
+# Subtest: recusa checkout ou referência diferentes do pedido armazenado
+ok 78 - recusa checkout ou referência diferentes do pedido armazenado
+  ---
+  duration_ms: 0.729291
+  type: 'test'
+  ...
+# Subtest: não segue links fornecidos pelo PagBank e ignora IDs de pedido inválidos
+ok 79 - não segue links fornecidos pelo PagBank e ignora IDs de pedido inválidos
+  ---
+  duration_ms: 0.225543
+  type: 'test'
+  ...
+# Subtest: seleciona pagamento confirmado acima de tentativas pendentes ou recusadas
+ok 80 - seleciona pagamento confirmado acima de tentativas pendentes ou recusadas
+  ---
+  duration_ms: 0.388205
+  type: 'test'
+  ...
+# Subtest: propaga falha da API sem produzir confirmação local
+ok 81 - propaga falha da API sem produzir confirmação local
+  ---
+  duration_ms: 0.471162
+  type: 'test'
+  ...
+# Subtest: interpreta uma notificação de pagamento do PagBank
+ok 82 - interpreta uma notificação de pagamento do PagBank
+  ---
+  duration_ms: 1.410508
+  type: 'test'
+  ...
+# Subtest: rejeita confirmação com valor ou moeda divergentes
+ok 83 - rejeita confirmação com valor ou moeda divergentes
+  ---
+  duration_ms: 0.504775
+  type: 'test'
+  ...
+# Subtest: aceita somente o acréscimo exato do boleto hospedado
+ok 84 - aceita somente o acréscimo exato do boleto hospedado
+  ---
+  duration_ms: 0.230936
+  type: 'test'
+  ...
+# Subtest: não aceita acréscimo nem subpagamento em cartão ou PIX
+ok 85 - não aceita acréscimo nem subpagamento em cartão ou PIX
+  ---
+  duration_ms: 0.160394
+  type: 'test'
+  ...
+# Subtest: rejeita identificador PagBank diferente do pedido salvo
+ok 86 - rejeita identificador PagBank diferente do pedido salvo
+  ---
+  duration_ms: 0.178744
+  type: 'test'
+  ...
+# Subtest: pagamento confirmado não pode regredir por evento atrasado
+ok 87 - pagamento confirmado não pode regredir por evento atrasado
+  ---
+  duration_ms: 0.17061
+  type: 'test'
+  ...
+# Subtest: interpreta expiração do checkout sem fingir pagamento
+ok 88 - interpreta expiração do checkout sem fingir pagamento
+  ---
+  duration_ms: 0.282764
+  type: 'test'
+  ...
+# Subtest: extrai somente uma referência e um evento PagBank plausíveis
+ok 89 - extrai somente uma referência e um evento PagBank plausíveis
+  ---
+  duration_ms: 2.951999
+  type: 'test'
+  ...
+# Subtest: só confirma o payload recebido quando ele coincide com o evento consultado
+ok 90 - só confirma o payload recebido quando ele coincide com o evento consultado
+  ---
+  duration_ms: 1.342792
+  type: 'test'
+  ...
+# Subtest: aceita somente endereços HTTPS de pagamento do PagBank
+ok 91 - aceita somente endereços HTTPS de pagamento do PagBank
+  ---
+  duration_ms: 2.959985
+  type: 'test'
+  ...
+# Subtest: envia o token e retorna o checkout hospedado
+ok 92 - envia o token e retorna o checkout hospedado
+  ---
+  duration_ms: 33.591558
+  type: 'test'
+  ...
+# Subtest: propaga a mensagem pública de erro da API simulada
+ok 93 - propaga a mensagem pública de erro da API simulada
+  ---
+  duration_ms: 1.107566
+  type: 'test'
+  ...
+# Subtest: recusa resposta de sucesso sem URL do PagBank
+ok 94 - recusa resposta de sucesso sem URL do PagBank
+  ---
+  duration_ms: 0.76027
+  type: 'test'
+  ...
+# Subtest: recusa redirecionamento externo mesmo em resposta 201
+ok 95 - recusa redirecionamento externo mesmo em resposta 201
+  ---
+  duration_ms: 0.757351
+  type: 'test'
+  ...
+# Subtest: consulta o status autenticado e interpreta pagamento reconciliado
+ok 96 - consulta o status autenticado e interpreta pagamento reconciliado
+  ---
+  duration_ms: 0.76836
+  type: 'test'
+  ...
+# Subtest: rejeita status desconhecido retornado pela API
+ok 97 - rejeita status desconhecido retornado pela API
+  ---
+  duration_ms: 0.749922
+  type: 'test'
+  ...
+1..97
+# tests 97
+# suites 0
+# pass 97
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3555.011111
+
+===== npm run test:rules =====
+npm notice run gb-grafica-store@0.0.0 test:rules
+npm notice run firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only firestore,storage "npm run test:rules:unit"
+i  emulators: Starting emulators: firestore, storage
+i  emulators: Detected demo project ID "demo-gb-grafica-rules", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+i  firestore: Firestore Emulator logging to firestore-debug.log
+✔  firestore: Firestore Emulator was started in standard edition.
+✔  firestore: Firestore Emulator UI websocket is running on 9150.
+i  Running script: npm run test:rules:unit
+npm notice run gb-grafica-store@0.0.0 test:rules:unit
+npm notice run node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts
+TAP version 13
+# [2026-09-17T16:41:54.401Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d284 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L165, false for 'create' @ L201, false for 'update' @ L165, false for 'update' @ L201
+# Subtest: Firestore: catálogo e configuração são públicos somente para leitura
+ok 1 - Firestore: catálogo e configuração são públicos somente para leitura
+  ---
+  duration_ms: 3065.164201
+  type: 'test'
+  ...
+# [2026-09-17T16:41:54.595Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d286 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L147:32 for 'create' @ L147, false for 'create' @ L201, evaluation error at L147:32 for 'update' @ L147, false for 'update' @ L201, false for 'create' @ L147, false for 'create' @ L201
+# [2026-09-17T16:41:54.635Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d287 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L147:32 for 'update' @ L147, false for 'update' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# [2026-09-17T16:41:54.659Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d288 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L154:24 for 'delete' @ L154, false for 'delete' @ L201, false for 'delete' @ L154, false for 'delete' @ L201
+# [2026-09-17T16:41:54.690Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d289 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L165:23 for 'create' @ L165, false for 'create' @ L201, evaluation error at L165:23 for 'update' @ L165, false for 'update' @ L201, false for 'create' @ L165, false for 'create' @ L201
+# Subtest: Firestore: usuário comum não altera catálogo nem configuração
+ok 2 - Firestore: usuário comum não altera catálogo nem configuração
+  ---
+  duration_ms: 285.058426
+  type: 'test'
+  ...
+# Subtest: Firestore: custom claim administrativa gerencia documentos válidos do catálogo
+ok 3 - Firestore: custom claim administrativa gerencia documentos válidos do catálogo
+  ---
+  duration_ms: 151.540882
+  type: 'test'
+  ...
+# Subtest: Firestore: perfil legado com role admin mantém o acesso administrativo
+ok 4 - Firestore: perfil legado com role admin mantém o acesso administrativo
+  ---
+  duration_ms: 151.179448
+  type: 'test'
+  ...
+# [2026-09-17T16:41:55.052Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d28d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L147, false for 'create' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# [2026-09-17T16:41:55.076Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d28e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L153, false for 'create' @ L201, false for 'update' @ L153, false for 'update' @ L201
+# [2026-09-17T16:41:55.098Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d28f error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L159, false for 'create' @ L201, false for 'update' @ L159, false for 'update' @ L201
+# [2026-09-17T16:41:55.132Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d290 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L159, false for 'create' @ L201, false for 'update' @ L159, false for 'update' @ L201
+# [2026-09-17T16:41:55.218Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d291 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L147, false for 'create' @ L201, false for 'update' @ L147, false for 'update' @ L201
+# Subtest: Firestore: administrador não grava documentos de catálogo inválidos
+ok 5 - Firestore: administrador não grava documentos de catálogo inválidos
+  ---
+  duration_ms: 226.446199
+  type: 'test'
+  ...
+# Subtest: Firestore: pedido só pode ser lido pelo proprietário ou por administrador
+ok 6 - Firestore: pedido só pode ser lido pelo proprietário ou por administrador
+  ---
+  duration_ms: 297.702861
+  type: 'test'
+  ...
+# Subtest: Firestore: consulta de pedidos exige filtro do proprietário para usuário comum
+ok 7 - Firestore: consulta de pedidos exige filtro do proprietário para usuário comum
+  ---
+  duration_ms: 164.390232
+  type: 'test'
+  ...
+# [2026-09-17T16:41:55.802Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d29c error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L171, false for 'create' @ L201, false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:41:55.855Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d29d error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L171, false for 'create' @ L201, false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:41:55.872Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d29e error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:41:55.885Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d29f error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'update' @ L173, false for 'update' @ L201
+# [2026-09-17T16:41:55.898Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'delete' @ L173, false for 'delete' @ L201
+# Subtest: Firestore: nenhum cliente altera pedidos diretamente, inclusive administrador
+ok 8 - Firestore: nenhum cliente altera pedidos diretamente, inclusive administrador
+  ---
+  duration_ms: 217.258325
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.027Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a4 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L176, false for 'create' @ L201, false for 'update' @ L176, false for 'update' @ L201
+# [2026-09-17T16:41:56.047Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L176, false for 'create' @ L201, false for 'update' @ L176, false for 'update' @ L201
+# Subtest: Firestore: subcoleções de pedidos permanecem exclusivas do servidor
+ok 9 - Firestore: subcoleções de pedidos permanecem exclusivas do servidor
+  ---
+  duration_ms: 147.538254
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.143Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L182:24 for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# Subtest: Firestore: usuário cria somente o próprio perfil básico
+ok 10 - Firestore: usuário cria somente o próprio perfil básico
+  ---
+  duration_ms: 95.916723
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.233Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L182:24 for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# [2026-09-17T16:41:56.268Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# [2026-09-17T16:41:56.313Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2a9 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L182, false for 'create' @ L201, evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'create' @ L182, false for 'create' @ L201
+# Subtest: Firestore: usuário não pode se promover nem falsificar UID ou e-mail
+ok 11 - Firestore: usuário não pode se promover nem falsificar UID ou e-mail
+  ---
+  duration_ms: 169.402692
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.403Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2ab error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:41:56.424Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2ac error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:41:56.452Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2ad error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# Subtest: Firestore: atualização do próprio perfil preserva campos de identidade e função
+ok 12 - Firestore: atualização do próprio perfil preserva campos de identidade e função
+  ---
+  duration_ms: 144.629626
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.565Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b0 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L187:24 for 'update' @ L187, false for 'update' @ L201, false for 'update' @ L187, false for 'update' @ L201
+# [2026-09-17T16:41:56.579Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b1 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# evaluation error at L192:24 for 'delete' @ L192, false for 'delete' @ L201, false for 'delete' @ L192, false for 'delete' @ L201
+# Subtest: Firestore: perfis alheios são privados e somente administrador pode gerenciá-los
+ok 13 - Firestore: perfis alheios são privados e somente administrador pode gerenciá-los
+  ---
+  duration_ms: 172.735068
+  type: 'test'
+  ...
+# [2026-09-17T16:41:56.692Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b5 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# [2026-09-17T16:41:56.714Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b6 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# [2026-09-17T16:41:56.737Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b7 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L197, false for 'create' @ L201, false for 'update' @ L197, false for 'update' @ L201
+# [2026-09-17T16:41:56.761Z]  @firebase/firestore: Firestore (12.11.0): GrpcConnection RPC 'Write' stream 0x22e1d2b8 error. Code: 7 Message: 7 PERMISSION_DENIED: 
+# false for 'create' @ L201, false for 'update' @ L201
+# Subtest: Firestore: coleções técnicas e caminhos desconhecidos são inacessíveis ao cliente
+ok 14 - Firestore: coleções técnicas e caminhos desconhecidos são inacessíveis ao cliente
+  ---
+  duration_ms: 130.189793
+  type: 'test'
+  ...
+# Subtest: Storage: usuário anônimo não envia, lê ou remove arte pendente
+ok 15 - Storage: usuário anônimo não envia, lê ou remove arte pendente
+  ---
+  duration_ms: 317.241059
+  type: 'test'
+  ...
+# Subtest: Storage: proprietário envia, lê e remove a própria arte pendente
+ok 16 - Storage: proprietário envia, lê e remove a própria arte pendente
+  ---
+  duration_ms: 59.83001
+  type: 'test'
+  ...
+# Subtest: Storage: um usuário não acessa a pasta pendente de outro
+ok 17 - Storage: um usuário não acessa a pasta pendente de outro
+  ---
+  duration_ms: 79.408609
+  type: 'test'
+  ...
+# Subtest: Storage: upload exige ownerId correspondente ao usuário autenticado
+ok 18 - Storage: upload exige ownerId correspondente ao usuário autenticado
+  ---
+  duration_ms: 43.574946
+  type: 'test'
+  ...
+# Subtest: Storage: modelo composto exige tipo raster e metadado técnico
+ok 19 - Storage: modelo composto exige tipo raster e metadado técnico
+  ---
+  duration_ms: 56.700134
+  type: 'test'
+  ...
+# Subtest: Storage: upload rejeita arquivo vazio, tipo proibido e limite excedido
+ok 20 - Storage: upload rejeita arquivo vazio, tipo proibido e limite excedido
+  ---
+  duration_ms: 222.448913
+  type: 'test'
+  ...
+# Subtest: Storage: limite exato de 15 MB continua permitido
+ok 21 - Storage: limite exato de 15 MB continua permitido
+  ---
+  duration_ms: 189.094349
+  type: 'test'
+  ...
+# Subtest: Storage: nome gerado e extensão precisam corresponder ao MIME
+ok 22 - Storage: nome gerado e extensão precisam corresponder ao MIME
+  ---
+  duration_ms: 30.698855
+  type: 'test'
+  ...
+# Subtest: Storage: PDF, JPG, PNG e WebP válidos permanecem aceitos
+ok 23 - Storage: PDF, JPG, PNG e WebP válidos permanecem aceitos
+  ---
+  duration_ms: 99.772613
+  type: 'test'
+  ...
+# Subtest: Storage: arquivo pendente existente não pode ser sobrescrito
+ok 24 - Storage: arquivo pendente existente não pode ser sobrescrito
+  ---
+  duration_ms: 47.23323
+  type: 'test'
+  ...
+# Subtest: Storage: arte vinculada ao pedido é somente leitura para o proprietário
+ok 25 - Storage: arte vinculada ao pedido é somente leitura para o proprietário
+  ---
+  duration_ms: 57.318572
+  type: 'test'
+  ...
+# Subtest: Storage: imagem do catálogo é pública somente para leitura individual
+ok 26 - Storage: imagem do catálogo é pública somente para leitura individual
+  ---
+  duration_ms: 44.079657
+  type: 'test'
+  ...
+# Subtest: Storage: somente claim administrativa envia e remove imagens válidas do catálogo
+ok 27 - Storage: somente claim administrativa envia e remove imagens válidas do catálogo
+  ---
+  duration_ms: 56.151443
+  type: 'test'
+  ...
+# Subtest: Storage: imagem de catálogo valida tamanho, MIME, nome e metadados
+ok 28 - Storage: imagem de catálogo valida tamanho, MIME, nome e metadados
+  ---
+  duration_ms: 204.935467
+  type: 'test'
+  ...
+# Subtest: Storage: imagem existente do catálogo não pode ser sobrescrita
+ok 29 - Storage: imagem existente do catálogo não pode ser sobrescrita
+  ---
+  duration_ms: 47.411732
+  type: 'test'
+  ...
+# Subtest: Storage: imagens administrativas são públicas e somente administrador altera
+not ok 30 - Storage: imagens administrativas são públicas e somente administrador altera
+  ---
+  duration_ms: 61.13445
+  type: 'test'
+  location: '/home/hendo/Codes/Gb-Grafica/test/firebase-rules/firebaseRules.test.ts:1:20754'
+  failureType: 'testCodeFailure'
+  error: "Firebase Storage: User does not have permission to access 'catalog/site/logo/ssssssssssssssssssssssssssssssss.png'. (storage/unauthorized)"
+  code: 'storage/unauthorized'
+  name: 'FirebaseError'
+  ...
+# Subtest: Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos
+ok 31 - Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válidos
+  ---
+  duration_ms: 240.525677
+  type: 'test'
+  ...
+# Subtest: Storage: caminhos fora das áreas autorizadas são bloqueados
+ok 32 - Storage: caminhos fora das áreas autorizadas são bloqueados
+  ---
+  duration_ms: 66.862681
+  type: 'test'
+  ...
+1..32
+# tests 32
+# suites 0
+# pass 31
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7924.445223
+⚠  Script exited unsuccessfully (code 1)
+i  emulators: Shutting down emulators.
+i  firestore: Stopping Firestore Emulator
+i  storage: Stopping Storage Emulator
+i  hub: Stopping emulator hub
+i  logging: Stopping Logging Emulator
+
+Error: Script "npm run test:rules:unit" exited with code 1
+
+===== npm run build =====
+npm notice run gb-grafica-store@0.0.0 build
+npm notice run vite build
+vite v6.4.2 building for production...
+transforming...
+✓ 2138 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                         2.31 kB │ gzip:   0.80 kB
+dist/assets/NotFound-Bitsgusf.js        1.41 kB │ gzip:   0.75 kB
+dist/assets/icons-D36A-LsR.js          17.80 kB │ gzip:   4.09 kB
+dist/assets/LegalPage-DGADu3Uq.js      25.46 kB │ gzip:   8.31 kB
+dist/assets/index-qAkfN4qd.js          65.80 kB │ gzip:  12.79 kB
+dist/assets/Admin-5yqt-PV9.js         100.81 kB │ gzip:  23.98 kB
+dist/assets/motion-AUQGuVoe.js        128.30 kB │ gzip:  42.08 kB
+dist/assets/App-DKa2TNLq.js           132.39 kB │ gzip:  38.62 kB
+dist/assets/react-vendor-P8FcbYH-.js  231.55 kB │ gzip:  73.66 kB
+dist/assets/firebase-XpOUagsw.js      491.12 kB │ gzip: 115.58 kB
+✓ built in 5.42s
+
+===== npm run test:smoke =====
+npm notice run gb-grafica-store@0.0.0 test:smoke
+npm notice run node --import tsx scripts/smoke-routes.ts
+Smoke test aprovado: saúde, contrato da API, 8 rotas públicas, robots.txt e sitemap.xml.
+
+===== npm run test:e2e =====
+npm notice run gb-grafica-store@0.0.0 test:e2e
+npm notice run playwright test
+[WebServer] npm notice run gb-grafica-store@0.0.0 dev:e2e
+[WebServer] npm notice run node --import tsx scripts/e2e-server.ts
+[WebServer] E2E server listening on http://127.0.0.1:4173
+
+Running 12 tests using 2 workers
+
+  ✓   1 e2e/admin.spec.ts:8:1 › mantém o foco e permite digitação contínua no cadastro de produto (4.1s)
+  ✓   2 e2e/store.spec.ts:8:1 › filtra o catálogo e conclui checkout de retirada no backend simulado (5.9s)
+  ✓   3 e2e/admin.spec.ts:22:1 › envia imagem principal e galeria pelo computador (2.3s)
+  ✓   5 e2e/admin.spec.ts:42:1 › permite cadastrar produto com texto e imagem (2.7s)
+  ✓   4 e2e/store.spec.ts:46:1 › calcula frete e preenche o endereço retornado pela API simulada (3.5s)
+  ✓   6 e2e/admin.spec.ts:52:1 › avisa antes de descartar alterações de um produto (2.9s)
+  ✓   7 e2e/store.spec.ts:61:1 › gera o modelo composto e envia texto, fonte, posição e arquivo ao checkout (6.1s)
+  ✓   8 e2e/admin.spec.ts:69:1 › valida duplicidade, cria e exclui produto com confirmação (3.6s)
+  ✓   9 e2e/store.spec.ts:115:3 › loja em viewport móvel › não cria rolagem horizontal e mantém o carrinho operável (2.3s)
+  ✓  10 e2e/admin.spec.ts:93:1 › protege configurações pendentes ao trocar de seção (2.4s)
+  ✓  11 e2e/admin.spec.ts:109:1 › rejeita promoção insegura e persiste uma promoção válida (2.0s)
+  ✓  12 e2e/admin.spec.ts:131:3 › painel em viewport móvel › mantém navegação e ações de produto acessíveis por toque (1.1s)
+
+  12 passed (24.0s)
+

@@ -1,7 +1,7 @@
 {
   "name": "gb-grafica-store",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.0.0",
   "type": "module",
   "engines": {
     "node": "22.x"
@@ -14,9 +14,8 @@
     "start": "tsx server.ts",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
-    "test:rules:runner": "node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts",
-    "test:rules:unit": "firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only firestore,storage \"npm run test:rules:runner\"",
-    "test:rules": "npm run test:rules:unit",
+    "test:rules:unit": "node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts",
+    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only firestore,storage \"npm run test:rules:unit\"",
     "dev:e2e": "node --import tsx scripts/e2e-server.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -29,14 +28,13 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.15.0",
-"clsx": "^2.1.1",
+    "clsx": "^2.1.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
-    "esbuild": "^0.28.2",
     "express": "^4.21.2",
     "firebase": "^12.11.0",
-    "firebase-admin": "^14.4.0",
-    "lucide-react": "^1.47.0",
+    "firebase-admin": "^14.3.0",
+    "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -50,8 +48,6 @@
     "@playwright/test": "^1.62.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.21",
     "firebase-tools": "15.30.1",
     "tailwindcss": "^4.1.14",
@@ -67,7 +63,6 @@
     "@firebase/util@1.15.3": true,
     "esbuild@0.27.7": true,
     "esbuild@0.25.12": true,
-    "protobufjs@7.6.6": true,
-    "re2@1.26.1": true
+    "protobufjs@7.6.6": true
   }
 }
