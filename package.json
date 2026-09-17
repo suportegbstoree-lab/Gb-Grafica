@@ -64,8 +64,13 @@
     "autoprefixer": "^10.6.1",
 >>>>>>> 9b5014b (Upgrade autoprefixer)
     "firebase-tools": "15.30.1",
+<<<<<<< HEAD
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2"
+=======
+    "tailwindcss": "^4.3.3",
+    "typescript": "~7.0.2"
+>>>>>>> a11da35 (Upgrade tailwindcss)
   },
   "overrides": {
     "jwks-rsa": {
