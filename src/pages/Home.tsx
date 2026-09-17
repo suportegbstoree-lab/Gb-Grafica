@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao, type PersonalizationFont } from '../types';
 import { cn } from '../lib/utils';
@@ -2083,7 +2083,7 @@ function ProductCard({
                 title="Facebook"
                 aria-label={`Compartilhar ${product.nome} no Facebook`}
               >
-                <Facebook size={16} />
+                <Share2 size={16} />
               </button>
               <button
                 type="button"
@@ -2096,7 +2096,7 @@ function ProductCard({
                 title="Twitter"
                 aria-label={`Compartilhar ${product.nome} no Twitter`}
               >
-                <Twitter size={16} />
+                <Share2 size={16} />
               </button>
               <button
                 type="button"
