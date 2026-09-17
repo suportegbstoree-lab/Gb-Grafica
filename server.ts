@@ -43,7 +43,7 @@ async function startServer() {
       },
     }));
     
-    app.get('*', (req, res) => {
+    app.get('/{*splat}', (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distPath, 'index.html'));
     });
