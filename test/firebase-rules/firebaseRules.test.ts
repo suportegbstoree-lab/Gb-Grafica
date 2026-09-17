@@ -592,7 +592,7 @@ test('Storage: imagens administrativas são públicas e somente administrador al
   const publicStorage = environment().unauthenticatedContext().storage();
 
   for (const [scope, owner] of [['categories', 'livros'], ['site', 'logo'], ['promotions', 'oferta']] as const) {
-    const objectPath = `catalog/${scope}/${owner}/${scope[0].repeat(32)}.png`;
+    const objectPath = `catalog/${scope}/${owner}/${'a'.repeat(32)}.png`;
     const adminReference = adminStorage.ref(objectPath);
     await assertUploadFails(userStorage.ref(objectPath).put(
       new Uint8Array([1]),
