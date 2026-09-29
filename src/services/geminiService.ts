@@ -3,6 +3,8 @@ import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 
 type AiAction = 'generate' | 'improveTitle' | 'improveDescription' | 'custom';
 
+
+
 async function requestSuggestion(
   action: AiAction,
   payload: { title?: string; description?: string; prompt?: string },
