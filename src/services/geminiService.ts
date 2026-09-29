@@ -1,64 +1,46 @@
-import { auth } from '../firebase';
-import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
+import { auth, generateGeminiText } from '../firebase';
+
 
 type AiAction = 'generate' | 'improveTitle' | 'improveDescription' | 'custom';
 
-
-
 async function requestSuggestion(
-  action: AiAction,
-  payload: { title?: string; description?: string; prompt?: string },
+	action: AiAction,
+	payload: { title?: string; description?: string; prompt?: string },
 ): Promise<string> {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Faça login novamente para usar a IA.');
+	const user = auth.currentUser;
+	if (!user) throw new Error('Faça login novamente para usar a IA.');
 
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 30_000);
-
-  try {
-    const idToken = await user.getIdToken();
-    const response = await fetch('/api/admin/ai', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({ action, ...payload }),
-      signal: controller.signal,
-    });
-
-    const data = await response.json().catch(() => ({})) as { suggestion?: unknown } & ApiErrorPayload;
-    if (!response.ok) {
-      throw new Error(apiErrorMessage(data, 'Não foi possível consultar a IA.'));
-    }
-
-    if (typeof data.suggestion !== 'string' || !data.suggestion.trim()) {
-      throw new Error('A IA não retornou uma sugestão válida.');
-    }
-
-    return data.suggestion.trim();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('A consulta à IA demorou demais. Tente novamente.');
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-  }
+	const { title = '', description = '', prompt = '' } = payload;
+	let instruction = '';
+	switch (action) {
+		case 'generate':
+			instruction = `Gere uma descrição clara e persuasiva para o produto "${title}". Foque nos benefícios e casos de uso para uma gráfica e loja de personalizados. Retorne somente a descrição, sem título ou introdução.`;
+			break;
+		case 'improveTitle':
+			instruction = `Melhore o título de produto "${title}" para torná-lo claro, atraente e amigável para busca. Retorne somente o título, sem aspas ou explicações.`;
+			break;
+		case 'improveDescription':
+			instruction = `Melhore a descrição de produto a seguir para deixá-la clara, profissional e persuasiva, sem inventar especificações: "${description}". Retorne somente a descrição.`;
+			break;
+		case 'custom':
+			instruction = `Escreva uma descrição para o produto "${title}" seguindo estas orientações: "${prompt}". Não invente dados técnicos que não estejam nas orientações. Retorne somente a descrição.`;
+			break;
+	}
+	return generateGeminiText(instruction);
 }
 
 export const generateDescriptionFromTitle = (title: string) => (
-  requestSuggestion('generate', { title })
+	requestSuggestion('generate', { title })
 );
 
 export const improveTitle = (title: string) => (
-  requestSuggestion('improveTitle', { title })
+	requestSuggestion('improveTitle', { title })
 );
 
 export const improveDescription = (description: string) => (
-  requestSuggestion('improveDescription', { description })
+	requestSuggestion('improveDescription', { description })
 );
 
 export const generateDescriptionWithCustomPrompt = (title: string, prompt: string) => (
-  requestSuggestion('custom', { title, prompt })
+	requestSuggestion('custom', { title, prompt })
 );

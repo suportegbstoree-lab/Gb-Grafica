@@ -4,7 +4,7 @@ Loja virtual em React/Vite com catálogo e administração no Firebase, autentic
 
 ## Rodar localmente
 
-Requisitos: Node.js 22 ou superior e npm.
+Requisitos: Node.js 22, npm e Java 21 para os testes das regras Firebase.
 
 ```bash
 npm ci
@@ -76,11 +76,33 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `FIREBASE_SERVICE_ACCOUNT_JSON` ou as três credenciais Firebase separadas
 - `FIREBASE_FIRESTORE_DATABASE_ID`
 - `FIREBASE_STORAGE_BUCKET`
-- `GEMINI_API_KEY` e, opcionalmente, `GEMINI_MODEL`
+- `FIREBASE_APP_CHECK_MODE=monitor` durante a ativação inicial
+- `VITE_GEMINI_MODEL` e, se o App Check estiver configurado, `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY`
 - `LOG_LEVEL=info`
 - `LOG_INCLUDE_STACK=false`
 
-O token PagBank, a conta de serviço Firebase e a chave Gemini são exclusivos do servidor. Não use prefixo `VITE_` nesses segredos.
+O token PagBank e a conta de serviço Firebase são exclusivos do servidor. O Firebase AI Logic usa a Gemini Developer API diretamente no app, sem `GEMINI_API_KEY`; configure o App Check no console Firebase antes de aplicar a proteção em produção.
+
+### App Check
+
+O frontend só inicializa o App Check quando `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` contém uma chave pública. A ausência da chave não impede login, desenvolvimento local ou build. O backend aceita três modos em `FIREBASE_APP_CHECK_MODE`:
+
+- `off`: não verifica o header; padrão seguro para desenvolvimento antes da configuração;
+- `monitor`: valida quando possível, registra ausências ou falhas e não bloqueia a requisição;
+- `enforce`: rejeita rotas protegidas sem um token válido.
+
+As rotas de frete, checkout, consulta de pagamento, atualização administrativa e acesso privado às artes são protegidas. `/api/health`, `/health` e o webhook PagBank permanecem fora do middleware porque são chamadas públicas ou servidor a servidor. O token é enviado apenas no header `X-Firebase-AppCheck`, nunca em URL ou log.
+
+Para ativar em produção:
+
+1. crie uma chave web baseada em pontuação do reCAPTCHA Enterprise para os domínios publicados;
+2. registre a chave no Firebase App Check;
+3. configure a site key pública na Vercel;
+4. publique primeiro com `FIREBASE_APP_CHECK_MODE=monitor`;
+5. confira os eventos `app_check_monitor_observation` nos logs;
+6. altere para `enforce` somente quando o tráfego legítimo estiver enviando tokens.
+
+Em desenvolvimento local, mantenha a site key vazia e o modo `off`, ou configure oficialmente um token de depuração no console Firebase. Nunca publique um token de depuração como variável `VITE_*`.
 
 `PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção. A captura é recusada pelo código sempre que `PAGBANK_ENV=production`.
 

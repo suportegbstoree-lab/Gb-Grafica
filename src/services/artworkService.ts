@@ -12,6 +12,7 @@ import {
   MAX_PERSONALIZATION_MODEL_BYTES,
 } from '../lib/personalizationModel';
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
+import { apiFetch } from './apiClient';
 
 export interface UploadedArtwork {
   path: string;
@@ -83,7 +84,7 @@ async function authenticatedRequest<T>(url: string, init?: RequestInit): Promise
   const user = auth.currentUser;
   if (!user) throw new Error('Sua sessão expirou. Faça login novamente.');
   const token = await user.getIdToken();
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     ...init,
     headers: {
       ...init?.headers,

@@ -39,6 +39,7 @@ import {
   personalizationModelName,
 } from '../lib/personalizationModel';
 import type { ComposedPersonalizationModel } from '../services/personalizationModelService';
+import { apiFetch } from '../services/apiClient';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -277,7 +278,7 @@ export default function Home({
     setIsCalculating(true);
     setShippingError(null);
     try {
-      const response = await fetch('/api/shipping-quote', {
+      const response = await apiFetch('/api/shipping-quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cep }),

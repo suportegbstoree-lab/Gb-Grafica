@@ -1,5 +1,5 @@
 {
   "name": "GB Gráfica - Loja Online",
-  "description": "Plataforma de e-commerce para serviços gráficos com PagBank integrado e painel administrativo para gestão de produtos.",
+  "description": "Plataforma de e-commerce para serviços relacionados a design e impressão, com PagBank integrado para pagamentos online, login de clientes via google, e integração com o Firebase para gerenciamento de dados e autenticação.",
   "requestFramePermissions": []
 }

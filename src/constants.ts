@@ -3,8 +3,9 @@ import { DEFAULT_LOGO_URL } from "./lib/seo";
 
 export const INITIAL_CONFIG: SiteConfig = {
   logo_url: DEFAULT_LOGO_URL,
-  telefone1: "(16) 99999-9999",
-  telefone2: "(16) 3333-3333",
+  telefone1: "(16) 98801-6792",
+  // TODO: Adicionar o segundo telefone verdadeiro e remover o placeholder abaixo
+  telefone2: "(16) 3333-3333", // Placeholder, substituir pelo telefone real
   banner_principal: "https://picsum.photos/seed/grafica-banner/1920/600",
   beneficio1_titulo: "ATENDIMENTO RÁPIDO",
   beneficio1_desc: "FALE DIRETO COM NOSSA EQUIPE",
@@ -12,12 +13,13 @@ export const INITIAL_CONFIG: SiteConfig = {
   beneficio2_desc: "CARTÃO, PIX OU BOLETO",
   beneficio3_titulo: "ALTA QUALIDADE",
   beneficio3_desc: "IMPRESSÃO PREMIUM",
-  razao_social: "",
-  documento_fiscal: "",
-  endereco_comercial: "",
-  email_atendimento: "",
-  email_privacidade: "",
-  prazo_producao: "",
+  razao_social: "GB Grafica",
+  documento_fiscal: "53343716000158",
+  endereco_comercial: "Rua General Carneiro, 1220, Centro, Franca/SP, CEP 14400-500",
+  email_atendimento: "suporte.gb.storee@gmail.com",
+  // TODO: Criar e adicionar o email de privacidade verdadeiro para separ as comunicações de suporte e privacidade, e remover o placeholder abaixo
+  email_privacidade: "suporte.gb.storee@gmail.com",
+  prazo_producao: "A partir de 5 dias úteis após pagamento",
   fontes_personalizacao: []
 };
 

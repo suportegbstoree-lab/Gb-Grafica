@@ -17,6 +17,7 @@ const originalEnvironment = {
   APP_ALLOWED_ORIGINS: process.env.APP_ALLOWED_ORIGINS,
   LOG_LEVEL: process.env.LOG_LEVEL,
   PAGBANK_TOKEN: process.env.PAGBANK_TOKEN,
+  FIREBASE_APP_CHECK_MODE: process.env.FIREBASE_APP_CHECK_MODE,
 };
 
 function restoreEnvironment(key: keyof typeof originalEnvironment): void {
@@ -42,6 +43,7 @@ before(async () => {
   process.env.APP_ALLOWED_ORIGINS = 'https://painel.example.com';
   process.env.LOG_LEVEL = 'silent';
   delete process.env.PAGBANK_TOKEN;
+  delete process.env.FIREBASE_APP_CHECK_MODE;
 
   server = createServer(app);
   await new Promise<void>((resolve, reject) => {
@@ -62,6 +64,7 @@ after(async () => {
   restoreEnvironment('APP_ALLOWED_ORIGINS');
   restoreEnvironment('LOG_LEVEL');
   restoreEnvironment('PAGBANK_TOKEN');
+  restoreEnvironment('FIREBASE_APP_CHECK_MODE');
 });
 
 test('aplica headers de segurança e propaga um request ID válido', async () => {
@@ -76,7 +79,10 @@ test('aplica headers de segurança e propaga um request ID válido', async () =>
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
   assert.equal(response.headers.get('x-permitted-cross-domain-policies'), 'none');
   assert.match(response.headers.get('strict-transport-security') || '', /max-age=31536000/);
-  assert.match(response.headers.get('content-security-policy') || '', /frame-ancestors 'none'/);
+  const contentSecurityPolicy = response.headers.get('content-security-policy') || '';
+  assert.match(contentSecurityPolicy, /frame-ancestors 'none'/);
+  assert.match(contentSecurityPolicy, /https:\/\/www\.google\.com\/recaptcha\//);
+  assert.match(contentSecurityPolicy, /https:\/\/www\.gstatic\.com\/recaptcha\//);
   assert.match(response.headers.get('cache-control') || '', /no-store/);
 });
 
@@ -101,14 +107,47 @@ test('responde corretamente ao preflight permitido', async () => {
     headers: {
       Origin: 'https://loja.example.com',
       'Access-Control-Request-Method': 'POST',
-      'Access-Control-Request-Headers': 'content-type,authorization,x-request-id',
+      'Access-Control-Request-Headers': 'content-type,authorization,x-firebase-appcheck,x-request-id',
     },
   });
 
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://loja.example.com');
   assert.match(response.headers.get('access-control-allow-methods') || '', /POST/);
+  assert.match(response.headers.get('access-control-allow-headers') || '', /X-Firebase-AppCheck/i);
   assert.match(response.headers.get('access-control-allow-headers') || '', /X-Request-Id/i);
+});
+
+test('App Check em enforce protege rotas do navegador', async () => {
+  process.env.FIREBASE_APP_CHECK_MODE = 'enforce';
+  try {
+    const response = await fetch(`${baseUrl}/api/shipping-quote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cep: '14400000' }),
+    });
+    const body = await expectApiError(response, 401, 'APP_CHECK_REQUIRED');
+    assert.match(String(body.error), /validar a segurança/i);
+  } finally {
+    delete process.env.FIREBASE_APP_CHECK_MODE;
+  }
+});
+
+test('health e webhook PagBank não são bloqueados pelo App Check', async () => {
+  process.env.FIREBASE_APP_CHECK_MODE = 'enforce';
+  try {
+    const health = await fetch(`${baseUrl}/api/health`);
+    assert.equal(health.status, 200);
+
+    const webhook = await fetch(`${baseUrl}/api/webhook/pagbank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    await expectApiError(webhook, 503, 'PAGBANK_NOT_CONFIGURED');
+  } finally {
+    delete process.env.FIREBASE_APP_CHECK_MODE;
+  }
 });
 
 test('rejeita JSON malformado sem expor o handler padrão do Express', async () => {

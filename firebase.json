@@ -2,7 +2,13 @@
   "firestore": [
     {
       "database": "ai-studio-2d6e0927-5895-447d-a355-298207aa71d2",
-      "rules": "firestore.rules"
+      "rules": "firestore.rules",
+	  "models": [
+		{
+		  "model": "gemini-3.8-flash",
+		  "rules": "firestore.rules"
+		}
+	  ]
     }
   ],
   "storage": {

@@ -13,3 +13,9 @@ blob-report/
 !.env.example
 .secret.json
 .personal_infos
+.vscode/
+request.json
+.github/agents/
+.github/*.yml
+.git/
+

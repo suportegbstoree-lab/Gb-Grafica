@@ -1,5 +1,6 @@
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import type { PaymentStatus } from '../lib/orderStatus';
+import { apiFetch } from './apiClient';
 
 export interface HostedCheckoutResult {
   initPoint: string;
@@ -45,7 +46,7 @@ export function isTrustedPagBankPaymentUrl(value: string): boolean {
 export async function createHostedCheckout(
   payload: unknown,
   idToken: string,
-  fetchImplementation: FetchImplementation = fetch,
+  fetchImplementation: FetchImplementation = apiFetch,
 ): Promise<HostedCheckoutResult> {
   const response = await fetchImplementation('/api/checkout', {
     method: 'POST',
@@ -75,7 +76,7 @@ export async function createHostedCheckout(
 export async function refreshHostedPaymentStatus(
   orderId: string,
   idToken: string,
-  fetchImplementation: FetchImplementation = fetch,
+  fetchImplementation: FetchImplementation = apiFetch,
 ): Promise<HostedPaymentStatusResult> {
   if (!/^GB-[A-Z0-9]{8,64}$/.test(orderId)) throw new Error('Pedido de pagamento inválido.');
   const response = await fetchImplementation(`/api/payment-status/${encodeURIComponent(orderId)}`, {
