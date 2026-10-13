@@ -1422,6 +1422,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			try {
 				const captured = await savePagBankCheckoutEvidence(db, {
 					orderId,
+					userId: firebaseUser.uid,
 					...(checkoutId ? { checkoutId } : {}),
 					requestId,
 					requestUrl: checkoutRequestUrl,
@@ -1481,6 +1482,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 				try {
 					const captured = await savePagBankCheckoutEvidence(db, {
 						orderId,
+						userId: firebaseUser.uid,
 						requestId,
 						requestUrl: `${pagbank.baseUrl}/checkouts`,
 						requestBody: checkoutBodyForEvidence,

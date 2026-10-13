@@ -1,6 +1,8 @@
 import type { Firestore } from 'firebase-admin/firestore';
+import { productionCaptureUserId, sanitizeProductionEvidence } from './pagbankProductionCapture.js';
 
 type PlainRecord = Record<string, unknown>;
+type CaptureEnvironment = 'sandbox' | 'production';
 
 const COLLECTION = '_pagbankHomologation';
 const MAX_WEBHOOKS_PER_CHECKOUT = 25;
@@ -11,6 +13,7 @@ export const PAGBANK_HOMOLOGATION_COLLECTION = COLLECTION;
 
 export interface CheckoutEvidenceInput {
   orderId: string;
+  userId?: string;
   checkoutId?: string;
   requestId: string;
   requestUrl: string;
@@ -45,15 +48,18 @@ export function isPagBankHomologationCaptureEnabled(
     environment.PAGBANK_HOMOLOGATION_CAPTURE?.trim().toLowerCase() === 'true';
 }
 
-export function buildPagBankCheckoutEvidence(input: CheckoutEvidenceInput): PlainRecord {
+export function buildPagBankCheckoutEvidence(
+  input: CheckoutEvidenceInput,
+  environment: CaptureEnvironment = 'sandbox',
+): PlainRecord {
   assertOrderId(input.orderId);
   assertIsoDate(input.requestSentAt, 'data de envio do checkout');
   assertIsoDate(input.responseReceivedAt, 'data de resposta do checkout');
-  assertSandboxCheckoutUrl(input.requestUrl);
+  assertCheckoutUrl(input.requestUrl, environment);
 
   return {
     schema_version: 1,
-    environment: 'sandbox',
+    environment,
     order_id: input.orderId,
     ...(input.checkoutId ? { checkout_id: input.checkoutId } : {}),
     updated_at: input.responseReceivedAt,
@@ -69,18 +75,21 @@ export function buildPagBankCheckoutEvidence(input: CheckoutEvidenceInput): Plai
           Accept: 'application/json',
           'x-idempotency-key': input.requestId,
         },
-        body: sanitizeEvidenceValue(input.requestBody),
+        body: sanitizeBody(input.requestBody, environment),
       },
       response: {
         captured_at: input.responseReceivedAt,
         status: normalizeStatus(input.responseStatus),
-        body: sanitizeEvidenceValue(input.responseBody),
+        body: sanitizeBody(input.responseBody, environment),
       },
     },
   };
 }
 
-export function buildPagBankWebhookEvidence(input: WebhookEvidenceInput): PlainRecord {
+export function buildPagBankWebhookEvidence(
+  input: WebhookEvidenceInput,
+  environment: CaptureEnvironment = 'sandbox',
+): PlainRecord {
   assertOrderId(input.orderId);
   if (!/^[a-f0-9]{64}$/i.test(input.eventHash)) {
     throw new Error('Hash do webhook inválido para a evidência de homologação.');
@@ -101,12 +110,12 @@ export function buildPagBankWebhookEvidence(input: WebhookEvidenceInput): PlainR
           ? '[NOT PROVIDED]'
           : '[REDACTED]',
       },
-      body: sanitizeEvidenceValue(input.requestBody),
+      body: sanitizeBody(input.requestBody, environment),
     },
     response: {
       captured_at: input.responseSentAt,
       status: normalizeStatus(input.responseStatus),
-      body: sanitizeEvidenceValue(input.responseBody),
+      body: sanitizeBody(input.responseBody, environment),
     },
   };
 }
@@ -115,8 +124,15 @@ export async function savePagBankCheckoutEvidence(
   db: Firestore,
   input: CheckoutEvidenceInput,
 ): Promise<boolean> {
-  if (!isPagBankHomologationCaptureEnabled()) return false;
-  const evidence = buildPagBankCheckoutEvidence(input);
+  const productionUser = productionCaptureUserId();
+  const environment = isPagBankHomologationCaptureEnabled() ? 'sandbox'
+    : productionUser && input.userId === productionUser ? 'production' : null;
+  if (!environment) return false;
+  const evidence = buildPagBankCheckoutEvidence(input, environment);
+  if (environment === 'production') {
+    evidence.capture_user_id = productionUser;
+    evidence.capture_window_start_at = process.env.PAGBANK_PRODUCTION_CAPTURE_START_AT?.trim();
+  }
   await db.collection(COLLECTION).doc(input.orderId).set(evidence, { merge: true });
   return true;
 }
@@ -125,14 +141,21 @@ export async function savePagBankWebhookEvidence(
   db: Firestore,
   input: WebhookEvidenceInput,
 ): Promise<boolean> {
-  if (!isPagBankHomologationCaptureEnabled()) return false;
-  const evidence = buildPagBankWebhookEvidence(input);
+  const productionUser = productionCaptureUserId();
+  const environment = isPagBankHomologationCaptureEnabled() ? 'sandbox'
+    : productionUser ? 'production' : null;
+  if (!environment) return false;
+  const evidence = buildPagBankWebhookEvidence(input, environment);
   const reference = db.collection(COLLECTION).doc(input.orderId);
   let stored = false;
 
   await db.runTransaction(async transaction => {
     const snapshot = await transaction.get(reference);
     const data = snapshot.data() as PlainRecord | undefined;
+    // Produção aceita apenas webhooks de checkouts capturados para esta conta.
+    if (environment === 'production' &&
+      (!snapshot.exists || data?.environment !== 'production' || data.capture_user_id !== productionUser ||
+        data.capture_window_start_at !== process.env.PAGBANK_PRODUCTION_CAPTURE_START_AT?.trim())) return;
     const webhooks = isPlainRecord(data?.webhooks) ? data.webhooks : {};
     if (Object.prototype.hasOwnProperty.call(webhooks, input.eventHash)) return;
     if (Object.keys(webhooks).length >= MAX_WEBHOOKS_PER_CHECKOUT) {
@@ -141,7 +164,7 @@ export async function savePagBankWebhookEvidence(
 
     const metadata = {
       schema_version: 1,
-      environment: 'sandbox',
+      environment,
       order_id: input.orderId,
       updated_at: input.responseSentAt,
       expiresAt: new Date(Date.now() + RETENTION_MS),
@@ -167,15 +190,19 @@ export async function savePagBankWebhookEvidence(
 export function formatPagBankHomologationReport(
   captures: unknown[],
   generatedAt = new Date().toISOString(),
+  environment: CaptureEnvironment = 'sandbox',
 ): string {
   if (!captures.length) throw new Error('Nenhuma evidência foi informada para exportação.');
   assertIsoDate(generatedAt, 'data de geração do relatório');
 
   const lines = [
     'INTEGRAÇÃO: Checkout PagBank',
-    'AMBIENTE: Sandbox',
+    `AMBIENTE: ${environment === 'production' ? 'Produção' : 'Sandbox'}`,
     `RELATÓRIO GERADO EM: ${generatedAt}`,
     'SEGURANÇA: tokens de autenticação foram substituídos por [REDACTED].',
+    ...(environment === 'production' ? [
+      'CORPOS SANITIZADOS: somente campos técnicos permitidos; dados pessoais, textos livres, links de pagamento e campos desconhecidos são mascarados. Estruturas extensas podem ser limitadas.',
+    ] : []),
     '',
   ];
 
@@ -188,6 +215,10 @@ export function formatPagBankHomologationReport(
     if (!orderId || !request || !response) {
       throw new Error(`Evidência ${captureIndex + 1} não contém um checkout completo.`);
     }
+    if ((record.environment || 'sandbox') !== environment) {
+      throw new Error(`A evidência ${orderId} pertence a outro ambiente.`);
+    }
+    assertCheckoutUrl(stringValue(request.url), environment);
 
     const methods = paymentMethodsFromRequest(request.body);
     lines.push(
@@ -201,13 +232,13 @@ export function formatPagBankHomologationReport(
       `Captured-At: ${stringValue(request.captured_at)}`,
       formatHeaders(request.headers),
       '',
-      formatJson(request.body),
+      formatJson(request.body, environment),
       '',
       'RESPONSE REAL DO PAGBANK',
       `HTTP ${statusLabel(response.status)}`,
       `Captured-At: ${stringValue(response.captured_at)}`,
       '',
-      formatJson(response.body),
+      formatJson(response.body, environment),
       '',
     );
 
@@ -230,13 +261,13 @@ export function formatPagBankHomologationReport(
         `Verificação: ${webhookVerificationLabel(webhook.verification)}`,
         formatHeaders(webhookRequest.headers),
         '',
-        formatJson(webhookRequest.body),
+        formatJson(webhookRequest.body, environment),
         '',
         `WEBHOOK ${webhookIndex + 1} — RESPONSE DA APLICAÇÃO`,
         `HTTP ${statusLabel(webhookResponse.status)}`,
         `Captured-At: ${stringValue(webhookResponse.captured_at)}`,
         '',
-        formatJson(webhookResponse.body),
+        formatJson(webhookResponse.body, environment),
         '',
       );
     });
@@ -294,19 +325,10 @@ function assertIsoDate(value: string, label: string): void {
   if (!value || Number.isNaN(Date.parse(value))) throw new Error(`A ${label} é inválida.`);
 }
 
-function assertSandboxCheckoutUrl(value: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error('URL do checkout inválida para a evidência de homologação.');
-  }
-  if (
-    parsed.protocol !== 'https:' ||
-    parsed.hostname !== 'sandbox.api.pagseguro.com' ||
-    parsed.pathname !== '/checkouts'
-  ) {
-    throw new Error('A evidência de homologação aceita somente o endpoint de Checkout Sandbox.');
+function assertCheckoutUrl(value: string, environment: CaptureEnvironment): void {
+  const host = environment === 'production' ? 'api.pagseguro.com' : 'sandbox.api.pagseguro.com';
+  if (value !== `https://${host}/checkouts`) {
+    throw new Error(`A evidência de homologação aceita somente o endpoint de Checkout ${environment === 'production' ? 'Produção' : 'Sandbox'}.`);
   }
 }
 
@@ -328,8 +350,12 @@ function statusLabel(value: unknown): string {
   return Number.isInteger(value) ? String(value) : 'SEM RESPOSTA HTTP';
 }
 
-function formatJson(value: unknown): string {
-  return JSON.stringify(sanitizeEvidenceValue(value), null, 2);
+function sanitizeBody(value: unknown, environment: CaptureEnvironment): unknown {
+  return environment === 'production' ? sanitizeProductionEvidence(value) : sanitizeEvidenceValue(value);
+}
+
+function formatJson(value: unknown, environment: CaptureEnvironment): string {
+  return JSON.stringify(sanitizeBody(value, environment), null, 2);
 }
 
 function formatHeaders(value: unknown): string {

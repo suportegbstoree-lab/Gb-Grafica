@@ -23,6 +23,21 @@ VITE_ALLOWED_HOSTS=.trycloudflare.com
 
 Reinicie `npm run dev` depois de alterar variáveis de ambiente.
 
+## Estrutura do repositório
+
+Execute os comandos npm na raiz, onde ficam `package.json`, `package-lock.json`, `index.html`, `vite.config.ts` e `vercel.json`.
+
+- `src/`: código da aplicação, incluindo `src/server/` e `src/e2e/E2EHarness.tsx`.
+- `api/index.ts`: entrada da API para a Vercel; importa `src/server/app.ts`.
+- `server.ts`: servidor local; usa a mesma aplicação Express.
+- `public/`: arquivos estáticos.
+- `scripts/`: utilitários de desenvolvimento, administração e validação.
+- `e2e/` e `test/firebase-rules/`: testes de navegador e regras Firebase.
+
+Na Vercel, use a raiz do repositório como **Root Directory** (campo vazio), `npm run build` como **Build Command** e `dist` como **Output Directory**, com Node.js 22. Antes de publicar a limpeza das cópias aninhadas, confira essa configuração: um projeto configurado para construir a partir de `src` precisa ser ajustado para a raiz.
+
+`src/` não contém outro projeto npm. Não copie configurações, scripts ou a árvore completa do repositório para dentro dessa pasta. Relatórios locais de testes, inventários `tree*.txt`, pacotes e patches de manutenção são ignorados pelo Git. Credenciais e arquivos pessoais continuam locais.
+
 ## Verificações
 
 Na primeira execução dos testes de navegador, instale o Chromium controlado pelo Playwright:
@@ -104,7 +119,7 @@ Para ativar em produção:
 
 Em desenvolvimento local, mantenha a site key vazia e o modo `off`, ou configure oficialmente um token de depuração no console Firebase. Nunca publique um token de depuração como variável `VITE_*`.
 
-`PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção. A captura é recusada pelo código sempre que `PAGBANK_ENV=production`.
+`PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção: essa variável ativa apenas a coleta Sandbox. A coleta para a validação final em produção exige a conta e a janela explícitas descritas abaixo.
 
 ## Firebase
 
@@ -237,6 +252,50 @@ O exportador lê a coleção técnica `_pagbankHomologation` usando Firebase Adm
 - responses reais devolvidos pela aplicação.
 
 O arquivo exportado é ignorado pelo Git. Revise-o antes do envio e confirme que os três meios aparecem. Ao terminar, volte `PAGBANK_HOMOLOGATION_CAPTURE` para `false` e remova a variável do ambiente de homologação.
+
+## Evidências da validação final em produção
+
+A coleta fica desligada por padrão. Ela captura somente checkouts da conta Firebase indicada no servidor, dentro de uma janela UTC de no máximo duas horas. Não existe parâmetro no navegador para ligar a coleta. Webhooks precisam ter passado pela validação existente e corresponder a um checkout capturado para a mesma conta e janela.
+
+Notificações recebidas depois da janela continuam seguindo o processamento normal de pagamentos, mas não entram no anexo. Planeje a janela para incluir a confirmação do método testado.
+
+Os registros continuam na coleção técnica `_pagbankHomologation`, bloqueada para os clientes pelas regras existentes. Em produção, somente campos técnicos permitidos são preservados nos corpos: identificadores, estados, meios, valores, datas e callbacks conhecidos. Cliente, endereço, cartão, textos livres, links de pagamento e campos desconhecidos são mascarados antes da gravação. O anexo declara que os corpos estão sanitizados; não apresenta dados omitidos como se fossem uma reprodução integral.
+
+### Ativar somente quando o teste estiver pronto
+
+1. Aplique o patch, valide e confira que o projeto Vercel constrói a partir da raiz do repositório.
+2. Identifique no Firebase Authentication o UID da conta que fará a compra de teste.
+3. Gere o início e o fim da janela imediatamente antes da configuração/deploy:
+
+```bash
+node -e 'const start = new Date(); const end = new Date(start.getTime() + 2 * 60 * 60 * 1000); console.log("PAGBANK_PRODUCTION_CAPTURE_START_AT=" + start.toISOString()); console.log("PAGBANK_PRODUCTION_CAPTURE_END_AT=" + end.toISOString());'
+```
+
+4. Na Vercel, configure em conjunto o ambiente, o token de produção como Secret e a captura:
+
+```dotenv
+PAGBANK_ENV=production
+PAGBANK_TOKEN=<token de produção; somente no servidor>
+PAGBANK_HOMOLOGATION_CAPTURE=false
+PAGBANK_PRODUCTION_CAPTURE_USER_ID=<UID da conta de teste>
+PAGBANK_PRODUCTION_CAPTURE_START_AT=<início UTC gerado acima>
+PAGBANK_PRODUCTION_CAPTURE_END_AT=<fim UTC gerado acima>
+```
+
+Mantenha `APP_URL` e as origens públicas corretas. A coleta não exige alterar o modo atual do App Check. Publique um novo deployment para carregar os valores. O tempo do build faz parte da janela: confira o horário antes da compra.
+
+5. Crie um checkout novo pela conta indicada, faça o teste acordado com o PagBank e anote o ID `GB-...`. Confira os eventos `pagbank_homologation_checkout_captured` e `pagbank_homologation_webhook_captured` nos logs. Falhas de captura são registradas em `pagbank_homologation_capture_failed`; a captura não muda o resultado do pagamento.
+6. Exporte localmente usando Firebase Admin no mesmo projeto/banco. O exportador não usa o token PagBank e não precisa trocar seu `.env` local de Sandbox para produção. Informe a URL pública nesse comando para preservar os callbacks conhecidos ao sanitizar novamente o anexo:
+
+```bash
+APP_URL=https://www.gblgrafica.com.br npm run pagbank:homologation:export -- --environment production --order GB-IDDOSEUPEDIDO
+```
+
+O arquivo é criado sem sobrescrever outro, com permissão local `0600`, e contém o ambiente no nome. A exportação recusa registros de outro ambiente. Se não houver webhook validado capturado, o anexo informa sua ausência; não fabrica confirmação. Revise o anexo antes de enviar ao suporte.
+
+7. Após obter o anexo, remova as três variáveis `PAGBANK_PRODUCTION_CAPTURE_*` e publique um novo deployment. A coleta já para automaticamente ao final da janela, mesmo sem esse novo deploy. O campo `expiresAt` continua com retenção de 14 dias; a exclusão dos registros depende da política TTL configurada no Firestore.
+
+Esta etapa prepara a evidência do teste; não gera a chave pública solicitada pelo suporte nem altera o contrato do Checkout Hospedado.
 
 ## Documentos comerciais
 

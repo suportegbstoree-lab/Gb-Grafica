@@ -19,3 +19,18 @@ request.json
 .github/*.yml
 .git/
 
+# Estado local das ferramentas de deploy
+/.vercel/
+/.firebase/
+
+# Saídas locais de testes e inventários do repositório
+/npm.txt
+/test-rules.txt
+/tree*.txt
+/__revisao__/
+
+# Pacotes e patches de manutenção mantidos fora do histórico
+/Gb-Grafica-*.tar.gz
+/Gb-Grafica-*.tar.gz.sha256
+/Gb-Grafica-*.patch
+/gb-grafica-*.patch
