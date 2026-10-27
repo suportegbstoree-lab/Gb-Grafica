@@ -82,10 +82,18 @@ before(async () => {
   const database = getFirestore(firebaseApp, testEnvironment.FIREBASE_FIRESTORE_DATABASE_ID);
 
   // Somente o SDK é simulado: middleware, autorização e rota Express são reais.
-  mock.method(auth, 'verifyIdToken', async (token: string) => {
+  mock.method(auth, 'verifyIdToken', async (token: string, checkRevoked?: boolean) => {
+    assert.equal(checkRevoked, true, 'a API deve consultar a revogação de cada sessão');
     verifiedTokens.push(token);
     const uid = token === 'alice-test-token' ? 'alice' : token === 'bob-test-token' ? 'bob' : null;
-    if (!uid) throw new Error('Token de teste inválido ou expirado.');
+    if (!uid) {
+      const code = token === 'revoked-test-token' ? 'auth/id-token-revoked'
+        : token === 'disabled-test-token' ? 'auth/user-disabled'
+        : token === 'unavailable-test-token' ? 'auth/internal-error'
+        : token === 'expired-test-token' ? 'auth/id-token-expired'
+        : 'auth/invalid-id-token';
+      throw Object.assign(new Error('Falha simulada de autenticação.'), { code });
+    }
     return { uid, sub: uid } as DecodedIdToken;
   });
   mock.method(database, 'collection', ((path: string) => {
@@ -160,13 +168,25 @@ test('consulta de pagamento rejeita esquema de autenticação diferente de Beare
   assert.deepEqual(documentReads, []);
 });
 
-for (const token of ['invalid-test-token', 'expired-test-token']) {
+test('a API rejeita token excessivamente grande antes de consultar o Firebase', async () => {
+  await expectError(await paymentStatusRequest(aliceOrderId, `Bearer ${'a'.repeat(8193)}`), 401, 'AUTHENTICATION_REQUIRED');
+  assert.deepEqual(verifiedTokens, []);
+  assert.deepEqual(documentReads, []);
+});
+
+for (const token of ['invalid-test-token', 'expired-test-token', 'revoked-test-token', 'disabled-test-token']) {
   test(`consulta de pagamento rejeita token recusado pelo Firebase: ${token}`, async () => {
     await expectError(await paymentStatusRequest(aliceOrderId, `Bearer ${token}`), 401, 'AUTHENTICATION_REQUIRED');
     assert.deepEqual(verifiedTokens, [token]);
     assert.deepEqual(documentReads, []);
   });
 }
+
+test('falha do Firebase Auth não é apresentada como sessão inválida', async () => {
+  await expectError(await paymentStatusRequest(aliceOrderId, 'Bearer unavailable-test-token'), 503, 'SERVICE_UNAVAILABLE');
+  assert.deepEqual(verifiedTokens, ['unavailable-test-token']);
+  assert.deepEqual(documentReads, []);
+});
 
 for (const [token, otherOrderId] of [
   ['alice-test-token', bobOrderId],

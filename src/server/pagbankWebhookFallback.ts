@@ -44,6 +44,8 @@ export function pagBankNotificationMatchesProviderEvent(
   if (received.amountCents !== null && received.amountCents !== provider.amountCents) return false;
   if (received.currency && received.currency !== provider.currency) return false;
   if (received.paymentMethod && received.paymentMethod !== provider.paymentMethod) return false;
+  if (received.refundedCents != null && received.refundedCents !== provider.refundedCents) return false;
+  if (received.paidCents != null && received.paidCents !== provider.paidCents) return false;
   return true;
 }
 

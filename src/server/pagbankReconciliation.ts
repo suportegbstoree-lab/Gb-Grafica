@@ -29,6 +29,8 @@ export async function reconcilePagBankCheckout(
     token: string;
     checkoutId: string;
     referenceId: string;
+    preferredChargeId?: string;
+    requireUnambiguousCharge?: boolean;
   },
   request: PagBankLookupRequest = requestPagBankResource,
 ): Promise<PagBankReconciliationResult> {
@@ -57,7 +59,11 @@ export async function reconcilePagBankCheckout(
   return {
     checkoutStatus: checkout.checkoutStatus,
     providerOrderIds: checkout.providerOrderIds,
-    event: selectReconciliationEvent(events) || checkout.checkoutEvent,
+    event: input.preferredChargeId
+      ? events.find(event => event.chargeId === input.preferredChargeId) || null
+      : input.requireUnambiguousCharge && events.length > 1
+        ? null
+        : selectReconciliationEvent(events) || checkout.checkoutEvent,
   };
 }
 

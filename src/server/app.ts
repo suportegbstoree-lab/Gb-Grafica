@@ -31,7 +31,7 @@ import {
 import {
 	pagBankBuyerFeeCents,
 	parsePagBankWebhookEvent,
-	shouldApplyPaymentStatus,
+	paymentEventTransition,
 	validatePagBankWebhookEvent,
 	type PagBankWebhookEvent,
 } from './pagbankWebhook.js';
@@ -70,7 +70,7 @@ import {
 	requestRequestId,
 	responseRequestId,
 } from './observability.js';
-import type { DocumentReference } from 'firebase-admin/firestore';
+import { FieldValue, type DocumentReference } from 'firebase-admin/firestore';
 import { getAppCheck } from 'firebase-admin/app-check';
 import {
 	APP_CHECK_HEADER,
@@ -429,7 +429,7 @@ function validAddressField(value: unknown, label: string, maxLength: number): st
 async function requireFirebaseUser(req: express.Request) {
 	const authorization = req.header('authorization') || '';
 	const match = authorization.match(/^Bearer\s+(.+)$/i);
-	if (!match) throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
+	if (!match || match[1].length > 8_192) throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
 
 	let auth;
 	try {
@@ -443,19 +443,27 @@ async function requireFirebaseUser(req: express.Request) {
 	}
 
 	try {
-		return await auth.verifyIdToken(match[1]);
-	} catch {
-		throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
+		return await auth.verifyIdToken(match[1], true);
+	} catch (error) {
+		const code = (error as { code?: unknown })?.code;
+		if (typeof code === 'string' && new Set([
+			'auth/argument-error', 'auth/invalid-argument', 'auth/invalid-id-token',
+			'auth/id-token-expired', 'auth/id-token-revoked', 'auth/user-disabled', 'auth/user-not-found',
+		]).has(code)) {
+			throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
+		}
+		logEvent('error', 'firebase_token_verification_unavailable', {
+			request_id: requestRequestId(req),
+			reason_code: typeof code === 'string' && /^auth\/[a-z-]{1,80}$/.test(code) ? code : 'unknown',
+		});
+		throw new HttpError(503, 'A autenticação está temporariamente indisponível. Tente novamente.');
 	}
 }
 
 async function requireAdminUser(req: express.Request) {
 	const firebaseUser = await requireFirebaseUser(req);
-	if (firebaseUser.admin === true) return firebaseUser;
-
 	const { db } = getAdminServices();
-	const userSnapshot = await db.collection('users').doc(firebaseUser.uid).get();
-	if (!userSnapshot.exists || userSnapshot.data()?.role !== 'admin') {
+	if (!(await userIsAdmin(firebaseUser, db))) {
 		throw new HttpError(403, 'Acesso restrito ao administrador.');
 	}
 
@@ -868,10 +876,11 @@ function paymentUpdateFromEvent(
 	currentOrder: PlainRecord,
 	event: PagBankWebhookEvent,
 	eventAt: string,
+	transition: NonNullable<ReturnType<typeof paymentEventTransition>>,
 ): PlainRecord {
 	const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
 	const update: PlainRecord = {
-		paymentStatus: event.paymentStatus,
+		paymentStatus: transition.paymentStatus,
 		pagbankStatus: event.providerStatus,
 		pagbankLastEventAt: eventAt,
 		...(event.providerId.startsWith('CHEC_') ? { pagbankCheckoutId: event.providerId } : {}),
@@ -880,9 +889,15 @@ function paymentUpdateFromEvent(
 		...(event.paymentMethod ? { pagbankPaymentMethod: event.paymentMethod } : {}),
 		...(event.amountCents !== null ? { pagbankChargedAmountCents: event.amountCents } : {}),
 		...(buyerFeeCents !== null ? { pagbankBuyerFeeCents: buyerFeeCents } : {}),
+		...(transition.refundedCents !== null ? {
+			pagbankRefundedAmountCents: transition.refundedCents,
+			pagbankRefundUpdatedAt: eventAt,
+			pagbankPayUrl: FieldValue.delete(),
+			status: 'Pendente',
+		} : {}),
 	};
 
-	if (event.paymentStatus === 'pago') {
+	if (transition.paymentStatus === 'pago') {
 		const fulfillment = currentFulfillmentStatus(currentOrder);
 		update.status = 'Pago';
 		if (fulfillment === 'aguardando_pagamento') {
@@ -897,13 +912,11 @@ async function reconcileStoredOrderPayment(
 	orderId: string,
 	initialOrder: PlainRecord,
 	pagbank: ReturnType<typeof getPagBankConfig>,
-	options: { forceProviderLookup?: boolean } = {},
 ): Promise<StoredPaymentReconciliationResult> {
 	const checkoutId = textValue(initialOrder.pagbankCheckoutId, 110);
 	if (
 		!pagbank.token ||
-		!checkoutId ||
-		(initialOrder.paymentStatus === 'pago' && !options.forceProviderLookup)
+		!checkoutId
 	) {
 		return {
 			paymentStatus: initialOrder.paymentStatus || 'pendente',
@@ -918,6 +931,11 @@ async function reconcileStoredOrderPayment(
 		token: pagbank.token,
 		checkoutId,
 		referenceId: orderId,
+		...((initialOrder.paymentStatus === 'pago' || Number(initialOrder.pagbankRefundedAmountCents) > 0) &&
+			typeof initialOrder.pagbankChargeId === 'string' && initialOrder.pagbankChargeId
+			? { preferredChargeId: initialOrder.pagbankChargeId } : {}),
+		requireUnambiguousCharge: initialOrder.paymentStatus === 'pago' ||
+			Number(initialOrder.pagbankRefundedAmountCents) > 0,
 	});
 	const event = lookup.event;
 	const firstProviderOrderId = lookup.providerOrderIds[0];
@@ -941,6 +959,8 @@ async function reconcileStoredOrderPayment(
 		event.providerId,
 		event.chargeId,
 		event.providerStatus,
+		String(event.refundedCents ?? ''),
+		String(event.paidCents ?? ''),
 	].join(':'), 'utf8').digest('hex');
 	const eventRef = orderRef.collection('pagbankEvents').doc(eventHash);
 	let paymentStatus: unknown = initialOrder.paymentStatus || 'pendente';
@@ -959,7 +979,8 @@ async function reconcileStoredOrderPayment(
 		if (validationError) throw new Error(`Reconciliação PagBank rejeitada: ${validationError}`);
 		if (eventSnapshot.exists) return;
 
-		const applied = shouldApplyPaymentStatus(currentOrder.paymentStatus, event.paymentStatus);
+		const transition = paymentEventTransition(currentOrder, event);
+		const applied = transition !== null;
 		const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
 		transaction.create(eventRef, {
 			providerId: event.providerId,
@@ -967,6 +988,7 @@ async function reconcileStoredOrderPayment(
 			providerStatus: event.providerStatus,
 			...(event.paymentStatus ? { paymentStatus: event.paymentStatus } : {}),
 			...(event.amountCents !== null ? { amountCents: event.amountCents } : {}),
+			...(event.refundedCents != null ? { refundedCents: event.refundedCents } : {}),
 			...(event.currency ? { currency: event.currency } : {}),
 			...(event.paymentMethod ? { paymentMethod: event.paymentMethod } : {}),
 			...(buyerFeeCents !== null ? { buyerFeeCents } : {}),
@@ -976,10 +998,10 @@ async function reconcileStoredOrderPayment(
 			receivedAt: eventAt,
 		});
 
-		if (!applied || !event.paymentStatus) return;
-		const update = paymentUpdateFromEvent(currentOrder, event, eventAt);
+		if (!transition) return;
+		const update = paymentUpdateFromEvent(currentOrder, event, eventAt, transition);
 		transaction.set(orderRef, update, { merge: true });
-		paymentStatus = event.paymentStatus;
+		paymentStatus = transition.paymentStatus;
 		pagbankStatus = event.providerStatus;
 		reconciled = true;
 	});
@@ -1020,7 +1042,6 @@ async function processPagBankWebhookByProviderLookup(
 		parsed.event.referenceId,
 		currentOrder,
 		pagbank,
-		{ forceProviderLookup: true },
 	);
 	if (
 		!result.providerEvent ||
@@ -1096,7 +1117,20 @@ async function userIsAdmin(
 	firebaseUser: Awaited<ReturnType<typeof requireFirebaseUser>>,
 	db: ReturnType<typeof getAdminServices>['db'],
 ): Promise<boolean> {
-	if (firebaseUser.admin === true) return true;
+	if (firebaseUser.admin === true) {
+		try {
+			const account = await getAdminServices().auth.getUser(firebaseUser.uid);
+			if (account.disabled) return false;
+			if (account.customClaims?.admin === true) return true;
+		} catch (error) {
+			const code = (error as { code?: unknown })?.code;
+			if (code === 'auth/user-not-found') return false;
+			logEvent('error', 'firebase_admin_claim_check_unavailable', {
+				reason_code: typeof code === 'string' && /^auth\/[a-z-]{1,80}$/.test(code) ? code : 'unknown',
+			});
+			throw new HttpError(503, 'Não foi possível verificar a permissão administrativa. Tente novamente.');
+		}
+	}
 	const userSnapshot = await db.collection('users').doc(firebaseUser.uid).get();
 	return userSnapshot.exists && userSnapshot.data()?.role === 'admin';
 }
@@ -1617,6 +1651,30 @@ app.post('/api/admin/orders/:orderId/fulfillment', requireAppCheck, async (req, 
 		}
 
 		const orderRef = db.collection('orders').doc(orderId);
+		const beforeTransition = await orderRef.get();
+		if (!beforeTransition.exists) throw new HttpError(404, 'Pedido não encontrado.');
+		const initialOrder = beforeTransition.data() as PlainRecord;
+		let verifiedChargeId: string | null = null;
+		if (initialOrder.paymentStatus === 'pago' && requestedStatus !== currentFulfillmentStatus(initialOrder)) {
+			let verified: StoredPaymentReconciliationResult;
+			try {
+				verified = await reconcileStoredOrderPayment(db, orderId, initialOrder, getPagBankConfig());
+			} catch (error) {
+				logEvent('warn', 'fulfillment_payment_verification_failed', {
+					request_id: responseRequestId(res), order_id: orderId, error,
+				});
+				throw new HttpError(503, 'Não foi possível conferir o pagamento no PagBank. Tente novamente.');
+			}
+			const payment = verified.providerEvent;
+			if (!payment || payment.kind !== 'payment' || !payment.chargeId ||
+				payment.refundedCents == null || payment.paidCents == null ||
+				payment.amountCents == null || payment.paidCents !== payment.amountCents ||
+				payment.currency !== 'BRL' ||
+				(payment.paymentStatus !== 'pago' && !(payment.refundedCents > 0))) {
+				throw new HttpError(503, 'Não foi possível confirmar o estado financeiro do pedido no PagBank.');
+			}
+			verifiedChargeId = payment.chargeId;
+		}
 		let appliedStatus: FulfillmentStatus = requestedStatus;
 		await db.runTransaction(async transaction => {
 			const snapshot = await transaction.get(orderRef);
@@ -1625,6 +1683,11 @@ app.post('/api/admin/orders/:orderId/fulfillment', requireAppCheck, async (req, 
 			const current = currentFulfillmentStatus(order);
 			const paymentStatus = order.paymentStatus as PaymentStatus | undefined;
 			const deliveryMethod = order.metodoEntrega as DeliveryMethod | undefined;
+			if (requestedStatus !== current && paymentStatus === 'pago' &&
+				(!verifiedChargeId || verifiedChargeId !== order.pagbankChargeId ||
+					Number(order.pagbankRefundedAmountCents) > 0)) {
+				throw new HttpError(409, 'O estado financeiro do pedido mudou. Atualize e tente novamente.');
+			}
 			const allowed = allowedFulfillmentTransitions(current, paymentStatus, deliveryMethod);
 			if (!allowed.includes(requestedStatus)) {
 				throw new HttpError(
@@ -1851,7 +1914,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 				throw new HttpError(422, 'A notificação não corresponde aos dados do pedido.');
 			}
 
-			applied = shouldApplyPaymentStatus(currentOrder.paymentStatus, event.paymentStatus);
+			const transition = paymentEventTransition(currentOrder, event);
+			applied = transition !== null;
 			const buyerFeeCents = pagBankBuyerFeeCents(event, currentOrder);
 			transaction.create(eventRef, {
 				providerId: event.providerId,
@@ -1859,6 +1923,7 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 				providerStatus: event.providerStatus,
 				...(event.paymentStatus ? { paymentStatus: event.paymentStatus } : {}),
 				...(event.amountCents !== null ? { amountCents: event.amountCents } : {}),
+				...(event.refundedCents != null ? { refundedCents: event.refundedCents } : {}),
 				...(event.currency ? { currency: event.currency } : {}),
 				...(event.paymentMethod ? { paymentMethod: event.paymentMethod } : {}),
 				...(buyerFeeCents !== null ? { buyerFeeCents } : {}),
@@ -1867,8 +1932,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 				receivedAt: new Date().toISOString(),
 			});
 
-			if (!applied || !event.paymentStatus) return;
-			const update = paymentUpdateFromEvent(currentOrder, event, new Date().toISOString());
+			if (!transition) return;
+			const update = paymentUpdateFromEvent(currentOrder, event, new Date().toISOString(), transition);
 			transaction.set(orderRef, update, { merge: true });
 		});
 

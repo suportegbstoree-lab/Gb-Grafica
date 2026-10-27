@@ -162,6 +162,12 @@ npm run admin:set -- --email administrador@exemplo.com
 
 Depois disso, saia e entre novamente no site para receber um token atualizado. O documento `users/{uid}` com `role: admin` continua aceito para compatibilidade com a conta administrativa existente.
 
+As rotas autenticadas da API conferem a revogação do ID token e a situação da conta no Firebase Auth. Para uma claim `admin: true`, a API também consulta a claim atual antes de autorizar; o papel legado no documento do usuário continua sendo uma via administrativa independente. Essa verificação adicional requer acesso ao Firebase Auth e pode adicionar latência. Em caso de falha do serviço, a API rejeita temporariamente a operação com HTTP 503.
+
+Para retirar o acesso de um administrador, remova **ambas** as permissões: a custom claim `admin` no Firebase Auth e o papel `admin` do documento `users/{uid}` no Firestore. Revogue também as sessões do usuário pelo Firebase Auth, conforme [a documentação do Firebase](https://firebase.google.com/docs/auth/admin/manage-sessions). Faça isso através de um procedimento administrativo autorizado e confira os dois registros; remover apenas uma das permissões não elimina a outra.
+
+A verificação de revogação acima protege as rotas Express, mas não modifica a avaliação direta das regras do Firestore e Storage pelo cliente. Tokens já emitidos podem continuar contendo claims antigas até expirarem, e as regras atuais não consultam um registro de revogação. Para uma contenção imediata de acesso direto, use medidas apropriadas no Firebase e avalie controles adicionais de regras com testes isolados antes da implantação. A validação de tokens por si só não impede que alguém com uma URL assinada já emitida a use até seu vencimento.
+
 ### Artes personalizadas
 
 - Formatos aceitos: PDF, PNG, JPG e WebP.
@@ -170,6 +176,14 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - O pedido guarda apenas o caminho privado do arquivo.
 - Cliente e administrador recebem um link assinado de cinco minutos através da API.
 - A arte deve ser anexada antes de o produto entrar no carrinho; não existe envio posterior pelo WhatsApp em novas compras.
+
+#### Prevenção de abuso dos uploads
+
+As regras limitam o tamanho de cada arquivo, mas não impõem cota agregada por usuário nem impedem uploads repetidos. Como o navegador envia as artes diretamente ao Storage, os rate limits da API Express não controlam esses envios. Não considere esse risco resolvido apenas pela autenticação ou pelo limite de 15 MB.
+
+No console Firebase, acompanhe as métricas do App Check para Cloud Storage e considere a imposição apenas após verificar que os clientes legítimos enviam tokens válidos. A configuração de App Check da API Express e a imposição no Storage são independentes; App Check reduz abuso automatizado, mas não é uma cota de armazenamento.
+
+Configure alertas de orçamento e monitore o uso do bucket. Alertas de orçamento não bloqueiam automaticamente uso nem cobrança. Antes de qualquer política de exclusão, inspecione os caminhos: artes pendentes usam `artworks/{uid}/pending/` e pedidos usam `artworks/{uid}/orders/`. Uma limpeza indiscriminada em `artworks/` pode apagar arquivos definitivos. Limitação agregada e limpeza segura requerem uma solução específica, testes e uma estratégia de implantação compatível com o fluxo atual.
 
 ### Personalização de texto
 
@@ -213,6 +227,9 @@ Depois disso, saia e entre novamente no site para receber um token atualizado. O
 - A reconciliação usa somente identificadores já vinculados ao pedido e constrói os endpoints no servidor, sem seguir URLs recebidas do navegador ou do payload.
 - Eventos reconciliados também são deduplicados e passam pelas mesmas validações de valor, moeda, método e transição de estado aplicadas ao webhook.
 - Pagamento e andamento operacional são armazenados separadamente.
+- Estornos confirmados são registrados em centavos (`pagbankRefundedAmountCents`). Um estorno parcial coloca o pagamento em análise; um estorno total o cancela. O andamento de produção já registrado é preservado para auditoria, e a API impede novos avanços enquanto o pagamento não estiver íntegro.
+- A confirmação de pedidos pagos é novamente consultada no PagBank antes de avançar sua etapa operacional. Se a cobrança não puder ser identificada ou o PagBank estiver indisponível, a mudança é adiada; pedidos legados sem identificação suficiente precisam de conciliação manual. Notificações antigas não reduzem o valor estornado já registrado.
+- Essa verificação ocorre nas notificações e nas consultas ou mudanças operacionais; não há varredura periódica automática de todos os pedidos. Um estorno parcial é apresentado pelo estado existente “Pagamento em análise”, sem uma nova tela de reembolso.
 
 ## Evidências para homologação PagBank
 

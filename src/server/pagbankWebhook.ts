@@ -18,6 +18,9 @@ export interface PagBankWebhookEvent {
   currency: string | null;
   paymentMethod: string | null;
   kind: 'checkout' | 'payment';
+  refundedCents?: number | null;
+  paidCents?: number | null;
+  invalidSummary?: boolean;
 }
 
 export interface StoredPaymentOrder {
@@ -27,6 +30,7 @@ export interface StoredPaymentOrder {
   pagbankCheckoutId?: unknown;
   pagbankOrderId?: unknown;
   pagbankChargeId?: unknown;
+  pagbankRefundedAmountCents?: unknown;
 }
 
 export function parsePagBankWebhookEvent(payload: unknown): PagBankWebhookEvent | null {
@@ -48,6 +52,13 @@ export function parsePagBankWebhookEvent(payload: unknown): PagBankWebhookEvent 
     ? charge.payment_method
     : null;
   const rawAmount = amount?.value;
+  const summary = amount && isPlainRecord(amount.summary) ? amount.summary : null;
+  const validCents = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0;
+  const invalidSummary = Boolean(
+    (amount && 'summary' in amount && !summary) ||
+    (summary && 'refunded' in summary && !validCents(summary.refunded)) ||
+    (summary && 'paid' in summary && !validCents(summary.paid)),
+  );
 
   return {
     referenceId,
@@ -59,6 +70,9 @@ export function parsePagBankWebhookEvent(payload: unknown): PagBankWebhookEvent 
     currency: cleanText(amount?.currency, 3).toUpperCase() || null,
     paymentMethod: cleanText(paymentMethod?.type, 30).toUpperCase() || null,
     kind,
+    refundedCents: summary && validCents(summary.refunded) ? Number(summary.refunded) : null,
+    paidCents: summary && validCents(summary.paid) ? Number(summary.paid) : null,
+    invalidSummary,
   };
 }
 
@@ -86,6 +100,26 @@ export function validatePagBankWebhookEvent(
   order: StoredPaymentOrder,
 ): string | null {
   const expectedTotal = storedTotalCents(order);
+  if (event.invalidSummary) return 'Resumo financeiro inválido.';
+  if ((event.refundedCents ?? 0) > 0) {
+    if (event.kind !== 'payment' || !event.chargeId || event.amountCents === null ||
+        event.currency !== 'BRL' || expectedTotal === null ||
+        !isAcceptedChargeAmount(event, expectedTotal) || event.paidCents == null ||
+        event.refundedCents! > event.paidCents || event.paidCents !== event.amountCents ||
+        !['PAID', 'CANCELED'].includes(event.providerStatus)) {
+      return 'Dados do estorno não correspondem à cobrança.';
+    }
+    if (typeof order.pagbankChargeId === 'string' && order.pagbankChargeId &&
+        event.chargeId !== order.pagbankChargeId) {
+      return 'Estorno pertence a outra cobrança.';
+    }
+  }
+  if (event.kind === 'payment' && (order.paymentStatus === 'pago' ||
+      Number(order.pagbankRefundedAmountCents) > 0) &&
+      typeof order.pagbankChargeId === 'string' && order.pagbankChargeId &&
+      event.chargeId !== order.pagbankChargeId) {
+    return 'Cobrança informada não corresponde ao pagamento confirmado.';
+  }
   if (event.kind === 'payment' && event.paymentStatus === 'pago') {
     if (event.amountCents === null) return 'Pagamento confirmado sem valor informado.';
     if (expectedTotal === null || !isAcceptedChargeAmount(event, expectedTotal)) {
@@ -116,6 +150,27 @@ export function validatePagBankWebhookEvent(
   }
 
   return null;
+}
+
+/** Calcula a transição após a validação e dentro da transação Firestore. */
+export function paymentEventTransition(
+  order: StoredPaymentOrder,
+  event: PagBankWebhookEvent,
+): { paymentStatus: PaymentStatus; refundedCents: number | null } | null {
+  const previous = Number.isSafeInteger(order.pagbankRefundedAmountCents) &&
+    Number(order.pagbankRefundedAmountCents) > 0 ? Number(order.pagbankRefundedAmountCents) : 0;
+  const incoming = event.refundedCents ?? 0;
+  if (previous > 0 && incoming < previous) return null;
+  if (incoming > 0) {
+    return {
+      paymentStatus: incoming >= event.paidCents! ? 'cancelado' : 'em_analise',
+      refundedCents: incoming,
+    };
+  }
+  if (previous > 0 || !event.paymentStatus || !shouldApplyPaymentStatus(order.paymentStatus, event.paymentStatus)) {
+    return null;
+  }
+  return { paymentStatus: event.paymentStatus, refundedCents: null };
 }
 
 export function pagBankBuyerFeeCents(
