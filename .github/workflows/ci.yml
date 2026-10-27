@@ -23,8 +23,15 @@ jobs:
       - name: Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22.23.4'
           cache: npm
+
+      - name: Use npm 12.2.1
+        run: |
+          npm install --global npm@12.2.1 --ignore-scripts
+          node --version
+          npm --version
+          test "$(npm --version)" = "12.2.1"
 
       - name: Java
         uses: actions/setup-java@v4
