@@ -179,16 +179,17 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      // A atribuição e a alteração de papéis administrativos são exclusivas do servidor.
       allow create: if isAuthenticated() && isValidUser(request.resource.data) &&
         (isOwner(userId) || isAdmin()) &&
         request.resource.data.uid == userId &&
         request.resource.data.email == request.auth.token.email &&
-        (request.resource.data.role == 'user' || isAdmin());
+        request.resource.data.role == 'user';
       allow update: if isAuthenticated() && isValidUser(request.resource.data) &&
         (isOwner(userId) || isAdmin()) &&
         request.resource.data.uid == resource.data.uid &&
         request.resource.data.email == resource.data.email &&
-        (request.resource.data.role == resource.data.role || isAdmin());
+        request.resource.data.role == resource.data.role;
       allow delete: if isAdmin();
     }
 

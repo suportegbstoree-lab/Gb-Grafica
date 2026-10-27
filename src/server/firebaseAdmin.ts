@@ -58,7 +58,13 @@ export function isFirebaseAdminConfigured(): boolean {
 export function getAdminServices(): AdminServices {
   const app = getApps()[0] || createAdminApp();
   const databaseId = process.env.FIREBASE_FIRESTORE_DATABASE_ID?.trim() || DEFAULT_FIRESTORE_DATABASE_ID;
-  const storageBucket = process.env.FIREBASE_STORAGE_BUCKET?.trim() || `${app.options.projectId}.firebasestorage.app`;
+  const projectId = app.options.projectId?.trim();
+  const storageBucket = process.env.FIREBASE_STORAGE_BUCKET?.trim()
+    || app.options.storageBucket?.trim()
+    || (projectId ? `${projectId}.firebasestorage.app` : undefined);
+  if (!storageBucket) {
+    throw new Error('Bucket do Firebase Storage não configurado. Defina FIREBASE_STORAGE_BUCKET.');
+  }
   return {
     app,
     auth: getAuth(app),

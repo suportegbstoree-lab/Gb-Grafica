@@ -99,12 +99,11 @@ export default function App() {
           if (userDoc.exists()) {
             setIsAdmin(hasAdminClaim || userDoc.data().role === 'admin');
           } else {
-            const role = hasAdminClaim ? 'admin' : 'user';
             setIsAdmin(hasAdminClaim);
             await setDoc(doc(db, 'users', firebaseUser.uid), {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              role: role
+              role: 'user'
             });
             setIsAdmin(hasAdminClaim);
           }

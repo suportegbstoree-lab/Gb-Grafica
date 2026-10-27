@@ -32,6 +32,31 @@ test('remove credenciais e dados pessoais de estruturas aninhadas', () => {
   assert.match(serialized, /status/);
 });
 
+test('remove o conteúdo inteiro de chaves privadas PEM, inclusive blocos truncados', () => {
+  for (const kind of ['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY']) {
+    const error = new Error(`falha -----BEGIN ${kind}-----\nCONTEUDO_FICTICIO\n-----END ${kind}----- status=400`);
+    const sanitized = JSON.stringify(sanitizeLogValue(error));
+    assert.doesNotMatch(sanitized, /CONTEUDO_FICTICIO|BEGIN|END/);
+    assert.match(sanitized, /PRIVATE_KEY_REDACTED/);
+    assert.match(sanitized, /status=400/);
+  }
+  const truncated = sanitizeLogValue('falha -----BEGIN PRIVATE KEY-----\\nCONTEUDO_TRUNCADO');
+  assert.equal(truncated, 'falha [PRIVATE_KEY_REDACTED]');
+});
+
+test('oculta assinaturas de URLs e campos com URLs assinadas em logs', () => {
+  const url = 'https://storage.googleapis.com/bucket/file?X-Goog-Credential=cred-ficticia&X-Goog-Signature=assinatura-ficticia&token=token-ficticio';
+  const sanitized = JSON.stringify(sanitizeLogValue({
+    signedUrl: url,
+    message: `Falha ao acessar ${url}`,
+    signature: 'assinatura-direta',
+    status: 403,
+  }));
+  assert.doesNotMatch(sanitized, /cred-ficticia|assinatura-ficticia|token-ficticio|assinatura-direta/);
+  assert.match(sanitized, /REDACTED/);
+  assert.match(sanitized, /403/);
+});
+
 test('limita estruturas circulares e não permite sobrescrever os campos-base do log', () => {
   const circular: Record<string, unknown> = { safe: 'ok' };
   circular.self = circular;

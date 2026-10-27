@@ -319,8 +319,52 @@ test('Firestore: perfis alheios são privados e somente administrador pode geren
 	await assertFails(alice.doc('users/bob').update({ nome: 'Invadido' }));
 	await assertFails(alice.doc('users/bob').delete());
 	await assertSucceeds(admin.doc('users/bob').get());
-	await assertSucceeds(admin.doc('users/bob').update({ role: 'admin' }));
+	await assertSucceeds(admin.doc('users/bob').update({ nome: 'Bob atualizado' }));
+	await assertFails(admin.doc('users/bob').update({ role: 'admin' }));
 	await assertSucceeds(admin.doc('users/bob').delete());
+});
+
+test('Firestore: claim administrativa antiga não persiste privilégios no perfil', async () => {
+	await seedDocuments([
+		['users/ex-admin', { uid: 'ex-admin', email: 'ex-admin@example.com', role: 'user' }],
+		['users/bob', { uid: 'bob', email: 'bob@example.com', role: 'user' }],
+	]);
+	const staleSession = authenticatedContext('ex-admin', { admin: true }).firestore();
+	await assertFails(staleSession.doc('users/ex-admin').update({ role: 'admin' }));
+	await assertFails(staleSession.doc('users/bob').update({ role: 'admin' }));
+	const batch = staleSession.batch();
+	batch.update(staleSession.doc('users/ex-admin'), { role: 'admin' });
+	batch.set(staleSession.doc('categories/nao-gravar'), { nome: 'Teste' });
+	await assertFails(batch.commit());
+	await assertSucceeds(staleSession.doc('users/bob').delete());
+	await assertFails(staleSession.doc('users/bob').set({
+		uid: 'bob', email: 'ex-admin@example.com', role: 'admin',
+	}));
+	await assertSucceeds(staleSession.doc('users/ex-admin').delete());
+	await assertFails(staleSession.doc('users/ex-admin').set({
+		uid: 'ex-admin', email: 'ex-admin@example.com', role: 'admin',
+	}));
+	const refreshedSession = authenticatedContext('ex-admin', { admin: false }).firestore();
+	await assertFails(refreshedSession.doc('categories/persistencia').set({ nome: 'Teste' }));
+});
+
+test('Firestore: claim administrativa permite primeiro login com perfil básico', async () => {
+	const admin = authenticatedContext('admin-primeiro-login', { admin: true }).firestore();
+	await assertSucceeds(admin.doc('users/admin-primeiro-login').set({
+		uid: 'admin-primeiro-login', email: 'admin-primeiro-login@example.com', role: 'user',
+	}));
+	await assertSucceeds(admin.doc('categories/primeiro-login').set({ nome: 'Teste' }));
+	await assertFails(admin.doc('users/admin-primeiro-login').update({ role: 'admin' }));
+});
+
+test('Firestore: administrador legado não altera papéis pelo cliente', async () => {
+	await seedDocuments([
+		['users/admin-legado', { uid: 'admin-legado', email: 'admin-legado@example.com', role: 'admin' }],
+		['users/bob', { uid: 'bob', email: 'bob@example.com', role: 'user' }],
+	]);
+	const admin = authenticatedContext('admin-legado').firestore();
+	await assertSucceeds(admin.doc('categories/legado').set({ nome: 'Teste' }));
+	await assertFails(admin.doc('users/bob').update({ role: 'admin' }));
 });
 
 test('Firestore: coleções técnicas e caminhos desconhecidos são inacessíveis ao cliente', async () => {

@@ -92,11 +92,11 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `FIREBASE_FIRESTORE_DATABASE_ID`
 - `FIREBASE_STORAGE_BUCKET`
 - `FIREBASE_APP_CHECK_MODE=monitor` durante a ativação inicial
-- `VITE_GEMINI_MODEL` e, se o App Check estiver configurado, `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY`
+- `VITE_GEMINI_MODEL` e `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` para o App Check do cliente
 - `LOG_LEVEL=info`
 - `LOG_INCLUDE_STACK=false`
 
-O token PagBank e a conta de serviço Firebase são exclusivos do servidor. O Firebase AI Logic usa a Gemini Developer API diretamente no app, sem `GEMINI_API_KEY`; configure o App Check no console Firebase antes de aplicar a proteção em produção.
+O token PagBank e a conta de serviço Firebase são exclusivos do servidor. O Firebase AI Logic usa a Agent Platform Gemini API a partir do app, sem `GEMINI_API_KEY` no navegador. Configure e valide o App Check no Firebase e a site key no ambiente de build da Vercel.
 
 ### App Check
 
@@ -107,6 +107,8 @@ O frontend só inicializa o App Check quando `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY
 - `enforce`: rejeita rotas protegidas sem um token válido.
 
 As rotas de frete, checkout, consulta de pagamento, atualização administrativa e acesso privado às artes são protegidas. `/api/health`, `/health` e o webhook PagBank permanecem fora do middleware porque são chamadas públicas ou servidor a servidor. O token é enviado apenas no header `X-Firebase-AppCheck`, nunca em URL ou log.
+
+O Firebase anunciou a exigência de App Check para Firebase AI Logic a partir de 2 de novembro de 2026. Confira a aplicação da proteção no console Firebase e valide que os clientes publicados conseguem emitir tokens antes dessa data: a verificação de App Check da API Express é independente da verificação feita pelo Firebase AI Logic e pelo Storage. A configuração do modo de usuários autenticados do Firebase AI Logic limita chamadas a usuários com sessão válida, mas não estabelece, por si só, uma permissão específica de administrador. Consulte a [documentação de App Check do Firebase AI Logic](https://firebase.google.com/docs/ai-logic/app-check) e o [modo de usuários autenticados](https://firebase.google.com/docs/ai-logic/auth-mode).
 
 Para ativar em produção:
 
@@ -162,6 +164,8 @@ npm run admin:set -- --email administrador@exemplo.com
 
 Depois disso, saia e entre novamente no site para receber um token atualizado. O documento `users/{uid}` com `role: admin` continua aceito para compatibilidade com a conta administrativa existente.
 
+Para proteger a concessão de privilégios, as regras não permitem que clientes criem perfis com `role: admin` nem alterem o campo `role`, mesmo quando usam uma sessão administrativa. Use `npm run admin:set` para conceder o acesso pelo Firebase Admin. O perfil criado no primeiro login recebe `role: user`; uma claim administrativa válida continua permitindo o acesso ao painel.
+
 As rotas autenticadas da API conferem a revogação do ID token e a situação da conta no Firebase Auth. Para uma claim `admin: true`, a API também consulta a claim atual antes de autorizar; o papel legado no documento do usuário continua sendo uma via administrativa independente. Essa verificação adicional requer acesso ao Firebase Auth e pode adicionar latência. Em caso de falha do serviço, a API rejeita temporariamente a operação com HTTP 503.
 
 Para retirar o acesso de um administrador, remova **ambas** as permissões: a custom claim `admin` no Firebase Auth e o papel `admin` do documento `users/{uid}` no Firestore. Revogue também as sessões do usuário pelo Firebase Auth, conforme [a documentação do Firebase](https://firebase.google.com/docs/auth/admin/manage-sessions). Faça isso através de um procedimento administrativo autorizado e confira os dois registros; remover apenas uma das permissões não elimina a outra.
@@ -184,6 +188,16 @@ As regras limitam o tamanho de cada arquivo, mas não impõem cota agregada por 
 No console Firebase, acompanhe as métricas do App Check para Cloud Storage e considere a imposição apenas após verificar que os clientes legítimos enviam tokens válidos. A configuração de App Check da API Express e a imposição no Storage são independentes; App Check reduz abuso automatizado, mas não é uma cota de armazenamento.
 
 Configure alertas de orçamento e monitore o uso do bucket. Alertas de orçamento não bloqueiam automaticamente uso nem cobrança. Antes de qualquer política de exclusão, inspecione os caminhos: artes pendentes usam `artworks/{uid}/pending/` e pedidos usam `artworks/{uid}/orders/`. Uma limpeza indiscriminada em `artworks/` pode apagar arquivos definitivos. Limitação agregada e limpeza segura requerem uma solução específica, testes e uma estratégia de implantação compatível com o fluxo atual.
+
+Para dimensionar uma futura cota com dados do próprio bucket, o comando abaixo usa as credenciais Firebase Admin configuradas no ambiente e **apenas lista** objetos no prefixo `artworks/`. O relatório exibe totais e distribuição por conta, sem nomes de arquivos ou identificadores de clientes. Objetos de pedidos são examinados durante a listagem, mas não entram nos totais de pendentes. A listagem pode gerar operações cobradas pelo Storage.
+
+```bash
+npm run security:storage-report
+# Opcional: ajustar o máximo de objetos examinados, entre 1 e 200000.
+npm run security:storage-report -- --max-objects=100000
+```
+
+O limite padrão é 50000 objetos. Quando a listagem é interrompida pelo limite, o relatório é identificado como parcial e retorna código de saída 2; seus percentis não representam necessariamente o bucket inteiro. Tamanhos ausentes são informados separadamente. O conteúdo do bucket pode mudar durante a leitura, portanto os números descrevem a listagem observada, sem garantir um retrato transacional. O relatório considera objetos ativos e não inclui versões não atuais, objetos em exclusão reversível ou uploads ainda não concluídos.
 
 ### Personalização de texto
 
