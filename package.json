@@ -22,6 +22,7 @@
     "test:smoke": "node --import tsx scripts/smoke-routes.ts",
     "security:storage-report": "node --import tsx scripts/report-pending-artworks.ts",
     "security:app-check": "node --import tsx scripts/check-app-check-config.ts",
+    "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
     "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts"
   },

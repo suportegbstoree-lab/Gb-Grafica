@@ -1,4 +1,7 @@
 {
+  "functions": {
+    "api/admin-ai.ts": { "maxDuration": 60 }
+  },
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -20,6 +23,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/admin/ai/suggestions",
+      "destination": "/api/admin-ai.ts"
+    },
     {
       "source": "/api/checkout",
       "destination": "/api/index.ts"

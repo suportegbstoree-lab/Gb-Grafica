@@ -23,7 +23,9 @@ test('usa o bucket configurado ao inicializar com JSON da conta de serviço', ()
     private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
   });
   delete process.env.FIREBASE_STORAGE_BUCKET;
-  assert.equal(getAdminServices().bucket.name, 'demo-security-test.firebasestorage.app');
+  const services = getAdminServices();
+  assert.equal(services.bucket.name, 'demo-security-test.firebasestorage.app');
+  assert.equal(services.app.options.projectId, 'demo-security-test');
 });
 
 test('prioriza o bucket explícito sobre o configurado no aplicativo', () => {

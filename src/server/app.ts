@@ -87,6 +87,7 @@ import {
 	evaluateAppCheck,
 } from './appCheck.js';
 import firebaseClientConfig from '../../firebase-applet-config.json' with { type: 'json' };
+import { AdminAiError, adminAiInstruction, generateAdminAiText, vertexAiConfig } from './adminAi.js';
 
 type RawBodyRequest = express.Request & { rawBody?: string };
 type PlainRecord = Record<string, unknown>;
@@ -219,7 +220,8 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(requestObservability);
 
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
+	if (req.path === '/api' || req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store');
 	res.setHeader('X-Content-Type-Options', 'nosniff');
 	res.setHeader('X-Frame-Options', 'DENY');
 	res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -302,13 +304,6 @@ app.use(express.json({
 		(request as RawBodyRequest).rawBody = buffer.toString('utf8');
 	},
 }));
-
-app.use((req, res, next) => {
-	if (req.path === '/api' || req.path.startsWith('/api/')) {
-		res.setHeader('Cache-Control', 'no-store');
-	}
-	next();
-});
 
 const requireAppCheck: express.RequestHandler = async (req, res, next) => {
 	const mode = configuredAppCheckMode(process.env.FIREBASE_APP_CHECK_MODE);
@@ -1729,6 +1724,27 @@ app.get('/api/payment-status/:orderId', requireAppCheck, async (req, res) => {
 		});
 	} catch (error) {
 		sendError(res, error);
+	}
+});
+
+app.post('/api/admin/ai/suggestions', requireAppCheck, async (req, res) => {
+	try {
+		const user = await requireAdminUser(req);
+		const instruction = adminAiInstruction(req.body);
+		const { app: firebaseApp, db } = getAdminServices();
+		const config = vertexAiConfig(firebaseApp.options.projectId);
+		enforceRateLimit(`admin-ai:${user.uid}`, 10, 60_000);
+		await enforceDistributedRateLimit(db, `admin-ai:${user.uid}`, 10, 60_000);
+		await enforceDistributedRateLimit(db, 'admin-ai:project', 60, 60_000);
+		const text = await generateAdminAiText(config, instruction, async () => {
+			const credential = firebaseApp.options.credential;
+			if (!credential) throw new Error('Credencial indisponível.');
+			return (await credential.getAccessToken()).access_token;
+		});
+		logEvent('info', 'admin_ai_completed', { request_id: responseRequestId(res), action: req.body.action });
+		res.json({ text });
+	} catch (error) {
+		sendError(res, error instanceof AdminAiError ? new HttpError(error.status, error.message, error.code) : error);
 	}
 });
 

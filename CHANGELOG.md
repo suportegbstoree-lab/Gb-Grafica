@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-27 — Autorização da IA administrativa no servidor
+
+- As quatro funções de IA do editor passaram a chamar a API própria, que exige sessão válida e autorização administrativa atual antes de gerar uma sugestão.
+- Reutilizada a verificação de revogação de sessão e de custom claim administrativa atual, preservando a compatibilidade com o papel administrativo legado protegido no Firestore.
+- A chamada ao provedor usa OAuth da conta de serviço no servidor; o navegador não escolhe projeto, modelo, destino ou parâmetros de geração.
+- Adicionados limites compartilhados no Firestore de 10 solicitações por administrador e 60 por projeto a cada minuto, além de limites de espera e saída do provedor.
+- Recusas e erros da API recebem `Cache-Control: no-store`; erros de autenticação, permissões e provedor não expõem credenciais ou textos enviados.
+- Adicionados diagnóstico de configuração e consulta opcional de permissão IAM, sem gerar texto ou alterar permissões.
+- Ajustada a dependência transitiva `qs` para `6.16.2` no lockfile.
+- Documentadas a configuração de IAM, a publicação e a desativação posterior do acesso direto antigo ao Firebase AI Logic; o patch não modifica essas configurações externas automaticamente.
+
 ## 2026-10-27 — Validação de sessões com Firebase App Check
 
 - Adicionada confirmação da validação do navegador pela API em `/api/app-check/status`, com diagnóstico em segundo plano e sem expor tokens.

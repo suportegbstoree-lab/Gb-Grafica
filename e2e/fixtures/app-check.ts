@@ -2,7 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken } from 'firebase/auth';
 import { doc, getFirestore, runTransaction } from 'firebase/firestore';
 import { getBytes, getStorage, ref } from 'firebase/storage';
-import { createFirebaseTextModel } from '../../src/services/firebaseAiClient';
+import { createAiSuggestionClient } from '../../src/services/aiSuggestionClient';
 import { createAppCheckTokenProvider, initializeBrowserAppCheck } from '../../src/services/appCheckClient';
 import { createApiFetch } from '../../src/services/apiClient';
 
@@ -19,12 +19,12 @@ const request = createApiFetch(fetch, provider);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
-const model = createFirebaseTextModel(app, 'test-model');
+const suggestion = createAiSuggestionClient(async () => 'id-token-ficticio', request);
 
 Object.assign(window, { appCheckFixture: {
 	provider, warnings,
 	request: async () => { const response = await request('/api/app-check/status'); return { status: response.status, body: await response.json() }; },
-	generate: async () => (await model.generateContent('Teste sem IA real')).response.text(),
+	generate: async () => suggestion('generate', { title: 'Produto de teste' }),
 	readDocument: async () => runTransaction(db, async transaction => (await transaction.get(doc(db, 'test', 'document'))).exists()),
 	readFile: async () => (await getBytes(ref(storage, 'test.bin'))).byteLength,
 	login: async () => { await signInWithCustomToken(auth, 'custom-token-ficticio'); return auth.currentUser?.uid; },

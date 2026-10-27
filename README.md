@@ -92,11 +92,12 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `FIREBASE_FIRESTORE_DATABASE_ID`
 - `FIREBASE_STORAGE_BUCKET`
 - `FIREBASE_APP_CHECK_MODE=monitor` durante a ativação inicial
-- `VITE_GEMINI_MODEL` e `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` para o App Check do cliente
+- `FIREBASE_AI_MODEL` e `FIREBASE_AI_LOCATION` opcionais para a IA administrativa no servidor
+- `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` para o App Check do cliente
 - `LOG_LEVEL=info`
 - `LOG_INCLUDE_STACK=false`
 
-O token PagBank e a conta de serviço Firebase são exclusivos do servidor. O Firebase AI Logic usa a Agent Platform Gemini API a partir do app, sem `GEMINI_API_KEY` no navegador. Configure e valide o App Check no Firebase e a site key no ambiente de build da Vercel.
+O token PagBank e a conta de serviço Firebase são exclusivos do servidor. A IA administrativa chama a Agent Platform Gemini API no backend com OAuth da conta de serviço existente. O navegador envia somente a ação e os textos para `/api/admin/ai/suggestions`, com login e App Check. Os quatro recursos do painel foram preservados. Confira a [ativação da IA administrativa](docs/ia-administrativa-seguranca.md) antes de publicar: são necessárias a API e a permissão IAM da conta de serviço, além do fechamento posterior do acesso direto antigo.
 
 ### App Check
 
@@ -108,13 +109,11 @@ O frontend só inicializa o App Check quando `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY
 
 As rotas de frete, checkout, consulta de pagamento, atualização administrativa, acesso privado às artes e upload em partes (quando habilitado) usam a validação. `/api/health`, `/health` e o webhook PagBank permanecem fora do middleware porque são chamadas públicas ou servidor a servidor. O token é enviado no header `X-Firebase-AppCheck` apenas para a API da mesma origem, nunca em URL ou log. Redirecionamentos da API não são seguidos. Uma rejeição explícita do middleware por token ausente/inválido pode renovar o atestado e repetir a chamada uma única vez, antes de executar o handler; erros de login, rede e PagBank não acionam essa repetição.
 
-O SDK renova os tokens automaticamente. A API confere também o App ID do cliente, usando por padrão `firebase-applet-config.json`; `FIREBASE_APP_CHECK_ALLOWED_APP_IDS` permite uma lista explícita de apps adicionais. `GET /api/app-check/status` aplica a mesma validação e retorna somente `mode` e `verified`. Quando há site key, o navegador consulta esse diagnóstico em segundo plano sem bloquear a montagem da loja. Os serviços Firestore, Storage, Auth e AI recebem os tokens pelo SDK Firebase, independentemente do helper da API.
+O SDK renova os tokens automaticamente. A API confere também o App ID do cliente, usando por padrão `firebase-applet-config.json`; `FIREBASE_APP_CHECK_ALLOWED_APP_IDS` permite uma lista explícita de apps adicionais. `GET /api/app-check/status` aplica a mesma validação e retorna somente `mode` e `verified`. Quando há site key, o navegador consulta esse diagnóstico em segundo plano sem bloquear a montagem da loja. Firestore, Storage e Auth recebem os tokens pelo SDK Firebase. A IA recebe App Check na API própria, antes de verificar a autorização administrativa.
 
 O helper da API espera até dez segundos para obter o atestado. Se o SDK não concluir essa etapa, a chamada segue sem token: em `monitor` pode continuar, enquanto em `enforce` é rejeitada pelo servidor. Não há liberação especial em `enforce`, nem repetição automática de uma aquisição que já falhou. O limite de espera do helper não modifica o ciclo interno dos demais SDKs Firebase.
 
-O cliente de IA usa tokens de uso limitado, preparando a compatibilidade com replay protection do Firebase AI Logic. A proteção contra reuso depende também de ativação no console; o backend Express continua usando tokens de sessão, sem consumo de uso único.
-
-O Firebase anunciou a exigência de App Check para Firebase AI Logic a partir de 2 de novembro de 2026. Confira a aplicação da proteção no console Firebase e valide que os clientes publicados conseguem emitir tokens antes dessa data: a verificação de App Check da API Express é independente da verificação feita pelo Firebase AI Logic e pelo Storage. A configuração do modo de usuários autenticados do Firebase AI Logic limita chamadas a usuários com sessão válida, mas não estabelece, por si só, uma permissão específica de administrador. Consulte a [documentação de App Check do Firebase AI Logic](https://firebase.google.com/docs/ai-logic/app-check) e o [modo de usuários autenticados](https://firebase.google.com/docs/ai-logic/auth-mode).
+A IA desta versão usa tokens de sessão App Check para a API própria e OAuth do servidor para o provedor; não usa Firebase AI Logic nem replay protection de tokens de uso limitado. A exigência do Firebase AI Logic de 2 de novembro de 2026 continua relevante para versões antigas que ainda chamam esse serviço diretamente. O [roteiro de migração](docs/ia-administrativa-seguranca.md) explica como fechar essa rota após validar a nova versão, mantendo a proteção dos demais serviços Firebase.
 
 Para ativar em produção:
 

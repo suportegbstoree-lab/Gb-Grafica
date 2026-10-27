@@ -6,7 +6,6 @@ import firebaseConfig from '../firebase-applet-config.json';
 import type { AppCheck } from 'firebase/app-check';
 import { apiFetch, setApiAppCheckTokenProvider } from './services/apiClient';
 import { checkAppCheckConnection, createAppCheckTokenProvider, initializeBrowserAppCheck } from './services/appCheckClient';
-import { createFirebaseTextModel } from './services/firebaseAiClient';
 
 const app = initializeApp(firebaseConfig);
 
@@ -40,7 +39,6 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
-const model = createFirebaseTextModel(app, import.meta.env.VITE_GEMINI_MODEL?.trim() || 'gemini-3.8-flash');
 
 // Create User, Login, Logout, and Auth State Change Listeners
 
@@ -102,17 +100,6 @@ export function handleStorageError(error: unknown, path: string | null) {
 	const normalizedError = error instanceof Error ? error : new Error(String(error));
 	console.error(`[Storage] ${path || '(sem caminho)'}:`, normalizedError.message);
 	return normalizedError;
-}
-
-export async function generateGeminiText(prompt: string): Promise<string> {
-	if (!prompt.trim()) {
-		throw new Error('O prompt do Gemini não pode ser vazio.');
-	}
-
-	const result = await model.generateContent(prompt);
-	const text = result.response.text()?.trim();
-	if (!text) throw new Error('O Gemini retornou uma resposta vazia.');
-	return text;
 }
 
 export {

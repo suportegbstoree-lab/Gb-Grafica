@@ -51,7 +51,6 @@ async function prepare(page: Page, failExchange = false) {
     const attestation = request.headers()['x-firebase-appcheck'];
     requests.push(attestation ?? '');
     expect(exchanges.some(exchange => exchange.token === attestation)).toBeTruthy();
-    if (request.url().includes(':generateContent')) return route.fulfill({ json: { candidates: [{ content: { role: 'model', parts: [{ text: 'Resposta fictícia' }] }, finishReason: 'STOP' }] } });
     if (request.url().includes('accounts:lookup')) return route.fulfill({ json: { users: [{ localId: 'test-user', providerUserInfo: [], createdAt: '1760000000000', lastLoginAt: '1760000000000' }] } });
     if (request.url().includes('identitytoolkit')) return route.fulfill({ json: { idToken: jwt(1000, Date.now(), { sub: 'test-user', user_id: 'test-user', auth_time: Math.floor(Date.now() / 1000), firebase: { sign_in_provider: 'custom' } }), refreshToken: 'fake-refresh', expiresIn: '3600', localId: 'test-user' } });
     if (request.url().includes('firestore') && request.url().includes(':commit')) {
@@ -148,13 +147,22 @@ test('rejeição do middleware força um novo atestado e uma única repetição'
   expect(state.exchanges).toHaveLength(2);
 });
 
-test('Firebase AI usa um token de uso limitado novo em cada geração', async ({ page }) => {
+test('IA administrativa envia App Check e login para a API da mesma origem', async ({ page }) => {
   const state = await prepare(page);
+  let calls = 0;
+  await page.route('**/api/admin/ai/suggestions', route => {
+    calls++;
+    const request = route.request();
+    expect(request.headers().authorization).toBe('Bearer id-token-ficticio');
+    expect(state.exchanges.some(exchange => exchange.token === request.headers()['x-firebase-appcheck'])).toBe(true);
+    expect(request.postDataJSON()).toEqual({ action: 'generate', title: 'Produto de teste' });
+    return route.fulfill({ json: { text: 'Resposta fictícia' } });
+  });
   await openFixture(page);
   expect(await page.evaluate(() => window.appCheckFixture.generate())).toBe('Resposta fictícia');
   expect(await page.evaluate(() => window.appCheckFixture.generate())).toBe('Resposta fictícia');
-  expect(state.exchanges.filter(exchange => exchange.limited)).toHaveLength(2);
-  expect(state.requests.at(-1)).not.toBe(state.requests.at(-2));
+  expect(calls).toBe(2);
+  expect(state.exchanges).toHaveLength(1);
   expect(state.violations).toEqual([]);
 });
 

@@ -1,5 +1,7 @@
 # App Check: aplicação e validação
 
+Atualização: a bateria de IA administrativa migrou as gerações para a API própria. Para esta versão, siga [IA administrativa e segurança](ia-administrativa-seguranca.md) para ativar IAM e fechar a rota antiga. Os trechos abaixo sobre Firebase AI Logic descrevem o cliente anterior; continuam relevantes apenas enquanto houver versões antigas em uso. A proteção App Check de Firestore, Storage, Auth e da API própria permanece necessária.
+
 Base do patch: commit `7ff0fcb`, pacote com SHA-256 `716c71b6831867cd62bfa9efffc4948988a44aacbd28a57ad1ccdc8234c12070`.
 
 O cadastro do app no console, a emissão de tokens pelo navegador e a exigência desses tokens são etapas distintas. “Registrado (não aplicado)” não comprova que a versão publicada está enviando tokens, nem que os serviços já estão rejeitando solicitações sem atestado.

@@ -83,6 +83,7 @@ function createAdminApp(): App {
   }
 
   return initializeApp({
+    projectId: serviceAccount.project_id,
     credential: cert({
       projectId: serviceAccount.project_id,
       clientEmail: serviceAccount.client_email,

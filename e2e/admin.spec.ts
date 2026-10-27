@@ -49,6 +49,82 @@ test('permite cadastrar produto com texto e imagem', async ({ page }) => {
   await expect(editor.getByLabel('Rótulo do Texto')).toHaveValue('Nome para a capa');
 });
 
+test('mantém os quatro comandos de IA e a aprovação da sugestão no editor existente', async ({ page }) => {
+  // Sessão fictícia somente neste navegador de teste. O servidor tem sua própria suíte de autorização.
+  await page.evaluate(async () => {
+    const modulePath = '/src/firebase.ts';
+    const { auth } = await import(modulePath);
+    await auth.authStateReady();
+    Object.defineProperty(auth, 'currentUser', { value: { getIdToken: async () => 'e2e-admin-ai-token' }, configurable: true });
+  });
+  const requests: Record<string, string>[] = [];
+  await page.route('**/api/admin/ai/suggestions', route => {
+    expect(route.request().headers().authorization).toBe('Bearer e2e-admin-ai-token');
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    return route.fulfill({ json: { text: `Sugestão ${body.action}` } });
+  });
+  await page.getByRole('button', { name: 'Novo Produto' }).click();
+  const editor = page.getByRole('dialog', { name: 'Novo Produto' });
+  await editor.getByLabel('Nome do Produto').fill('Caneca');
+  await editor.getByLabel('Descrição', { exact: true }).fill('Descrição original');
+
+  await editor.getByRole('button', { name: 'Melhorar com IA', exact: true }).first().click();
+  let preview = page.getByRole('dialog', { name: 'Sugestão da IA' });
+  await expect(preview).toContainText('Sugestão improveTitle');
+  await preview.getByRole('button', { name: 'Aprovar e Usar' }).click();
+  await expect(editor.getByLabel('Nome do Produto')).toHaveValue('Sugestão improveTitle');
+
+  await editor.getByRole('button', { name: 'Gerar da IA', exact: true }).click();
+  preview = page.getByRole('dialog', { name: 'Sugestão da IA' });
+  await expect(preview).toContainText('Sugestão generate');
+  await preview.getByRole('button', { name: 'Aprovar e Usar' }).click();
+  await expect(editor.getByLabel('Descrição', { exact: true })).toHaveValue('Sugestão generate');
+
+  await editor.getByRole('button', { name: 'Melhorar com IA', exact: true }).last().click();
+  preview = page.getByRole('dialog', { name: 'Sugestão da IA' });
+  await expect(preview).toContainText('Sugestão improveDescription');
+  await preview.getByRole('button', { name: 'Aprovar e Usar' }).click();
+  await expect(editor.getByLabel('Descrição', { exact: true })).toHaveValue('Sugestão improveDescription');
+
+  await editor.getByRole('button', { name: 'Comando IA', exact: true }).click();
+  const custom = page.getByRole('dialog', { name: 'Comando Personalizado' });
+  await custom.locator('textarea').fill('Use um tom informal');
+  await custom.getByRole('button', { name: 'Gerar Descrição', exact: true }).click();
+  preview = page.getByRole('dialog', { name: 'Sugestão da IA' });
+  await expect(preview).toContainText('Sugestão custom');
+  await preview.getByRole('button', { name: 'Aprovar e Usar' }).click();
+  await expect(editor.getByLabel('Descrição', { exact: true })).toHaveValue('Sugestão custom');
+  expect(requests).toEqual([
+    { action: 'improveTitle', title: 'Caneca' },
+    { action: 'generate', title: 'Sugestão improveTitle' },
+    { action: 'improveDescription', description: 'Sugestão generate' },
+    { action: 'custom', title: 'Sugestão improveTitle', prompt: 'Use um tom informal' },
+  ]);
+});
+
+test('recusa da API de IA preserva o texto digitado e mantém o editor utilizável', async ({ page }) => {
+  await page.evaluate(async () => {
+    const modulePath = '/src/firebase.ts';
+    const { auth } = await import(modulePath);
+    await auth.authStateReady();
+    Object.defineProperty(auth, 'currentUser', { value: { getIdToken: async () => 'e2e-admin-ai-token' }, configurable: true });
+  });
+  await page.route('**/api/admin/ai/suggestions', route => route.fulfill({
+    status: 403, json: { code: 'ACCESS_DENIED', error: 'Você não tem permissão para esta operação.' },
+  }));
+  await page.getByRole('button', { name: 'Novo Produto' }).click();
+  const editor = page.getByRole('dialog', { name: 'Novo Produto' });
+  await editor.getByLabel('Nome do Produto').fill('Caneca');
+  await editor.getByLabel('Descrição', { exact: true }).fill('Texto que deve permanecer');
+  await editor.getByRole('button', { name: 'Gerar da IA', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('permissão');
+  await expect(page.getByRole('dialog', { name: 'Sugestão da IA' })).toHaveCount(0);
+  await expect(editor.getByLabel('Descrição', { exact: true })).toHaveValue('Texto que deve permanecer');
+  await editor.getByLabel('Descrição', { exact: true }).fill('Posso continuar editando');
+  await expect(editor.getByLabel('Descrição', { exact: true })).toHaveValue('Posso continuar editando');
+});
+
 test('avisa antes de descartar alterações de um produto', async ({ page }) => {
   await page.getByRole('button', { name: 'Novo Produto' }).click();
   const editor = page.getByRole('dialog', { name: 'Novo Produto' });
