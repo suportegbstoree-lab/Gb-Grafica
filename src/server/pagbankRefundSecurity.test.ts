@@ -28,6 +28,8 @@ let providerRefund = 0;
 let providerStatus = 'PAID';
 let providerUnavailable = false;
 let additionalCharges: ReturnType<typeof charge>[] = [];
+let checkoutStatus = 'ACTIVE';
+let checkoutHasOrders = true;
 let tokenAdmin = true;
 let currentAdmin = true;
 let adminLookupUnavailable = false;
@@ -86,7 +88,10 @@ before(async () => {
   mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
     const url = String(input);
     if (providerUnavailable) throw new Error('Provedor de teste indisponível');
-    if (url.includes('/checkouts/')) return Response.json({ id: checkoutId, reference_id: orderId, status: 'ACTIVE', orders: [{ id: providerOrderId }] });
+    if (url.includes('/checkouts/')) return Response.json({
+      id: checkoutId, reference_id: orderId, status: checkoutStatus,
+      orders: checkoutHasOrders ? [{ id: providerOrderId }] : [],
+    });
     if (url.includes('/orders/')) return Response.json({ id: providerOrderId, charges: [...additionalCharges, charge(providerRefund, providerStatus)] });
     throw new Error('Chamada externa inesperada');
   });
@@ -98,6 +103,7 @@ before(async () => {
 });
 beforeEach(() => {
   docs.clear(); providerRefund = 0; providerStatus = 'PAID'; providerUnavailable = false; additionalCharges = [];
+  checkoutStatus = 'ACTIVE'; checkoutHasOrders = true;
   tokenAdmin = true; currentAdmin = true; adminLookupUnavailable = false;
   docs.set(`orders/${orderId}`, {
     userId: 'owner', paymentStatus: 'pago', status: 'Pago', fulfillmentStatus: 'pagamento_confirmado',
@@ -155,6 +161,31 @@ test('claim administrativa removida também impede acesso a arte de outro usuár
     headers: { authorization: 'Bearer admin-test' },
   });
   assert.equal(response.status, 403);
+});
+
+test('webhook assinado com estado PAID apenas no checkout não confirma pedido', async () => {
+  docs.set(`orders/${orderId}`, {
+    ...docs.get(`orders/${orderId}`), paymentStatus: 'pendente', status: 'Pendente',
+    fulfillmentStatus: 'aguardando_pagamento',
+  });
+  const response = await webhook({ id: checkoutId, reference_id: orderId, status: 'PAID' });
+  assert.equal(response.status, 422);
+  assert.equal(docs.get(`orders/${orderId}`)!.paymentStatus, 'pendente');
+  assert.equal(docs.get(`orders/${orderId}`)!.fulfillmentStatus, 'aguardando_pagamento');
+});
+
+test('consulta autenticada sem cobrança não confirma pagamento a partir do estado do checkout', async () => {
+  checkoutStatus = 'PAID'; checkoutHasOrders = false;
+  docs.set(`orders/${orderId}`, {
+    ...docs.get(`orders/${orderId}`), paymentStatus: 'pendente', status: 'Pendente',
+    fulfillmentStatus: 'aguardando_pagamento', pagbankChargeId: '',
+  });
+  const response = await localFetch(`${baseUrl}/api/payment-status/${orderId}`, {
+    headers: { authorization: 'Bearer test-token' },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, 'pendente');
+  assert.equal(docs.get(`orders/${orderId}`)!.paymentStatus, 'pendente');
 });
 after(async () => {
   if (server?.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

@@ -195,6 +195,8 @@ Configure alertas de orçamento e monitore o uso do bucket. Alertas de orçament
 - O pedido armazena o modelo pronto e também texto, fonte e posição como metadados de auditoria e compatibilidade.
 - O servidor exige o arquivo composto, valida formato, assinatura, proprietário e metadado técnico e o move para o caminho definitivo do pedido.
 - Cliente e administrador acessam o modelo por URL assinada de cinco minutos. No painel, a produção abre a imagem pronta; quando existir arte original, ela permanece disponível separadamente.
+- No checkout, a assinatura do arquivo e sua cópia para o pedido usam a mesma geração do objeto no Storage. Se o arquivo validado for substituído e aquela geração deixar de existir, o checkout pede um novo envio. A limpeza do arquivo temporário só o remove se a geração atual ainda for a validada.
+- A cópia definitiva fornece somente metadados necessários e não transfere intencionalmente o metadado de token de download da origem. O comportamento de acesso e eventuais URLs de longa duração devem ser conferidos em um projeto Firebase descartável; arquivos já existentes não são modificados por essa alteração.
 
 ### Imagens do catálogo
 
@@ -220,6 +222,7 @@ Configure alertas de orçamento e monitore o uso do bucket. Alertas de orçament
 - O webhook é deduplicado pelo hash do corpo recebido.
 - Atualizações financeiras usam transação Firestore.
 - Pagamentos `PAID` só são aplicados quando valor, moeda e identificadores correspondem ao pedido. Cartão e Pix exigem o valor exato; no boleto do Checkout Hospedado também é reconhecido exclusivamente o acréscimo de R$ 1,00 devolvido pelo PagBank ao comprador.
+- Uma confirmação de pagamento exige uma cobrança identificada e o status `PAID` na própria cobrança. Um status de checkout sem cobrança, ou o estado do documento pai de uma cobrança sem status, não confirma o pedido.
 - Webhooks com assinatura válida seguem a verificação oficial `SHA-256(token-payload)` sobre o corpo bruto.
 - Se o Sandbox omitir ou enviar uma assinatura divergente, o payload é descartado como fonte de verdade e serve apenas para acionar uma consulta autenticada ao PagBank. Somente o evento devolvido pela API pode alterar o pedido.
 - A consulta alternativa possui limites locais e persistentes e exige coincidência dos identificadores e dados financeiros antes de registrar a notificação como evidência.

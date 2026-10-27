@@ -44,7 +44,8 @@ export function parsePagBankWebhookEvent(payload: unknown): PagBankWebhookEvent 
   if (!providerId || !referenceId) return null;
 
   const kind = charge ? 'payment' : 'checkout';
-  const providerStatus = cleanText(charge?.status || payload.status, 50).toUpperCase();
+  // Quando existe uma cobrança, somente seu próprio status representa o pagamento.
+  const providerStatus = cleanText(charge ? charge.status : payload.status, 50).toUpperCase();
   if (!providerStatus) return null;
 
   const amount = charge && isPlainRecord(charge.amount) ? charge.amount : null;
@@ -101,6 +102,9 @@ export function validatePagBankWebhookEvent(
 ): string | null {
   const expectedTotal = storedTotalCents(order);
   if (event.invalidSummary) return 'Resumo financeiro inválido.';
+  if (event.paymentStatus === 'pago' && (event.kind !== 'payment' || !event.chargeId)) {
+    return 'Confirmação de pagamento exige uma cobrança identificada.';
+  }
   if ((event.refundedCents ?? 0) > 0) {
     if (event.kind !== 'payment' || !event.chargeId || event.amountCents === null ||
         event.currency !== 'BRL' || expectedTotal === null ||

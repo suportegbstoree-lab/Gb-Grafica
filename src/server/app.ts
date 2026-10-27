@@ -20,6 +20,13 @@ import {
 } from '../lib/artwork.js';
 import { isComposablePersonalizationImage } from '../lib/personalizationModel.js';
 import {
+	copyArtworkVersion,
+	deleteArtworkVersion,
+	parseArtworkObjectGeneration,
+	readArtworkPrefix,
+	type ArtworkObjectVersion,
+} from './artworkObjectVersion.js';
+import {
 	allowedFulfillmentTransitions,
 	isFulfillmentStatus,
 	legacyFulfillmentStatus,
@@ -92,6 +99,8 @@ interface ShippingQuote {
 }
 
 interface NormalizedCartItem {
+	artworkVersion?: ArtworkObjectVersion;
+	modelVersion?: ArtworkObjectVersion;
 	cartItem: {
 		id: string;
 		productId: string;
@@ -654,6 +663,8 @@ async function normalizeCart(
 		const modelPath = requiresText ? textValue(item.modeloPath, 300) : '';
 		let artworkName = '';
 		let modelName = '';
+		let artworkVersion: ArtworkObjectVersion | undefined;
+		let modelVersion: ArtworkObjectVersion | undefined;
 
 		if (requiresArtwork) {
 			if (item.artePendente === true) {
@@ -670,19 +681,24 @@ async function normalizeCart(
 				const [metadata] = await artworkFile.getMetadata();
 				const size = Number(metadata.size);
 				const ownerId = metadata.metadata?.ownerId;
+				const generation = parseArtworkObjectGeneration(metadata.generation);
 				if (
-					!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId ||
+					!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId || generation === null ||
 					(requiresText && !isComposablePersonalizationImage(metadata.contentType, size))
 				) {
 					throw new HttpError(422, `O arquivo enviado para ${productName} não é permitido.`);
 				}
-				const [prefix] = await artworkFile.download({ start: 0, end: 15, validation: false });
+				const prefix = await readArtworkPrefix(bucket, artworkPath, generation);
 				if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
 					throw new HttpError(422, `O conteúdo do arquivo enviado para ${productName} não corresponde ao formato informado.`);
 				}
 				artworkName = sanitizeArtworkName(
 					textValue(item.arquivoNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'arte',
 				);
+				artworkVersion = {
+					path: artworkPath, generation, contentType: String(metadata.contentType),
+					kind: 'source-artwork', originalName: artworkName,
+				};
 			} catch (error) {
 				if (error instanceof HttpError) throw error;
 				throw new HttpError(422, `Não foi possível validar a arte de ${productName}. Envie o arquivo novamente.`);
@@ -716,19 +732,24 @@ async function normalizeCart(
 				const size = Number(metadata.size);
 				const ownerId = metadata.metadata?.ownerId;
 				const kind = metadata.metadata?.kind;
+				const generation = parseArtworkObjectGeneration(metadata.generation);
 				if (
 					!isComposablePersonalizationImage(metadata.contentType, size) ||
-					ownerId !== userId || kind !== 'personalization-model'
+					ownerId !== userId || kind !== 'personalization-model' || generation === null
 				) {
 					throw new HttpError(422, `O modelo composto de ${productName} não é permitido.`);
 				}
-				const [prefix] = await modelFile.download({ start: 0, end: 15, validation: false });
+				const prefix = await readArtworkPrefix(bucket, modelPath, generation);
 				if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
 					throw new HttpError(422, `O conteúdo do modelo composto de ${productName} é inválido.`);
 				}
 				modelName = sanitizeArtworkName(
 					textValue(item.modeloNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'modelo.webp',
 				);
+				modelVersion = {
+					path: modelPath, generation, contentType: String(metadata.contentType),
+					kind: 'personalization-model', originalName: modelName,
+				};
 			} catch (error) {
 				if (error instanceof HttpError) throw error;
 				throw new HttpError(422, `Não foi possível validar o modelo composto de ${productName}. Gere-o novamente.`);
@@ -740,6 +761,8 @@ async function normalizeCart(
 		const price = (unitAmount / 100).toFixed(2);
 
 		normalizedItems.push({
+			...(artworkVersion ? { artworkVersion } : {}),
+			...(modelVersion ? { modelVersion } : {}),
 			cartItem: {
 				id: cartId,
 				productId,
@@ -816,20 +839,23 @@ async function copyArtworksToOrder(
 	services: ReturnType<typeof getAdminServices>,
 	userId: string,
 	orderId: string,
-): Promise<{ pendingPaths: string[]; orderPaths: string[] }> {
-	const pendingPaths: string[] = [];
+): Promise<{ pendingPaths: ArtworkObjectVersion[]; orderPaths: string[] }> {
+	const pendingPaths: ArtworkObjectVersion[] = [];
 	const orderPaths: string[] = [];
 
 	try {
 		for (const item of items) {
 			const assets = [
-				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, model: false },
-				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, model: true },
+				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
+				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
 			];
 
 			for (const asset of assets) {
 				const sourcePath = asset.path;
 				if (!sourcePath) continue;
+				if (!asset.version || asset.version.path !== sourcePath) {
+					throw new HttpError(422, 'A versão validada do arquivo não está mais disponível.');
+				}
 				const isValidSource = asset.model
 					? isPendingPersonalizationModelPath(sourcePath, userId)
 					: isPendingArtworkPath(sourcePath, userId);
@@ -846,9 +872,17 @@ async function copyArtworksToOrder(
 					throw new HttpError(500, `Não foi possível preparar o destino ${asset.model ? 'do modelo' : 'da arte'}.`);
 				}
 
-				await services.bucket.file(sourcePath).copy(services.bucket.file(destinationPath));
+				try {
+					await copyArtworkVersion(services.bucket, asset.version, destinationPath, userId);
+				} catch (error) {
+					const code = (error as { code?: unknown })?.code;
+					if (code === 404 || code === 412) {
+						throw new HttpError(422, 'O arquivo validado mudou ou não está mais disponível. Envie-o novamente.');
+					}
+					throw error;
+				}
 				item.cartItem[asset.field] = destinationPath;
-				pendingPaths.push(sourcePath);
+				pendingPaths.push(asset.version);
 				orderPaths.push(destinationPath);
 			}
 		}
@@ -1503,7 +1537,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			}, { merge: true });
 			await batch.commit();
 
-			await Promise.allSettled(pendingArtworkPaths.map(path => services.bucket.file(path).delete()));
+			await Promise.allSettled(pendingArtworkPaths.map(source => deleteArtworkVersion(services.bucket, source)));
 
 			res.status(201).json({
 				payment_method: 'hosted',

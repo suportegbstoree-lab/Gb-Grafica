@@ -18,6 +18,7 @@ request.json
 .github/agents/
 .github/*.yml
 .git/
+*.patch
 
 # Estado local das ferramentas de deploy
 /.vercel/

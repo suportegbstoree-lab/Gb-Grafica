@@ -27,6 +27,32 @@ test('interpreta uma notificação de pagamento do PagBank', () => {
   assert.equal(event.paymentMethod, 'CREDIT_CARD');
 });
 
+test('não confirma pagamento somente pelo estado do checkout ou sem identificador da cobrança', () => {
+  const checkout = parsePagBankWebhookEvent({ id: 'CHEC_123', reference_id: 'GB-123', status: 'PAID' });
+  assert.ok(checkout);
+  assert.equal(validatePagBankWebhookEvent(checkout, { totalCents: 840, pagbankCheckoutId: 'CHEC_123' }),
+    'Confirmação de pagamento exige uma cobrança identificada.');
+
+  const withoutChargeId = parsePagBankWebhookEvent({
+    ...paidPayload, charges: [{ ...paidPayload.charges[0], id: '' }],
+  });
+  assert.ok(withoutChargeId);
+  assert.equal(validatePagBankWebhookEvent(withoutChargeId, { totalCents: 840 }),
+    'Confirmação de pagamento exige uma cobrança identificada.');
+
+  const valid = parsePagBankWebhookEvent(paidPayload);
+  assert.ok(valid);
+  assert.equal(validatePagBankWebhookEvent(valid, { totalCents: 840 }), null);
+});
+
+test('cobrança sem estado próprio não herda o estado de pagamento do documento pai', () => {
+  assert.equal(parsePagBankWebhookEvent({
+    ...paidPayload,
+    status: 'PAID',
+    charges: [{ id: 'CHAR_123', amount: { value: 840, currency: 'BRL' } }],
+  }), null);
+});
+
 test('rejeita confirmação com valor ou moeda divergentes', () => {
   const event = parsePagBankWebhookEvent(paidPayload);
   assert.ok(event);
