@@ -3,6 +3,7 @@ import express from 'express';
 import axios from 'axios';
 import cors from 'cors';
 import { getAdminServices, isFirebaseAdminConfigured } from './firebaseAdmin.js';
+import { ArtworkRelayError, sendArtworkRelayChunk, startArtworkRelay } from './artworkRelay.js';
 import {
 	createCartItemId,
 	isValidBrazilianPhone,
@@ -278,6 +279,19 @@ app.use('/api', (req, res, next) => {
 		return;
 	}
 	next();
+});
+
+// Somente usuários autenticados alcançam o parser maior. As demais rotas mantêm 256 KiB.
+const relayJson = express.json({ limit: '3mb' });
+app.use('/api/artwork-uploads', (req, res, next) => {
+	if (process.env.ARTWORK_UPLOAD_RELAY_MODE !== 'enabled') return next();
+	void Promise.resolve(requireAppCheck(req, res, checkError => {
+		if (checkError) return next(checkError);
+		void requireFirebaseUser(req).then(user => {
+			res.locals.artworkRelayUser = user;
+			relayJson(req, res, next);
+		}).catch(caught => sendArtworkRelayError(res, caught));
+	})).catch(caught => sendArtworkRelayError(res, caught));
 });
 
 app.use(express.json({
@@ -1226,6 +1240,45 @@ function sendError(res: express.Response, error: unknown) {
 		request_id: requestId,
 	});
 }
+
+const requireArtworkRelay: express.RequestHandler = (_req, res, next) => {
+	if (process.env.ARTWORK_UPLOAD_RELAY_MODE !== 'enabled') {
+		sendError(res, new HttpError(404, 'Rota da API não encontrada.', 'API_ROUTE_NOT_FOUND'));
+		return;
+	}
+	next();
+};
+
+function sendArtworkRelayError(res: express.Response, caught: unknown) {
+	if (caught instanceof HttpError) return sendError(res, caught);
+	if (caught instanceof ArtworkRelayError) return sendError(res, new HttpError(caught.status, caught.message, caught.code));
+	// A URI de uma sessão de upload é uma credencial: nunca registrar erros externos brutos aqui.
+	return sendError(res, new HttpError(503, 'Não foi possível processar o envio. Tente novamente.', 'ARTWORK_UPLOAD_UNAVAILABLE'));
+}
+
+app.post('/api/artwork-uploads', requireArtworkRelay, async (req, res) => {
+	try {
+		const user = res.locals.artworkRelayUser as Awaited<ReturnType<typeof requireFirebaseUser>>;
+		if (!user) throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
+		const services = getAdminServices();
+		enforceRateLimit(`artwork-relay-start:${user.uid}`, 30, 60_000);
+		await enforceDistributedRateLimit(services.db, `artwork-relay-start:${user.uid}`, 30, 60_000);
+		if (!isPlainRecord(req.body)) throw new HttpError(422, 'Arquivo inválido para envio.');
+		res.status(201).json(await startArtworkRelay(services, user.uid, req.body));
+	} catch (caught) { sendArtworkRelayError(res, caught); }
+});
+
+app.post('/api/artwork-uploads/:uploadId/chunk', requireArtworkRelay, async (req, res) => {
+	try {
+		const user = res.locals.artworkRelayUser as Awaited<ReturnType<typeof requireFirebaseUser>>;
+		if (!user) throw new HttpError(401, 'Sua sessão expirou. Faça login novamente.');
+		const services = getAdminServices();
+		enforceRateLimit(`artwork-relay-chunk:${user.uid}`, 180, 60_000);
+		await enforceDistributedRateLimit(services.db, `artwork-relay-chunk:${user.uid}`, 180, 60_000);
+		if (!isPlainRecord(req.body)) throw new HttpError(422, 'Parte do arquivo inválida.');
+		res.json(await sendArtworkRelayChunk(services, user.uid, req.params.uploadId, req.body.offset, req.body.data));
+	} catch (caught) { sendArtworkRelayError(res, caught); }
+});
 
 const healthHandler = (_req: express.Request, res: express.Response) => {
 	if (process.env.NODE_ENV === 'production') {
