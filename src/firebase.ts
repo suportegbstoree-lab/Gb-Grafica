@@ -3,20 +3,19 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChang
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider, getToken, type AppCheck } from 'firebase/app-check';
-import { getAI, getGenerativeModel, AgentPlatformBackend } from 'firebase/ai';
-import { setApiAppCheckTokenProvider } from './services/apiClient';
+import type { AppCheck } from 'firebase/app-check';
+import { apiFetch, setApiAppCheckTokenProvider } from './services/apiClient';
+import { checkAppCheckConnection, createAppCheckTokenProvider, initializeBrowserAppCheck } from './services/appCheckClient';
+import { createFirebaseTextModel } from './services/firebaseAiClient';
 
 const app = initializeApp(firebaseConfig);
 
 function initializeFirebaseAppCheck(): AppCheck | null {
-	const siteKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY?.trim();
-	if (!siteKey || typeof window === 'undefined') return null;
-
 	try {
-		return initializeAppCheck(app, {
-			provider: new ReCaptchaEnterpriseProvider(siteKey),
-			isTokenAutoRefreshEnabled: true,
+		return initializeBrowserAppCheck(app, {
+			siteKey: import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY,
+			development: import.meta.env.DEV,
+			debug: import.meta.env.DEV && import.meta.env.VITE_APP_CHECK_DEBUG === 'true',
 		});
 	} catch {
 		console.warn('[App Check] Não foi possível inicializar a proteção do navegador.');
@@ -26,25 +25,22 @@ function initializeFirebaseAppCheck(): AppCheck | null {
 
 export const appCheck = initializeFirebaseAppCheck();
 
-export async function getAppCheckToken(): Promise<string | null> {
-	if (!appCheck) return null;
-	try {
-		const result = await getToken(appCheck, false);
-		return result.token || null;
-	} catch {
-		console.warn('[App Check] Não foi possível validar esta sessão do navegador.');
-		return null;
-	}
-}
+export const getAppCheckToken = createAppCheckTokenProvider(appCheck);
 
 setApiAppCheckTokenProvider(getAppCheckToken);
 
-const ai = getAI(app, { backend: new AgentPlatformBackend() });
-const model = getGenerativeModel(ai, { model: import.meta.env.VITE_GEMINI_MODEL?.trim() || 'gemini-3.8-flash' });
+// Confirma a validação real pela API em segundo plano, sem impedir a montagem da loja.
+if (appCheck) {
+	void checkAppCheckConnection(apiFetch).then(verified => {
+		if (!verified) console.warn('[App Check] A API ainda não confirmou a proteção desta sessão.');
+	}).catch(() => console.warn('[App Check] O diagnóstico da API está indisponível.'));
+}
+
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
+const model = createFirebaseTextModel(app, import.meta.env.VITE_GEMINI_MODEL?.trim() || 'gemini-3.8-flash');
 
 // Create User, Login, Logout, and Auth State Change Listeners
 

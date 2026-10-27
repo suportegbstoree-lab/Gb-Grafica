@@ -35,3 +35,7 @@ request.json
 /Gb-Grafica-*.tar.gz.sha256
 /Gb-Grafica-*.patch
 /gb-grafica-*.patch
+
+# Pacotes locais
+*.tar.gz
+*.tar.gz.sha256

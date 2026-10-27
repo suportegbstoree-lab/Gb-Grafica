@@ -83,8 +83,10 @@ import { getAppCheck } from 'firebase-admin/app-check';
 import {
 	APP_CHECK_HEADER,
 	configuredAppCheckMode,
+	configuredAppCheckAppIds,
 	evaluateAppCheck,
 } from './appCheck.js';
+import firebaseClientConfig from '../../firebase-applet-config.json' with { type: 'json' };
 
 type RawBodyRequest = express.Request & { rawBody?: string };
 type PlainRecord = Record<string, unknown>;
@@ -310,7 +312,8 @@ app.use((req, res, next) => {
 
 const requireAppCheck: express.RequestHandler = async (req, res, next) => {
 	const mode = configuredAppCheckMode(process.env.FIREBASE_APP_CHECK_MODE);
-	if (!mode) {
+	const allowedAppIds = configuredAppCheckAppIds(process.env.FIREBASE_APP_CHECK_ALLOWED_APP_IDS, firebaseClientConfig.appId);
+	if (!mode || (mode !== 'off' && !allowedAppIds)) {
 		sendError(res, new HttpError(
 			503,
 			'A validação de segurança está configurada incorretamente.',
@@ -321,12 +324,14 @@ const requireAppCheck: express.RequestHandler = async (req, res, next) => {
 
 	const evaluation = await evaluateAppCheck({
 		mode,
+		allowedAppIds,
 		headerValue: req.header(APP_CHECK_HEADER),
 		getVerifier: () => {
 			const appCheck = getAppCheck(getAdminServices().app);
 			return token => appCheck.verifyToken(token);
 		},
 	});
+	res.locals.appCheck = { mode, verified: evaluation.verified };
 
 	if (evaluation.allowed) {
 		if (evaluation.failureReason) {
@@ -357,6 +362,11 @@ const requireAppCheck: express.RequestHandler = async (req, res, next) => {
 	));
 };
 
+// Diagnóstico somente de leitura. Não retorna tokens, credenciais nem dados de usuários.
+app.get('/api/app-check/status', requireAppCheck, (_req, res) => {
+	logEvent('info', 'app_check_status', { request_id: responseRequestId(res), ...res.locals.appCheck });
+	res.json(res.locals.appCheck);
+});
 
 function getPagBankConfig() {
 	const environment = process.env.PAGBANK_ENV?.trim().toLowerCase() === 'production'

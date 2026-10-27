@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-27 — Validação de sessões com Firebase App Check
+
+- Adicionada confirmação da validação do navegador pela API em `/api/app-check/status`, com diagnóstico em segundo plano e sem expor tokens.
+- A API passou a conferir o App ID da loja, com suporte a uma lista explícita de apps autorizados.
+- Chamadas à API mantêm o atestado restrito à mesma origem e impedem seu encaminhamento por redirecionamentos.
+- Uma sessão rejeitada pelo middleware pode obter um novo atestado e repetir a chamada uma única vez, preservando os headers e o corpo da requisição.
+- A aquisição de tokens pela API recebeu espera limitada e aviso controlado quando o provedor está indisponível.
+- Adicionado modo de depuração restrito ao desenvolvimento local e validação de build que impede publicar a flag de debug ou usar `enforce` sem chave pública.
+- Chamadas ao Firebase AI Logic passaram a solicitar tokens de uso limitado, compatíveis com a ativação de proteção contra reuso no console.
+- Adicionado o comando `security:app-check` para conferir a configuração local sem exibir credenciais.
+
 ## 2026-09-17 — Gestão operacional do painel administrativo
 
 - Categorias agora podem ser editadas sem trocar o identificador do documento; renomeações atualizam os produtos e as promoções vinculadas.

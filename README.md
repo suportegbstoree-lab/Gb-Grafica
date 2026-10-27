@@ -102,11 +102,17 @@ O token PagBank e a conta de serviço Firebase são exclusivos do servidor. O Fi
 
 O frontend só inicializa o App Check quando `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` contém uma chave pública. A ausência da chave não impede login, desenvolvimento local ou build. O backend aceita três modos em `FIREBASE_APP_CHECK_MODE`:
 
-- `off`: não verifica o header; padrão seguro para desenvolvimento antes da configuração;
+- `off`: não verifica o header; padrão desativado para desenvolvimento antes da configuração;
 - `monitor`: valida quando possível, registra ausências ou falhas e não bloqueia a requisição;
 - `enforce`: rejeita rotas protegidas sem um token válido.
 
-As rotas de frete, checkout, consulta de pagamento, atualização administrativa e acesso privado às artes são protegidas. `/api/health`, `/health` e o webhook PagBank permanecem fora do middleware porque são chamadas públicas ou servidor a servidor. O token é enviado apenas no header `X-Firebase-AppCheck`, nunca em URL ou log.
+As rotas de frete, checkout, consulta de pagamento, atualização administrativa, acesso privado às artes e upload em partes (quando habilitado) usam a validação. `/api/health`, `/health` e o webhook PagBank permanecem fora do middleware porque são chamadas públicas ou servidor a servidor. O token é enviado no header `X-Firebase-AppCheck` apenas para a API da mesma origem, nunca em URL ou log. Redirecionamentos da API não são seguidos. Uma rejeição explícita do middleware por token ausente/inválido pode renovar o atestado e repetir a chamada uma única vez, antes de executar o handler; erros de login, rede e PagBank não acionam essa repetição.
+
+O SDK renova os tokens automaticamente. A API confere também o App ID do cliente, usando por padrão `firebase-applet-config.json`; `FIREBASE_APP_CHECK_ALLOWED_APP_IDS` permite uma lista explícita de apps adicionais. `GET /api/app-check/status` aplica a mesma validação e retorna somente `mode` e `verified`. Quando há site key, o navegador consulta esse diagnóstico em segundo plano sem bloquear a montagem da loja. Os serviços Firestore, Storage, Auth e AI recebem os tokens pelo SDK Firebase, independentemente do helper da API.
+
+O helper da API espera até dez segundos para obter o atestado. Se o SDK não concluir essa etapa, a chamada segue sem token: em `monitor` pode continuar, enquanto em `enforce` é rejeitada pelo servidor. Não há liberação especial em `enforce`, nem repetição automática de uma aquisição que já falhou. O limite de espera do helper não modifica o ciclo interno dos demais SDKs Firebase.
+
+O cliente de IA usa tokens de uso limitado, preparando a compatibilidade com replay protection do Firebase AI Logic. A proteção contra reuso depende também de ativação no console; o backend Express continua usando tokens de sessão, sem consumo de uso único.
 
 O Firebase anunciou a exigência de App Check para Firebase AI Logic a partir de 2 de novembro de 2026. Confira a aplicação da proteção no console Firebase e valide que os clientes publicados conseguem emitir tokens antes dessa data: a verificação de App Check da API Express é independente da verificação feita pelo Firebase AI Logic e pelo Storage. A configuração do modo de usuários autenticados do Firebase AI Logic limita chamadas a usuários com sessão válida, mas não estabelece, por si só, uma permissão específica de administrador. Consulte a [documentação de App Check do Firebase AI Logic](https://firebase.google.com/docs/ai-logic/app-check) e o [modo de usuários autenticados](https://firebase.google.com/docs/ai-logic/auth-mode).
 
@@ -119,7 +125,9 @@ Para ativar em produção:
 5. confira os eventos `app_check_monitor_observation` nos logs;
 6. altere para `enforce` somente quando o tráfego legítimo estiver enviando tokens.
 
-Em desenvolvimento local, mantenha a site key vazia e o modo `off`, ou configure oficialmente um token de depuração no console Firebase. Nunca publique um token de depuração como variável `VITE_*`.
+Em desenvolvimento local, mantenha a site key vazia e o modo `off`, ou use `VITE_APP_CHECK_DEBUG=true` com `npm run dev` em localhost e cadastre o token gerado pelo SDK no console Firebase. Builds publicados rejeitam o modo de debug e também rejeitam `enforce` sem site key. Nunca coloque um token de depuração em variável `VITE_*`.
+
+Veja o [roteiro completo de ativação e validação](docs/app-check-ativacao.md). `npm run security:app-check -- --production` verifica a configuração local correspondente ao build, sem conectar contas nem alterar o Firebase; a validação real depende do navegador e das métricas no console.
 
 `PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção: essa variável ativa apenas a coleta Sandbox. A coleta para a validação final em produção exige a conta e a janela explícitas descritas abaixo.
 

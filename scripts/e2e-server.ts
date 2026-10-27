@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+import { readFile } from 'node:fs/promises';
 
 process.env.VITE_E2E_MODE = 'true';
 process.env.DISABLE_HMR = 'true';
@@ -14,6 +15,16 @@ async function startE2EServer() {
 
   app.get('/__e2e/health', (_request, response) => {
     response.json({ status: 'ok', mode: 'e2e' });
+  });
+
+  app.get('/__e2e/app-check', async (_request, response, next) => {
+    try {
+      const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+      const headers = config.headers.find((rule: { source: string }) => rule.source === '/(.*)').headers;
+      const policy = headers.find((header: { key: string }) => header.key === 'Content-Security-Policy').value;
+      response.setHeader('Content-Security-Policy', policy);
+      response.type('html').send(await readFile(new URL('../e2e/fixtures/app-check.html', import.meta.url), 'utf8'));
+    } catch (error) { next(error); }
   });
 
   app.post('/api/shipping-quote', (request, response) => {
