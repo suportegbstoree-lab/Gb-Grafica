@@ -1,5 +1,6 @@
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
 import type { PersonalizationFont, ProductCustomizationType, TextCustomization } from './lib/textCustomization';
+import type { ProductShippingProfile, ShippingOption, ShippingParcel } from './lib/shipping';
 
 export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationFont, ProductCustomizationType, TextCustomization };
 
@@ -20,6 +21,8 @@ export interface Anuncio {
   combinacoes: Record<string, string>;
   tipoInput?: ProductCustomizationType;
   labelTexto?: string;
+  shipping?: ProductShippingProfile;
+  shippingByCombination?: Record<string, ProductShippingProfile>;
 }
 
 export interface CartItem {
@@ -66,6 +69,7 @@ export interface Order {
   metodoPagamento?: 'cartao' | 'pix' | 'pagbank';
   subtotal?: string;
   frete?: string;
+  shipping?: ShippingOption & { origin_cep: string; destination_cep: string; quoted_at: string; parcels: ShippingParcel[] };
   totalCents?: number;
   clienteNome?: string;
   clienteEmail?: string;

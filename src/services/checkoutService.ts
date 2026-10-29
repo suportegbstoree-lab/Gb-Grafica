@@ -30,6 +30,10 @@ export interface HostedPaymentStatusResult {
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+export class CheckoutApiError extends Error {
+  constructor(message: string, public readonly code?: string) { super(message); this.name = 'CheckoutApiError'; }
+}
+
 export function isTrustedPagBankPaymentUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -59,7 +63,7 @@ export async function createHostedCheckout(
 
   const data = await response.json().catch(() => ({})) as CheckoutApiResponse;
   if (!response.ok) {
-    throw new Error(apiErrorMessage(data, 'Não foi possível iniciar o pagamento.'));
+    throw new CheckoutApiError(apiErrorMessage(data, 'Não foi possível iniciar o pagamento.'), typeof data.code === 'string' ? data.code : undefined);
   }
 
   if (typeof data.init_point !== 'string' || !isTrustedPagBankPaymentUrl(data.init_point)) {

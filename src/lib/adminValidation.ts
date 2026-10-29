@@ -1,5 +1,6 @@
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
+import { parseShippingProfile, type ProductShippingProfile } from './shipping';
 import {
   isProductCustomizationType,
   normalizePersonalizationFonts,
@@ -176,6 +177,16 @@ export function validateProductDraft(
     return { ok: false, message: 'Informe o rótulo do texto que o cliente deverá preencher.' };
   }
 
+  const shipping = draft.shipping === undefined ? undefined : parseShippingProfile(draft.shipping);
+  const shippingByCombination: Record<string, ProductShippingProfile> = {};
+  if (shipping === null) return { ok: false, message: 'Revise o peso e a embalagem: máximo de 30 kg por volume, 100 cm por lado e soma de até 200 cm.' };
+  for (const key of combinationKeys) {
+    if (!Object.hasOwn(draft.shippingByCombination || {}, key)) continue;
+    const profile = parseShippingProfile(draft.shippingByCombination![key]);
+    if (!profile) return { ok: false, message: `Revise o peso e a embalagem da combinação ${key}.` };
+    shippingByCombination[key] = profile;
+  }
+
   return {
     ok: true,
     value: {
@@ -189,6 +200,8 @@ export function validateProductDraft(
       combinacoes,
       tipoInput,
       labelTexto,
+      ...(shipping ? { shipping } : {}),
+      ...(Object.keys(shippingByCombination).length ? { shippingByCombination } : {}),
     },
   };
 }

@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-29 — Proteção do servidor de desenvolvimento
+
+- Desenvolvimento passou a escutar em loopback por padrão. Acesso por rede/túnel exige habilitação explícita e hosts exatos; `APP_URL` não amplia a lista de hosts do Vite.
+- Adicionada validação de Host/Origin no HTTP e no upgrade WebSocket, sem confiar em headers encaminhados para autorizar o servidor local.
+- Restringidos arquivos entregues pelo Vite ao código cliente, dependências e recursos públicos necessários. Backend, scripts, testes, credenciais, arquivos compactados e caminhos externos são bloqueados, inclusive por consultas raw/import, codificação de URL e links simbólicos.
+- Diretório public é verificado antes de servir ou construir; imports de arquivos privados no bundle também são recusados. O endpoint de abertura do editor local foi desativado.
+- HMR passou a compartilhar o servidor HTTP; desativá-lo também desliga o listener WebSocket. O servidor E2E fica em loopback e builds com VITE_E2E_MODE=true são rejeitados.
+- `npm start` passou a executar produção explícita, com build obrigatório e sem importar Vite. Valores inválidos de ambiente, modo ou porta interrompem a inicialização.
+- Adicionados testes reais de HTTP, preview, CLI, WebSocket e HMR no navegador, com regressão na CI. Preservados os fluxos de App Check, IA, personalização, checkout e frete.
+- Atualizada somente a dependência transitiva `re2js` de `2.8.6` para `2.8.7`, corrigindo o alerta de negação de serviço identificado na auditoria do SDK Firebase.
+
+## 2026-10-29 — Cotação real de frete com os Correios
+
+- Substituída a tabela regional por consultas nacionais de preço e prazo dos serviços PAC/SEDEX autorizados no contrato, somente pelo backend.
+- Adicionado suporte a token temporário e renovação automática com usuário, código de acesso CWS e cartão de postagem, sem credenciais no navegador.
+- Adicionados peso por unidade, peso da embalagem, dimensões externas e capacidade por volume ao editor de produtos, com perfis específicos por combinação.
+- Carrinho permite escolher serviço e apresenta prazo de transporte separado da produção; alterar CEP, itens, opções ou quantidades invalida a cotação.
+- Pedidos usam até 20 volumes; produtos/combinações diferentes ficam separados. Serviço sem preço e prazo para todos os volumes não é oferecido.
+- Checkout recalcula o frete antes de criar pedido/PagBank e exige revisão quando o preço muda. Serviço e volumes são registrados no pedido e exibidos no painel.
+- Adicionados diagnóstico `shipping:check`, testes do provedor, HTTP e navegador, e guia `docs/correios-integration.md`.
+- Ajustada a duração da função principal da API na Vercel para 60 segundos para acomodar recotação e checkout.
+
 ## 2026-10-27 — Autorização da IA administrativa no servidor
 
 - As quatro funções de IA do editor passaram a chamar a API própria, que exige sessão válida e autorização administrativa atual antes de gerar uma sugestão.

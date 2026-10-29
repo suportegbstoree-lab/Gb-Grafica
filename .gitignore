@@ -4,6 +4,12 @@ dist/
 coverage/
 playwright-report/
 test-results/
+# Marcadores temporários das regressões do servidor local (inclusive execução interrompida).
+/.security-probe-*.json
+/src/security-probe-*.ts
+/src/security-hmr-*.ts
+/src/server/security-probe-*.ts
+/public/security-probe-*
 blob-report/
 .DS_Store
 *.log

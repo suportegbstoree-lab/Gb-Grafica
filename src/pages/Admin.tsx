@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import ProductShippingEditor from '../components/ProductShippingEditor';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -2014,6 +2015,8 @@ export default function Admin({
                   )}
                 </div>
 
+                <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
+
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
                   <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white disabled:opacity-50">Cancelar</button>
                   <button type="submit" disabled={isSaving || isUploadingCatalogImages} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
@@ -2545,6 +2548,11 @@ function OrderCard({
           </div>
           <div>{order.enderecoEntrega.bairro} — {order.enderecoEntrega.cidade}/{order.enderecoEntrega.estado}</div>
           <div>CEP {order.enderecoEntrega.cep}</div>
+          {order.shipping && <div className="mt-3 space-y-1">
+            <div>{order.shipping.service_name} ({order.shipping.service_code}) — {order.shipping.parcels.length} volume(s) — {order.shipping.delivery_days} dia(s) útil(eis) após postagem.</div>
+            {!order.shipping.home_delivery && <div>Entrega domiciliar indisponível na cotação; pode exigir retirada em agência.</div>}
+            {order.shipping.parcels.map((parcel, i) => <div key={i}>Volume {i + 1}: {parcel.weightGrams} g — {parcel.lengthCm} × {parcel.widthCm} × {parcel.heightCm} cm</div>)}
+          </div>}
         </div>
       )}
 

@@ -1,15 +1,21 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { guardLocalWebSocket, localNetworkMiddleware, localNetworkPolicy } from '../src/server/localServerSecurity.js';
 
 process.env.VITE_E2E_MODE = 'true';
 process.env.DISABLE_HMR = 'true';
 
 const PORT = Number(process.env.E2E_PORT || 4173);
-const HOST = '0.0.0.0';
+const HOST = '127.0.0.1';
 
 async function startE2EServer() {
   const app = express();
+  const server = createServer(app);
+  const policy = localNetworkPolicy({}, true);
+  app.use(localNetworkMiddleware(policy));
+  guardLocalWebSocket(server, policy, true);
   app.disable('x-powered-by');
   app.use(express.json({ limit: '100kb' }));
 
@@ -33,12 +39,20 @@ async function startE2EServer() {
       return;
     }
     response.json({
+      cep: String(request.body.cep),
       address: 'Rua dos Testes, Centro, Franca/SP',
       amount_cents: 1290,
       street: 'Rua dos Testes',
       neighborhood: 'Centro',
       city: 'Franca',
       state: 'SP',
+      options: [
+        { service_code: '03298', service_name: 'PAC', amount_cents: 1290, delivery_days: 5, home_delivery: true, saturday_delivery: false },
+        { service_code: '03220', service_name: 'SEDEX', amount_cents: 2590, delivery_days: 2, home_delivery: true, saturday_delivery: false },
+      ],
+      parcel_count: 1,
+      quoted_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
     });
   });
 
@@ -60,12 +74,14 @@ async function startE2EServer() {
   });
 
   const vite = await createViteServer({
+    mode: 'e2e',
     appType: 'spa',
-    server: { middlewareMode: true, hmr: false },
+    server: { port: PORT, middlewareMode: true, hmr: false, ws: false,
+      warmup: { clientFiles: ['./src/main.tsx', './src/e2e/E2EHarness.tsx'] } },
   });
   app.use(vite.middlewares);
 
-  const server = app.listen(PORT, HOST, () => {
+  server.listen(PORT, HOST, () => {
     console.log(`E2E server listening on http://127.0.0.1:${PORT}`);
   });
 

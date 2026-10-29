@@ -50,12 +50,62 @@ test('calcula frete e preenche o endereço retornado pela API simulada', async (
   await cart.getByLabel('Calcular frete').fill('14400000');
   const quoteRequest = page.waitForRequest(request => request.url().endsWith('/api/shipping-quote'));
   await cart.getByRole('button', { name: 'OK' }).click();
-  expect((await quoteRequest).postDataJSON()).toEqual({ cep: '14400000' });
+  expect((await quoteRequest).postDataJSON()).toEqual({ cep: '14400000', items: [{ productId: '1yi50l93z', quantidade: 1, selecoes: {} }] });
 
   await expect(cart.getByText('Rua dos Testes, Centro, Franca/SP')).toBeVisible();
   await expect(cart.getByLabel('Rua')).toHaveValue('Rua dos Testes');
   await expect(cart.getByLabel('Bairro')).toHaveValue('Centro');
   await expect(cart.getByText('R$ 12.90', { exact: true })).toHaveCount(2);
+  await expect(cart.getByText('Prazo estimado: 5 dias úteis após a postagem.')).toBeVisible();
+});
+
+test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async ({ page }) => {
+  await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
+  await cart.getByLabel('Calcular frete').fill('14400000');
+  await cart.getByRole('button', { name: 'OK', exact: true }).click();
+  await cart.getByRole('radio', { name: /SEDEX/ }).check();
+  await expect(cart.getByText('R$ 25.90', { exact: true })).toHaveCount(2);
+  await cart.getByLabel('Número', { exact: true }).fill('123');
+  await cart.getByLabel('Nome completo').fill('Cliente Teste');
+  await cart.getByLabel(/CPF do pagador/).fill('52998224725');
+  await cart.getByLabel('Telefone para contato').fill('16999376260');
+  await cart.getByLabel('Li e aceito as condições da compra.').check();
+  const request = page.waitForRequest(r => r.url().endsWith('/api/checkout'));
+  await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();
+  expect((await request).postDataJSON()).toEqual(expect.objectContaining({ shippingServiceCode: '03220', shippingAmountCents: 2590 }));
+  await expect(page.getByTestId('e2e-checkout-redirect')).not.toBeEmpty();
+});
+
+test('alteração de quantidade invalida a cotação', async ({ page }) => {
+  await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
+  await cart.getByLabel('Calcular frete').fill('14400000');
+  await cart.getByRole('button', { name: 'OK', exact: true }).click();
+  await expect(cart.getByRole('radio', { name: /PAC/ })).toBeVisible();
+  await cart.getByRole('button', { name: 'Aumentar quantidade de Carimbo' }).click();
+  await expect(cart.getByRole('radio', { name: /PAC/ })).toHaveCount(0);
+  await expect(cart.getByRole('button', { name: 'IR PARA O PAGBANK' })).toBeDisabled();
+});
+
+test('resposta atrasada de outro CEP não restaura uma cotação antiga', async ({ page }) => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/shipping-quote', async route => {
+    const response = await route.fetch();
+    await gate;
+    await route.fulfill({ response }).catch(() => {});
+  });
+  await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
+  await cart.getByLabel('Calcular frete').fill('14400000');
+  const pending = page.waitForRequest(r => r.url().endsWith('/api/shipping-quote'));
+  await cart.getByRole('button', { name: 'OK', exact: true }).click();
+  await pending;
+  await cart.getByLabel('Calcular frete').fill('01001000');
+  release();
+  await expect(cart.getByRole('radio')).toHaveCount(0);
+  await expect(cart.getByRole('button', { name: 'OK', exact: true })).toBeEnabled();
 });
 
 test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checkout', async ({ page }) => {

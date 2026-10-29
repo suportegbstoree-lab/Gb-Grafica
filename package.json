@@ -7,11 +7,11 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx server.ts --mode development",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "start": "tsx server.ts",
+    "start": "tsx server.ts --mode production",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
     "test:rules:unit": "node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts",
@@ -20,9 +20,11 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:smoke": "node --import tsx scripts/smoke-routes.ts",
+    "test:server-security": "node --import tsx --test --test-concurrency=1 test/dev-server/*.test.ts",
     "security:storage-report": "node --import tsx scripts/report-pending-artworks.ts",
     "security:app-check": "node --import tsx scripts/check-app-check-config.ts",
     "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
+    "shipping:check": "node --import tsx scripts/check-correios.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
     "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts"
   },

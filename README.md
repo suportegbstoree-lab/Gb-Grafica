@@ -4,6 +4,8 @@ Loja virtual em React/Vite com catálogo e administração no Firebase, autentic
 
 ## Rodar localmente
 
+A integração de frete real com os Correios usa credenciais apenas no servidor e perfis de peso/embalagem no catálogo. Consulte [Correios: configuração e testes](docs/correios-integration.md) antes de habilitar entregas. Diagnóstico local: `npm run shipping:check`.
+
 Requisitos: Node.js 22, npm e Java 21 para os testes das regras Firebase.
 
 ```bash
@@ -18,10 +20,17 @@ Para usar um Quick Tunnel do Cloudflare, mantenha o site na porta 3000, execute 
 
 ```dotenv
 APP_URL=https://seu-subdominio.trycloudflare.com
-VITE_ALLOWED_HOSTS=.trycloudflare.com
+DEV_SERVER_ALLOW_NETWORK=true
+VITE_ALLOWED_HOSTS=seu-subdominio.trycloudflare.com
 ```
 
 Reinicie `npm run dev` depois de alterar variáveis de ambiente.
+
+Use o nome exato do túnel que você controla; curingas como `.trycloudflare.com` são rejeitados. `APP_URL` define URLs da aplicação e não autoriza o acesso ao servidor de desenvolvimento por si só. O proxy precisa preservar o Host e o Origin públicos. Para acessar pela LAN, configure o IP exato em `VITE_ALLOWED_HOSTS` e execute `npm run dev -- --host 0.0.0.0` com a opção de rede habilitada.
+
+`npm run dev` usa desenvolvimento explícito e escuta em `127.0.0.1`. `npm start` usa produção e exige `npm run build` antes; não inicia o Vite. Sem `NODE_ENV` ou `--mode`, a execução direta também usa produção. Valores inválidos ou conflitantes interrompem a inicialização.
+
+O HMR usa a mesma porta HTTP. `DISABLE_HMR=true` também desliga o listener WebSocket. O servidor de testes E2E e o preview escutam em loopback por padrão; os endpoints simulados ficam restritos ao servidor E2E. Não publique o Vite/preview como servidor de produção. Consulte [Proteção do servidor local](docs/dev-server-security.md) para limites de arquivos e validação.
 
 ## Estrutura do repositório
 

@@ -21,9 +21,9 @@ import {
   createHostedCheckout,
   isTrustedPagBankPaymentUrl,
   refreshHostedPaymentStatus,
+  CheckoutApiError,
 } from '../services/checkoutService';
 import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
-import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import TextCustomizationDrawer from '../components/TextCustomizationDrawer';
 import {
   activePersonalizationFonts,
@@ -39,7 +39,8 @@ import {
   personalizationModelName,
 } from '../lib/personalizationModel';
 import type { ComposedPersonalizationModel } from '../services/personalizationModelService';
-import { apiFetch } from '../services/apiClient';
+import { requestShippingQuote } from '../services/shippingService';
+import type { ShippingQuoteResponse } from '../lib/shipping';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -102,13 +103,10 @@ function trustedStoredPaymentLink(value: unknown): value is string {
   return typeof value === 'string' && isTrustedPagBankPaymentUrl(value);
 }
 
-interface ShippingInfo {
-  address: string;
+interface ShippingInfo extends ShippingQuoteResponse {
   price: number;
-  street: string;
-  neighborhood: string;
-  city: string;
-  state: string;
+  context: string;
+  selectedCode: string;
 }
 
 export interface PersonalizationModelStorage {
@@ -160,7 +158,7 @@ export default function Home({
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
   const [cep, setCep] = useState('');
-  const [shippingInfo, setShippingInfo] = useState<ShippingInfo | null>(null);
+  const [storedShippingInfo, setShippingInfo] = useState<ShippingInfo | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [customerName, setCustomerName] = useState('');
@@ -180,6 +178,15 @@ export default function Home({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pagbankReturnOrderId, setPagbankReturnOrderId] = useState<string | null>(null);
   const checkoutLock = useRef(false);
+  const shippingAbort = useRef<AbortController | null>(null);
+  const shippingSequence = useRef(0);
+  const shippingContext = JSON.stringify([deliveryMethod, cep, cart.map(item => [
+    item.productId, item.quantidade, Object.entries(item.selecoes).sort(([a], [b]) => a.localeCompare(b)),
+  ])]);
+  const currentShippingContext = useRef(shippingContext);
+  currentShippingContext.current = shippingContext;
+  const shippingInfo = storedShippingInfo?.context === shippingContext && Date.parse(storedShippingInfo.expires_at) > Date.now()
+    ? storedShippingInfo : null;
   const shouldReduceMotion = useReducedMotion();
 
   const storeStructuredData = useMemo(() => buildStoreStructuredData(config), [config]);
@@ -223,6 +230,21 @@ export default function Home({
   }, 0), [cart]);
   const hasInvalidCartPrice = cart.some(item => parseMoneyToCents(item.preco) === null);
   const totalCents = subtotalCents + (deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : 0);
+
+  React.useEffect(() => {
+    shippingSequence.current += 1;
+    shippingAbort.current?.abort();
+    setShippingInfo(null);
+    setShippingError(null);
+    setIsCalculating(false);
+    return () => { shippingSequence.current += 1; shippingAbort.current?.abort(); };
+  }, [shippingContext]);
+
+  React.useEffect(() => {
+    if (!storedShippingInfo) return;
+    const timer = window.setTimeout(() => setShippingInfo(null), Math.max(0, Date.parse(storedShippingInfo.expires_at) - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [storedShippingInfo]);
 
   React.useEffect(() => {
     setCart(current => current.map(item => {
@@ -274,49 +296,29 @@ export default function Home({
   }, [user?.uid, user?.displayName]);
 
   const calculateShipping = async () => {
-    if (cep.length !== 8) return;
+    if (cep.length !== 8 || !cart.length) return;
+    shippingAbort.current?.abort();
+    const controller = new AbortController();
+    shippingAbort.current = controller;
+    const sequence = ++shippingSequence.current;
+    const context = shippingContext;
     setIsCalculating(true);
     setShippingError(null);
+    setShippingInfo(null);
     try {
-      const response = await apiFetch('/api/shipping-quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cep }),
-      });
-      const data = await response.json().catch(() => ({})) as {
-        address?: unknown;
-        amount_cents?: unknown;
-        street?: unknown;
-        neighborhood?: unknown;
-        city?: unknown;
-        state?: unknown;
-      } & ApiErrorPayload;
-      if (!response.ok) throw new Error(apiErrorMessage(data, 'Não foi possível calcular o frete.'));
-      if (typeof data.address !== 'string' || typeof data.amount_cents !== 'number') {
-        throw new Error('A cotação de frete retornou dados inválidos.');
-      }
-      if (
-        typeof data.street !== 'string' || typeof data.neighborhood !== 'string' ||
-        typeof data.city !== 'string' || typeof data.state !== 'string'
-      ) {
-        throw new Error('A cotação não retornou o endereço completo.');
-      }
+      const data = await requestShippingQuote(cep, cart, controller.signal);
+      if (sequence !== shippingSequence.current || currentShippingContext.current !== context) return;
       setShippingInfo({
-        address: data.address,
-        price: data.amount_cents / 100,
-        street: data.street,
-        neighborhood: data.neighborhood,
-        city: data.city,
-        state: data.state,
+        ...data, context, selectedCode: data.options[0].service_code, price: data.options[0].amount_cents / 100,
       });
       setAddressStreet(data.street);
       setAddressNeighborhood(data.neighborhood);
     } catch (error) {
-      console.error('Erro ao calcular frete:', error);
+      if (sequence !== shippingSequence.current || controller.signal.aborted || currentShippingContext.current !== context) return;
       setShippingInfo(null);
       setShippingError(error instanceof Error ? error.message : 'Não foi possível calcular o frete.');
     } finally {
-      setIsCalculating(false);
+      if (sequence === shippingSequence.current) setIsCalculating(false);
     }
   };
 
@@ -404,7 +406,7 @@ export default function Home({
       cpf,
       phone,
       deliveryMethod,
-      hasShippingQuote: Boolean(shippingInfo),
+      hasShippingQuote: Boolean(shippingInfo && Date.parse(shippingInfo.expires_at) > Date.now()),
       addressStreet,
       addressNeighborhood,
       addressNumber,
@@ -437,6 +439,8 @@ export default function Home({
         cpf: formResult.cpf,
         phone: formResult.phone,
         deliveryMethod,
+        shippingServiceCode: deliveryMethod === 'entrega' ? shippingInfo?.selectedCode : undefined,
+        shippingAmountCents: deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : undefined,
         cep: deliveryMethod === 'entrega' ? cep : undefined,
         addressNumber: deliveryMethod === 'entrega' ? addressNumber.trim() : undefined,
         addressComplement: deliveryMethod === 'entrega' ? addressComplement.trim() : undefined,
@@ -452,6 +456,7 @@ export default function Home({
       if (onCheckoutRedirect) onCheckoutRedirect(checkoutResult.initPoint);
       else window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
+      if (error instanceof CheckoutApiError && error.code?.startsWith('SHIPPING_')) setShippingInfo(null);
       console.error('Checkout error:', error);
       setNotice({
         type: 'error',
@@ -1229,6 +1234,20 @@ export default function Home({
                             <span>Frete</span>
                             <span className="text-pink-500">R$ {shippingInfo.price.toFixed(2)}</span>
                           </div>
+                          <fieldset className="mt-3 space-y-2">
+                            <legend className="font-bold text-gray-900">Serviço dos Correios</legend>
+                            {shippingInfo.options.map(option => (
+                              <label key={option.service_code} className="flex items-start gap-2 rounded-lg border border-gray-200 p-2 cursor-pointer">
+                                <input type="radio" name="shipping-service" checked={shippingInfo.selectedCode === option.service_code}
+                                  onChange={() => setShippingInfo({ ...shippingInfo, selectedCode: option.service_code, price: option.amount_cents / 100 })} />
+                                <span>{option.service_name} — R$ {(option.amount_cents / 100).toFixed(2)}
+                                  <span className="block">Prazo estimado: {option.delivery_days} {option.delivery_days === 1 ? 'dia útil' : 'dias úteis'} após a postagem.</span>
+                                  {!option.home_delivery && <span className="block font-semibold">Pode exigir retirada em agência dos Correios.</span>}
+                                </span>
+                              </label>
+                            ))}
+                          </fieldset>
+                          <p className="mt-2">{shippingInfo.parcel_count} {shippingInfo.parcel_count === 1 ? 'volume' : 'volumes'}. O prazo de transporte não inclui a produção{config.prazo_producao ? `: ${config.prazo_producao}` : '.'}</p>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
                             <div className="sm:col-span-2">
                               <label htmlFor="shipping-street" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-1 font-black">Rua</label>
@@ -1416,7 +1435,7 @@ export default function Home({
                             {order.metodoEntrega === 'retirada' ? (
                               <><Settings size={10} className="stroke-[2.5px]" /> Retirada na Gráfica</>
                             ) : (
-                              <><Package size={10} className="stroke-[2.5px]" /> Entrega</>
+                              <><Package size={10} className="stroke-[2.5px]" /> Entrega{order.shipping ? ` — ${order.shipping.service_name}` : ''}</>
                             )}
                           </div>
                         )}

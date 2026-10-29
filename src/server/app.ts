@@ -88,6 +88,9 @@ import {
 } from './appCheck.js';
 import firebaseClientConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import { AdminAiError, adminAiInstruction, generateAdminAiText, vertexAiConfig } from './adminAi.js';
+import { CorreiosError, correiosConfig, getCorreiosClient } from './correios.js';
+import { shippingParcelsForCart } from './shippingCart.js';
+import type { ShippingOption, ShippingParcel } from '../lib/shipping.js';
 
 type RawBodyRequest = express.Request & { rawBody?: string };
 type PlainRecord = Record<string, unknown>;
@@ -100,6 +103,11 @@ interface ShippingQuote {
 	street: string;
 	neighborhood: string;
 	city: string;
+	options: ShippingOption[];
+	parcels: ShippingParcel[];
+	quotedAt: string;
+	expiresAt: string;
+	selected?: ShippingOption;
 }
 
 interface NormalizedCartItem {
@@ -501,7 +509,9 @@ async function requireAdminUser(req: express.Request) {
 async function getShippingQuote(
 	deliveryMethod: unknown,
 	cepValue: unknown,
+	itemsValue: unknown,
 	requestId?: string,
+	catalog?: ReadonlyMap<string, PlainRecord>,
 ): Promise<ShippingQuote> {
 	if (deliveryMethod === 'retirada') {
 		return {
@@ -512,6 +522,7 @@ async function getShippingQuote(
 			street: '',
 			neighborhood: '',
 			city: '',
+			options: [], parcels: [], quotedAt: '', expiresAt: '',
 		};
 	}
 
@@ -521,6 +532,13 @@ async function getShippingQuote(
 
 	const cep = typeof cepValue === 'string' ? cepValue.replace(/\D/g, '') : '';
 	if (cep.length !== 8) throw new HttpError(422, 'Informe um CEP válido.');
+	const client = getCorreiosClient();
+	const { db } = getAdminServices();
+	const parcels = await shippingParcelsForCart(itemsValue, async id => {
+		if (catalog) return catalog.get(id);
+		const snapshot = await db.collection('anuncios').doc(id).get();
+		return snapshot.exists ? snapshot.data() : undefined;
+	});
 
 	try {
 		const response = await axios.get<{
@@ -539,17 +557,18 @@ async function getShippingQuote(
 			throw new HttpError(422, 'CEP não encontrado.');
 		}
 
-		const isLowerShippingCostState = ['SP', 'RJ', 'MG', 'ES', 'PR', 'SC', 'RS'].includes(state);
-		const amountCents = isLowerShippingCostState ? 1850 : 3590;
 		const street = textValue(addressData.logradouro, 160);
 		const neighborhood = textValue(addressData.bairro, 60);
 		const address = [street, neighborhood].filter(Boolean).join(', ')
 			? `${[street, neighborhood].filter(Boolean).join(', ')} - ${city}/${state}`
 			: `${city}/${state}`;
 
-		return { cep, amountCents, address, state, street, neighborhood, city };
+		const options = await client.quote(cep, parcels);
+		const quotedAt = new Date().toISOString();
+		return { cep, amountCents: options[0].amount_cents, address, state, street, neighborhood, city,
+			options, parcels, quotedAt, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
 	} catch (error) {
-		if (error instanceof HttpError) throw error;
+		if (error instanceof HttpError || error instanceof CorreiosError) throw error;
 		logEvent('error', 'viacep_request_failed', {
 			request_id: requestId,
 			provider: 'viacep',
@@ -566,6 +585,7 @@ async function normalizeCart(
 ): Promise<{
 	items: NormalizedCartItem[];
 	subtotalCents: number;
+	shippingProducts: Map<string, PlainRecord>;
 }> {
 	const { db, bucket } = services;
 	if (!Array.isArray(itemsValue) || itemsValue.length === 0 || itemsValue.length > 50) {
@@ -595,6 +615,7 @@ async function normalizeCart(
 	} as Promocao));
 
 	const normalizedItems: NormalizedCartItem[] = [];
+	const shippingProducts = new Map<string, PlainRecord>();
 	let subtotalCents = 0;
 
 	for (let index = 0; index < snapshots.length; index += 1) {
@@ -602,6 +623,7 @@ async function normalizeCart(
 		if (!snapshot.exists) throw new HttpError(422, 'Um dos produtos não está mais disponível.');
 
 		const product = snapshot.data() as PlainRecord;
+		shippingProducts.set(productId, product);
 		const productName = textValue(product.nome, 100);
 		if (!productName) throw new HttpError(422, 'Um dos produtos está configurado incorretamente.');
 
@@ -813,7 +835,7 @@ async function normalizeCart(
 		});
 	}
 
-	return { items: normalizedItems, subtotalCents };
+	return { items: normalizedItems, subtotalCents, shippingProducts };
 }
 
 function providerErrorDetails(error: unknown): unknown {
@@ -1209,15 +1231,16 @@ function sendError(res: express.Response, error: unknown) {
 	const requestId = responseRequestId(res);
 	res.setHeader('X-Request-Id', requestId);
 
-	if (error instanceof HttpError) {
+	if (error instanceof HttpError || error instanceof CorreiosError) {
 		const code = error.code || publicErrorCode(error.status);
+		const publicMessage = error instanceof HttpError ? error.publicMessage : error.message;
 		logEvent(error.status >= 500 ? 'error' : 'warn', 'api_request_rejected', {
 			request_id: requestId,
 			status_code: error.status,
 			error_code: code,
-			error_message: error.publicMessage,
+			error_message: publicMessage,
 		});
-		res.status(error.status).json({ error: error.publicMessage, code, request_id: requestId });
+		res.status(error.status).json({ error: publicMessage, code, request_id: requestId });
 		return;
 	}
 
@@ -1309,7 +1332,7 @@ app.post('/api/shipping-quote', requireAppCheck, async (req, res) => {
 		const { db } = getAdminServices();
 		await enforceDistributedRateLimit(db, `shipping:${req.ip || 'unknown'}`, 40, 60_000);
 		const body = isPlainRecord(req.body) ? req.body : {};
-		const quote = await getShippingQuote('entrega', body.cep, responseRequestId(res));
+		const quote = await getShippingQuote('entrega', body.cep, body.items, responseRequestId(res));
 		res.json({
 			cep: quote.cep,
 			address: quote.address,
@@ -1318,6 +1341,10 @@ app.post('/api/shipping-quote', requireAppCheck, async (req, res) => {
 			neighborhood: quote.neighborhood,
 			city: quote.city,
 			amount_cents: quote.amountCents,
+			options: quote.options,
+			parcel_count: quote.parcels.length,
+			quoted_at: quote.quotedAt,
+			expires_at: quote.expiresAt,
 		});
 	} catch (error) {
 		sendError(res, error);
@@ -1383,7 +1410,19 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		const cpf = validCpf(body.cpf);
 		const phone = validPhone(body.phone);
 		const deliveryMethod = body.deliveryMethod as DeliveryMethod;
-		const shipping = await getShippingQuote(deliveryMethod, body.cep, responseRequestId(res));
+		const normalizedCart = await normalizeCart(body.items, services, firebaseUser.uid);
+		const shipping = await getShippingQuote(deliveryMethod, body.cep, normalizedCart.items.map(item => item.cartItem), responseRequestId(res), normalizedCart.shippingProducts);
+		if (deliveryMethod === 'entrega') {
+			const selected = shipping.options.find(option => option.service_code === body.shippingServiceCode);
+			if (!selected || !Number.isSafeInteger(body.shippingAmountCents) || Number(body.shippingAmountCents) <= 0) {
+				throw new HttpError(422, 'Calcule o frete e selecione um serviço antes de continuar.', 'SHIPPING_SELECTION_REQUIRED');
+			}
+			if (selected.amount_cents !== body.shippingAmountCents) {
+				throw new HttpError(409, 'O valor do frete mudou. Calcule novamente e confira o total antes de pagar.', 'SHIPPING_QUOTE_CHANGED');
+			}
+			shipping.selected = selected;
+			shipping.amountCents = selected.amount_cents;
+		}
 		const deliveryAddress = deliveryMethod === 'entrega'
 			? {
 				cep: shipping.cep,
@@ -1395,7 +1434,6 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 				estado: shipping.state,
 			}
 			: null;
-		const normalizedCart = await normalizeCart(body.items, services, firebaseUser.uid);
 		const totalCents = normalizedCart.subtotalCents + shipping.amountCents;
 
 		if (totalCents <= 0 || totalCents > 8999999100) {
@@ -1455,6 +1493,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			itens: normalizedCart.items.map(item => item.cartItem),
 			subtotal: (normalizedCart.subtotalCents / 100).toFixed(2),
 			frete: (shipping.amountCents / 100).toFixed(2),
+			...(shipping.selected ? { shipping: { ...shipping.selected, origin_cep: correiosConfig().originCep,
+				destination_cep: shipping.cep, quoted_at: shipping.quotedAt, parcels: shipping.parcels } } : {}),
 			total: (totalCents / 100).toFixed(2),
 			totalCents,
 			status: 'Pendente',
@@ -1511,7 +1551,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			if (deliveryAddress) {
 				checkoutBody.shipping = {
 					type: 'FIXED',
-					service_type: 'PAC',
+					service_type: shipping.selected!.service_name,
 					amount: shipping.amountCents,
 					address_modifiable: false,
 					address: {

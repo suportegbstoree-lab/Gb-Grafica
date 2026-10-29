@@ -60,6 +60,9 @@ jobs:
       - name: Production server smoke test
         run: npm run test:smoke
 
+      - name: Local server security regression
+        run: npm run test:server-security
+
       - name: Install E2E browser
         run: npx playwright install --with-deps chromium
 

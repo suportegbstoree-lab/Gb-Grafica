@@ -19,6 +19,25 @@ test('mantém o foco e permite digitação contínua no cadastro de produto', as
   await expect(productName).toHaveValue('Produto completo');
 });
 
+test('cadastra e preserva peso e embalagem ao reabrir o produto', async ({ page }) => {
+  await page.getByRole('button', { name: 'Editar Carimbo', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Editar Produto' });
+  // A imagem data: da fixture não é uma URL de catálogo persistível.
+  await editor.getByLabel('Imagem Principal (URL)').fill('/logo.png');
+  await editor.getByRole('button', { name: 'Cadastrar peso e embalagem' }).click();
+  await editor.getByLabel('Peso por unidade vendida (g)').fill('300');
+  await editor.getByLabel('Peso da embalagem vazia (g)').fill('150');
+  await editor.getByLabel('Comprimento externo (cm)').fill('25');
+  await editor.getByLabel('Largura externa (cm)').fill('20');
+  await editor.getByLabel('Altura externa (cm)').fill('15');
+  await editor.getByLabel('Unidades que cabem por volume').fill('2');
+  await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await page.getByRole('button', { name: 'Editar Carimbo', exact: true }).click();
+  await expect(editor.getByLabel('Peso por unidade vendida (g)')).toHaveValue('300');
+  await expect(editor.getByLabel('Unidades que cabem por volume')).toHaveValue('2');
+});
+
 test('envia imagem principal e galeria pelo computador', async ({ page }) => {
   await page.getByRole('button', { name: 'Novo Produto' }).click();
   const editor = page.getByRole('dialog', { name: 'Novo Produto' });

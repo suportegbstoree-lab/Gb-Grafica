@@ -15,7 +15,7 @@ styleElement.textContent = appStyles;
 document.head.appendChild(styleElement);
 
 async function mountApplication() {
-  const module = import.meta.env.VITE_E2E_MODE === 'true'
+  const module = import.meta.env.DEV && import.meta.env.MODE === 'e2e' && import.meta.env.VITE_E2E_MODE === 'true'
     ? await import('./e2e/E2EHarness.tsx')
     : await import('./App.tsx');
   const RootApplication = module.default;

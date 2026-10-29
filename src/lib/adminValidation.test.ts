@@ -46,6 +46,19 @@ test('valida e normaliza um produto simples', () => {
   if (result.ok) assert.equal(result.value.nome, 'Carimbo personalizado');
 });
 
+test('preserva perfil de envio e as embalagens específicas de combinações existentes', () => {
+  const profile = { unitWeightGrams: 300, packagingWeightGrams: 150, lengthCm: 25, widthCm: 20, heightCm: 15, unitsPerParcel: 2 };
+  const result = validateProductDraft({ ...validProduct, shipping: profile,
+    atributos: [{ nome: 'Tamanho', opcoes: ['P'] }], combinacoes: { P: '10.00' }, shippingByCombination: { P: profile, removida: profile },
+  }, categories, []);
+  assert.ok(result.ok);
+  if (result.ok) {
+    assert.deepEqual(result.value.shipping, profile);
+    assert.deepEqual(result.value.shippingByCombination, { P: profile });
+  }
+  assert.equal(validateProductDraft({ ...validProduct, shipping: { ...profile, unitWeightGrams: 20000 } }, categories, []).ok, false);
+});
+
 test('bloqueia produto duplicado, categoria inexistente e texto sem rótulo', () => {
   const existing = [{ ...validProduct, id: 'produto-1' } as Anuncio];
   assert.equal(validateProductDraft(validProduct, categories, existing).ok, false);

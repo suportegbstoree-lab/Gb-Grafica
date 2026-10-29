@@ -10,6 +10,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI || executablePath ? 1 : undefined,
   reporter: 'list',
+  expect: { timeout: 15_000 },
   outputDir: 'test-results',
   use: {
     baseURL: 'http://127.0.0.1:4173',
