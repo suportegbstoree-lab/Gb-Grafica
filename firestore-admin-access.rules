@@ -1,0 +1,11 @@
+rules_version = '2';
+// Template for a NEW/EMPTY (default) database dedicated to authorization.
+// If (default) already has data/rules, integrate the reserved collection into
+// its existing policy instead. Never overwrite unrelated production rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

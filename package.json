@@ -15,7 +15,7 @@
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
     "test:rules:unit": "node --import tsx --test --test-concurrency=1 test/firebase-rules/*.test.ts",
-    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only firestore,storage \"npm run test:rules:unit\"",
+    "test:rules": "firebase emulators:exec --config firebase.rules-test.json --project demo-gb-grafica-rules --only auth,firestore,storage \"npm run test:rules:unit\"",
     "dev:e2e": "node --import tsx scripts/e2e-server.ts",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -26,7 +26,8 @@
     "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
     "shipping:check": "node --import tsx scripts/check-correios.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
-    "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts"
+    "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts",
+    "admin:sync": "tsx scripts/sync-admin-access.ts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

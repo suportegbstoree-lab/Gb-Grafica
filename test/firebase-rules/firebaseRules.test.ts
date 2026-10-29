@@ -139,6 +139,7 @@ before(async () => {
 
 beforeEach(async () => {
 	await environment().clearFirestore();
+	await seedDocuments(['admin-claim', 'admin-role', 'admin-legado', 'admin-primeiro-login'].map(uid => [`_adminAccess/${uid}`, { schemaVersion: 1, enabled: true, epoch: 'legacy' }]));
 });
 
 after(async () => {
@@ -336,11 +337,11 @@ test('Firestore: claim administrativa antiga não persiste privilégios no perfi
 	batch.update(staleSession.doc('users/ex-admin'), { role: 'admin' });
 	batch.set(staleSession.doc('categories/nao-gravar'), { nome: 'Teste' });
 	await assertFails(batch.commit());
-	await assertSucceeds(staleSession.doc('users/bob').delete());
+	await assertFails(staleSession.doc('users/bob').delete());
 	await assertFails(staleSession.doc('users/bob').set({
 		uid: 'bob', email: 'ex-admin@example.com', role: 'admin',
 	}));
-	await assertSucceeds(staleSession.doc('users/ex-admin').delete());
+	await assertFails(staleSession.doc('users/ex-admin').delete());
 	await assertFails(staleSession.doc('users/ex-admin').set({
 		uid: 'ex-admin', email: 'ex-admin@example.com', role: 'admin',
 	}));

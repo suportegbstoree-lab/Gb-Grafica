@@ -1,3 +1,4 @@
+import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import axios from 'axios';
@@ -1192,11 +1193,20 @@ async function userIsAdmin(
 	firebaseUser: Awaited<ReturnType<typeof requireFirebaseUser>>,
 	db: ReturnType<typeof getAdminServices>['db'],
 ): Promise<boolean> {
+	let authorization;
+	try {
+		authorization = await db.collection(ADMIN_ACCESS_COLLECTION).doc(firebaseUser.uid).get();
+	} catch {
+		logEvent('error', 'firebase_admin_authorization_unavailable', {});
+		throw new HttpError(503, 'Não foi possível verificar a permissão administrativa. Tente novamente.');
+	}
+	if (!adminAccessRecordAllows(authorization.data(), firebaseUser)) return false;
 	if (firebaseUser.admin === true) {
 		try {
 			const account = await getAdminServices().auth.getUser(firebaseUser.uid);
 			if (account.disabled) return false;
-			if (account.customClaims?.admin === true) return true;
+			if (account.customClaims?.admin === true && adminAccessRecordAllows(authorization.data(), account.customClaims)) return true;
+			if (authorization.data()?.epoch !== 'legacy') return false;
 		} catch (error) {
 			const code = (error as { code?: unknown })?.code;
 			if (code === 'auth/user-not-found') return false;

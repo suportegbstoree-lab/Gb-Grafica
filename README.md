@@ -372,3 +372,15 @@ git push origin main
 ```
 
 Com o repositório conectado à Vercel, o push inicia um novo deploy. Confira `/api/health`, login, frete, criação do checkout e recebimento do webhook antes de divulgar a loja.
+
+## Administrative access revocation
+
+Administrative access now requires a server-owned authorization record in addition to the existing role/claim. Prepare and migrate current administrators **before deploying** the new rules or application; see [Admin access revocation](docs/admin-revocation.md) for the required `(default)` registry, IAM connection and rollout order.
+
+```bash
+npm run admin:sync -- --dry-run
+npm run admin:sync -- --apply
+npm run admin:set -- --email admin@example.com --revoke
+```
+
+The grant command retains its original syntax. Run revocation through this command rather than changing only a claim or profile manually.

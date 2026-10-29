@@ -1,3 +1,4 @@
+import { observeAdminAccess } from './services/adminAccessClient';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -9,7 +10,7 @@ import Home from './pages/Home';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from './types';
 import { INITIAL_CONFIG } from './constants';
 import {
-  db, auth, onAuthStateChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType
+  db, auth, onIdTokenChanged, onSnapshot, collection, query, orderBy, where, doc, getDoc, setDoc, FirebaseUser, handleFirestoreError, OperationType
 } from './firebase';
 import { LEGAL_ROUTES, type LegalDocumentId } from './lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage } from './lib/seo';
@@ -80,43 +81,46 @@ export default function App() {
   const [ordersReady, setOrdersReady] = useState(true);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const previousUserId = useRef<string | null>(null);
+  const ordersGeneration = useRef(0);
 
-  // Auth Listener
+  // Authorization is observed independently from the cached ID token.
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let stopAuthorization = () => {};
+    let generation = 0;
+    let currentUid: string | null = null;
+    let adminAllowed = false;
+    const unsubscribe = onIdTokenChanged(auth, (firebaseUser) => {
+      const current = ++generation;
+      stopAuthorization();
       setUser(firebaseUser);
-      if (firebaseUser) {
-        let hasAdminClaim = false;
-        try {
-          const token = await firebaseUser.getIdTokenResult();
-          hasAdminClaim = token.claims.admin === true;
-        } catch (error) {
-          console.error('Não foi possível verificar as permissões do token:', error);
-        }
-        // Check Admin Role
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            setIsAdmin(hasAdminClaim || userDoc.data().role === 'admin');
-          } else {
-            setIsAdmin(hasAdminClaim);
-            await setDoc(doc(db, 'users', firebaseUser.uid), {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              role: 'user'
-            });
-            setIsAdmin(hasAdminClaim);
-          }
-        } catch (error) {
-          console.error('Não foi possível verificar o perfil do usuário:', error);
-          setIsAdmin(hasAdminClaim);
-        }
-      } else {
+      if ((firebaseUser?.uid || null) !== currentUid) {
+        currentUid = firebaseUser?.uid || null;
+        adminAllowed = false;
         setIsAdmin(false);
+        setIsAuthReady(false);
+        ordersGeneration.current++;
+        setOrders([]);
       }
-      setIsAuthReady(true);
+      if (!firebaseUser) { setIsAdmin(false); setIsAuthReady(true); return; }
+      stopAuthorization = observeAdminAccess(firebaseUser, {
+        watchProfile: (uid, next, error) => onSnapshot(doc(db, 'users', uid), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
+        watchAccess: (uid, next, error) => onSnapshot(doc(db, '_adminAccess', uid), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
+        changed: allowed => {
+          if (current !== generation) return;
+          if (adminAllowed && !allowed) { ordersGeneration.current++; setOrders([]); }
+          adminAllowed = allowed;
+          setIsAdmin(allowed);
+          setIsAuthReady(true);
+        },
+      });
+      // Preserve basic profile creation; all administrative fields remain server-owned.
+      void getDoc(doc(db, 'users', firebaseUser.uid)).then(async snapshot => {
+        if (current === generation && !snapshot.exists()) {
+          await setDoc(doc(db, 'users', firebaseUser.uid), { uid: firebaseUser.uid, email: firebaseUser.email, role: 'user' });
+        }
+      }).catch(() => console.error('Não foi possível preparar o perfil do usuário.'));
     });
-    return () => unsubscribe();
+    return () => { generation++; stopAuthorization(); unsubscribe(); };
   }, []);
 
   // Firestore Listeners
@@ -170,6 +174,7 @@ export default function App() {
 
   // Orders Listener (Only if logged in)
   useEffect(() => {
+    const generation = ++ordersGeneration.current;
     if (!user) {
       setOrders([]);
       setOrdersReady(true);
@@ -183,6 +188,7 @@ export default function App() {
       : query(collection(db, 'orders'), where('userId', '==', user.uid));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (generation !== ordersGeneration.current) return;
       const nextOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
       nextOrders.sort((first, second) => {
         const firstDate = Date.parse(first.data) || 0;
@@ -192,12 +198,13 @@ export default function App() {
       setOrders(nextOrders);
       setOrdersReady(true);
     }, (error) => {
+      if (generation !== ordersGeneration.current) return;
       handleFirestoreError(error, OperationType.LIST, 'orders');
       setOrdersError('Não foi possível carregar os pedidos agora.');
       setOrdersReady(true);
     });
 
-    return () => unsubscribe();
+    return () => { if (generation === ordersGeneration.current) ordersGeneration.current++; unsubscribe(); };
   }, [user, isAdmin]);
 
   // Sync Cart to LocalStorage

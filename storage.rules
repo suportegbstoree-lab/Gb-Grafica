@@ -1,8 +1,21 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function validAdminEpoch(access) {
+      return access.get('schemaVersion', 0) == 1 && access.get('enabled', false) == true &&
+        access.get('epoch', '') is string &&
+        ((access.epoch == 'legacy' && !('gbAdminEpoch' in request.auth.token)) ||
+         (access.epoch.matches('^[a-f0-9]{32}$') && request.auth.token.get('admin', false) == true &&
+          request.auth.token.get('gbAdminEpoch', '') == access.epoch));
+    }
+
+    function currentAdminAccess() {
+      let path = /databases/(default)/documents/_adminAccess/$(request.auth.uid);
+      return firestore.exists(path) && validAdminEpoch(firestore.get(path).data);
+    }
+
     function isAdmin() {
-      return request.auth != null && request.auth.token.get('admin', false) == true;
+      return request.auth != null && request.auth.token.get('admin', false) == true && currentAdminAccess();
     }
 
     function isValidPendingArtwork(fileName, contentType) {

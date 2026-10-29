@@ -56,7 +56,8 @@ after(async () => {
 	for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
 });
 
-function request(uid: string) {
+async function request(uid: string) {
+	await db.collection('_adminAccess').doc(uid).set({ schemaVersion: 1, enabled: true, epoch: 'legacy' });
 	return nativeFetch(`${baseUrl}/api/admin/ai/suggestions`, { method: 'POST', headers: { Authorization: `Bearer ${uid}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'generate', title: 'Produto de teste' }) });
 }
 

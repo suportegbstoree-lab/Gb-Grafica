@@ -67,11 +67,24 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function validAdminEpoch(access) {
+      return access.get('schemaVersion', 0) == 1 && access.get('enabled', false) == true &&
+        access.get('epoch', '') is string &&
+        ((access.epoch == 'legacy' && !('gbAdminEpoch' in request.auth.token)) ||
+         (access.epoch.matches('^[a-f0-9]{32}$') && request.auth.token.get('admin', false) == true &&
+          request.auth.token.get('gbAdminEpoch', '') == access.epoch));
+    }
+
     function isAdmin() {
-      return isAuthenticated() &&
+      return isAuthenticated() && currentAdminAccess() &&
         ((request.auth.token.get('admin', false) == true) ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == 'admin'));
+    }
+
+    function currentAdminAccess() {
+      let path = /databases/$(database)/documents/_adminAccess/$(request.auth.uid);
+      return exists(path) && validAdminEpoch(get(path).data);
     }
 
     function isValidEmail(email) {
@@ -191,6 +204,12 @@ service cloud.firestore {
         request.resource.data.email == resource.data.email &&
         request.resource.data.role == resource.data.role;
       allow delete: if isAdmin();
+    }
+
+    // Clients may observe their own authorization, but only the server changes it.
+    match /_adminAccess/{userId} {
+      allow get: if isOwner(userId);
+      allow list, create, update, delete: if false;
     }
 
     // Evidências temporárias da homologação são exclusivas do servidor.

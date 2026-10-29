@@ -18,6 +18,8 @@ const providerCalls: { url: string; init: RequestInit }[] = [];
 let oauthCalls = 0;
 let providerStatus = 200;
 let generation = 0;
+let accountEpoch = 'a'.repeat(32);
+let registryUnavailable = false;
 let server: Server;
 let firebaseApp: App;
 let baseUrl: string;
@@ -25,7 +27,12 @@ let baseUrl: string;
 function uid(kind: string) { return `${kind}-${generation}`; }
 function reference(path: string) {
 	return { path, async get() {
-		if (path.startsWith('users/')) return { exists: path === `users/${uid('legacy')}`, data: () => ({ role: 'admin' }) };
+		if (path.startsWith('_adminAccess/')) {
+			if (registryUnavailable) throw new Error('registry unavailable');
+			const value = documents.get('_adminAccess/current');
+			return { exists: value !== undefined, data: () => value };
+		}
+		if (path.startsWith('users/')) return { exists: [ `users/${uid('legacy')}`, `users/${uid('versioned')}` ].includes(path), data: () => ({ role: 'admin' }) };
 		const value = documents.get(path);
 		return { exists: value !== undefined, data: () => value };
 	} };
@@ -49,16 +56,16 @@ before(async () => {
 			const code = token === 'revoked' ? 'auth/id-token-revoked' : token === 'expired' ? 'auth/id-token-expired' : token === 'disabled' ? 'auth/user-disabled' : token === 'auth-unavailable' ? 'auth/internal-error' : 'auth/invalid-id-token';
 			throw Object.assign(new Error('falha-ficticia-sem-credenciais'), { code });
 		}
-		return { uid: uid(token), sub: uid(token), admin: ['admin', 'stale', 'account-disabled', 'claim-unavailable'].includes(token) } as unknown as DecodedIdToken;
+		return { uid: uid(token), sub: uid(token), admin: ['admin', 'stale', 'account-disabled', 'claim-unavailable', 'versioned'].includes(token), ...(token === 'versioned' ? { gbAdminEpoch: 'a'.repeat(32) } : {}) } as unknown as DecodedIdToken;
 	});
 	mock.method(auth, 'getUser', async id => {
 		if (id === uid('claim-unavailable')) throw Object.assign(new Error('falha-ficticia'), { code: 'auth/internal-error' });
-		return { uid: id, disabled: id === uid('account-disabled'), customClaims: { admin: id !== uid('stale') } } as unknown as Awaited<ReturnType<typeof auth.getUser>>;
+		return { uid: id, disabled: id === uid('account-disabled'), customClaims: { admin: id !== uid('stale'), ...(id === uid('versioned') ? { gbAdminEpoch: accountEpoch } : {}) } } as unknown as Awaited<ReturnType<typeof auth.getUser>>;
 	});
 	mock.method(getAppCheck(firebaseApp), 'verifyToken', async () => ({ appId: clientConfig.appId } as Awaited<ReturnType<ReturnType<typeof getAppCheck>['verifyToken']>>));
 	const db = getFirestore(firebaseApp, 'admin-ai-access-tests');
 	mock.method(db, 'collection', ((path: string) => {
-		assert.ok(['users', '_rateLimits'].includes(path), `Coleção inesperada: ${path}`);
+		assert.ok(['users', '_rateLimits', '_adminAccess'].includes(path), `Coleção inesperada: ${path}`);
 		return { doc: (id: string) => reference(`${path}/${id}`) };
 	}) as typeof db.collection);
 	mock.method(db, 'runTransaction', (async (callback: (value: typeof transaction) => Promise<unknown>) => callback(transaction)) as typeof db.runTransaction);
@@ -76,7 +83,7 @@ before(async () => {
 
 beforeEach(() => {
 	generation++;
-	documents.clear(); verified.length = 0; providerCalls.length = 0; oauthCalls = 0; providerStatus = 200;
+	documents.clear(); documents.set('_adminAccess/current', { schemaVersion: 1, enabled: true, epoch: 'legacy' }); accountEpoch = 'a'.repeat(32); registryUnavailable = false; verified.length = 0; providerCalls.length = 0; oauthCalls = 0; providerStatus = 200;
 	process.env.FIREBASE_APP_CHECK_MODE = 'off';
 	process.env.FIREBASE_AI_MODEL = 'gemini-test';
 });
@@ -150,7 +157,7 @@ test('campos de infraestrutura e ações inválidas não chegam ao provedor nem 
 		const response = await request('admin', body);
 		assert.equal(response.status, 422);
 		assert.equal(providerCalls.length, 0);
-		assert.equal(documents.size, 0);
+		assert.equal([...documents.keys()].filter(key => key.startsWith('_rateLimits/')).length, 0);
 	}
 });
 
@@ -198,4 +205,27 @@ test('CORS continua rejeitando origem alheia e o preflight não exige App Check'
 	process.env.FIREBASE_APP_CHECK_MODE = 'enforce';
 	const response = await nativeFetch(`${baseUrl}/api/admin/ai/suggestions`, { method: 'OPTIONS', headers: { Origin: 'https://loja.example', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type,x-firebase-appcheck' } });
 	assert.equal(response.status, 204);
+});
+
+
+test('registry revocation blocks stale admin claims and legacy roles before any paid generation', async () => {
+  documents.set('_adminAccess/current', { schemaVersion: 1, enabled: false, epoch: 'b'.repeat(32) });
+  await denied(await request('admin'), 403, 'ACCESS_DENIED');
+  await denied(await request('legacy'), 403, 'ACCESS_DENIED');
+  documents.delete('_adminAccess/current');
+  await denied(await request('admin'), 403, 'ACCESS_DENIED');
+});
+
+test('versioned authorization rejects old tokens and disagreement with current Auth even if legacy role persists', async () => {
+  documents.set('_adminAccess/current', { schemaVersion: 1, enabled: true, epoch: 'a'.repeat(32) });
+  await denied(await request('admin'), 403, 'ACCESS_DENIED');
+  assert.equal((await request('versioned')).status, 200);
+  providerCalls.length = 0; oauthCalls = 0;
+  accountEpoch = 'b'.repeat(32);
+  await denied(await request('versioned'), 403, 'ACCESS_DENIED');
+});
+
+test('authorization registry outage returns a controlled failure without calling the provider', async () => {
+  registryUnavailable = true;
+  await denied(await request('admin'), 503, 'SERVICE_UNAVAILABLE');
 });

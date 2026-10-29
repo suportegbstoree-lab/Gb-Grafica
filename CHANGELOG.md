@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-29 — Revogação administrativa entre serviços Firebase
+
+- Adicionado registro de autorização controlado pelo servidor no banco da loja e espelhado no `(default)` para as regras do Storage.
+- Firestore, Storage e API passaram a exigir autorização ativa; claim antiga ou papel legado isolado não contornam uma revogação registrada.
+- Concessões geram uma nova época de autorização, impedindo que um token anterior volte a funcionar após remover e devolver Admin.
+- `admin:set` preserva o formato anterior de concessão e agora aceita `--revoke` e `--dry-run`; a revogação bloqueia ambos os registros, remove os dois papéis e revoga refresh tokens.
+- Adicionado `admin:sync`, somente leitura por padrão, para migrar Admins atuais preservando registros bloqueados, com verificação de divergências.
+- Navegador observa autorização do servidor e retira o painel/lista administrativa quando o acesso é revogado; renovação normal do token preserva o painel ativo.
+- Adicionados testes de falhas parciais, revogação concorrente, API e comandos reais em Auth/Firestore/Storage emulados, inclusive banco nomeado e token congelado antes da revogação.
+- Documentada ativação do registro no banco padrão, conexão IAM e ordem de publicação. Regras de artes personalizadas e limites existentes foram preservados.
+
 ## 2026-10-29 — Proteção do servidor de desenvolvimento
 
 - Desenvolvimento passou a escutar em loopback por padrão. Acesso por rede/túnel exige habilitação explícita e hosts exatos; `APP_URL` não amplia a lista de hosts do Vite.

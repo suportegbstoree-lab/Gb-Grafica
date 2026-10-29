@@ -102,7 +102,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
 beforeEach(() => {
-  docs.clear(); providerRefund = 0; providerStatus = 'PAID'; providerUnavailable = false; additionalCharges = [];
+  docs.clear(); docs.set('_adminAccess/owner', { schemaVersion: 1, enabled: true, epoch: 'legacy' }); providerRefund = 0; providerStatus = 'PAID'; providerUnavailable = false; additionalCharges = [];
   checkoutStatus = 'ACTIVE'; checkoutHasOrders = true;
   tokenAdmin = true; currentAdmin = true; adminLookupUnavailable = false;
   docs.set(`orders/${orderId}`, {
