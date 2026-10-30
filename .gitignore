@@ -50,3 +50,5 @@ request.json
 
 CHANGELOG.md
 TODO.md
+.github/modernize/
+/docs

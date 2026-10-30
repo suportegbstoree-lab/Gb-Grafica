@@ -4,6 +4,7 @@ import { isAdminImagePath, isAdminFontPath } from '../lib/adminAsset.js';
 import { isCatalogImagePath } from '../lib/catalogImage.js';
 import type { AdminAccessRecord } from '../lib/adminAccess.js';
 import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
+import { parsePrintProfile, printProfileKey, type PrintProfile, type ArtworkApproval } from '../lib/printProfile.js';
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
 import axios from 'axios';
@@ -140,6 +141,8 @@ interface NormalizedCartItem {
 		contracapaModo?: 'automatic' | 'custom';
 		textoPersonalizado?: string;
 		personalizacaoTexto?: TextCustomization;
+		printProfile?: PrintProfile;
+		aprovacaoArte?: ArtworkApproval;
 	};
 	checkoutItem: {
 		reference_id: string;
@@ -717,6 +720,12 @@ async function normalizeCart(
 
 		const productImage = httpUrl(product.imagem);
 		const productDescription = textValue(product.desc, 255) || productName;
+		const printProfile = product.printProfile === undefined ? undefined : parsePrintProfile(product.printProfile);
+		if (printProfile === null) throw new HttpError(422, `O formato de impressão de ${productName} está inválido. Entre em contato com a loja.`);
+		const submittedPrint = item.printProfile === undefined ? undefined : parsePrintProfile(item.printProfile);
+		if (submittedPrint === null || printProfileKey(submittedPrint) !== printProfileKey(printProfile)) {
+			throw new HttpError(422, `O formato de impressão de ${productName} mudou. Remova o item do carrinho e gere a arte novamente.`);
+		}
 		const productType = isProductCustomizationType(product.tipoInput) ? product.tipoInput : 'nenhum';
 		const requiresArtwork = productRequiresArtwork(productType);
 		const requiresText = productRequiresText(productType);
@@ -728,6 +737,8 @@ async function normalizeCart(
 			(!modelPath || !backModelPath || !['automatic', 'custom'].includes(String(backMode)))) {
 			throw new HttpError(422, `A contracapa de ${productName} é inválida. Gere as duas faces novamente.`);
 		}
+		if (printProfile && requiresArtwork && !modelPath) throw new HttpError(422, `Gere o modelo de ${productName} no formato de impressão cadastrado.`);
+		if (modelPath && item.aprovarArte !== true) throw new HttpError(422, `Confira e aprove a arte de ${productName} antes de concluir o pedido.`);
 		let artworkName = '';
 		let modelName = '';
 		let backModelName = '';
@@ -819,6 +830,17 @@ async function normalizeCart(
 			backModelVersion = await validateModel(backModelPath, item.contracapaNome);
 			backModelName = backModelVersion.originalName;
 		}
+		const approval: ArtworkApproval | undefined = modelVersion ? {
+			version: 1, acceptedAt: new Date().toISOString(), userId,
+			modelGeneration: modelVersion.generation,
+			...(backModelVersion ? { backGeneration: backModelVersion.generation } : {}),
+			designFingerprint: createHash('sha256').update(JSON.stringify({
+				productId, selections, printProfile: printProfile || null, text: textCustomization,
+				artwork: artworkVersion ? [artworkVersion.path, artworkVersion.generation] : null,
+				model: [modelVersion.path, modelVersion.generation],
+				back: backModelVersion ? [backModelVersion.path, backModelVersion.generation] : null,
+			})).digest('hex'),
+		} : undefined;
 		const customText = textCustomization?.texto;
 		const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
 		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath].filter(Boolean).join('|'));
@@ -841,6 +863,8 @@ async function normalizeCart(
 				} : {}),
 				selecoes: selections,
 				quantidade: quantity,
+				...(printProfile ? { printProfile } : {}),
+				...(approval ? { aprovacaoArte: approval } : {}),
 				...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
 				...(modelPath ? { modeloPath: modelPath, modeloNome: modelName } : {}),
 				...(backModelPath ? { contracapaPath: backModelPath, contracapaNome: backModelName, contracapaModo: backMode as 'automatic' | 'custom' } : {}),

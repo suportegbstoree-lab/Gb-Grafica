@@ -1,3 +1,5 @@
+import ProductPrintEditor from '../components/ProductPrintEditor';
+import OrderProductionSheet from '../components/OrderProductionSheet';
 import EditorModal from '../components/EditorModal';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import StoreSettingsLists from '../components/StoreSettingsLists';
@@ -2046,6 +2048,7 @@ export default function Admin({
                   )}
                 </div>
 
+                <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
 
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
@@ -2494,6 +2497,7 @@ function OrderCard({
   handleOpenModel: (orderId: string, itemId: string) => void;
   key?: string;
 }) {
+  const [sheetOpen, setSheetOpen] = useState(false);
   const paymentConfirmed = isPaymentConfirmed(order);
   const fulfillment = order.fulfillmentStatus || legacyFulfillmentStatus(order.status, order.paymentStatus);
   const transitionOptions = Array.from(new Set([
@@ -2571,6 +2575,8 @@ function OrderCard({
         </div>
       </div>
 
+      <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
+      {sheetOpen && <OrderProductionSheet order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}
       {order.metodoEntrega === 'entrega' && order.enderecoEntrega && (
         <div className="rounded-lg border border-gray-800 bg-black/30 p-4 text-xs text-gray-400">
           <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-600">Endereço de entrega</div>

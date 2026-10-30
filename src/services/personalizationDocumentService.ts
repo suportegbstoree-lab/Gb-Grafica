@@ -33,5 +33,5 @@ async function readSignedModel(url: string): Promise<Blob> {
 export async function loadOrderPersonalizationDocument(orderId: string, item: CartItem): Promise<PersonalizationDocument> {
   const front = await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id));
   const back = item.contracapaPath ? await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id, 'back')) : null;
-  return { title: item.nome, pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
+  return { title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
 }

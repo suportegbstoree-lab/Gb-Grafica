@@ -1,3 +1,6 @@
+import PrintGuides from './PrintGuides';
+import PrintProfileNotice from './PrintProfileNotice';
+import { isInsideSafeArea, printImageQuality, type PrintProfile } from '../lib/printProfile';
 import TextLineControls from './TextLineControls';
 import { distributeTextLines, reconcileTextLines } from '../lib/textLines';
 import React, { useRef, useState } from 'react';
@@ -27,6 +30,7 @@ export interface BackCoverDraft { mode: 'none' | 'automatic' | 'custom'; file?: 
 
 interface TextCustomizationDrawerProps {
   productName: string;
+  printProfile?: PrintProfile;
   previewImage: string;
   previewSource?: Blob;
   fieldLabel: string;
@@ -44,6 +48,7 @@ function clampPosition(value: number): number {
 
 export default function TextCustomizationDrawer({
   productName,
+  printProfile,
   previewImage,
   previewSource,
   fieldLabel,
@@ -79,6 +84,8 @@ export default function TextCustomizationDrawer({
   const [backPreview, setBackPreview] = useState('');
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const [showPrintGuides, setShowPrintGuides] = useState(true);
   const [previewAspectRatio, setPreviewAspectRatio] = useState(1);
   const [previewFace, setPreviewFace] = useState<'front' | 'back'>('front');
   const drawerRef = useRef<HTMLElement>(null);
@@ -217,6 +224,9 @@ export default function TextCustomizationDrawer({
         source: backDraft.mode === 'custom' ? backDraft.file! : previewSource || previewImage,
         fonts: [],
       }) : undefined;
+      if (printProfile && [model, ...(back ? [back] : [])].some(face => !printImageQuality(printProfile, face.width, face.height).ratioMatches)) {
+        throw new Error('A proporção da capa ou contracapa difere do formato de impressão com sangria. Envie uma imagem nas proporções indicadas.');
+      }
       await onSave(normalized, model, back, backDraft);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Não foi possível gerar o modelo personalizado.');
@@ -272,10 +282,17 @@ export default function TextCustomizationDrawer({
 
           <section className="min-w-0 space-y-3 rounded-2xl bg-gray-50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-gray-900">Prévia do item personalizado</h4><div className="flex gap-2"><button type="button" onClick={() => setPreviewFace('front')} aria-pressed={!isBack} className={`rounded-lg px-3 py-2 text-xs font-bold ${!isBack ? 'bg-gray-900 text-white' : 'bg-white text-gray-600'}`}>Capa</button>{backDraft.mode !== 'none' && <button type="button" onClick={() => setPreviewFace('back')} aria-pressed={isBack} className={`rounded-lg px-3 py-2 text-xs font-bold ${isBack ? 'bg-gray-900 text-white' : 'bg-white text-gray-600'}`}>Contracapa</button>}</div></div>
+            {printProfile && <>
+              <PrintProfileNotice profile={printProfile} width={imageDimensions.width} height={imageDimensions.height} />
+              <label className="flex items-center gap-2 text-xs text-gray-700"><input type="checkbox" checked={showPrintGuides} onChange={event => setShowPrintGuides(event.target.checked)} />Mostrar guias de corte e área segura</label>
+              <p className="text-[10px] text-gray-500">Vermelho: corte. Verde: área segura para textos. As guias não entram no arquivo.</p>
+              {textRequired && !isBack && textBoxes.some(box => !isInsideSafeArea(printProfile, box)) && <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">Há texto fora da área segura. Ele pode ficar próximo ao corte.</p>}
+            </>}
             <p id={instructionsId} className="text-xs leading-relaxed text-gray-500">{textRequired && !isBack ? 'Selecione e arraste cada linha. Use as setas; Shift move 5%.' : 'Confira a arte antes de aplicar a personalização.'}</p>
-            <div ref={previewRef} role="group" tabIndex={textRequired && !isBack ? 0 : -1} onPointerDown={textRequired && !isBack ? handlePointerDown : undefined} onPointerMove={textRequired && !isBack ? handlePointerMove : undefined} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd} onKeyDown={textRequired && !isBack ? handlePreviewKeyDown : undefined} aria-describedby={instructionsId} aria-label={textRequired && !isBack ? `Prévia da posição do texto: ${activeLine?.posicao.x ?? draft.posicao.x}% horizontal e ${activeLine?.posicao.y ?? draft.posicao.y}% vertical` : 'Prévia da arte'} style={{ aspectRatio: previewAspectRatio, width: `min(100%, calc(56vh * ${previewAspectRatio}))` }} className="relative mx-auto block max-h-[56vh] touch-none overflow-hidden rounded-xl border-2 border-gray-200 bg-white text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100">
+            <div ref={previewRef} role="group" tabIndex={textRequired && !isBack ? 0 : -1} onPointerDown={textRequired && !isBack ? handlePointerDown : undefined} onPointerMove={textRequired && !isBack ? handlePointerMove : undefined} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd} onKeyDown={textRequired && !isBack ? handlePreviewKeyDown : undefined} aria-describedby={instructionsId} aria-label={textRequired && !isBack ? `Prévia da posição do texto: ${activeLine?.posicao.x ?? draft.posicao.x}% horizontal e ${activeLine?.posicao.y ?? draft.posicao.y}% vertical` : 'Prévia da arte'} style={{ aspectRatio: previewAspectRatio, maxHeight: printProfile ? '40vh' : '56vh', width: `min(100%, calc(${printProfile ? 40 : 56}vh * ${previewAspectRatio}))` }} className="relative mx-auto block max-h-[56vh] touch-none overflow-hidden rounded-xl border-2 border-gray-200 bg-white text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100">
               <PersonalizationPreview source={currentSource} customization={textRequired && !isBack ? previewCustomization : null} fonts={availableFonts} onDimensions={(width, height) => {
                 setPreviewAspectRatio(width / height);
+                setImageDimensions({ width, height });
                 if (isBack) return;
                 dimensionsRef.current = { width, height };
                 if (!initializedRef.current && textRequired) {
@@ -289,6 +306,7 @@ export default function TextCustomizationDrawer({
                   });
                 }
               }} onLayout={setTextBoxes} />
+              {printProfile && showPrintGuides && <PrintGuides profile={printProfile} />}
               {textRequired && !isBack && textBoxes.filter(box => box.id !== 'legacy').map(box => <button key={box.id} type="button" data-line-id={box.id} aria-label={`Selecionar linha ${box.index + 1} na prévia`} aria-pressed={activeLine?.id === box.id} onClick={() => setSelectedId(box.id)} style={{ left: `${box.x}%`, top: `${box.y}%`, width: `${box.width}%`, height: `${box.height}%` }} className={`absolute min-h-3 min-w-3 rounded border-2 bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-pink-400 ${activeLine?.id === box.id ? 'z-10 border-pink-400' : 'z-0 border-transparent hover:border-pink-300'}`} />)}
               {textRequired && !isBack && <span className="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[9px] font-bold text-gray-600"><Move size={11} />Arraste para posicionar</span>}
             </div>

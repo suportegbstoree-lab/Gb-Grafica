@@ -1,3 +1,14 @@
+# Changelog
+
+## 2026-10-30 — Impressão e produção de pedidos
+
+- Formato opcional por produto com medidas finais, sangria, margem segura e resolução recomendada.
+- Guias de corte e área segura na prévia, avisos de resolução efetiva e texto próximo ao corte; proporção incompatível exige ajuste da arte.
+- Confirmação explícita da arte no carrinho, com aprovação, gerações de arquivo e formato registrados pelo servidor no pedido.
+- Checkout recusa formato desatualizado; pedidos antigos preservam seu fluxo e não recebem aprovação retroativa.
+- Ficha de produção nos pedidos administrativos, usando os dados salvos na compra e a fila existente.
+- PDF administrativo com tamanho físico, TrimBox e BleedBox; guias ficam fora dos arquivos e exportações seguem restritas ao painel.
+
 ## 2026-10-30 — Controle independente das linhas
 
 - Cada linha de texto tem posição, tamanho, cor e fonte próprios, com seleção na lista ou na prévia.
@@ -20,14 +31,11 @@
 - Fontes TTF e OTF, além de WOFF2: validação de conteúdo no navegador, caminhos, MIME, relay e regras do Storage.
 - Gerenciamento de fontes em modal, mantendo a gravação das configurações e os pedidos antigos.
 
-# Changelog
-
 ## 2026-10-30 — Destaques, contatos e acesso temporário
 
 - Produtos podem compor o banner rotativo.
 - Atendimento aceita listas de e-mails e telefones opcionais; benefícios são editáveis e reordenáveis.
 - Exceção temporária por conta para arquivos administrativos, com autorização e revogação verificadas pela API.
-
 
 ## 2026-10-29 — Capa, contracapa e exportação dos modelos
 

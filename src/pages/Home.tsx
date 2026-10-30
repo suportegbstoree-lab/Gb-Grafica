@@ -26,6 +26,7 @@ import {
 } from '../services/checkoutService';
 import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
 import TextCustomizationDrawer, { type BackCoverDraft } from '../components/TextCustomizationDrawer';
+import { parsePrintProfile, printProfileKey, printProfileLabel } from '../lib/printProfile';
 import PersonalizationViewer from '../components/PersonalizationViewer';
 import type { PersonalizationDocument } from '../services/personalizationExport';
 import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
@@ -410,7 +411,7 @@ export default function Home({
     try {
       const front = await personalizationModelStorage.readModel(item.modeloPath);
       const back = item.contracapaPath ? await personalizationModelStorage.readModel(item.contracapaPath) : null;
-      if (request === viewerRequest.current) setModelDocument({ title: item.nome, pages: [
+      if (request === viewerRequest.current) setModelDocument({ title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [
         { label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : []),
       ] });
     } catch (error) { setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível carregar o modelo.' }); }
@@ -432,6 +433,10 @@ export default function Home({
 
   const checkout = async () => {
     if (checkoutLock.current || isCheckingOut || cart.length === 0) return;
+    if (cart.some(item => item.modeloPath && item.aprovarArte !== true)) {
+      setNotice({ type: 'error', message: 'Confira e aprove a arte de cada item personalizado antes de continuar.' });
+      return;
+    }
     if (!user) {
       setNotice({ type: 'info', message: 'Faça login para finalizar o pedido.' });
       await handleLogin();
@@ -473,6 +478,8 @@ export default function Home({
           ...(item.contracapaModo ? { contracapaModo: item.contracapaModo } : {}),
           textoPersonalizado: item.textoPersonalizado || '',
           personalizacaoTexto: item.personalizacaoTexto,
+          ...(item.printProfile ? { printProfile: item.printProfile } : {}),
+          ...(item.modeloPath ? { aprovarArte: item.aprovarArte === true } : {}),
         })),
         requestId: crypto.randomUUID(),
         customerName: formResult.customerName,
@@ -1150,6 +1157,8 @@ export default function Home({
                           <div className="mt-2 text-[10px] font-bold text-pink-600">Personalização: {item.textoPersonalizado}</div>
                         ) : null}
                         {item.modeloPath && <button type="button" onClick={() => void openCartModel(item)} className="mt-2 text-xs font-bold text-purple-600 hover:underline">Visualizar modelo{item.contracapaPath ? ' · capa e contracapa' : ''}</button>}
+                        {item.printProfile && <p className="mt-2 text-[10px] text-gray-600">{printProfileLabel(item.printProfile)}</p>}
+                        {item.modeloPath && <label className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-gray-700"><input type="checkbox" aria-label={`Aprovar arte de ${item.nome}`} checked={item.aprovarArte === true} onChange={event => { const approved = event.target.checked; setCart(current => current.map(entry => entry.id === item.id ? { ...entry, aprovarArte: approved } : entry)); }} className="mt-0.5 shrink-0" /><span>Conferi o modelo e aprovo {item.contracapaPath ? 'a capa e a contracapa' : 'a capa'}, os textos e as posições deste item para produção.</span></label>}
                         {item.arquivoNome && (
                           <div className="mt-1 text-[10px] text-gray-500">Arte anexada: {item.arquivoNome}</div>
                         )}
@@ -1438,7 +1447,7 @@ export default function Home({
                     type="button"
                     onClick={checkout}
                     disabled={
-                      isCheckingOut || isCalculating || hasInvalidCartPrice ||
+                      isCheckingOut || isCalculating || hasInvalidCartPrice || cart.some(item => item.modeloPath && item.aprovarArte !== true) ||
                       (deliveryMethod === 'entrega' && (
                         !shippingInfo || !addressStreet.trim() || !addressNeighborhood.trim() || !addressNumber.trim()
                       )) ||
@@ -1771,6 +1780,7 @@ function ProductCard({
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
   const availableFonts = activePersonalizationFonts(fonts);
+  const printProfile = parsePrintProfile(product.printProfile) || undefined;
   const requiresArtwork = productRequiresArtwork(product.tipoInput);
   const requiresText = productRequiresText(product.tipoInput);
 
@@ -1803,10 +1813,10 @@ function ProductCard({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (requiresText && !isComposablePersonalizationImage(file.type, file.size)) {
+    if ((requiresText || printProfile) && !isComposablePersonalizationImage(file.type, file.size)) {
       onNotify({
         type: 'error',
-        message: 'Produtos com texto sobre a arte exigem uma imagem JPG, PNG ou WebP. PDF continua disponível para produtos sem texto.',
+        message: 'Produtos com texto ou formato de impressão exigem uma imagem JPG, PNG ou WebP para compor o modelo. PDF continua disponível nos produtos sem essas opções.',
       });
       return;
     }
@@ -1905,9 +1915,12 @@ function ProductCard({
       onNotify({ type: 'error', message: 'Configure o texto, a fonte e a posição da personalização.' });
       return;
     }
-    if (requiresText && !uploadedModel) {
+    if ((requiresText || (requiresArtwork && printProfile)) && !uploadedModel) {
       onNotify({ type: 'error', message: 'Gere o modelo composto antes de adicionar este produto ao carrinho.' });
       return;
+    }
+    if (uploadedModel && printProfileKey(generatedDocument?.printProfile) !== printProfileKey(printProfile)) {
+      onNotify({ type: 'error', message: 'O formato de impressão mudou. Gere o modelo novamente.' }); return;
     }
     const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
     const cartId = createCartItemId(
@@ -1929,6 +1942,7 @@ function ProductCard({
       } : {}),
       selecoes: { ...selections },
       quantidade: 1,
+      ...(printProfile ? { printProfile } : {}),
       arquivoPath: uploadedArtwork?.path,
       arquivoNome: uploadedArtwork?.name,
       modeloPath: uploadedModel?.path,
@@ -2066,7 +2080,7 @@ function ProductCard({
                     {isUploadingArtwork ? 'Enviando...' : 'Selecionar arquivo'}
                     <input
                       type="file"
-                      accept={requiresText ? 'image/png,image/jpeg,image/webp' : 'application/pdf,image/png,image/jpeg,image/webp'}
+                      accept={(requiresText || printProfile) ? 'image/png,image/jpeg,image/webp' : 'application/pdf,image/png,image/jpeg,image/webp'}
                       onChange={handleArtworkFile}
                       disabled={isUploadingArtwork}
                       className="sr-only"
@@ -2074,7 +2088,7 @@ function ProductCard({
                   </label>
                 )}
                 <p className="mt-2 text-[9px] text-gray-400 leading-tight">
-                  {requiresText ? 'PNG, JPG ou WebP' : 'PDF, PNG, JPG ou WebP'}, até 15 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
+                  {(requiresText || printProfile) ? 'PNG, JPG ou WebP' : 'PDF, PNG, JPG ou WebP'}, até 15 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
                 </p>
               </div>
             )}
@@ -2225,6 +2239,7 @@ function ProductCard({
     {isTextDrawerOpen && (
       <TextCustomizationDrawer
         productName={product.nome}
+        printProfile={printProfile}
         previewImage={artworkPreviewUrl || activeImage || product.imagem || DEFAULT_LOGO_URL}
         previewSource={artworkSourceFile || undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
@@ -2243,7 +2258,7 @@ function ProductCard({
             throw error;
           }
           const previousModels = [uploadedModel, uploadedBack].filter((model): model is UploadedArtwork => Boolean(model));
-          const document: PersonalizationDocument = { title: product.nome, pages: [
+          const document: PersonalizationDocument = { title: product.nome, ...(printProfile ? { printProfile } : {}), pages: [
             { label: 'Capa', blob: model.blob }, ...(back ? [{ label: 'Contracapa' as const, blob: back.blob }] : []),
           ] };
           setTextCustomization(value);

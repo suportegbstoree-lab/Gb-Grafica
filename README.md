@@ -385,14 +385,14 @@ npm run admin:set -- --email admin@example.com --revoke
 
 The grant command retains its original syntax. Run revocation through this command rather than changing only a claim or profile manually.
 
-
 ## Modelos de cadernos
 
 O editor de personalização abre em modal, com texto em várias linhas, tamanho, cor e prévia ao vivo. Veja [o guia do editor](docs/personalization-editor.md). A personalização oferece contracapa automática ou enviada pelo cliente, visualizador interno com zoom e download em JPG/PDF na resolução original. Veja [aplicação e funcionamento](docs/notebook-personalization.md). A migração da IA administrativa para OpenAI está registrada em [TODO.md](TODO.md).
-
 
 Veja [configurações e acesso temporário](docs/store-settings.md).
 
 Os cards se adaptam à largura disponível, o seletor da contracapa usa o botão do site e adicionar produtos mantém a loja aberta com confirmação visual. Veja [o guia dos ajustes de catálogo e carrinho](docs/cart-layout.md).
 
 O editor oferece [controle independente das linhas](docs/text-lines.md), com fonte e cor compartilháveis. Os botões de exportação JPG/PDF aparecem somente em **Admin → Pedidos**; as prévias do cliente continuam disponíveis.
+
+O [formato de impressão e a ficha de produção](docs/print-production.md) permitem cadastrar medidas e sangria por produto, conferir a qualidade e registrar a aprovação da arte. O PDF administrativo usa as medidas salvas no pedido; produtos antigos continuam compatíveis.

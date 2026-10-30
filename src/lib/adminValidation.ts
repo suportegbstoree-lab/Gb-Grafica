@@ -1,3 +1,4 @@
+import { parsePrintProfile } from './printProfile';
 import { parseStoreContacts, parseStoreBenefits } from './storePresentation';
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
@@ -178,6 +179,9 @@ export function validateProductDraft(
     return { ok: false, message: 'Informe o rótulo do texto que o cliente deverá preencher.' };
   }
 
+  const printProfile = draft.printProfile === undefined ? undefined : parsePrintProfile(draft.printProfile);
+  if (printProfile === null) return { ok: false, message: 'Revise o formato de impressão: medidas, sangria, margem segura e resolução devem ser válidas.' };
+
   const shipping = draft.shipping === undefined ? undefined : parseShippingProfile(draft.shipping);
   const shippingByCombination: Record<string, ProductShippingProfile> = {};
   if (shipping === null) return { ok: false, message: 'Revise o peso e a embalagem: máximo de 30 kg por volume, 100 cm por lado e soma de até 200 cm.' };
@@ -203,6 +207,7 @@ export function validateProductDraft(
       combinacoes,
       tipoInput,
       labelTexto,
+      ...(printProfile ? { printProfile } : {}),
       ...(shipping ? { shipping } : {}),
       ...(Object.keys(shippingByCombination).length ? { shippingByCombination } : {}),
     },

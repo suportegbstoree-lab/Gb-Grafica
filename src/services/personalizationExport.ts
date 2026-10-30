@@ -1,3 +1,4 @@
+import { parsePrintProfile, printGeometry, printImageQuality, type PrintProfile } from '../lib/printProfile';
 import { sanitizeArtworkName } from '../lib/artwork';
 import { personalizationModelDimensions } from '../lib/personalizationModel';
 import { decodePersonalizationSource, personalizationCanvasBlob } from './personalizationModelService';
@@ -9,6 +10,7 @@ export interface PersonalizationPage {
 
 export interface PersonalizationDocument {
   title: string;
+  printProfile?: PrintProfile;
   pages: PersonalizationPage[];
 }
 
@@ -44,9 +46,23 @@ export async function exportPersonalizationPdf(document: PersonalizationDocument
       ? page.blob : await exportPersonalizationImage(page.blob, 'image/png');
     const bytes = await blob.arrayBuffer();
     const image = blob.type === 'image/jpeg' ? await pdf.embedJpg(bytes) : await pdf.embedPng(bytes);
-    // Uma página por face, com os pixels originais. O tamanho físico usa 300 dpi.
-    const size: [number, number] = [image.width * 72 / 300, image.height * 72 / 300];
-    pdf.addPage(size).drawImage(image, { x: 0, y: 0, width: size[0], height: size[1] });
+    const profile = document.printProfile === undefined ? undefined : parsePrintProfile(document.printProfile);
+    if (profile === null) throw new Error('O formato de impressão salvo neste pedido é inválido.');
+    if (profile && !printImageQuality(profile, image.width, image.height).ratioMatches) throw new Error('A proporção do modelo difere do formato de impressão salvo. Confira a arte antes de produzir.');
+    const geometry = profile && printGeometry(profile);
+    const mmToPoints = 72 / 25.4;
+    const size: [number, number] = geometry
+      ? [geometry.widthMm * mmToPoints, geometry.heightMm * mmToPoints]
+      : [image.width * 72 / 300, image.height * 72 / 300];
+    const sheet = pdf.addPage(size);
+    // Fit proportionally; preserve original pixels, with no raster resampling or stretching.
+    const scale = Math.min(size[0] / image.width, size[1] / image.height);
+    const width = image.width * scale, height = image.height * scale;
+    sheet.drawImage(image, { x: (size[0] - width) / 2, y: (size[1] - height) / 2, width, height });
+    if (profile) {
+      sheet.setBleedBox(0, 0, size[0], size[1]);
+      sheet.setTrimBox(profile.bleedMm * mmToPoints, profile.bleedMm * mmToPoints, profile.widthMm * mmToPoints, profile.heightMm * mmToPoints);
+    }
   }
   const bytes = await pdf.save();
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });

@@ -155,7 +155,7 @@ async function checkout(extraItem: Record<string, unknown> = {}) {
     body: JSON.stringify({
       requestId: randomUUID(), legalAcceptance: currentLegalAcceptance(), customerName: 'Cliente Teste',
       cpf: '52998224725', phone: '11987654321', deliveryMethod: 'retirada',
-      items: [{ productId: 'produto', selecoes: {}, quantidade: 1, arquivoPath: sourcePath, arquivoNome: 'arte.png', ...extraItem }],
+      items: [{ productId: 'produto', selecoes: {}, quantidade: 1, arquivoPath: sourcePath, arquivoNome: 'arte.png', aprovarArte: true, ...extraItem }],
     }),
   });
 }
@@ -313,5 +313,65 @@ test('checkout recusa estilo inválido por linha antes de chamar o provedor', as
   docs.set('config/main', { fontes_personalizacao: [{ id: 'arial', nome: 'Arial', cssFamily: 'Arial', ativo: true }] });
   docs.set('anuncios/produto', { nome: 'Produto Teste', desc: 'Arte teste', categoria: 'teste', preco_base: '10.00', tipoInput: 'texto_arte' });
   const response = await checkout({ modeloPath: addModel('1', 25), personalizacaoTexto: { texto: 'A', fonte: 'arial', posicao: { x: 50, y: 50 }, linhas: [{ id: 'line-a', texto: 'A', tamanhoFonte: 999, posicao: { x: 50, y: 50 } }] } });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0);
+});
+
+const printProfile = { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 };
+function configurePrintProduct() {
+  docs.set('anuncios/produto', { ...docs.get('anuncios/produto'), printProfile });
+}
+
+test('salva formato e aprovação vinculados às gerações validadas das duas faces', async () => {
+  configurePrintProduct();
+  const front = addModel('1', 25), back = addModel('2', 26);
+  const response = await checkout({ modeloPath: front, contracapaPath: back, contracapaModo: 'custom', printProfile,
+    aprovacaoArte: { acceptedAt: '1900-01-01', userId: 'outro', modelGeneration: 999, designFingerprint: 'forjado' },
+  });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))?.[1];
+  const item = (order?.itens as Array<Record<string, unknown>>)[0];
+  assert.deepEqual(item.printProfile, printProfile);
+  const approval = item.aprovacaoArte as { userId: string; acceptedAt: string; modelGeneration: number; backGeneration: number; designFingerprint: string };
+  assert.equal(approval.userId, uid); assert.equal(approval.modelGeneration, 25); assert.equal(approval.backGeneration, 26);
+  assert.match(approval.designFingerprint, /^[a-f0-9]{64}$/); assert.ok(Date.now() - Date.parse(approval.acceptedAt) < 10_000);
+  assert.deepEqual(copies.map(copy => copy.generation), [17, 25, 26]);
+  docs.set('anuncios/produto', { ...docs.get('anuncios/produto'), printProfile: { ...printProfile, widthMm: 200 } });
+  assert.deepEqual(item.printProfile, printProfile, 'o pedido conserva o formato da compra');
+});
+
+test('aprovação explícita é obrigatória para o modelo, inclusive sem formato novo', async () => {
+  const response = await checkout({ modeloPath: addModel('1', 25), aprovarArte: false });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0);
+  assert.match((await response.json() as { error: string }).error, /aprove a arte/);
+  assert.equal(copies.length, 0);
+});
+
+test('não confunde texto truthy com aprovação explícita', async () => {
+  const response = await checkout({ modeloPath: addModel('1', 25), aprovarArte: 'true' });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0);
+});
+
+test('recusa formato do carrinho desatualizado ou adulterado antes de copiar arquivos', async () => {
+  configurePrintProduct();
+  const response = await checkout({ modeloPath: addModel('1', 25), printProfile: { ...printProfile, bleedMm: 0 } });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0); assert.equal(copies.length, 0);
+  assert.match((await response.json() as { error: string }).error, /formato de impressão.*mudou/);
+});
+
+test('não aceita formato ausente em produto com formato cadastrado', async () => {
+  configurePrintProduct();
+  assert.equal((await checkout({ modeloPath: addModel('1', 25) })).status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('recusa configuração de impressão inválida no catálogo', async () => {
+  docs.set('anuncios/produto', { ...docs.get('anuncios/produto'), printProfile: { ...printProfile, safeMarginMm: 80 } });
+  const response = await checkout();
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0);
+});
+
+test('produto com formato exige modelo composto antes da compra', async () => {
+  configurePrintProduct();
+  const response = await checkout({ printProfile });
   assert.equal(response.status, 422); assert.equal(providerCalls, 0);
 });

@@ -1,3 +1,4 @@
+import type { PrintProfile } from '../lib/printProfile';
 import { validateAdminFontFile } from '../services/adminFontValidation';
 import { adminFontFormat } from '../lib/adminAsset';
 import type { PersonalizationDocument } from '../services/personalizationExport';
@@ -34,6 +35,8 @@ const FIXTURE_CONFIG: SiteConfig = {
   ],
 };
 
+const PRINT_PROFILE: PrintProfile = { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 };
+const PRINT_FIXTURE = new URLSearchParams(window.location.search).has('print');
 const FIXTURE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 const FIXTURE_CATEGORIES: Category[] = [
@@ -115,6 +118,12 @@ const FIXTURE_ORDERS: Order[] = [
   },
 ];
 
+if (PRINT_FIXTURE) {
+  FIXTURE_PRODUCTS.find(product => product.id === 'caderno')!.printProfile = PRINT_PROFILE;
+  FIXTURE_ORDERS[0].itens[0].printProfile = { ...PRINT_PROFILE };
+  FIXTURE_ORDERS[0].itens[0].aprovacaoArte = { version: 1, acceptedAt: '2026-10-30T10:00:00.000Z', userId: 'e2e-user', modelGeneration: 25, backGeneration: 26, designFingerprint: 'a'.repeat(64) };
+}
+
 const FIXTURE_USER = {
   uid: 'e2e-user',
   displayName: 'Cliente Teste',
@@ -126,8 +135,13 @@ const FIXTURE_USER = {
 const FixtureCatalog = React.createContext<{ products: Anuncio[]; setProducts: React.Dispatch<React.SetStateAction<Anuncio[]>>; config: SiteConfig; setConfig: React.Dispatch<React.SetStateAction<SiteConfig>> }>(null!);
 
 async function fixtureOrderModelLoader(_orderId: string, item: CartItem): Promise<PersonalizationDocument> {
-  const blob = new Blob([Uint8Array.from(atob(FIXTURE_IMAGE.split(',')[1]), character => character.charCodeAt(0))], { type: 'image/png' });
-  return { title: item.nome, pages: [{ label: 'Capa', blob }, ...(item.contracapaPath ? [{ label: 'Contracapa' as const, blob }] : [])] };
+  let blob = new Blob([Uint8Array.from(atob(FIXTURE_IMAGE.split(',')[1]), character => character.charCodeAt(0))], { type: 'image/png' });
+  if (item.printProfile) {
+    const canvas = document.createElement('canvas'); canvas.width = 1040; canvas.height = 1540;
+    const context = canvas.getContext('2d')!; context.fillStyle = '#2563eb'; context.fillRect(0, 0, 1040, 1540);
+    blob = await new Promise<Blob>(resolve => canvas.toBlob(value => resolve(value!), 'image/png'));
+  }
+  return { title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob }, ...(item.contracapaPath ? [{ label: 'Contracapa' as const, blob }] : [])] };
 }
 
 function StoreFixture() {

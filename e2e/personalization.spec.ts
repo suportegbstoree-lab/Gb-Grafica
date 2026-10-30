@@ -45,6 +45,7 @@ test('caderno preserva 4096 pixels, permite apenas prévia e mantém a contracap
   await cart.getByLabel('Nome completo').fill('Cliente Teste');
   await cart.getByLabel(/CPF do pagador/).fill('52998224725');
   await cart.getByLabel('Telefone para contato').fill('16999376260');
+  await cart.getByLabel(/^Aprovar arte de /).check();
   await cart.getByLabel('Li e aceito as condições da compra.').check();
   const request = page.waitForRequest(request => request.url().endsWith('/api/checkout'));
   await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();

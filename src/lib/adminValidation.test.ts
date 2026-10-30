@@ -135,3 +135,14 @@ test('fingerprint é estável para objetos com chaves em ordens diferentes', () 
   assert.equal(draftFingerprint({ nome: 'A', nested: { b: 2, a: 1 } }), draftFingerprint({ nested: { a: 1, b: 2 }, nome: 'A' }));
   assert.notEqual(draftFingerprint({ nome: 'A' }), draftFingerprint({ nome: 'B' }));
 });
+
+test('preserva formato de impressão válido e recusa medidas inconsistentes', () => {
+  const printProfile = { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 };
+  const result = validateProductDraft({ ...validProduct, printProfile }, categories, []);
+  assert.ok(result.ok);
+  if (result.ok) assert.deepEqual(result.value.printProfile, printProfile);
+  assert.equal(validateProductDraft({ ...validProduct, printProfile: { ...printProfile, safeMarginMm: 50 } }, categories, []).ok, false);
+  const legacy = validateProductDraft(validProduct, categories, []);
+  assert.ok(legacy.ok);
+  if (legacy.ok) assert.equal(Object.hasOwn(legacy.value, 'printProfile'), false);
+});

@@ -160,6 +160,7 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
   await cart.getByLabel('Nome completo').fill('Cliente Teste');
   await cart.getByLabel(/CPF do pagador/).fill('52998224725');
   await cart.getByLabel('Telefone para contato').fill('16999376260');
+  await cart.getByLabel(/^Aprovar arte de /).check();
   await cart.getByLabel('Li e aceito as condições da compra.').check();
 
   const checkoutRequest = page.waitForRequest(request => request.url().endsWith('/api/checkout'));

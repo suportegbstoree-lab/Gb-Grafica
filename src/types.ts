@@ -1,3 +1,4 @@
+import type { PrintProfile, ArtworkApproval } from './lib/printProfile';
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
 import type { PersonalizationFont, ProductCustomizationType, TextCustomization } from './lib/textCustomization';
 import type { ProductShippingProfile, ShippingOption, ShippingParcel } from './lib/shipping';
@@ -23,11 +24,15 @@ export interface Anuncio {
   labelTexto?: string;
   destaque?: boolean;
   destaqueOrdem?: number;
+  printProfile?: PrintProfile;
   shipping?: ProductShippingProfile;
   shippingByCombination?: Record<string, ProductShippingProfile>;
 }
 
 export interface CartItem {
+  printProfile?: PrintProfile;
+  aprovarArte?: boolean;
+  aprovacaoArte?: ArtworkApproval;
   id: string;
   productId: string;
   nome: string;

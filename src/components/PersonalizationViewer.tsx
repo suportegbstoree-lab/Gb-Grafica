@@ -1,3 +1,4 @@
+import PrintProfileNotice from './PrintProfileNotice';
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { Download, X, ZoomIn, ZoomOut } from 'lucide-react';
@@ -88,11 +89,12 @@ export default function PersonalizationViewer({ document: model, onClose, allowD
             <button type="button" disabled={exporting} onClick={() => void download('pdf')} className="flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Download size={14} /> {exporting ? 'Exportando...' : 'Baixar PDF'}</button>
           </div>}
         </div>
+        {model.printProfile && <div className="max-h-40 shrink-0 overflow-auto px-3 py-2"><PrintProfileNotice profile={model.printProfile} width={size.width} height={size.height} /></div>}
         {error && <p role="alert" className="bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
         <div tabIndex={0} aria-label="Área de visualização do modelo" className="min-h-0 flex-1 overflow-auto bg-gray-100 p-3 sm:p-6">
           <img key={page.url} src={page.url} draggable={allowDownload} onContextMenu={allowDownload ? undefined : event => event.preventDefault()} onDragStart={allowDownload ? undefined : event => event.preventDefault()} alt={`${page.label} do modelo personalizado`} onLoad={event => setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setError('Não foi possível exibir esta imagem.')} className={zoom === null ? 'mx-auto h-full max-w-full object-contain' : 'max-w-none'} style={zoom === null ? undefined : { width: size.width * zoom, height: size.height * zoom }} />
         </div>
-        {allowDownload && <p className="border-t border-gray-200 px-4 py-2 text-[11px] text-gray-500">JPG exporta a face selecionada. O PDF inclui todas as faces, na ordem capa e contracapa.</p>}
+        {allowDownload && <p className="border-t border-gray-200 px-4 py-2 text-[11px] text-gray-500">JPG exporta a face selecionada. O PDF inclui todas as faces, na ordem capa e contracapa. Quando há formato cadastrado, usa as medidas com sangria e caixa de corte; pedidos antigos mantêm a escala de 300 dpi.</p>}
       </section>
     </div>, globalThis.document.body,
   );
