@@ -218,7 +218,7 @@ O limite padrão é 50000 objetos. Quando a listagem é interrompida pelo limite
 ### Personalização de texto
 
 - O painel permite configurar produtos como `Texto`, `Upload de Arte`, `Texto + Imagem` ou sem personalização.
-- As fontes disponíveis são administradas em Configurações. É possível cadastrar uma família CSS instalada no sistema ou enviar WOFF2 de até 3 MB; nenhuma opção comercial é fixada no código.
+- As fontes disponíveis são administradas em Configurações. É possível cadastrar uma família CSS instalada no sistema ou enviar WOFF2, TTF ou OTF de até 3 MB pelo modal **Gerenciar fontes**; nenhuma opção comercial é fixada no código.
 - O cliente informa o texto em um drawer, escolhe uma das fontes ativas e posiciona o conteúdo por clique, arraste ou teclado em uma prévia.
 - Ao aplicar, o navegador produz uma imagem raster já composta com fundo, texto, fonte e posição e a envia para a área privada do Cloud Storage.
 - Produtos `Texto + Imagem` aceitam JPG, PNG ou WebP como arte de origem. PDF permanece disponível apenas para produtos de upload sem texto, pois não pode ser composto no navegador.
@@ -388,7 +388,11 @@ The grant command retains its original syntax. Run revocation through this comma
 
 ## Modelos de cadernos
 
-A personalização oferece contracapa automática ou enviada pelo cliente, visualizador interno com zoom e download em JPG/PDF na resolução original. Veja [aplicação e funcionamento](docs/notebook-personalization.md). A migração da IA administrativa para OpenAI está registrada em [TODO.md](TODO.md).
+O editor de personalização abre em modal, com texto em várias linhas, tamanho, cor e prévia ao vivo. Veja [o guia do editor](docs/personalization-editor.md). A personalização oferece contracapa automática ou enviada pelo cliente, visualizador interno com zoom e download em JPG/PDF na resolução original. Veja [aplicação e funcionamento](docs/notebook-personalization.md). A migração da IA administrativa para OpenAI está registrada em [TODO.md](TODO.md).
 
 
 Veja [configurações e acesso temporário](docs/store-settings.md).
+
+Os cards se adaptam à largura disponível, o seletor da contracapa usa o botão do site e adicionar produtos mantém a loja aberta com confirmação visual. Veja [o guia dos ajustes de catálogo e carrinho](docs/cart-layout.md).
+
+O editor oferece [controle independente das linhas](docs/text-lines.md), com fonte e cor compartilháveis. Os botões de exportação JPG/PDF aparecem somente em **Admin → Pedidos**; as prévias do cliente continuam disponíveis.

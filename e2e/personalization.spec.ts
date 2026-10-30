@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { PDFDocument, PDFName, PDFRawStream } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 
 async function imageFile(page: Page, name: string, width: number, height: number, color: string) {
   const base64 = await page.evaluate(({ width, height, color }) => {
@@ -19,7 +19,7 @@ async function notebook(page: Page, width = 4096, height = 3072) {
   return { card, editor: page.getByRole('dialog', { name: 'Personalizar capa e contracapa', exact: true }) };
 }
 
-test('caderno preserva 4096 pixels, abre no site, baixa JPG e PDF e mantém a contracapa no checkout', async ({ page, context }) => {
+test('caderno preserva 4096 pixels, permite apenas prévia e mantém a contracapa no checkout', async ({ page, context }) => {
   const { card, editor } = await notebook(page);
   await expect(editor.getByLabel('Incluir contracapa', { exact: true })).toBeChecked();
   await editor.getByRole('button', { name: 'Aplicar e gerar modelo' }).click();
@@ -29,30 +29,12 @@ test('caderno preserva 4096 pixels, abre no site, baixa JPG e PDF e mantém a co
   await expect(viewer.getByRole('button', { name: 'Contracapa', exact: true })).toBeVisible();
   expect(context.pages()).toHaveLength(1);
 
-  const jpegDownload = page.waitForEvent('download');
-  await viewer.getByRole('button', { name: 'JPG desta face' }).click();
-  const jpg = await jpegDownload;
-  expect(jpg.suggestedFilename()).toBe('Caderno-Personalizado-capa.jpg');
-  const jpgBytes = await readFile((await jpg.path())!);
-  expect([...jpgBytes.subarray(0, 3)]).toEqual([255, 216, 255]);
-  const jpgSize = await page.evaluate(async base64 => {
-    const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(base64), char => char.charCodeAt(0))], { type: 'image/jpeg' }));
-    const result = [bitmap.width, bitmap.height]; bitmap.close(); return result;
-  }, jpgBytes.toString('base64'));
-  expect(jpgSize).toEqual([4096, 3072]);
-
-  const pdfDownload = page.waitForEvent('download');
-  await viewer.getByRole('button', { name: 'Baixar PDF' }).click();
-  const pdf = await PDFDocument.load(await readFile((await (await pdfDownload).path())!));
-  expect(pdf.getPageCount()).toBe(2);
-  const images = pdf.context.enumerateIndirectObjects().filter(([, obj]) => obj instanceof PDFRawStream && obj.dict.get(PDFName.of('Subtype')) === PDFName.of('Image'));
-  expect(images.length).toBeGreaterThan(0);
-  for (const [, image] of images) {
-    expect((image as PDFRawStream).dict.get(PDFName.of('Width'))?.toString()).toBe('4096');
-    expect((image as PDFRawStream).dict.get(PDFName.of('Height'))?.toString()).toBe('3072');
-  }
+  await expect(viewer.getByRole('button', { name: /JPG|PDF/ })).toHaveCount(0);
   await viewer.getByRole('button', { name: 'Fechar visualização do modelo' }).click();
   await card.getByRole('button', { name: 'Adicionar ao Carrinho' }).click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await cart.getByRole('button', { name: 'Visualizar modelo · capa e contracapa' }).click();
   await expect(viewer.getByRole('button', { name: 'Contracapa', exact: true })).toBeVisible();
@@ -90,9 +72,7 @@ test('contracapa escolhida exige imagem e mantém seus próprios pixels e conte�
     return [...context.getImageData(0, 0, 1, 1).data];
   });
   expect(pixel).toEqual([37, 99, 235, 255]);
-  const download = page.waitForEvent('download');
-  await viewer.getByRole('button', { name: 'JPG desta face' }).click();
-  expect((await download).suggestedFilename()).toBe('Caderno-Personalizado-contracapa.jpg');
+  await expect(viewer.getByRole('button', { name: /JPG|PDF/ })).toHaveCount(0);
 });
 
 test.describe('modelo no celular', () => {
@@ -123,6 +103,7 @@ test('pedidos do cliente e produção abrem capa e contracapa no visualizador in
   let viewer = page.getByRole('dialog', { name: 'Modelo personalizado', exact: true });
   await expect(viewer.getByRole('button', { name: 'Contracapa', exact: true })).toBeVisible();
   await expect(viewer.getByRole('button', { name: 'Fechar visualização do modelo' })).toBeFocused();
+  await expect(viewer.getByRole('button', { name: /JPG|PDF/ })).toHaveCount(0);
   await viewer.getByRole('button', { name: 'Contracapa', exact: true }).click();
   await expect(viewer.getByAltText('Contracapa do modelo personalizado')).toBeVisible();
   expect(context.pages()).toHaveLength(1);
@@ -134,4 +115,23 @@ test('pedidos do cliente e produção abrem capa e contracapa no visualizador in
   viewer = page.getByRole('dialog', { name: 'Modelo personalizado', exact: true });
   await expect(viewer.getByRole('button', { name: 'Contracapa', exact: true })).toBeVisible();
   expect(context.pages()).toHaveLength(1);
+});
+
+test('somente Pedidos do administrador oferece JPG e PDF de capa e contracapa', async ({ page }) => {
+  await page.goto('/__e2e/admin');
+  await page.getByRole('button', { name: 'Pedidos', exact: true }).click();
+  await page.getByRole('button', { name: 'Abrir modelo composto' }).click();
+  const viewer = page.getByRole('dialog', { name: 'Modelo personalizado', exact: true });
+  const jpegDownload = page.waitForEvent('download');
+  await viewer.getByRole('button', { name: 'JPG desta face' }).click();
+  const jpg = await jpegDownload;
+  expect([...((await readFile((await jpg.path())!)).subarray(0, 3))]).toEqual([255, 216, 255]);
+  const pdfDownload = page.waitForEvent('download');
+  await viewer.getByRole('button', { name: 'Baixar PDF' }).click();
+  const pdf = await PDFDocument.load(await readFile((await (await pdfDownload).path())!));
+  expect(pdf.getPageCount()).toBe(2);
+  await viewer.getByRole('button', { name: 'Contracapa', exact: true }).click();
+  const backDownload = page.waitForEvent('download');
+  await viewer.getByRole('button', { name: 'JPG desta face' }).click();
+  expect((await backDownload).suggestedFilename()).toContain('contracapa');
 });

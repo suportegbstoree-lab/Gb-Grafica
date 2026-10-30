@@ -211,9 +211,12 @@ test('checkout com texto e imagem copia separadamente as versões da arte e do m
   });
   const response = await checkout({
     modeloPath: modelPath, modeloNome: 'modelo.png',
-    personalizacaoTexto: { texto: 'Nome', fonte: 'arial', posicao: { x: 50, y: 50 } },
+    personalizacaoTexto: { texto: 'Nome\nSobrenome', fonte: 'arial', tamanhoFonte: 8.5, cor: '#00aaff', posicao: { x: 50, y: 50 } },
   });
   assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))?.[1];
+  const style = (order?.itens as Array<{ personalizacaoTexto: { texto: string; tamanhoFonte: number; cor: string } }>)[0].personalizacaoTexto;
+  assert.equal(style.texto, 'Nome\nSobrenome'); assert.equal(style.tamanhoFonte, 8.5); assert.equal(style.cor, '#00aaff');
   assert.deepEqual(copies.map(copy => copy.generation), [17, 25]);
   assert.ok(copies.every(copy => objects.has(copy.path)));
   assert.equal(objects.has(sourcePath), false);
@@ -288,4 +291,27 @@ test('consulta autenticada entrega a face correta sem abrir acesso a outro propr
   assert.equal((await request('?face=wrong')).status, 400);
   docs.set(`orders/${orderId}`, { userId: 'outro', itens: [{ id: itemId, contracapaPath: back }] });
   assert.equal((await request('?face=back')).status, 403);
+});
+
+test('checkout preserva tamanho, cor, fonte e posição de cada linha', async () => {
+  docs.set('config/main', { fontes_personalizacao: [{ id: 'arial', nome: 'Arial', cssFamily: 'Arial', ativo: true }] });
+  docs.set('anuncios/produto', { nome: 'Produto Teste', desc: 'Arte teste', categoria: 'teste', preco_base: '10.00', tipoInput: 'texto_arte' });
+  const response = await checkout({ modeloPath: addModel('1', 25), personalizacaoTexto: {
+    texto: 'A\nB', fonte: 'arial', cor: '#ffffff', posicao: { x: 50, y: 50 }, corCompartilhada: false, linhas: [
+      { id: 'line-a', texto: 'A', tamanhoFonte: 5, cor: '#ff0000', posicao: { x: 10, y: 20 } },
+      { id: 'line-b', texto: 'B', tamanhoFonte: 9, cor: '#00ff00', posicao: { x: 70, y: 80 } },
+    ],
+  } });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))?.[1];
+  const item = (order?.itens as Array<Record<string, unknown>>)[0];
+  const style = item.personalizacaoTexto as { linhas: Array<{ tamanhoFonte: number; cor: string; posicao: unknown }> };
+  assert.deepEqual(style.linhas.map(line => [line.tamanhoFonte, line.cor, line.posicao]), [[5, '#ff0000', { x: 10, y: 20 }], [9, '#00ff00', { x: 70, y: 80 }]]);
+});
+
+test('checkout recusa estilo inválido por linha antes de chamar o provedor', async () => {
+  docs.set('config/main', { fontes_personalizacao: [{ id: 'arial', nome: 'Arial', cssFamily: 'Arial', ativo: true }] });
+  docs.set('anuncios/produto', { nome: 'Produto Teste', desc: 'Arte teste', categoria: 'teste', preco_base: '10.00', tipoInput: 'texto_arte' });
+  const response = await checkout({ modeloPath: addModel('1', 25), personalizacaoTexto: { texto: 'A', fonte: 'arial', posicao: { x: 50, y: 50 }, linhas: [{ id: 'line-a', texto: 'A', tamanhoFonte: 999, posicao: { x: 50, y: 50 } }] } });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0);
 });

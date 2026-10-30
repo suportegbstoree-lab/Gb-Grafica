@@ -1,3 +1,5 @@
+import EditorModal from '../components/EditorModal';
+import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import StoreSettingsLists from '../components/StoreSettingsLists';
 import { storeContacts, storeBenefits } from '../lib/storePresentation';
 import PersonalizationViewer from '../components/PersonalizationViewer';
@@ -36,8 +38,8 @@ import {
   validatePromotionDraft,
   validateSiteConfig,
 } from '../lib/adminValidation';
-import { textFontLabel } from '../lib/textCustomization';
-import { normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
+import { textCustomizationFontLabel } from '../lib/textCustomization';
+import { MAX_PERSONALIZATION_FONTS, normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
 import {
   removeAdminAsset,
   storedAdminAssetPath,
@@ -45,6 +47,7 @@ import {
   uploadAdminImage,
   type UploadedAdminAsset,
 } from '../services/adminAssetService';
+import { adminFontUploadType, adminFontFormat } from '../lib/adminAsset';
 import type { AdminImageScope } from '../lib/adminAsset';
 import { formattedDiscountPercentage } from '../lib/promotions';
 
@@ -177,6 +180,7 @@ export default function Admin({
   const [configUploads, setConfigUploads] = useState<Partial<Record<'logo_url' | 'banner_principal', UploadedAdminAsset>>>({});
   const [isUploadingAdminAsset, setIsUploadingAdminAsset] = useState(false);
   const [configDraft, setConfigDraft] = useState<SiteConfig>(() => structuredClone(config));
+  const [isFontsEditorOpen, setIsFontsEditorOpen] = useState(false);
   const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
   const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
   const [collapsedOrderQueues, setCollapsedOrderQueues] = useState<Set<OrderQueue>>(() => new Set(['entregue']));
@@ -648,7 +652,10 @@ export default function Admin({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || isUploadingAdminAsset) return;
-    const nome = file.name.replace(/\.woff2$/i, '').replace(/[-_]+/g, ' ').trim() || 'Fonte personalizada';
+    if ((configDraft.fontes_personalizacao || []).length >= MAX_PERSONALIZATION_FONTS) { setErrorMessage(`Use no máximo ${MAX_PERSONALIZATION_FONTS} fontes.`); return; }
+    const fontType = adminFontUploadType(file.name, file.type);
+    if (!fontType) { setErrorMessage('Envie um arquivo WOFF2, TTF ou OTF.'); return; }
+    const nome = file.name.replace(/\.(woff2|ttf|otf)$/i, '').replace(/[-_]+/g, ' ').trim() || 'Fonte personalizada';
     const baseId = slugifyDocumentId(nome).slice(0, 48) || 'fonte';
     const existingIds = new Set((configDraft.fontes_personalizacao || []).map(font => font.id));
     let id = baseId;
@@ -666,6 +673,7 @@ export default function Admin({
         nome,
         cssFamily: `GBFont_${id.replace(/-/g, '_')}`,
         arquivoUrl: uploaded.url,
+        arquivoFormato: adminFontFormat(fontType)!,
         ativo: true,
       };
       setConfigDraft(current => ({
@@ -1496,29 +1504,9 @@ export default function Admin({
 
               <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
 
-              <section className="rounded-xl border border-purple-500/30 bg-[#111111] p-6 space-y-6">
-                <div className="flex items-center gap-3"><Type className="text-purple-400" size={20} /><div><h3 className="font-bold">Fontes da personalização</h3><p className="text-xs text-gray-500">Somente as fontes ativas aparecem para o cliente. Nenhuma opção é predefinida pelo código.</p></div></div>
-                <div className="space-y-3">
-                  {(configDraft.fontes_personalizacao || []).map((font, index) => (
-                    <div key={font.id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-800 bg-black p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
-                      <input aria-label={`Nome da fonte ${index + 1}`} value={font.nome} onChange={event => updateConfiguredFont(index, { nome: event.target.value })} className="rounded border border-gray-800 bg-[#111111] px-3 py-2 text-sm" />
-                      <div className="min-w-0"><div style={{ fontFamily: font.cssFamily }} className="truncate text-lg">Texto de exemplo</div><div className="truncate text-[10px] text-gray-600">{font.arquivoUrl ? 'Arquivo WOFF2' : font.cssFamily}</div></div>
-                      <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><input type="checkbox" checked={font.ativo} onChange={event => updateConfiguredFont(index, { ativo: event.target.checked })} className="accent-[#ff4d79]" /> Ativa</label>
-                      <button type="button" onClick={() => removeConfiguredFont(index)} aria-label={`Remover fonte ${font.nome}`} className="p-2 text-gray-500 hover:text-red-500"><Trash2 size={17} /></button>
-                    </div>
-                  ))}
-                  {(configDraft.fontes_personalizacao || []).length === 0 && <p className="rounded-lg border border-dashed border-gray-800 p-5 text-sm text-gray-500">Nenhuma fonte cadastrada. Produtos com texto ficam indisponíveis até que ao menos uma fonte ativa seja salva.</p>}
-                </div>
-                <div className="grid grid-cols-1 gap-4 border-t border-gray-800 pt-5 md:grid-cols-[1fr_1fr_auto]">
-                  <input aria-label="Nome da nova fonte do sistema" value={newSystemFont.nome} onChange={event => setNewSystemFont(current => ({ ...current, nome: event.target.value }))} placeholder="Nome exibido, ex.: Montserrat" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
-                  <input aria-label="Família CSS da nova fonte" value={newSystemFont.cssFamily} onChange={event => setNewSystemFont(current => ({ ...current, cssFamily: event.target.value }))} placeholder="Família CSS, ex.: Montserrat, sans-serif" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
-                  <button type="button" onClick={addSystemFont} className="rounded-lg border border-gray-700 px-5 py-3 text-xs font-bold hover:bg-gray-800">Adicionar fonte do sistema</button>
-                </div>
-                <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-purple-500 px-5 py-3 text-xs font-bold text-white hover:bg-purple-600">
-                  {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar arquivo WOFF2
-                  <input type="file" accept=".woff2,font/woff2,application/font-woff2" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
-                </label>
-                <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
+              <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-purple-500/30 bg-[#111111] p-6">
+                <div className="flex items-center gap-3"><Type className="text-purple-400" size={20} /><div><h3 className="font-bold">Fontes da personalização</h3><p className="mt-1 text-xs text-gray-500">{(configDraft.fontes_personalizacao || []).filter(font => font.ativo).length} fontes ativas · WOFF2, TTF ou OTF</p></div></div>
+                <button type="button" onClick={() => setIsFontsEditorOpen(true)} className="rounded-xl bg-purple-500 px-5 py-3 text-xs font-bold hover:bg-purple-600">Gerenciar fontes</button>
               </section>
 
               <section className="p-6 bg-[#111111] border border-amber-500/30 rounded-xl space-y-6">
@@ -1637,6 +1625,40 @@ export default function Admin({
           </div>
         )}
       </main>
+
+      {isFontsEditorOpen && <EditorModal title="Fontes da personalização" busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
+        <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} />
+        <div className="space-y-5">
+          <p className="text-xs text-gray-400">Somente as fontes ativas aparecem para o cliente. Envie WOFF2, TTF ou OTF de até 3 MB.</p>
+          {errorMessage && <p role="alert" className="rounded-xl bg-red-950 p-3 text-sm text-red-300">{errorMessage}</p>}
+          {successMessage && <p role="status" className="text-sm text-green-400">{successMessage}</p>}
+          <fieldset disabled={isUploadingAdminAsset} className="space-y-5">
+            <div className="space-y-3">
+              {(configDraft.fontes_personalizacao || []).map((font, index) => (
+                <div key={font.id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-800 bg-black p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
+                  <input aria-label={`Nome da fonte ${index + 1}`} value={font.nome} onChange={event => updateConfiguredFont(index, { nome: event.target.value })} className="rounded border border-gray-800 bg-[#111111] px-3 py-2 text-sm" />
+                  <div className="min-w-0"><div style={{ fontFamily: font.cssFamily }} className="truncate text-lg">Texto de exemplo</div><div className="truncate text-[10px] text-gray-600">{font.arquivoUrl ? `Arquivo ${(font.arquivoFormato || 'woff2').toUpperCase()}` : font.cssFamily}</div></div>
+                  <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><input type="checkbox" checked={font.ativo} onChange={event => updateConfiguredFont(index, { ativo: event.target.checked })} className="accent-[#ff4d79]" /> Ativa</label>
+                  <button type="button" onClick={() => removeConfiguredFont(index)} aria-label={`Remover fonte ${font.nome}`} className="p-2 text-gray-500 hover:text-red-500"><Trash2 size={17} /></button>
+                </div>
+              ))}
+              {(configDraft.fontes_personalizacao || []).length === 0 && <p className="rounded-lg border border-dashed border-gray-800 p-5 text-sm text-gray-500">Nenhuma fonte cadastrada. Produtos com texto ficam indisponíveis até que ao menos uma fonte ativa seja salva.</p>}
+            </div>
+            <div className="grid grid-cols-1 gap-4 border-t border-gray-800 pt-5 md:grid-cols-[1fr_1fr_auto]">
+              <input aria-label="Nome da nova fonte do sistema" value={newSystemFont.nome} onChange={event => setNewSystemFont(current => ({ ...current, nome: event.target.value }))} placeholder="Nome exibido, ex.: Montserrat" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
+              <input aria-label="Família CSS da nova fonte" value={newSystemFont.cssFamily} onChange={event => setNewSystemFont(current => ({ ...current, cssFamily: event.target.value }))} placeholder="Família CSS, ex.: Montserrat, sans-serif" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
+              <button type="button" onClick={addSystemFont} className="rounded-lg border border-gray-700 px-5 py-3 text-xs font-bold hover:bg-gray-800">Adicionar fonte do sistema</button>
+            </div>
+            <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-purple-500 px-5 py-3 text-xs font-bold text-white hover:bg-purple-600">
+              {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar fonte WOFF2, TTF ou OTF
+              <input type="file" accept=".woff2,.ttf,.otf,font/woff2,font/ttf,font/otf,application/font-woff2,application/x-font-ttf,application/x-font-otf" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+            </label>
+            <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
+
+          </fieldset>
+        </div>
+      </EditorModal>}
+
 
       {/* Modal Editor de Produto */}
       <AnimatePresence>
@@ -2431,7 +2453,7 @@ export default function Admin({
           />
         )}
       </AnimatePresence>
-      {modelDocument && <PersonalizationViewer document={modelDocument} onClose={() => setModelDocument(null)} />}
+      {modelDocument && <PersonalizationViewer allowDownload document={modelDocument} onClose={() => setModelDocument(null)} />}
       {/* Removidos modais de upload */}
     </div>
   );
@@ -2580,9 +2602,10 @@ function OrderCard({
                 {item.personalizacaoTexto ? (
                   <div className="mt-3 rounded-lg border border-[#ff4d79]/30 bg-[#ff4d79]/5 p-3">
                     <div className="text-[9px] font-bold uppercase tracking-widest text-[#ff4d79]">Personalização para produção</div>
-                    <div className="mt-2 break-words text-xs font-bold text-white">Texto: {item.personalizacaoTexto.texto}</div>
+                    <div className="mt-2 whitespace-pre-wrap break-words text-xs font-bold text-white">Texto: {item.personalizacaoTexto.texto}</div>
+                    {item.personalizacaoTexto.linhas && <ul aria-label="Ajustes por linha" className="mt-2 space-y-1 text-[10px] text-gray-400">{item.personalizacaoTexto.linhas.map((line, index) => <li key={line.id}>Linha {index + 1}: {line.tamanhoFonte}% · {line.cor} · {line.fonteNome || line.fonte} · X {line.posicao.x}% / Y {line.posicao.y}%</li>)}</ul>}
                     <div className="mt-1 text-[10px] text-gray-400">
-                      Fonte: {textFontLabel(item.personalizacaoTexto.fonte, [], item.personalizacaoTexto.fonteNome)}
+                      Fonte: {textCustomizationFontLabel(item.personalizacaoTexto)}
                     </div>
                     {item.modeloPath ? (
                       <button

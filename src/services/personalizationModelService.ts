@@ -1,3 +1,5 @@
+import { textLayers } from '../lib/textLines';
+import { personalizationTextLayout } from '../lib/personalizationTextLayout';
 import { matchesArtworkSignature } from '../lib/artwork';
 import {
 	isComposablePersonalizationImage,
@@ -18,7 +20,7 @@ export interface ComposedPersonalizationModel {
 	height: number;
 }
 
-interface DecodedImage {
+export interface DecodedImage {
 	source: CanvasImageSource;
 	width: number;
 	height: number;
@@ -116,40 +118,69 @@ export async function decodePersonalizationSource(source: Blob | string): Promis
 	}
 }
 
-function splitLongWord(context: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
-	const chunks: string[] = [];
-	let current = '';
-	for (const character of word) {
-		const candidate = current + character;
-		if (current && context.measureText(candidate).width > maxWidth) {
-			chunks.push(current);
-			current = character;
-		} else {
-			current = candidate;
-		}
-	}
-	if (current) chunks.push(current);
-	return chunks;
+export function personalizationFontSize(width: number, customization: TextCustomization): number {
+  return width * (customization.tamanhoFonte !== undefined ? customization.tamanhoFonte / 100 : personalizationTextScale(customization.texto));
 }
 
-function wrappedLines(context: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-	const words = text.trim().split(/\s+/).flatMap(word => (
-		context.measureText(word).width > maxWidth ? splitLongWord(context, word, maxWidth) : [word]
-	));
-	const lines: string[] = [];
-	let current = '';
+export async function preparePersonalizationFont(customization: TextCustomization | null | undefined, fonts: PersonalizationFont[]): Promise<() => void> {
+  if (!customization) return () => undefined;
+  const faces: FontFace[] = [];
+  const layers = textLayers(customization);
+  try {
+    const used = new Set<string>();
+    for (const layer of layers) {
+      if (used.has(layer.value.fonte)) continue;
+      used.add(layer.value.fonte);
+      const selected = fonts.find(font => font.id === layer.value.fonte && font.ativo);
+      if (selected?.arquivoUrl && typeof FontFace !== 'undefined' && document.fonts) {
+        const face = await new FontFace(selected.cssFamily, `url(${JSON.stringify(selected.arquivoUrl)})`, { weight: '700' }).load();
+        document.fonts.add(face); faces.push(face);
+      }
+      await document.fonts?.load(`700 32px ${textFontCssFamily(layer.value.fonte, fonts, layer.value.fonteCssFamily)}`, layer.value.texto || 'A');
+    }
+  } catch {
+    faces.forEach(face => document.fonts?.delete(face));
+    throw new Error('Uma das fontes escolhidas não pôde ser carregada para gerar o modelo.');
+  }
+  return () => faces.forEach(face => document.fonts?.delete(face));
+}
 
-	for (const word of words) {
-		const candidate = current ? `${current} ${word}` : word;
-		if (current && context.measureText(candidate).width > maxWidth) {
-			lines.push(current);
-			current = word;
-		} else {
-			current = candidate;
-		}
-	}
-	if (current) lines.push(current);
-	return lines.slice(0, 8);
+export interface PersonalizationTextBox {
+  id: string; index: number; x: number; y: number; width: number; height: number;
+}
+
+export function personalizationLayerLayout(context: CanvasRenderingContext2D, width: number, height: number, customization: TextCustomization, fonts: PersonalizationFont[]) {
+  const fontSize = personalizationFontSize(width, customization);
+  if (!Number.isFinite(fontSize) || fontSize <= 0) throw new Error('Informe um tamanho válido para a linha.');
+  context.font = `700 ${fontSize}px ${textFontCssFamily(customization.fonte, fonts, customization.fonteCssFamily)}`;
+  return personalizationTextLayout(width, height, customization, text => context.measureText(text).width);
+}
+
+export function drawPersonalizationText(context: CanvasRenderingContext2D, width: number, height: number, customization: TextCustomization, fonts: PersonalizationFont[]): PersonalizationTextBox[] {
+  const boxes: PersonalizationTextBox[] = [];
+  for (const layer of textLayers(customization)) {
+    const layout = personalizationLayerLayout(context, width, height, layer.value, fonts);
+    const { fontSize } = layout;
+    context.textAlign = 'center'; context.textBaseline = 'middle'; context.lineJoin = 'round';
+    const color = layer.value.cor || '#ffffff';
+    const rgb = [1, 3, 5].map(index => parseInt(color.slice(index, index + 2), 16));
+    context.strokeStyle = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114 < 128 ? 'rgba(255,255,255,0.88)' : 'rgba(0,0,0,0.88)';
+    context.lineWidth = fontSize * 0.1; context.fillStyle = color;
+    layout.lines.forEach((line, index) => {
+      const y = layout.firstLineY + index * layout.lineHeight;
+      context.strokeText(line, layout.centerX, y); context.fillText(line, layout.centerX, y);
+    });
+    if (layer.value.texto.trim()) {
+      const boxWidth = Math.max(...layout.lines.map(line => context.measureText(line).width)) + context.lineWidth;
+      const boxHeight = layout.lines.length * layout.lineHeight + context.lineWidth;
+      boxes.push({ id: layer.id, index: layer.index,
+        x: (layout.centerX - boxWidth / 2) / width * 100,
+        y: (layout.firstLineY - layout.lineHeight / 2 - context.lineWidth / 2) / height * 100,
+        width: boxWidth / width * 100, height: boxHeight / height * 100,
+      });
+    }
+  }
+  return boxes;
 }
 
 export function personalizationCanvasBlob(canvas: HTMLCanvasElement, type = PERSONALIZATION_MODEL_MIME_TYPE): Promise<Blob> {
@@ -174,7 +205,7 @@ export async function composePersonalizationModel({
 	fonts: PersonalizationFont[];
 }): Promise<ComposedPersonalizationModel> {
 	const decoded = await decodePersonalizationSource(source);
-	let temporaryFontFace: FontFace | null = null;
+	let releaseFont = () => undefined;
 	const canvas = document.createElement('canvas');
 	try {
 		const dimensions = personalizationModelDimensions(decoded.width, decoded.height);
@@ -190,44 +221,9 @@ export async function composePersonalizationModel({
 		context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
 
 		if (customization) {
-			const fontSize = Math.max(18, Math.round(canvas.width * personalizationTextScale(customization.texto)));
-			const fontFamily = textFontCssFamily(customization.fonte, fonts, customization.fonteCssFamily);
-			const fontDeclaration = `700 ${fontSize}px ${fontFamily}`;
-			try {
-				const selectedFont = fonts.find(font => font.id === customization.fonte && font.ativo);
-				if (selectedFont?.arquivoUrl && typeof FontFace !== 'undefined' && document.fonts) {
-					temporaryFontFace = await new FontFace(
-						selectedFont.cssFamily,
-						`url(${JSON.stringify(selectedFont.arquivoUrl)}) format("woff2")`,
-						{ weight: '700' },
-					).load();
-					document.fonts.add(temporaryFontFace);
-				}
-				await document.fonts?.load(fontDeclaration, customization.texto);
-			} catch {
-				throw new Error('A fonte escolhida não pôde ser carregada para gerar o modelo.');
-			}
-			context.font = fontDeclaration;
-			context.textAlign = 'center';
-			context.textBaseline = 'middle';
-			context.lineJoin = 'round';
-
-			const lines = wrappedLines(context, customization.texto, canvas.width * 0.9);
-			const lineHeight = fontSize * 1.18;
-			const blockHeight = Math.max(lineHeight, lines.length * lineHeight);
-			const centerX = canvas.width * (customization.posicao.x / 100);
-			const centerY = canvas.height * (customization.posicao.y / 100);
-			const firstLineY = centerY - (blockHeight / 2) + (lineHeight / 2);
-
-			context.strokeStyle = 'rgba(0, 0, 0, 0.88)';
-			context.lineWidth = Math.max(2, fontSize * 0.1);
-			context.fillStyle = '#ffffff';
-			lines.forEach((line, index) => {
-				const y = firstLineY + index * lineHeight;
-				context.strokeText(line, centerX, y, canvas.width * 0.9);
-				context.fillText(line, centerX, y, canvas.width * 0.9);
-			});
-		}
+      releaseFont = await preparePersonalizationFont(customization, fonts);
+      drawPersonalizationText(context, canvas.width, canvas.height, customization, fonts);
+    }
 
 		let modelBlob: Blob;
 		try {
@@ -243,7 +239,7 @@ export async function composePersonalizationModel({
 		}
 		return { blob: modelBlob, width: canvas.width, height: canvas.height };
 	} finally {
-		if (temporaryFontFace && document.fonts) document.fonts.delete(temporaryFontFace);
+		releaseFont();
 		decoded.dispose();
 		canvas.width = canvas.height = 1;
 	}

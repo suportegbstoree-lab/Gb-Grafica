@@ -6,9 +6,10 @@ import {
   personalizationDownloadName, type PersonalizationDocument, type PersonalizationPage,
 } from '../services/personalizationExport';
 
-export default function PersonalizationViewer({ document: model, onClose }: {
+export default function PersonalizationViewer({ document: model, onClose, allowDownload = false }: {
   document: PersonalizationDocument;
   onClose: () => void;
+  allowDownload?: boolean;
 }) {
   const [pageIndex, setPageIndex] = React.useState(0);
   const [zoom, setZoom] = React.useState<number | null>(null);
@@ -53,7 +54,7 @@ export default function PersonalizationViewer({ document: model, onClose }: {
   }, [Boolean(page)]);
 
   const download = async (format: 'jpg' | 'pdf') => {
-    if (exporting || !page) return;
+    if (!allowDownload || exporting || !page) return;
     setExporting(true); setError('');
     try {
       const blob = format === 'pdf' ? await exportPersonalizationPdf(model) : await exportPersonalizationImage(page.blob, 'image/jpeg');
@@ -82,16 +83,16 @@ export default function PersonalizationViewer({ document: model, onClose }: {
             <button type="button" aria-label="Aumentar zoom" onClick={() => setZoom(Math.min(4, (zoom ?? 1) + 0.25))} className="rounded-lg p-2 hover:bg-gray-100"><ZoomIn size={18} /></button>
           </div>
           <span className="text-xs text-gray-500" aria-live="polite">{size.width > 0 && `${size.width} × ${size.height} px`}{zoom !== null && ` · ${Math.round(zoom * 100)}%`}</span>
-          <div className="ml-auto flex flex-wrap gap-2">
+          {allowDownload && <div className="ml-auto flex flex-wrap gap-2">
             <button type="button" disabled={exporting} onClick={() => void download('jpg')} className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-2 text-xs font-bold disabled:opacity-50"><Download size={14} /> JPG desta face</button>
             <button type="button" disabled={exporting} onClick={() => void download('pdf')} className="flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"><Download size={14} /> {exporting ? 'Exportando...' : 'Baixar PDF'}</button>
-          </div>
+          </div>}
         </div>
         {error && <p role="alert" className="bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
         <div tabIndex={0} aria-label="Área de visualização do modelo" className="min-h-0 flex-1 overflow-auto bg-gray-100 p-3 sm:p-6">
-          <img key={page.url} src={page.url} alt={`${page.label} do modelo personalizado`} onLoad={event => setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setError('Não foi possível exibir esta imagem.')} className={zoom === null ? 'mx-auto h-full max-w-full object-contain' : 'max-w-none'} style={zoom === null ? undefined : { width: size.width * zoom, height: size.height * zoom }} />
+          <img key={page.url} src={page.url} draggable={allowDownload} onContextMenu={allowDownload ? undefined : event => event.preventDefault()} onDragStart={allowDownload ? undefined : event => event.preventDefault()} alt={`${page.label} do modelo personalizado`} onLoad={event => setSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setError('Não foi possível exibir esta imagem.')} className={zoom === null ? 'mx-auto h-full max-w-full object-contain' : 'max-w-none'} style={zoom === null ? undefined : { width: size.width * zoom, height: size.height * zoom }} />
         </div>
-        <p className="border-t border-gray-200 px-4 py-2 text-[11px] text-gray-500">JPG exporta a face selecionada. O PDF inclui todas as faces, na ordem capa e contracapa.</p>
+        {allowDownload && <p className="border-t border-gray-200 px-4 py-2 text-[11px] text-gray-500">JPG exporta a face selecionada. O PDF inclui todas as faces, na ordem capa e contracapa.</p>}
       </section>
     </div>, globalThis.document.body,
   );

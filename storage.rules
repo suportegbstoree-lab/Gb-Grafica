@@ -107,8 +107,9 @@ service firebase.storage {
         resource == null &&
         request.resource.size > 0 &&
         request.resource.size <= 3 * 1024 * 1024 &&
-        request.resource.contentType == 'font/woff2' &&
-        fileName.matches('^[a-f0-9]{32}[.]woff2$') &&
+        ((request.resource.contentType == 'font/woff2' && fileName.matches('^[a-f0-9]{32}[.]woff2$')) ||
+         (request.resource.contentType == 'font/ttf' && fileName.matches('^[a-f0-9]{32}[.]ttf$')) ||
+         (request.resource.contentType == 'font/otf' && fileName.matches('^[a-f0-9]{32}[.]otf$'))) &&
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;

@@ -11,7 +11,7 @@ export default function PersonalizationFontLoader({ fonts }: { fonts: Personaliz
 
     void Promise.all(normalized.filter(font => font.arquivoUrl).map(async font => {
       try {
-        const face = new FontFace(font.cssFamily, `url(${JSON.stringify(font.arquivoUrl)}) format("woff2")`);
+        const face = new FontFace(font.cssFamily, `url(${JSON.stringify(font.arquivoUrl)})`);
         const loaded = await face.load();
         if (cancelled) return;
         document.fonts.add(loaded);

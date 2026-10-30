@@ -1,4 +1,7 @@
 export const MAX_CUSTOM_TEXT_LENGTH = 200;
+export const MAX_CUSTOM_TEXT_LINES = 8;
+export const MIN_TEXT_SIZE = 1;
+export const MAX_TEXT_SIZE = 20;
 export const MAX_PERSONALIZATION_FONTS = 20;
 
 export type ProductCustomizationType = 'arte' | 'texto' | 'texto_arte' | 'nenhum';
@@ -8,6 +11,7 @@ export interface PersonalizationFont {
   nome: string;
   cssFamily: string;
   arquivoUrl?: string;
+  arquivoFormato?: 'woff2' | 'ttf' | 'otf';
   ativo: boolean;
 }
 
@@ -17,10 +21,28 @@ export interface TextCustomization {
   fonteNome?: string;
   fonteCssFamily?: string;
   fonteArquivoUrl?: string;
+  /** Font size as a percentage of the source image width. Optional on old orders. */
+  tamanhoFonte?: number;
+  cor?: string;
+  linhas?: TextCustomizationLine[];
+  fonteCompartilhada?: boolean;
+  corCompartilhada?: boolean;
   posicao: {
     x: number;
     y: number;
   };
+}
+
+export interface TextCustomizationLine {
+  id: string;
+  texto: string;
+  fonte?: string;
+  fonteNome?: string;
+  fonteCssFamily?: string;
+  fonteArquivoUrl?: string;
+  tamanhoFonte?: number;
+  cor?: string;
+  posicao: { x: number; y: number };
 }
 
 export const DEFAULT_TEXT_CUSTOMIZATION: TextCustomization = {
@@ -93,6 +115,7 @@ export function normalizePersonalizationFonts(value: unknown): PersonalizationFo
       nome,
       cssFamily,
       ...(arquivoUrl ? { arquivoUrl } : {}),
+      ...(['woff2', 'ttf', 'otf'].includes(String(entry.arquivoFormato)) ? { arquivoFormato: entry.arquivoFormato as PersonalizationFont['arquivoFormato'] } : {}),
       ativo: entry.ativo !== false,
     });
   }
@@ -120,30 +143,71 @@ export function normalizeTextCustomization(
   allowedFonts?: PersonalizationFont[],
 ): TextCustomization | null {
   if (!isRecord(value) || !isRecord(value.posicao)) return null;
-  const texto = typeof value.texto === 'string'
-    ? value.texto.trim().replace(/\s+/g, ' ')
+  let texto = typeof value.texto === 'string'
+    ? value.texto.replace(/\r\n?/g, '\n').split('\n').map(line => line.trim().replace(/[^\S\n]+/g, ' ')).join('\n')
     : '';
+  if (value.linhas === undefined) texto = texto.trim();
   const fonte = normalizedFontId(value.fonte);
   const configuredFont = allowedFonts?.find(font => font.ativo && font.id === fonte);
   const x = normalizedCoordinate(value.posicao.x);
   const y = normalizedCoordinate(value.posicao.y);
 
   if (
-    !texto || texto.length > MAX_CUSTOM_TEXT_LENGTH || !fonte ||
+    !texto.trim() || texto.length > MAX_CUSTOM_TEXT_LENGTH || texto.split('\n').length > MAX_CUSTOM_TEXT_LINES || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(texto) || !fonte ||
+    (value.cor !== undefined && (typeof value.cor !== 'string' || !/^#[a-f0-9]{6}$/i.test(value.cor))) ||
+    (value.tamanhoFonte !== undefined && (typeof value.tamanhoFonte !== 'number' || !Number.isFinite(value.tamanhoFonte) || value.tamanhoFonte < MIN_TEXT_SIZE || value.tamanhoFonte > MAX_TEXT_SIZE)) ||
     (allowedFonts && !configuredFont) || x === null || y === null
   ) return null;
 
   const fonteNome = configuredFont?.nome || normalizedFontName(value.fonteNome);
   const fonteCssFamily = configuredFont?.cssFamily || normalizedCssFamily(value.fonteCssFamily);
   const fonteArquivoUrl = configuredFont?.arquivoUrl || normalizedFontUrl(value.fonteArquivoUrl);
-  return {
+  const normalized: TextCustomization = {
     texto,
     fonte,
     ...(fonteNome ? { fonteNome } : {}),
     ...(fonteCssFamily ? { fonteCssFamily } : {}),
     ...(fonteArquivoUrl ? { fonteArquivoUrl } : {}),
+    ...(typeof value.cor === 'string' ? { cor: value.cor.toLowerCase() } : {}),
+    ...(typeof value.tamanhoFonte === 'number' ? { tamanhoFonte: Math.round(value.tamanhoFonte * 10) / 10 } : {}),
     posicao: { x, y },
   };
+  if (value.linhas !== undefined) {
+    const rows = texto.split('\n');
+    if (!Array.isArray(value.linhas) || value.linhas.length !== rows.length ||
+        (value.fonteCompartilhada !== undefined && typeof value.fonteCompartilhada !== 'boolean') ||
+        (value.corCompartilhada !== undefined && typeof value.corCompartilhada !== 'boolean')) return null;
+    const ids = new Set<string>();
+    const lines: TextCustomizationLine[] = [];
+    for (let i = 0; i < value.linhas.length; i++) {
+      const line = value.linhas[i];
+      if (!isRecord(line) || !isRecord(line.posicao) || typeof line.id !== 'string' ||
+          !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(line.id) || ids.has(line.id) ||
+          typeof line.texto !== 'string' || /[\r\n]/.test(line.texto) ||
+          (line.tamanhoFonte !== undefined && (typeof line.tamanhoFonte !== 'number' || !Number.isFinite(line.tamanhoFonte) || line.tamanhoFonte < MIN_TEXT_SIZE || line.tamanhoFonte > MAX_TEXT_SIZE)) ||
+          (line.cor !== undefined && (typeof line.cor !== 'string' || !/^#[a-f0-9]{6}$/i.test(line.cor))) ||
+          (line.fonte !== undefined && !normalizedFontId(line.fonte)) ||
+          line.texto.trim().replace(/\s+/g, ' ') !== rows[i]) return null;
+      ids.add(line.id);
+      const separateFont = value.fonteCompartilhada === false && line.fonte !== undefined;
+      const style = normalizeTextCustomization({
+        texto: rows[i] || '_',
+        fonte: separateFont ? line.fonte : normalized.fonte,
+        fonteNome: separateFont ? line.fonteNome : normalized.fonteNome,
+        fonteCssFamily: separateFont ? line.fonteCssFamily : normalized.fonteCssFamily,
+        fonteArquivoUrl: separateFont ? line.fonteArquivoUrl : normalized.fonteArquivoUrl,
+        tamanhoFonte: line.tamanhoFonte ?? normalized.tamanhoFonte,
+        cor: value.corCompartilhada === false ? line.cor ?? normalized.cor : normalized.cor,
+        posicao: line.posicao,
+      }, allowedFonts);
+      if (!style) return null;
+      lines.push({ id: line.id, ...style, texto: rows[i] });
+    }
+    normalized.linhas = lines;
+    normalized.fonteCompartilhada = value.fonteCompartilhada !== false;
+    normalized.corCompartilhada = value.corCompartilhada !== false;
+  }
+  return normalized;
 }
 
 export function legacyTextCustomization(
@@ -163,7 +227,13 @@ export function legacyTextCustomization(
 }
 
 export function textCustomizationFingerprint(value: TextCustomization): string {
-  return `${value.texto}|${value.fonte}|${value.posicao.x.toFixed(1)}|${value.posicao.y.toFixed(1)}`;
+  const style = (line: TextCustomization | TextCustomizationLine) => [line.texto, line.fonte, line.posicao.x.toFixed(1), line.posicao.y.toFixed(1), line.tamanhoFonte ?? 'auto', line.cor ?? '#ffffff'];
+  return JSON.stringify([style(value), value.fonteCompartilhada ?? true, value.corCompartilhada ?? true, value.linhas?.map(style)]);
+}
+
+export function textCustomizationFontLabel(value: TextCustomization, fonts: PersonalizationFont[] = []): string {
+  if (value.fonteCompartilhada === false && value.linhas?.some(line => line.fonte && line.fonte !== value.fonte)) return 'Fontes por linha';
+  return textFontLabel(value.fonte, fonts, value.fonteNome);
 }
 
 export function textFontLabel(

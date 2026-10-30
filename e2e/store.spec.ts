@@ -16,6 +16,9 @@ test('filtra o catálogo e conclui checkout de retirada no backend simulado', as
 
   await page.getByLabel('Buscar produtos').fill('');
   await products.getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
 
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await expect(cart).toBeVisible();
@@ -45,6 +48,9 @@ test('filtra o catálogo e conclui checkout de retirada no backend simulado', as
 
 test('calcula frete e preenche o endereço retornado pela API simulada', async ({ page }) => {
   await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
 
   await cart.getByLabel('Calcular frete').fill('14400000');
@@ -61,6 +67,9 @@ test('calcula frete e preenche o endereço retornado pela API simulada', async (
 
 test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async ({ page }) => {
   await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await cart.getByLabel('Calcular frete').fill('14400000');
   await cart.getByRole('button', { name: 'OK', exact: true }).click();
@@ -79,6 +88,9 @@ test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async (
 
 test('alteração de quantidade invalida a cotação', async ({ page }) => {
   await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await cart.getByLabel('Calcular frete').fill('14400000');
   await cart.getByRole('button', { name: 'OK', exact: true }).click();
@@ -97,6 +109,9 @@ test('resposta atrasada de outro CEP não restaura uma cotação antiga', async 
     await route.fulfill({ response }).catch(() => {});
   });
   await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await cart.getByLabel('Calcular frete').fill('14400000');
   const pending = page.waitForRequest(r => r.url().endsWith('/api/shipping-quote'));
@@ -119,7 +134,7 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
   await drawer.getByLabel('Nome para personalização').fill('Receitas da Família');
   await drawer.getByRole('button', { name: 'Georgia' }).click();
 
-  const preview = drawer.getByRole('button', { name: /Prévia da posição do texto/ });
+  const preview = drawer.getByRole('group', { name: /Prévia da posição do texto/ });
   const bounds = await preview.boundingBox();
   expect(bounds).not.toBeNull();
   await page.mouse.click(bounds!.x + bounds!.width * 0.75, bounds!.y + bounds!.height * 0.25);
@@ -133,6 +148,9 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
   await expect(productCard.getByText(/Georgia/)).toBeVisible();
   await expect(productCard.getByText('Modelo composto pronto')).toBeVisible();
   await productCard.getByRole('button', { name: 'Adicionar ao Carrinho' }).click();
+  await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+  await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
 
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await expect(cart.getByText('Texto: Receitas da Família')).toBeVisible();
@@ -152,13 +170,16 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
     modeloPath: expect.stringMatching(/^artworks\/e2e-user\/pending\/[a-f0-9]{32}[.]png$/),
     modeloNome: 'Livro-de-Receitas-Personalizado-modelo.png',
     textoPersonalizado: 'Receitas da Família',
-    personalizacaoTexto: {
+    personalizacaoTexto: expect.objectContaining({
       texto: 'Receitas da Família',
       fonte: 'georgia',
       fonteNome: 'Georgia',
       fonteCssFamily: 'Georgia, serif',
+      tamanhoFonte: 7.2,
+      cor: '#ffffff',
       posicao: { x: 75, y: 25 },
-    },
+      linhas: [expect.objectContaining({ texto: 'Receitas da Família', posicao: { x: 75, y: 25 } })],
+    }),
   }));
 });
 
@@ -173,6 +194,9 @@ test.describe('loja em viewport móvel', () => {
     expect(overflow.document).toBeLessThanOrEqual(overflow.viewport + 1);
 
     await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+    await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
+    await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
+    await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
     const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
     await expect(cart).toBeVisible();
     const box = await cart.boundingBox();

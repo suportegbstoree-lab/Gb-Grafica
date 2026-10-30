@@ -1,3 +1,25 @@
+## 2026-10-30 — Controle independente das linhas
+
+- Cada linha de texto tem posição, tamanho, cor e fonte próprios, com seleção na lista ou na prévia.
+- Fonte e cor podem ser compartilhadas, mantendo tamanho e posição individuais; arraste por mouse/toque, setas e campos numéricos.
+- Estilos e identidade das linhas são preservados ao editar, inserir ou remover texto, e validados no checkout.
+- Prévia e modelo final usam a mesma composição; seleção e contornos de edição ficam fora do arquivo gerado.
+- Exportação JPG/PDF disponível somente no visualizador de Pedidos do painel administrativo; cliente mantém a prévia.
+
+## 2026-10-30 — Cards, contracapa e carrinho
+
+- Conteúdo dos produtos contido no card, com colunas adaptadas à largura do próprio componente, textos longos e ações com quebra de linha.
+- Personalização ocupa toda a largura disponível; preço, compartilhamento e botão de compra permanecem dentro dos limites.
+- Contracapa com botão acessível em português para selecionar ou trocar imagem, mantendo validação e prévia.
+- Adicionar produtos mostra “Adicionado ao carrinho.” e atualiza o contador; a abertura acontece pelo botão do carrinho.
+
+## 2026-10-30 — Editor de personalização
+
+- Editor em modal com texto em várias linhas, tamanho e cor selecionáveis e prévia em canvas.
+- Prévia e exportação compartilham composição; Enter e linhas vazias são preservados.
+- Fontes TTF e OTF, além de WOFF2: validação de conteúdo no navegador, caminhos, MIME, relay e regras do Storage.
+- Gerenciamento de fontes em modal, mantendo a gravação das configurações e os pedidos antigos.
+
 # Changelog
 
 ## 2026-10-30 — Destaques, contatos e acesso temporário

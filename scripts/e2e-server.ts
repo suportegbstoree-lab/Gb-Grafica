@@ -33,6 +33,18 @@ async function startE2EServer() {
     } catch (error) { next(error); }
   });
 
+  app.get('/__e2e/cover.png', async (_request, response, next) => {
+    try { response.type('image/png').send(await readFile(new URL('../e2e/fixtures/editor-cover.png', import.meta.url))); }
+    catch (error) { next(error); }
+  });
+
+  app.get('/__e2e/fonts/:file', async (request, response, next) => {
+    if (!['editor-font.ttf', 'editor-font.otf'].includes(request.params.file)) { response.sendStatus(404); return; }
+    try {
+      response.type(request.params.file.endsWith('.ttf') ? 'font/ttf' : 'font/otf').send(await readFile(new URL(`../e2e/fixtures/${request.params.file}`, import.meta.url)));
+    } catch (error) { next(error); }
+  });
+
   app.post('/api/shipping-quote', (request, response) => {
     if (!/^\d{8}$/.test(String(request.body?.cep || ''))) {
       response.status(400).json({ error: 'Informe um CEP válido.' });

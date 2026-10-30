@@ -1,3 +1,5 @@
+import { validateAdminFontFile } from '../services/adminFontValidation';
+import { adminFontFormat } from '../lib/adminAsset';
 import type { PersonalizationDocument } from '../services/personalizationExport';
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
@@ -57,7 +59,7 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
     nome: 'Livro de Receitas Personalizado',
     desc: 'Livro de receitas com capa dura e nome personalizado.',
     categoria: 'Livros de Receita',
-    imagem: FIXTURE_IMAGE,
+    imagem: '/__e2e/cover.png',
     imagens: [],
     preco_base: '39,90',
     atributos: [],
@@ -226,10 +228,11 @@ function AdminFixture() {
       };
     },
     async uploadFont(fontId, file) {
+      const format = adminFontFormat(await validateAdminFontFile(file));
       const uploadId = crypto.randomUUID().replace(/-/g, '');
       return {
-        path: `catalog/fonts/${fontId}/${uploadId}.woff2`,
-        url: `https://example.com/fonts/${fontId}/${uploadId}.woff2`,
+        path: `catalog/fonts/${fontId}/${uploadId}.${format}`,
+        url: `/__e2e/fonts/editor-font.${format}`,
         name: file.name,
       };
     },

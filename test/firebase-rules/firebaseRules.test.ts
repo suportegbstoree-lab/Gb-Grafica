@@ -695,3 +695,22 @@ test('Storage: caminhos fora das áreas autorizadas são bloqueados', async () =
 	));
 	await assertFails(reference.delete());
 });
+
+test('Storage: TTF e OTF mantêm autorização, MIME correspondente e arquivos imutáveis', async () => {
+  const admin = authenticatedContext('admin-claim', { admin: true }).storage();
+  const user = authenticatedContext('alice').storage();
+  const publicStorage = environment().unauthenticatedContext().storage();
+  for (const [ext, mime] of [['ttf', 'font/ttf'], ['otf', 'font/otf']]) {
+    const path = `catalog/fonts/fixture/${'ab'.repeat(16)}.${ext}`;
+    const metadata = catalogImageMetadata('admin-claim', mime);
+    await assertUploadFails(user.ref(path).put(new Uint8Array([1]), metadata));
+    await assertUploadFails(publicStorage.ref(path).put(new Uint8Array([1]), metadata));
+    await assertUploadFails(admin.ref(path).put(new Uint8Array([1]), catalogImageMetadata('admin-claim', 'font/woff2')));
+    await assertUploadFails(admin.ref(path).put(new Uint8Array([1]), catalogImageMetadata('alice', mime)));
+    await assertUploadFails(admin.ref(path).put(new Uint8Array(MAX_ADMIN_FONT_BYTES + 1), metadata));
+    await assertUploadSucceeds(admin.ref(path).put(new Uint8Array([1]), metadata));
+    await assertSucceeds(publicStorage.ref(path).getMetadata());
+    await assertUploadFails(admin.ref(path).put(new Uint8Array([2]), metadata));
+    await assertSucceeds(admin.ref(path).delete());
+  }
+});

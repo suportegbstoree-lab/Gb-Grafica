@@ -138,3 +138,17 @@ test('fonte WOFF2 usa namespace próprio e assinatura obrigatória', async () =>
     (id, data) => sendCatalogRelayChunk(f.services, 'alice', id, data.offset, data.data, f.fetchMock));
   assert.match(result.path, /^catalog\/fonts\/fonte\/.*[.]woff2$/);
 });
+
+test('relay recebe TTF e OTF sem ampliar o namespace ou aceitar assinatura divergente', async () => {
+  for (const [extension, mime, header] of [['ttf', 'font/ttf', [0,1,0,0]], ['otf', 'font/otf', [79,84,84,79]]] as const) {
+    const f = fixture(); const bytes = Buffer.alloc(32); Buffer.from(header).copy(bytes);
+    const result = await runCatalogRelayUpload(new Blob([bytes], { type: mime }), `fonte.${extension}`, 'fonts', 'fonte', 'demo.example',
+      data => startCatalogRelay(f.services, 'alice', data),
+      (id, data) => sendCatalogRelayChunk(f.services, 'alice', id, data.offset, data.data, f.fetchMock));
+    assert.ok(result.path.endsWith(`.${extension}`)); assert.deepEqual([...f.sessions.values()][0].bytes, bytes);
+    await assert.rejects(startCatalogRelay(f.services, 'alice', { ...input, contentType: mime }), (e: CatalogRelayError) => e.status === 422);
+    const start = await startCatalogRelay(f.services, 'alice', { ...input, kind: 'fonts', contentType: mime });
+    await assert.rejects(sendCatalogRelayChunk(f.services, 'alice', start.uploadId, 0, png().toString('base64'), f.fetchMock), (e: CatalogRelayError) => e.status === 422);
+    assert.equal(f.getUploads(), 1);
+  }
+});

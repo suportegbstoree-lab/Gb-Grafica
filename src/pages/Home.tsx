@@ -34,7 +34,7 @@ import {
   productRequiresArtwork,
   productRequiresText,
   textCustomizationFingerprint,
-  textFontLabel,
+  textCustomizationFontLabel,
   type TextCustomization,
 } from '../lib/textCustomization';
 import { formattedDiscountPercentage, promotionalPrice } from '../lib/promotions';
@@ -352,7 +352,7 @@ export default function Home({
       }
       return [...prev, item];
     });
-    setIsCartOpen(true);
+    setNotice({ type: 'success', message: 'Adicionado ao carrinho.' });
   };
 
   const updateQuantity = (id: string, delta: number) => {
@@ -784,7 +784,7 @@ export default function Home({
             <span className="text-[11px] font-black uppercase tracking-widest text-[#d14d8c]">Meus Pedidos</span>
           </button>
 
-          <button type="button" onClick={() => setIsCartOpen(true)} className="flex items-center gap-3 group relative">
+          <button type="button" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrinho" aria-haspopup="dialog" aria-expanded={isCartOpen} className="flex items-center gap-3 group relative">
             <div className="w-16 h-16 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
               <ShoppingCart size={28} className="text-[#5dc1c1]" />
             </div>
@@ -1140,9 +1140,9 @@ export default function Home({
                         </div>
                         {item.personalizacaoTexto ? (
                           <div className="mt-2 rounded-lg border border-pink-100 bg-pink-50/70 px-3 py-2 text-[10px] text-gray-600">
-                            <div className="font-bold text-pink-600">Texto: {item.personalizacaoTexto.texto}</div>
+                            <div className="whitespace-pre-wrap break-words font-bold text-pink-600">Texto: {item.personalizacaoTexto.texto}</div>
                             <div className="mt-1">
-                              Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)}
+                              Fonte: {textCustomizationFontLabel(item.personalizacaoTexto, config.fontes_personalizacao)}
                             </div>
                             {item.modeloNome && <div className="mt-1 font-bold text-green-700">Modelo composto: {item.modeloNome}</div>}
                           </div>
@@ -1511,8 +1511,8 @@ export default function Home({
                             <span className="text-gray-900 font-bold">{formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}</span>
                           </div>
                           {item.personalizacaoTexto ? (
-                            <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
-                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textFontLabel(item.personalizacaoTexto.fonte, config.fontes_personalizacao, item.personalizacaoTexto.fonteNome)}
+                            <div className="whitespace-pre-wrap break-words text-[9px] text-pink-500 font-black uppercase tracking-wider">
+                              Texto: {item.personalizacaoTexto.texto} · Fonte: {textCustomizationFontLabel(item.personalizacaoTexto, config.fontes_personalizacao)}
                             </div>
                           ) : item.textoPersonalizado ? (
                             <div className="text-[9px] text-pink-500 font-black uppercase tracking-wider">
@@ -1958,9 +1958,10 @@ function ProductCard({
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      className="bg-white/60 backdrop-blur-sm border border-gray-100 rounded-[2.5rem] p-8 flex flex-col lg:flex-row gap-10 hover:border-pink-200 transition-all group shadow-sm hover:shadow-md"
+      className="@container/product min-w-0 max-w-full overflow-hidden [overflow-wrap:anywhere] bg-white/60 backdrop-blur-sm border border-gray-100 rounded-[2.5rem] p-5 sm:p-8 hover:border-pink-200 transition-all group shadow-sm hover:shadow-md"
     >
-      <div className="w-full lg:w-80 flex-shrink-0 flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-6 @3xl/product:flex-row @3xl/product:gap-10">
+      <div className="min-w-0 max-w-full w-full @3xl/product:w-80 flex-shrink-0 flex flex-col gap-4">
         <div className="aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 relative group-hover:shadow-[0_0_30px_rgba(244,114,182,0.1)] transition-all">
           <img
             key={activeImage}
@@ -2003,19 +2004,19 @@ function ProductCard({
         )}
       </div>
 
-      <div className="flex-grow flex flex-col">
-        <div className="flex justify-between items-start mb-4">
-          <h3 className="text-2xl font-black text-gray-900 tracking-tight">{product.nome}</h3>
-          <div className="bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Novo</div>
+      <div className="min-w-0 flex-1 flex flex-col">
+        <div className="flex min-w-0 justify-between items-start gap-3 mb-4">
+          <h3 className="min-w-0 text-2xl font-black text-gray-900 tracking-tight">{product.nome}</h3>
+          <div className="shrink-0 bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Novo</div>
         </div>
         <p className="text-sm text-gray-500 mb-8 leading-relaxed max-w-2xl font-medium">{product.desc}</p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 mb-10">
+        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-6 mb-10">
           {product.atributos.map((attr, idx) => {
             const isEnabled = idx === 0 || product.atributos.slice(0, idx).every(a => selections[a.nome]);
 
             return (
-              <div key={attr.nome} className={cn("flex flex-col transition-all", !isEnabled && "opacity-20 pointer-events-none grayscale")}>
+              <div key={attr.nome} className={cn("min-w-0 flex flex-col transition-all", !isEnabled && "opacity-20 pointer-events-none grayscale")}>
                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{attr.nome}</span>
                 <div className="flex flex-col gap-2">
                   {attr.opcoes.map(option => (
@@ -2040,7 +2041,7 @@ function ProductCard({
           })}
 
           {/* Personalization Section */}
-          <div className="flex flex-col gap-8">
+          <div className="col-span-full flex min-w-0 flex-col gap-6">
             {requiresArtwork && (
               <div className="flex flex-col">
                 <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">Sua arte</span>
@@ -2085,9 +2086,9 @@ function ProductCard({
                 <span className="mb-4 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{product.labelTexto || 'Personalização'}</span>
                 {textCustomization ? (
                   <div className="rounded-xl border border-pink-200 bg-pink-50/70 p-4">
-                    <div className="break-words text-sm font-bold text-gray-900">{textCustomization.texto}</div>
+                    <div className="whitespace-pre-wrap break-words text-sm font-bold text-gray-900">{textCustomization.texto}</div>
                     <div className="mt-2 text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                      {textFontLabel(textCustomization.fonte, fonts, textCustomization.fonteNome)}
+                      {textCustomizationFontLabel(textCustomization, fonts)}
                     </div>
                     {uploadedModel && <div className="mt-2 text-[9px] font-black uppercase tracking-wider text-green-700">Modelo composto pronto</div>}
                     <button
@@ -2118,21 +2119,21 @@ function ProductCard({
         </div>
 
         <div className="mt-auto pt-8 border-t border-gray-100 flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row justify-between items-end sm:items-center gap-6">
-            <div className="flex items-baseline gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-4">
+            <div className="flex min-w-0 max-w-full flex-wrap items-baseline gap-3">
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Preço</span>
-              <div className="text-3xl font-black text-gray-900">
+              <div className="min-w-0 text-3xl font-black text-gray-900">
                 {price && priceCents !== null && priceCents > 0 ? (
                   <div>
                     {discount && (
-                      <div className="mb-1 flex items-center gap-2 text-xs">
+                      <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
                         <span className="font-semibold text-gray-400 line-through">{formatMoney(discount.originalCents / 100)}</span>
                         <span className="rounded-full bg-pink-100 px-2 py-1 text-[9px] font-black uppercase tracking-wider text-pink-600">
                           {formattedDiscountPercentage(discount.percentage)}% OFF
                         </span>
                       </div>
                     )}
-                    <span className="flex items-center gap-1">
+                    <span className="flex flex-wrap items-center gap-1">
                       <span className="text-sm font-normal text-gray-400">R$</span> {formatMoney(price).replace(/^R\$\s*/, '')}
                     </span>
                   </div>
@@ -2144,7 +2145,7 @@ function ProductCard({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 bg-gray-50/50 p-1.5 rounded-2xl border border-gray-100">
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 bg-gray-50/50 p-1.5 rounded-2xl border border-gray-100">
               <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest px-2">Compartilhar</span>
               <button
                 type="button"
@@ -2208,16 +2209,17 @@ function ProductCard({
             onClick={handleAdd}
             disabled={!isFullySelected || priceCents === null || priceCents <= 0 || !customizationReady || isUploadingArtwork}
             className={cn(
-              "w-full flex items-center justify-center gap-3 px-10 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
+              "w-full min-w-0 max-w-full flex items-center justify-center gap-3 px-4 sm:px-6 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
               isFullySelected && priceCents !== null && priceCents > 0 && customizationReady && !isUploadingArtwork
                 ? "bg-gray-900 text-white hover:bg-[#d14d8c] shadow-xl hover:shadow-pink-100 active:scale-95 cursor-pointer"
                 : "bg-gray-100 text-gray-400 cursor-not-allowed opacity-60"
             )}
           >
-            <ShoppingCart size={18} />
-            Adicionar ao Carrinho
+            <ShoppingCart size={18} className="shrink-0" />
+            <span className="min-w-0">Adicionar ao Carrinho</span>
           </button>
         </div>
+      </div>
       </div>
     </motion.article>
     {isTextDrawerOpen && (

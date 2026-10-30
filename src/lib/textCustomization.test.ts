@@ -66,3 +66,19 @@ test('fingerprint diferencia fonte e posição do mesmo texto', () => {
     textCustomizationFingerprint({ ...base, posicao: { x: 60, y: 50 } }),
   );
 });
+
+test('preserva novas linhas, linhas vazias, tamanho e cor no texto normalizado', () => {
+  const value = normalizeTextCustomization({ texto: '  Linha um  \r\n\r\n Linha   dois ', fonte: 'arial', posicao: { x: 50, y: 50 }, tamanhoFonte: 8.3, cor: '#00AAFF' }, fonts);
+  assert.equal(value?.texto, 'Linha um\n\nLinha dois');
+  assert.equal(value?.tamanhoFonte, 8.3); assert.equal(value?.cor, '#00aaff');
+});
+
+test('rejeita estilos manipulados e excesso de linhas; estilos distintos não mesclam o carrinho', () => {
+  const base = { texto: 'Nome', fonte: 'arial', posicao: { x: 50, y: 50 } };
+  for (const invalid of [{ cor: 'red;display:none' }, { cor: '#fff' }, { tamanhoFonte: NaN }, { tamanhoFonte: 0 }, { tamanhoFonte: 21 }, { texto: Array(9).fill('A').join('\n') }]) {
+    assert.equal(normalizeTextCustomization({ ...base, ...invalid }, fonts), null);
+  }
+  assert.notEqual(textCustomizationFingerprint(base), textCustomizationFingerprint({ ...base, cor: '#00ff00' }));
+  assert.notEqual(textCustomizationFingerprint(base), textCustomizationFingerprint({ ...base, tamanhoFonte: 5 }));
+  assert.notEqual(textCustomizationFingerprint({ ...base, texto: 'A\nB' }), textCustomizationFingerprint({ ...base, texto: 'A B' }));
+});

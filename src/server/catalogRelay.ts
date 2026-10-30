@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { FieldValue } from 'firebase-admin/firestore';
-import { adminFontPath, adminImagePath, isAdminFontPath, isAdminImagePath, isAllowedAdminFont, matchesWoff2Signature } from '../lib/adminAsset.js';
+import { adminFontPath, adminImagePath, isAdminFontPath, isAdminImagePath, isAllowedAdminFont, matchesAdminFontSignature, adminFontFormat } from '../lib/adminAsset.js';
 import { catalogImageExtension, isAllowedCatalogImage, isCatalogImagePath, isSafeCatalogProductId, matchesCatalogImageSignature, sanitizeCatalogImageName } from '../lib/catalogImage.js';
 import type { getAdminServices } from './firebaseAdmin.js';
 
 type Services = ReturnType<typeof getAdminServices>;
 type Kind = 'products' | 'categories' | 'site' | 'promotions' | 'fonts';
-function validAsset(mime: unknown, size: unknown): boolean { return typeof mime === 'string' && typeof size === 'number' && Number.isSafeInteger(size) && (isAllowedCatalogImage(mime, size) || (mime === 'font/woff2' && isAllowedAdminFont(mime, size))); }
+function validAsset(mime: unknown, size: unknown): boolean { return typeof mime === 'string' && typeof size === 'number' && Number.isSafeInteger(size) && (isAllowedCatalogImage(mime, size) || (adminFontFormat(mime) !== null && isAllowedAdminFont(mime, size))); }
 function validPath(path: unknown): path is string { return typeof path === 'string' && (isCatalogImagePath(path) || isAdminImagePath(path) || isAdminFontPath(path)); }
 const CHUNK_BYTES = 2 * 1024 * 1024;
 const WINDOW_MS = 60 * 60_000;
@@ -51,7 +51,7 @@ export async function startCatalogRelay(
   const { size, contentType, kind } = input;
   if (!userId || userId.length > 128 || /[/\\\x00-\x1f\x7f]/.test(userId) ||
       !validAsset(contentType, size) || !['products', 'categories', 'site', 'promotions', 'fonts'].includes(String(kind)) ||
-      (kind === 'fonts' ? contentType !== 'font/woff2' : !isAllowedCatalogImage(contentType as string, size as number)) ||
+      (kind === 'fonts' ? !adminFontFormat(contentType as string) : !isAllowedCatalogImage(contentType as string, size as number)) ||
       typeof input.ownerId !== 'string' || !isSafeCatalogProductId(input.ownerId) ||
       typeof input.name !== 'string') {
     return error(422, 'CATALOG_UPLOAD_INVALID', 'Arquivo inválido para envio.');
@@ -59,12 +59,12 @@ export async function startCatalogRelay(
   const mime = contentType as string;
   const fileSize = size as number;
   const uploadKind = kind as Kind;
-  const extension = mime === 'font/woff2' ? 'woff2' : catalogImageExtension(mime);
+  const extension = adminFontFormat(mime) || catalogImageExtension(mime);
   if (!extension) return error(422, 'CATALOG_UPLOAD_INVALID', 'Formato de arquivo não permitido.');
   const name = sanitizeCatalogImageName(input.name);
   const sessionId = randomUUID().replace(/-/g, '');
   const fileId = randomUUID().replace(/-/g, '');
-  const path = uploadKind === 'products' ? `catalog/products/${input.ownerId}/${fileId}.${extension}` : uploadKind === 'fonts' ? adminFontPath(input.ownerId, fileId)! : adminImagePath(uploadKind, input.ownerId, fileId, mime)!;
+  const path = uploadKind === 'products' ? `catalog/products/${input.ownerId}/${fileId}.${extension}` : uploadKind === 'fonts' ? adminFontPath(input.ownerId, fileId, mime)! : adminImagePath(uploadKind, input.ownerId, fileId, mime)!;
   if (!validPath(path)) return error(422, 'CATALOG_UPLOAD_INVALID', 'Destino inválido.');
   const downloadToken = randomUUID();
   const now = Date.now();
@@ -152,7 +152,7 @@ export async function sendCatalogRelayChunk(
     if ((offset as number) >= data.size || bytes.length !== Math.min(CHUNK_BYTES, data.size - (offset as number))) {
       return error(422, 'CATALOG_UPLOAD_INVALID', 'Parte do arquivo inválida.');
     }
-    if (offset === 0 && !(data.contentType === 'font/woff2' ? matchesWoff2Signature(bytes) : matchesCatalogImageSignature(data.contentType, bytes))) return error(422, 'CATALOG_UPLOAD_INVALID', 'Conteúdo do arquivo inválido.');
+    if (offset === 0 && !(adminFontFormat(data.contentType) ? matchesAdminFontSignature(data.contentType, bytes) : matchesCatalogImageSignature(data.contentType, bytes))) return error(422, 'CATALOG_UPLOAD_INVALID', 'Conteúdo do arquivo inválido.');
     transaction.update(ref, { lease, leaseUntil: Date.now() + LEASE_MS });
     return { done: false, size: data.size as number, path: data.path as string, name: data.name as string,
       contentType: data.contentType as string, kind: data.kind as Kind, sessionUrl: data.sessionUrl as string } as const;

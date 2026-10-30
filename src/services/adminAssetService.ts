@@ -1,3 +1,4 @@
+import { validateAdminFontFile } from './adminFontValidation';
 import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from '../firebase';
@@ -7,12 +8,9 @@ import {
   adminImagePath,
   isAdminFontPath,
   isAdminImagePath,
-  isAllowedAdminFont,
   isAllowedAdminImage,
   isSafeAdminAssetId,
   matchesAdminImageSignature,
-  matchesWoff2Signature,
-  MAX_ADMIN_FONT_BYTES,
   sanitizeAdminAssetName,
   type AdminImageScope,
 } from '../lib/adminAsset';
@@ -71,20 +69,13 @@ export async function uploadAdminFont(fontId: string, file: File): Promise<Uploa
   const user = auth.currentUser;
   if (!user) throw new Error('Sua sessão expirou. Faça login novamente.');
   if (!isSafeAdminAssetId(fontId)) throw new Error('O identificador da fonte é inválido.');
-  const normalizedContentType = (
-    (file.type === '' || file.type === 'application/octet-stream') && file.name.toLowerCase().endsWith('.woff2')
-  ) ? 'font/woff2' : file.type;
-  if (!isAllowedAdminFont(normalizedContentType, file.size)) {
-    throw new Error(`Envie uma fonte WOFF2 com no máximo ${MAX_ADMIN_FONT_BYTES / 1024 / 1024} MB.`);
-  }
-  const header = new Uint8Array(await file.slice(0, 4).arrayBuffer());
-  if (!matchesWoff2Signature(header)) throw new Error('O arquivo não possui uma assinatura WOFF2 válida.');
-  const path = adminFontPath(fontId, crypto.randomUUID().replace(/-/g, ''));
+  const normalizedContentType = await validateAdminFontFile(file);
+  const path = adminFontPath(fontId, crypto.randomUUID().replace(/-/g, ''), normalizedContentType);
   if (!path) throw new Error('Não foi possível gerar um caminho seguro para a fonte.');
   const originalName = sanitizeAdminAssetName(file.name);
   try {
     const snapshot = await uploadBytes(ref(storage, path), file, {
-      contentType: 'font/woff2',
+      contentType: normalizedContentType,
       cacheControl: 'public,max-age=31536000,immutable',
       customMetadata: { uploadedBy: user.uid, originalName },
     });
