@@ -1,3 +1,4 @@
+import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
@@ -61,6 +62,7 @@ export async function uploadAdminImage(
     });
     return { path, url: await getDownloadURL(snapshot.ref), name: originalName };
   } catch (error) {
+    if (needsCatalogFallback(error)) return uploadCatalogFallback(file, originalName, scope, ownerId, user.uid);
     throw adminAssetError(error);
   }
 }
@@ -88,6 +90,7 @@ export async function uploadAdminFont(fontId: string, file: File): Promise<Uploa
     });
     return { path, url: await getDownloadURL(snapshot.ref), name: originalName };
   } catch (error) {
+    if (needsCatalogFallback(error)) return uploadCatalogFallback(file.slice(0, file.size, normalizedContentType), originalName, 'fonts', fontId, user.uid);
     throw adminAssetError(error);
   }
 }
@@ -102,6 +105,7 @@ export async function removeAdminAsset(path: string): Promise<void> {
       ? String((error as { code?: unknown }).code || '')
       : '';
     if (code === 'storage/object-not-found') return;
+    if (needsCatalogFallback(error)) return deleteCatalogFallback(path);
     throw adminAssetError(error);
   }
 }

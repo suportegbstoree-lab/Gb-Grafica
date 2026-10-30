@@ -1,6 +1,7 @@
+import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../lib/storePresentation';
 import React, { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, Mail, Sparkles, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao, type PersonalizationFont } from '../types';
 import { cn } from '../lib/utils';
@@ -48,6 +49,8 @@ import type { ShippingQuoteResponse } from '../lib/shipping';
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
 interface HomeSlide {
+  productId?: string;
+  subtitle?: string;
   image?: string;
   title?: string;
   link: string;
@@ -204,6 +207,9 @@ export default function Home({
     ? storedShippingInfo : null;
   const shouldReduceMotion = useReducedMotion();
 
+  const contacts = storeContacts(config);
+  const benefits = storeBenefits(config);
+  const primaryContact = contacts.find(contact => contact.type === 'whatsapp') || contacts[0];
   const storeStructuredData = useMemo(() => buildStoreStructuredData(config), [config]);
   usePageMetadata({
     title: 'GB Gráfica | Loja Online Oficial',
@@ -214,8 +220,9 @@ export default function Home({
   useStructuredData('gb-store-structured-data', storeStructuredData);
 
   const slides = useMemo<HomeSlide[]>(() => {
+    const highlighted = featuredProducts(products).map(product => ({ productId: product.id, image: product.imagem, title: product.nome, subtitle: product.desc, link: '' }));
     const availableSlides: HomeSlide[] = [
-      { image: config.banner_principal, title: config.banner_titulo, link: '' },
+      ...(highlighted.length ? highlighted : [{ image: config.banner_principal, title: config.banner_titulo, link: '' }]),
       ...promotions.filter(promotion => promotion.ativa).map(promotion => ({
         image: promotion.imagem,
         title: promotion.titulo,
@@ -228,7 +235,7 @@ export default function Home({
     return availableSlides.length > 0
       ? availableSlides
       : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
-  }, [config.banner_principal, config.banner_titulo, promotions]);
+  }, [config.banner_principal, config.banner_titulo, promotions, products]);
 
   const visibleProducts = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
@@ -624,6 +631,11 @@ export default function Home({
 
   const activeSlide = slides[currentSlide] || slides[0];
   const handleBannerAction = () => {
+    if (activeSlide.productId) {
+      setSearchTerm(''); setActiveCategory(null);
+      window.requestAnimationFrame(() => document.getElementById(`produto-${activeSlide.productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+      return;
+    }
     if (activeSlide.link && isHttpUrl(activeSlide.link)) {
       const target = new URL(activeSlide.link);
       if (target.origin === window.location.origin) window.location.assign(target.href);
@@ -681,8 +693,7 @@ export default function Home({
       {/* Micro Top Bar */}
       <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex flex-wrap justify-between items-center gap-2 text-[11px] text-white relative z-40">
         <div className="flex flex-wrap gap-4 md:gap-8">
-          <a href={`https://wa.me/${whatsappNumber(config.telefone1)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone1}</a>
-          <a href={`https://wa.me/${whatsappNumber(config.telefone2)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-100 transition-colors cursor-pointer font-bold"><Phone size={14} /> {config.telefone2}</a>
+          {contacts.map(contact => <a key={contact.id} href={contactHref(contact)} target={contact.type === 'whatsapp' ? '_blank' : undefined} rel="noopener noreferrer" aria-label={`${contact.label}: ${contact.value}`} className="flex items-center gap-2 break-all font-bold transition-colors hover:text-pink-100">{contact.type === 'email' ? <Mail size={14} /> : <Phone size={14} />} {contact.value}</a>)}
         </div>
         <div className="flex flex-wrap justify-end gap-x-8 gap-y-2 items-center">
           {isAdmin && (
@@ -857,7 +868,7 @@ export default function Home({
             <img
               src={activeSlide.image}
               alt={activeSlide.title || `Destaque ${currentSlide + 1}`}
-              className="w-full h-full object-cover"
+              className={activeSlide.productId ? "h-full w-full bg-gray-50 object-contain opacity-40" : "w-full h-full object-cover"}
               referrerPolicy="no-referrer"
               fetchPriority="high"
               decoding="async"
@@ -881,7 +892,7 @@ export default function Home({
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h1 className="text-5xl md:text-7xl font-black tracking-tighter text-gray-900 leading-none">
+              <h1 className="break-words text-4xl font-black leading-none tracking-tighter text-gray-900 md:text-7xl">
                 {activeSlide.title ? (
                   <>
                     {activeSlide.title.split('<br/>').map((line, i) => (
@@ -909,7 +920,7 @@ export default function Home({
               transition={{ delay: 0.4 }}
               className="text-gray-600 max-w-xl mx-auto text-base md:text-lg font-medium"
             >
-              {config.banner_subtitulo || "Produtos personalizados para eternizar os momentos mais especiais da sua vida."}
+              {activeSlide.subtitle || config.banner_subtitulo || "Produtos personalizados para eternizar os momentos mais especiais da sua vida."}
             </motion.p>
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -917,7 +928,7 @@ export default function Home({
               transition={{ delay: 0.6 }}
             >
               <button type="button" onClick={handleBannerAction} className="bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl shadow-pink-100 hover:scale-105 active:scale-95">
-                {activeSlide.link && isHttpUrl(activeSlide.link) ? 'Ver promoção' : (config.banner_botao || 'Ver Produtos')}
+                {activeSlide.productId ? 'Ver produto' : activeSlide.link && isHttpUrl(activeSlide.link) ? 'Ver promoção' : (config.banner_botao || 'Ver Produtos')}
               </button>
             </motion.div>
           </div>
@@ -953,11 +964,9 @@ export default function Home({
       </section>
 
       {/* Benefits */}
-      <section className="bg-white/40 backdrop-blur-sm px-4 md:px-12 py-12 flex flex-wrap justify-center gap-12 md:gap-24 border-b border-gray-100 relative z-10">
-        <BenefitItem icon="🚚" title={config.beneficio1_titulo} desc={config.beneficio1_desc} />
-        <BenefitItem icon="💳" title={config.beneficio2_titulo} desc={config.beneficio2_desc} />
-        <BenefitItem icon="✨" title={config.beneficio3_titulo} desc={config.beneficio3_desc} />
-      </section>
+      {benefits.length > 0 && <section aria-label="Benefícios da loja" className="relative z-10 flex flex-wrap justify-center gap-12 border-b border-gray-100 bg-white/40 px-4 py-12 backdrop-blur-sm md:gap-24 md:px-12">
+        {benefits.map(benefit => <BenefitItem key={benefit.id} icon={<Sparkles size={28} />} title={benefit.title} desc={benefit.description} />)}
+      </section>}
 
       {/* Main Content */}
       <main id="produtos" className="max-w-7xl mx-auto px-4 md:px-12 py-16 flex flex-col md:flex-row gap-12">
@@ -1054,8 +1063,7 @@ export default function Home({
           <div>
             <h4 className="text-gray-900 font-black mb-6 uppercase text-xs tracking-widest">Atendimento</h4>
             <ul className="space-y-4 text-gray-500 text-sm font-medium">
-              <li><a href={`https://wa.me/${whatsappNumber(config.telefone1)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={14} /> {config.telefone1}</a></li>
-              <li><a href={`https://wa.me/${whatsappNumber(config.telefone2)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:text-pink-500 transition-colors cursor-pointer"><Phone size={14} /> {config.telefone2}</a></li>
+              {contacts.map(contact => <li key={contact.id}><a href={contactHref(contact)} target={contact.type === 'whatsapp' ? '_blank' : undefined} rel="noopener noreferrer" className="flex items-center gap-2 break-all transition-colors hover:text-pink-500">{contact.type === 'email' ? <Mail size={14} /> : <Phone size={14} />} {contact.label}: {contact.value}</a></li>)}
               <li><button type="button" onClick={() => setIsHowToBuyOpen(true)} className="hover:text-pink-500 transition-colors cursor-pointer">Como Comprar</button></li>
               <li className="hover:text-pink-500 transition-colors cursor-pointer">Segunda a Sexta: 08h às 18h</li>
             </ul>
@@ -1087,7 +1095,7 @@ export default function Home({
             <p>{[config.razao_social, config.documento_fiscal].filter(Boolean).join(' · ')}</p>
           )}
           {config.endereco_comercial && <p>{config.endereco_comercial}</p>}
-          {config.email_atendimento && (
+          {config.contatos === undefined && config.email_atendimento && (
             <p><a href={`mailto:${config.email_atendimento}`} className="hover:text-pink-500 transition-colors">{config.email_atendimento}</a></p>
           )}
           <p className="opacity-30">Build: 20260407-0307</p>
@@ -1600,19 +1608,19 @@ export default function Home({
       {modelDocument && <PersonalizationViewer document={modelDocument} onClose={() => setModelDocument(null)} />}
 
       {/* Floating Chat Button */}
-      <motion.button
+      {primaryContact && <motion.button
         type="button"
-        aria-label="Falar com a GB Gráfica pelo WhatsApp"
+        aria-label={`Falar com a GB Gráfica: ${primaryContact.label}`}
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
-        onClick={() => openExternal(`https://wa.me/${whatsappNumber(config.telefone1)}`)}
+        onClick={() => { const href = contactHref(primaryContact); if (primaryContact.type === 'whatsapp') openExternal(href); else window.location.assign(href); }}
         className="fixed bottom-8 right-8 z-40 bg-[#25D366] text-white p-4 rounded-full shadow-2xl flex items-center justify-center group"
       >
-        <Phone size={24} />
+        {primaryContact.type === 'email' ? <Mail size={24} /> : <Phone size={24} />}
         <span className="max-w-0 overflow-hidden group-hover:max-w-xs group-hover:ml-2 transition-all duration-300 font-bold text-sm whitespace-nowrap">
-          Falar no WhatsApp
+          {primaryContact.label}
         </span>
-      </motion.button>
+      </motion.button>}
     </div>
   );
 }
@@ -1695,7 +1703,7 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   );
 }
 
-function BenefitItem({ icon, title, desc }: { icon: string; title: string; desc: string }) {
+function BenefitItem({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string; key?: string }) {
   return (
     <div className="flex flex-col items-center text-center group">
       <div className="text-3xl mb-4 transform group-hover:scale-125 transition-transform duration-300 drop-shadow-[0_0_15px_rgba(244,114,182,0.3)]">{icon}</div>

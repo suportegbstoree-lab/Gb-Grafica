@@ -1,3 +1,4 @@
+import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
@@ -64,6 +65,7 @@ export async function uploadCatalogImage(productId: string, file: File): Promise
     const url = await getDownloadURL(snapshot.ref);
     return { path, url, name: originalName };
   } catch (error) {
+    if (needsCatalogFallback(error)) return uploadCatalogFallback(file, originalName, 'products', productId, user.uid);
     throw catalogStorageError(error);
   }
 }
@@ -79,6 +81,7 @@ export async function removeCatalogImage(path: string): Promise<void> {
       ? String((error as { code?: unknown }).code || '')
       : '';
     if (code === 'storage/object-not-found') return;
+    if (needsCatalogFallback(error)) return deleteCatalogFallback(path);
     throw catalogStorageError(error);
   }
 }

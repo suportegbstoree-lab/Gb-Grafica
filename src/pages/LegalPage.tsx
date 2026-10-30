@@ -1,3 +1,4 @@
+import { storeContacts } from '../lib/storePresentation';
 import { useEffect, type ReactNode } from 'react';
 import { AlertTriangle, ArrowLeft, FileText, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -61,7 +62,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
   const providerName = valueOrPending(config.razao_social);
   const taxId = valueOrPending(config.documento_fiscal);
   const address = valueOrPending(config.endereco_comercial);
-  const serviceEmail = valueOrPending(config.email_atendimento);
+  const serviceEmail = valueOrPending(storeContacts(config).find(contact => contact.type === 'email')?.value || config.email_atendimento);
   const privacyEmail = valueOrPending(config.email_privacidade || config.email_atendimento);
   const productionDeadline = valueOrPending(config.prazo_producao);
 
@@ -75,7 +76,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
         <dt className="font-bold text-gray-900">Endereço</dt><dd>{address}</dd>
         <dt className="font-bold text-gray-900">Atendimento</dt><dd>{serviceEmail}</dd>
         <dt className="font-bold text-gray-900">Privacidade e LGPD</dt><dd>{privacyEmail}</dd>
-        <dt className="font-bold text-gray-900">Telefones</dt><dd>{config.telefone1} / {config.telefone2}</dd>
+        <dt className="font-bold text-gray-900">Telefones</dt><dd>{storeContacts(config).filter(contact => contact.type !== 'email').map(contact => contact.value).join(' / ') || 'Não informado'}</dd>
       </dl>
     ),
   };

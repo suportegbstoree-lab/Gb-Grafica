@@ -3,7 +3,7 @@ import {
   isAllowedCatalogImage,
   matchesCatalogImageSignature,
   sanitizeCatalogImageName,
-} from './catalogImage';
+} from './catalogImage.js';
 
 export type AdminImageScope = 'categories' | 'site' | 'promotions';
 export const MAX_ADMIN_FONT_BYTES = 3 * 1024 * 1024;

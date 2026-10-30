@@ -1,3 +1,8 @@
+import { CatalogRelayError, startCatalogRelay, sendCatalogRelayChunk } from './catalogRelay.js';
+import { ADMIN_CATALOG_LEASE_COLLECTION, catalogLeaseAllows } from './adminCatalogLease.js';
+import { isAdminImagePath, isAdminFontPath } from '../lib/adminAsset.js';
+import { isCatalogImagePath } from '../lib/catalogImage.js';
+import type { AdminAccessRecord } from '../lib/adminAccess.js';
 import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
@@ -309,6 +314,16 @@ app.use('/api/artwork-uploads', (req, res, next) => {
 			relayJson(req, res, next);
 		}).catch(caught => sendArtworkRelayError(res, caught));
 	})).catch(caught => sendArtworkRelayError(res, caught));
+});
+
+app.use('/api/admin/catalog-uploads', (req, res, next) => {
+  void Promise.resolve(requireAppCheck(req, res, checkError => {
+    if (checkError) return next(checkError);
+    void requireCatalogLeaseUser(req).then(user => {
+      res.locals.catalogLeaseUser = user;
+      relayJson(req, res, next);
+    }).catch(caught => sendCatalogRelayError(res, caught));
+  })).catch(caught => sendCatalogRelayError(res, caught));
 });
 
 app.use(express.json({
@@ -1303,6 +1318,57 @@ function sendArtworkRelayError(res: express.Response, caught: unknown) {
 	// A URI de uma sessão de upload é uma credencial: nunca registrar erros externos brutos aqui.
 	return sendError(res, new HttpError(503, 'Não foi possível processar o envio. Tente novamente.', 'ARTWORK_UPLOAD_UNAVAILABLE'));
 }
+
+async function requireCatalogLeaseUser(req: express.Request) {
+  const user = await requireAdminUser(req);
+  const { db } = getAdminServices();
+  const [lease, access] = await Promise.all([
+    db.collection(ADMIN_CATALOG_LEASE_COLLECTION).doc(user.uid).get(),
+    db.collection('_adminAccess').doc(user.uid).get(),
+  ]);
+  if (!catalogLeaseAllows(lease.data(), (access.data() || null) as AdminAccessRecord | null, user)) {
+    throw new HttpError(403, 'Acesso temporário a arquivos administrativos ausente ou expirado. Confira a autorização ou a configuração do Storage.', 'CATALOG_LEASE_REQUIRED');
+  }
+  return user;
+}
+
+function sendCatalogRelayError(res: express.Response, caught: unknown) {
+  if (caught instanceof HttpError) return sendError(res, caught);
+  if (caught instanceof CatalogRelayError) return sendError(res, new HttpError(caught.status, caught.message, caught.code));
+  // A URI resumível é uma credencial e não deve ser registrada.
+  return sendError(res, new HttpError(503, 'Não foi possível processar o arquivo administrativo.', 'CATALOG_UPLOAD_UNAVAILABLE'));
+}
+
+app.post('/api/admin/catalog-uploads', async (req, res) => {
+  try {
+    const user = res.locals.catalogLeaseUser as Awaited<ReturnType<typeof requireCatalogLeaseUser>> | undefined;
+    if (!user) throw new HttpError(401, 'Sua sessão expirou.');
+    enforceRateLimit(`catalog-upload:${user.uid}`, 20, 60_000);
+    res.status(201).json(await startCatalogRelay(getAdminServices(), user.uid, req.body));
+  } catch (caught) { sendCatalogRelayError(res, caught); }
+});
+
+app.post('/api/admin/catalog-uploads/:uploadId/chunk', async (req, res) => {
+  try {
+    const user = res.locals.catalogLeaseUser as Awaited<ReturnType<typeof requireCatalogLeaseUser>> | undefined;
+    if (!user) throw new HttpError(401, 'Sua sessão expirou.');
+    enforceRateLimit(`catalog-chunk:${user.uid}`, 180, 60_000);
+    res.json(await sendCatalogRelayChunk(getAdminServices(), user.uid, req.params.uploadId, req.body.offset, req.body.data));
+  } catch (caught) { sendCatalogRelayError(res, caught); }
+});
+
+app.post('/api/admin/catalog-assets/delete', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requireCatalogLeaseUser(req);
+    enforceRateLimit(`catalog-delete:${user.uid}`, 40, 60_000);
+    const path = req.body?.path;
+    if (typeof path !== 'string' || !(isCatalogImagePath(path) || isAdminImagePath(path) || isAdminFontPath(path))) {
+      throw new HttpError(422, 'Caminho de arquivo administrativo inválido.');
+    }
+    await getAdminServices().bucket.file(path).delete({ ignoreNotFound: true });
+    res.json({ deleted: true });
+  } catch (caught) { sendCatalogRelayError(res, caught); }
+});
 
 app.post('/api/artwork-uploads', requireArtworkRelay, async (req, res) => {
 	try {

@@ -1,3 +1,4 @@
+import { parseStoreContacts, parseStoreBenefits } from './storePresentation';
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
 import { parseShippingProfile, type ProductShippingProfile } from './shipping';
@@ -190,6 +191,8 @@ export function validateProductDraft(
   return {
     ok: true,
     value: {
+      ...(draft.destaque !== undefined ? { destaque: draft.destaque === true } : {}),
+      ...(Number.isSafeInteger(draft.destaqueOrdem) && draft.destaqueOrdem! >= 0 ? { destaqueOrdem: draft.destaqueOrdem } : {}),
       nome,
       desc,
       categoria,
@@ -286,10 +289,9 @@ export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteCon
     typeof value === 'string' ? value.trim() : value,
   ])) as unknown as SiteConfig;
 
-  if (!normalized.telefone1 || !normalized.telefone2) {
-    return { ok: false, message: 'Informe os dois números de atendimento.' };
-  }
-  if (!isValidBrazilianPhone(normalized.telefone1) || !isValidBrazilianPhone(normalized.telefone2)) {
+  if (normalized.contatos !== undefined && !parseStoreContacts(normalized.contatos)) return { ok: false, message: 'Revise os meios de contato: nome, e-mail ou telefone inválido, ou limite de 12 itens excedido.' };
+  if (normalized.beneficios !== undefined && !parseStoreBenefits(normalized.beneficios)) return { ok: false, message: 'Revise os benefícios: título, descrição ou limite de 12 itens inválido.' };
+  if (normalized.contatos === undefined && [normalized.telefone1, normalized.telefone2].some(value => value && !isValidBrazilianPhone(value))) {
     return { ok: false, message: 'Informe números de atendimento válidos, incluindo o DDD.' };
   }
   if (normalized.logo_url && !isSafeAdminUrl(normalized.logo_url)) {
@@ -308,7 +310,7 @@ export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteCon
   if ((config.fontes_personalizacao || []).length !== fonts.length) {
     return { ok: false, message: 'Revise as fontes de personalização: há nome, identificador, família ou URL inválidos ou duplicados.' };
   }
-  return { ok: true, value: { ...normalized, fontes_personalizacao: fonts } };
+  return { ok: true, value: { ...normalized, ...(normalized.contatos !== undefined ? { contatos: parseStoreContacts(normalized.contatos)! } : {}), ...(normalized.beneficios !== undefined ? { beneficios: parseStoreBenefits(normalized.beneficios)! } : {}), fontes_personalizacao: fonts } };
 }
 
 function canonicalize(value: unknown): unknown {

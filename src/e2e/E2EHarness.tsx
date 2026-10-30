@@ -121,12 +121,15 @@ const FIXTURE_USER = {
   getIdTokenResult: async () => ({ claims: { admin: true } }),
 } as unknown as FirebaseUser;
 
+const FixtureCatalog = React.createContext<{ products: Anuncio[]; setProducts: React.Dispatch<React.SetStateAction<Anuncio[]>>; config: SiteConfig; setConfig: React.Dispatch<React.SetStateAction<SiteConfig>> }>(null!);
+
 async function fixtureOrderModelLoader(_orderId: string, item: CartItem): Promise<PersonalizationDocument> {
   const blob = new Blob([Uint8Array.from(atob(FIXTURE_IMAGE.split(',')[1]), character => character.charCodeAt(0))], { type: 'image/png' });
   return { title: item.nome, pages: [{ label: 'Capa', blob }, ...(item.contracapaPath ? [{ label: 'Contracapa' as const, blob }] : [])] };
 }
 
 function StoreFixture() {
+  const { products, config } = React.useContext(FixtureCatalog);
   const [cart, setCart] = React.useState<CartItem[]>([]);
   const [checkoutRedirect, setCheckoutRedirect] = React.useState('');
   const modelBlobs = React.useRef(new Map<string, Blob>());
@@ -145,8 +148,8 @@ function StoreFixture() {
   return (
     <div data-testid="e2e-store">
       <Home
-        products={FIXTURE_PRODUCTS}
-        config={FIXTURE_CONFIG}
+        products={products}
+        config={config}
         categories={FIXTURE_CATEGORIES}
         promotions={FIXTURE_PROMOTIONS}
         cart={cart}
@@ -168,10 +171,9 @@ function StoreFixture() {
 }
 
 function AdminFixture() {
-  const [products, setProducts] = React.useState(FIXTURE_PRODUCTS);
+  const { products, setProducts, config, setConfig } = React.useContext(FixtureCatalog);
   const [categories, setCategories] = React.useState(FIXTURE_CATEGORIES);
   const [promotions, setPromotions] = React.useState(FIXTURE_PROMOTIONS);
-  const [config, setConfig] = React.useState(FIXTURE_CONFIG);
   const [lastAction, setLastAction] = React.useState('');
 
   const persistence = React.useMemo<AdminPersistence>(() => ({
@@ -259,13 +261,18 @@ function AdminFixture() {
 }
 
 export default function E2EHarness() {
+  const [products, setProducts] = React.useState(FIXTURE_PRODUCTS);
+  const [config, setConfig] = React.useState(FIXTURE_CONFIG);
   return (
+    <FixtureCatalog.Provider value={{ products, setProducts, config, setConfig }}>
     <BrowserRouter>
       <Routes>
         <Route path="/__e2e/store" element={<StoreFixture />} />
         <Route path="/__e2e/admin" element={<AdminFixture />} />
+        <Route path="/admin" element={<AdminFixture />} />
         <Route path="*" element={<Navigate to="/__e2e/store" replace />} />
       </Routes>
     </BrowserRouter>
+    </FixtureCatalog.Provider>
   );
 }

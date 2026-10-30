@@ -1,3 +1,4 @@
+import { storeContacts } from './storePresentation';
 import { useEffect } from 'react';
 import type { SiteConfig } from '../types';
 
@@ -53,8 +54,9 @@ export function resolvePublicImage(value?: string): string {
 }
 
 export function buildStoreStructuredData(config: SiteConfig) {
-  const telephone = config.telefone1?.trim();
-  const email = config.email_atendimento?.trim();
+  const contacts = storeContacts(config);
+  const telephone = contacts.find(contact => contact.type !== 'email')?.value;
+  const email = contacts.find(contact => contact.type === 'email')?.value || (config.contatos === undefined ? config.email_atendimento?.trim() : undefined);
   const address = config.endereco_comercial?.trim();
   const taxId = config.documento_fiscal?.trim();
 

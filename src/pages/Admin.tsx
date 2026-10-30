@@ -1,3 +1,5 @@
+import StoreSettingsLists from '../components/StoreSettingsLists';
+import { storeContacts, storeBenefits } from '../lib/storePresentation';
 import PersonalizationViewer from '../components/PersonalizationViewer';
 import type { PersonalizationDocument } from '../services/personalizationExport';
 import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
@@ -111,11 +113,6 @@ const FIREBASE_ADMIN_ASSET_STORAGE: AdminAssetStorage = {
   pathFromUrl: storedAdminAssetPath,
 };
 
-const BENEFIT_FIELDS = [
-  { number: 1, title: 'beneficio1_titulo', description: 'beneficio1_desc' },
-  { number: 2, title: 'beneficio2_titulo', description: 'beneficio2_desc' },
-  { number: 3, title: 'beneficio3_titulo', description: 'beneficio3_desc' },
-] as const;
 
 const LEGAL_FIELD_LABELS: Record<string, string> = {
   razao_social: 'razão social',
@@ -164,6 +161,7 @@ export default function Admin({
   const [modelDocument, setModelDocument] = useState<PersonalizationDocument | null>(null);
   const modelRequest = React.useRef(0);
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
+  const [savingHighlight, setSavingHighlight] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
@@ -523,26 +521,41 @@ export default function Admin({
     }
   };
 
+  const toggleHighlight = async (product: Anuncio) => {
+    if (savingHighlight) return;
+    setSavingHighlight(product.id); setErrorMessage(null);
+    try {
+      await persistence.setDocument('anuncios', product.id, { ...product, destaque: product.destaque !== true, destaqueOrdem: product.destaqueOrdem || Date.now() });
+      setSuccessMessage(product.destaque ? 'Produto removido dos destaques.' : 'Produto adicionado aos destaques do banner.');
+    } catch (error) { setErrorMessage(adminPersistenceError(error, 'Não foi possível alterar o destaque.')); }
+    finally { setSavingHighlight(null); }
+  };
+
   // Config Handlers
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (isSaving) return;
     setErrorMessage(null);
     const formData = new FormData(e.currentTarget);
+    const contacts = configDraft.contatos ?? storeContacts(configDraft);
+    const benefits = configDraft.beneficios ?? storeBenefits(configDraft);
+    const phones = contacts.filter(contact => contact.type !== 'email');
     const updatedConfig: SiteConfig = {
       logo_url: configDraft.logo_url,
-      telefone1: formData.get('telefone1') as string,
-      telefone2: formData.get('telefone2') as string,
+      contatos: contacts,
+      beneficios: benefits,
+      telefone1: phones[0]?.value || '',
+      telefone2: phones[1]?.value || '',
       banner_principal: configDraft.banner_principal,
       banner_titulo: formData.get('banner_titulo') as string,
       banner_subtitulo: formData.get('banner_subtitulo') as string,
       banner_botao: formData.get('banner_botao') as string,
-      beneficio1_titulo: formData.get('beneficio1_titulo') as string,
-      beneficio1_desc: formData.get('beneficio1_desc') as string,
-      beneficio2_titulo: formData.get('beneficio2_titulo') as string,
-      beneficio2_desc: formData.get('beneficio2_desc') as string,
-      beneficio3_titulo: formData.get('beneficio3_titulo') as string,
-      beneficio3_desc: formData.get('beneficio3_desc') as string,
+      beneficio1_titulo: benefits[0]?.title || '',
+      beneficio1_desc: benefits[0]?.description || '',
+      beneficio2_titulo: benefits[1]?.title || '',
+      beneficio2_desc: benefits[1]?.description || '',
+      beneficio3_titulo: benefits[2]?.title || '',
+      beneficio3_desc: benefits[2]?.description || '',
       fontes_personalizacao: configDraft.fontes_personalizacao || [],
       razao_social: String(formData.get('razao_social') || '').trim(),
       documento_fiscal: String(formData.get('documento_fiscal') || '').trim(),
@@ -1289,6 +1302,7 @@ export default function Admin({
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {products.map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
+                  <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>
                   <div className="aspect-video bg-gray-900 relative">
                     <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-4">
@@ -1480,22 +1494,7 @@ export default function Admin({
                 </div>
               </section>
 
-              <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-                <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-5">
-                  <div className="flex items-center gap-3"><Settings className="text-[#ff4d79]" size={20} /><h3 className="font-bold">Atendimento</h3></div>
-                  <div className="space-y-2"><label htmlFor="config-phone-1" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp principal</label><input id="config-phone-1" name="telefone1" type="tel" defaultValue={config.telefone1} autoComplete="tel" className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
-                  <div className="space-y-2"><label htmlFor="config-phone-2" className="text-xs font-bold uppercase tracking-widest text-gray-500">WhatsApp alternativo</label><input id="config-phone-2" name="telefone2" type="tel" defaultValue={config.telefone2} autoComplete="tel" className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
-                </section>
-                <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-5">
-                  <div className="flex items-center gap-3"><Sparkles className="text-[#ff4d79]" size={20} /><h3 className="font-bold">Benefícios da loja</h3></div>
-                  {BENEFIT_FIELDS.map(benefit => (
-                    <div key={benefit.number} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <input aria-label={`Título do benefício ${benefit.number}`} name={benefit.title} defaultValue={config[benefit.title]} maxLength={100} placeholder={`Título ${benefit.number}`} className="rounded border border-gray-800 bg-black px-3 py-2 text-sm" />
-                      <input aria-label={`Descrição do benefício ${benefit.number}`} name={benefit.description} defaultValue={config[benefit.description]} maxLength={180} placeholder="Descrição" className="rounded border border-gray-800 bg-black px-3 py-2 text-sm" />
-                    </div>
-                  ))}
-                </section>
-              </div>
+              <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
 
               <section className="rounded-xl border border-purple-500/30 bg-[#111111] p-6 space-y-6">
                 <div className="flex items-center gap-3"><Type className="text-purple-400" size={20} /><div><h3 className="font-bold">Fontes da personalização</h3><p className="text-xs text-gray-500">Somente as fontes ativas aparecem para o cliente. Nenhuma opção é predefinida pelo código.</p></div></div>

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-30 — Destaques, contatos e acesso temporário
+
+- Produtos podem compor o banner rotativo.
+- Atendimento aceita listas de e-mails e telefones opcionais; benefícios são editáveis e reordenáveis.
+- Exceção temporária por conta para arquivos administrativos, com autorização e revogação verificadas pela API.
+
+
 ## 2026-10-29 — Capa, contracapa e exportação dos modelos
 
 - Adicionada contracapa opcional, usando a arte da capa sem texto sobreposto ou uma imagem escolhida pelo cliente; disponível também em produtos de arte sem texto.

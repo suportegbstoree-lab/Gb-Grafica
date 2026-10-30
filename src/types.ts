@@ -21,6 +21,8 @@ export interface Anuncio {
   combinacoes: Record<string, string>;
   tipoInput?: ProductCustomizationType;
   labelTexto?: string;
+  destaque?: boolean;
+  destaqueOrdem?: number;
   shipping?: ProductShippingProfile;
   shippingByCombination?: Record<string, ProductShippingProfile>;
 }
@@ -116,7 +118,12 @@ export interface Promocao {
   descontoFixoCentavos?: number;
 }
 
+export interface StoreContact { id: string; type: 'whatsapp' | 'phone' | 'email'; label: string; value: string; }
+export interface StoreBenefit { id: string; title: string; description: string; }
+
 export interface SiteConfig {
+  contatos?: StoreContact[];
+  beneficios?: StoreBenefit[];
   logo_url?: string;
   telefone1: string;
   telefone2: string;

@@ -25,6 +25,7 @@
     "security:app-check": "node --import tsx scripts/check-app-check-config.ts",
     "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
     "shipping:check": "node --import tsx scripts/check-correios.ts",
+    "admin:catalog-lease": "tsx scripts/admin-catalog-lease.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
     "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts",
     "admin:sync": "tsx scripts/sync-admin-access.ts"
