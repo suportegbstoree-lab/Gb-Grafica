@@ -60,6 +60,8 @@ const fakeBucket = {
   file(path: string, options?: { generation?: number; preconditionOpts?: { ifGenerationMatch?: number } }) {
     return {
       name: path,
+      async exists() { return [objects.has(path)]; },
+      async getSignedUrl() { return [`https://storage.example.test/${path}`]; },
       async getMetadata() {
         const obj = objects.get(path);
         if (!obj) throw Object.assign(new Error('Objeto ausente'), { code: 404 });
@@ -216,4 +218,74 @@ test('checkout com texto e imagem copia separadamente as versões da arte e do m
   assert.ok(copies.every(copy => objects.has(copy.path)));
   assert.equal(objects.has(sourcePath), false);
   assert.equal(objects.has(modelPath), false);
+});
+
+function addModel(digit: string, generation: number, metadata: Record<string, string> = {}) {
+  const path = `artworks/${uid}/pending/${digit.repeat(32)}.png`;
+  objects.set(path, {
+    generation, bytes: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0]),
+    metadata: { ownerId: uid, kind: 'personalization-model', originalName: 'modelo.png', ...metadata },
+  });
+  return path;
+}
+
+test('caderno sem texto preserva capa e contracapa no pedido e copia as três versões', async () => {
+  const front = addModel('1', 25);
+  const back = addModel('2', 26);
+  const response = await checkout({ modeloPath: front, contracapaPath: back, contracapaNome: 'contracapa.png', contracapaModo: 'custom' });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  assert.deepEqual(copies.map(copy => copy.generation), [17, 25, 26]);
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))?.[1];
+  const item = (order?.itens as Array<Record<string, unknown>>)[0];
+  assert.equal(item.contracapaPath, copies[2].path);
+  assert.equal(item.contracapaNome, 'contracapa.png');
+  assert.equal(item.contracapaModo, 'custom');
+  assert.equal(objects.has(back), false);
+});
+
+test('recusa contracapa pertencente a outro usuário antes de chamar PagBank', async () => {
+  const response = await checkout({ modeloPath: addModel('1', 25), contracapaPath: 'artworks/outro/pending/22222222222222222222222222222222.png', contracapaModo: 'custom' });
+  assert.equal(response.status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('recusa contracapa com metadados de proprietário incompatíveis', async () => {
+  const response = await checkout({ modeloPath: addModel('1', 25), contracapaPath: addModel('2', 26, { ownerId: 'outro' }), contracapaModo: 'automatic' });
+  assert.equal(response.status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('recusa o mesmo objeto usado para as duas faces', async () => {
+  const front = addModel('1', 25);
+  const response = await checkout({ modeloPath: front, contracapaPath: front, contracapaModo: 'automatic' });
+  assert.equal(response.status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('recusa contracapa sem capa', async () => {
+  const response = await checkout({ contracapaPath: addModel('2', 26), contracapaModo: 'custom' });
+  assert.equal(response.status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('recusa modo desconhecido de contracapa', async () => {
+  const response = await checkout({ modeloPath: addModel('1', 25), contracapaPath: addModel('2', 26), contracapaModo: 'invalid' });
+  assert.equal(response.status, 422);
+  assert.equal(providerCalls, 0);
+});
+
+test('consulta autenticada entrega a face correta sem abrir acesso a outro proprietário', async () => {
+  const orderId = 'GB-TEST123456'; const itemId = 'item123';
+  const back = `artworks/${uid}/orders/${orderId}/${itemId}/${'2'.repeat(32)}.png`;
+  objects.set(back, { generation: 26, bytes: Buffer.from('conteudo-ficticio'), metadata: {} });
+  docs.set(`orders/${orderId}`, { userId: uid, itens: [{ id: itemId, contracapaPath: back, contracapaNome: 'contracapa.png' }] });
+  const request = (query = '') => localFetch(`${baseUrl}/api/orders/${orderId}/model/${itemId}${query}`, { headers: { authorization: 'Bearer usuario-teste' } });
+  const response = await request('?face=back');
+  assert.equal(response.status, 200);
+  const result = await response.json() as { url: string; filename: string };
+  assert.equal(result.url, `https://storage.example.test/${back}`);
+  assert.equal(result.filename, 'contracapa.png');
+  assert.equal((await request('?face=wrong')).status, 400);
+  docs.set(`orders/${orderId}`, { userId: 'outro', itens: [{ id: itemId, contracapaPath: back }] });
+  assert.equal((await request('?face=back')).status, 403);
 });

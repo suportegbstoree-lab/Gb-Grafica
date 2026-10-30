@@ -2,10 +2,12 @@
 // é obrigatória em imports relativos após a transpiração de TypeScript.
 import { sanitizeArtworkName } from './artwork.js';
 
-export const PERSONALIZATION_MODEL_MIME_TYPE = 'image/webp';
+export const PERSONALIZATION_MODEL_MIME_TYPE = 'image/png';
 export const MAX_PERSONALIZATION_MODEL_BYTES = 15 * 1024 * 1024;
-export const MAX_PERSONALIZATION_MODEL_EDGE = 3200;
-export const MAX_PERSONALIZATION_MODEL_PIXELS = 10_000_000;
+// Falhar explicitamente é preferível a reduzir a resolução sem avisar.
+// O navegador ainda pode ter um limite menor de memória/canvas.
+export const MAX_PERSONALIZATION_MODEL_EDGE = 32_767;
+export const MAX_PERSONALIZATION_MODEL_PIXELS = 64_000_000;
 
 const COMPOSABLE_IMAGE_TYPES = new Set([
   'image/jpeg',
@@ -32,14 +34,9 @@ export function personalizationModelDimensions(width: number, height: number): P
 
   const normalizedWidth = Math.max(1, Math.round(width));
   const normalizedHeight = Math.max(1, Math.round(height));
-  const edgeScale = Math.min(1, MAX_PERSONALIZATION_MODEL_EDGE / Math.max(normalizedWidth, normalizedHeight));
-  const pixelScale = Math.min(1, Math.sqrt(MAX_PERSONALIZATION_MODEL_PIXELS / (normalizedWidth * normalizedHeight)));
-  const scale = Math.min(edgeScale, pixelScale);
-
-  return {
-    width: Math.max(1, Math.round(normalizedWidth * scale)),
-    height: Math.max(1, Math.round(normalizedHeight * scale)),
-  };
+  if (Math.max(normalizedWidth, normalizedHeight) > MAX_PERSONALIZATION_MODEL_EDGE ||
+      normalizedWidth * normalizedHeight > MAX_PERSONALIZATION_MODEL_PIXELS) return null;
+  return { width: normalizedWidth, height: normalizedHeight };
 }
 
 export function personalizationTextScale(text: string): number {
@@ -51,7 +48,7 @@ export function personalizationTextScale(text: string): number {
   return 0.072;
 }
 
-export function personalizationModelName(productName: string, sourceName?: string): string {
+export function personalizationModelName(productName: string, sourceName?: string, back = false): string {
   const sourceBase = sourceName?.replace(/\.[^.]+$/, '') || productName || 'personalizacao';
   const normalized = sanitizeArtworkName(sourceBase)
     .replace(/\.[^.]+$/, '')
@@ -60,5 +57,5 @@ export function personalizationModelName(productName: string, sourceName?: strin
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 90) || 'personalizacao';
-  return `${normalized}-modelo.webp`;
+  return `${normalized}-${back ? 'contracapa' : 'modelo'}.png`;
 }

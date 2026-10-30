@@ -1,4 +1,4 @@
-import { deleteObject, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getBlob, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   artworkExtension,
@@ -154,9 +154,17 @@ export async function requestArtworkUrl(orderId: string, itemId: string): Promis
   return data.url;
 }
 
-export async function requestPersonalizationModelUrl(orderId: string, itemId: string): Promise<string> {
+export async function readPendingPersonalizationModel(path: string): Promise<Blob> {
+  const user = auth.currentUser;
+  if (!user || !path.startsWith(`artworks/${user.uid}/pending/`) || !/^[a-f0-9]{32}[.](png|jpg|webp)$/.test(path.slice(`artworks/${user.uid}/pending/`.length))) {
+    throw new Error('O modelo não pertence à sua sessão atual.');
+  }
+  return getBlob(ref(storage, path), MAX_PERSONALIZATION_MODEL_BYTES);
+}
+
+export async function requestPersonalizationModelUrl(orderId: string, itemId: string, face: 'front' | 'back' = 'front'): Promise<string> {
   const data = await authenticatedRequest<{ url?: unknown }>(
-    `/api/orders/${encodeURIComponent(orderId)}/model/${encodeURIComponent(itemId)}`,
+    `/api/orders/${encodeURIComponent(orderId)}/model/${encodeURIComponent(itemId)}${face === 'back' ? '?face=back' : ''}`,
   );
   if (typeof data.url !== 'string' || !data.url.startsWith('https://')) {
     throw new Error('O servidor não retornou um link válido para o modelo personalizado.');

@@ -4,6 +4,8 @@ dist/
 coverage/
 playwright-report/
 test-results/
+docs/
+
 # Marcadores temporários das regressões do servidor local (inclusive execução interrompida).
 /.security-probe-*.json
 /src/security-probe-*.ts
@@ -45,3 +47,6 @@ request.json
 # Pacotes locais
 *.tar.gz
 *.tar.gz.sha256
+
+CHANGELOG.md
+TODO.md

@@ -1,3 +1,6 @@
+import PersonalizationViewer from '../components/PersonalizationViewer';
+import type { PersonalizationDocument } from '../services/personalizationExport';
+import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
 import React, { useState } from 'react';
 import ProductShippingEditor from '../components/ProductShippingEditor';
 import { Link } from 'react-router-dom';
@@ -10,7 +13,7 @@ import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
 import { allowedFulfillmentTransitions, fulfillmentStatusLabel, legacyFulfillmentStatus, ORDER_QUEUE_ORDER, orderQueueFor, orderQueueLabel, type OrderQueue } from '../lib/orderStatus';
-import { requestArtworkUrl, requestPersonalizationModelUrl } from '../services/artworkService';
+import { requestArtworkUrl } from '../services/artworkService';
 import {
   removeCatalogImage,
   storedCatalogImagePath,
@@ -74,6 +77,7 @@ export interface AdminProps {
   persistence?: AdminPersistence;
   catalogImageStorage?: AdminCatalogImageStorage;
   adminAssetStorage?: AdminAssetStorage;
+  orderModelLoader?: typeof loadOrderPersonalizationDocument;
   onLogout?: () => void | Promise<void>;
 }
 
@@ -154,8 +158,12 @@ export default function Admin({
   persistence = FIREBASE_PERSISTENCE,
   catalogImageStorage = FIREBASE_CATALOG_IMAGE_STORAGE,
   adminAssetStorage = FIREBASE_ADMIN_ASSET_STORAGE,
+  orderModelLoader = loadOrderPersonalizationDocument,
   onLogout = logout,
 }: AdminProps) {
+  const [modelDocument, setModelDocument] = useState<PersonalizationDocument | null>(null);
+  const modelRequest = React.useRef(0);
+  React.useEffect(() => () => { modelRequest.current += 1; }, []);
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
@@ -1009,9 +1017,11 @@ export default function Admin({
 
   const handleOpenModel = async (orderId: string, itemId: string) => {
     try {
-      const url = await requestPersonalizationModelUrl(orderId, itemId);
-      const opened = window.open(url, '_blank', 'noopener,noreferrer');
-      if (opened) opened.opener = null;
+      const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
+      if (!item) throw new Error('Item do pedido não encontrado.');
+      const request = ++modelRequest.current;
+      const document = await orderModelLoader(orderId, item);
+      if (request === modelRequest.current) setModelDocument(document);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Não foi possível abrir o modelo composto.');
     }
@@ -2422,6 +2432,7 @@ export default function Admin({
           />
         )}
       </AnimatePresence>
+      {modelDocument && <PersonalizationViewer document={modelDocument} onClose={() => setModelDocument(null)} />}
       {/* Removidos modais de upload */}
     </div>
   );
@@ -2593,6 +2604,8 @@ function OrderCard({
                     Personalização legada: {item.textoPersonalizado}
                   </div>
                 ) : null}
+                {item.modeloPath && !item.personalizacaoTexto && <button type="button" onClick={() => handleOpenModel(order.id, item.id)} className="mt-2 text-xs font-bold text-pink-400 hover:underline">Abrir modelo composto</button>}
+                {item.contracapaPath && <div className="mt-1 text-[10px] text-gray-400">Capa e contracapa disponíveis no modelo</div>}
                 {item.arquivoPath && (
                   <button
                     type="button"

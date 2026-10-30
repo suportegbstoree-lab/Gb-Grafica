@@ -16,18 +16,16 @@ test('aceita apenas imagem raster segura para compor o modelo', () => {
   assert.equal(isComposablePersonalizationImage('image/png', MAX_PERSONALIZATION_MODEL_BYTES + 1), false);
 });
 
-test('reduz imagens enormes preservando a proporção', () => {
+test('preserva os pixels originais e recusa dimensões impossíveis sem reduzir', () => {
   assert.deepEqual(personalizationModelDimensions(1200, 800), { width: 1200, height: 800 });
-  const reduced = personalizationModelDimensions(12_000, 8_000);
-  assert.ok(reduced);
-  assert.ok(reduced.width <= 3200);
-  assert.ok(reduced.width * reduced.height <= 10_000_000);
-  assert.equal(Number((reduced.width / reduced.height).toFixed(2)), 1.5);
+  assert.deepEqual(personalizationModelDimensions(6000, 4000), { width: 6000, height: 4000 });
+  assert.equal(personalizationModelDimensions(12_000, 8_000), null);
   assert.equal(personalizationModelDimensions(0, 800), null);
 });
 
 test('gera nome seguro e reduz o texto conforme o comprimento', () => {
-  assert.equal(personalizationModelName('Livro de Receitas', 'arte final.jpeg'), 'arte-final-modelo.webp');
+  assert.equal(personalizationModelName('Livro de Receitas', 'arte final.jpeg'), 'arte-final-modelo.png');
+  assert.equal(personalizationModelName('Caderno', 'arte.png', true), 'arte-contracapa.png');
   assert.ok(personalizationTextScale('Nome') > personalizationTextScale('x'.repeat(150)));
 });
 

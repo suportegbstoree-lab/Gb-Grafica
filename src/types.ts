@@ -41,6 +41,9 @@ export interface CartItem {
   arquivoNome?: string;
   modeloPath?: string;
   modeloNome?: string;
+  contracapaPath?: string;
+  contracapaNome?: string;
+  contracapaModo?: 'automatic' | 'custom';
   artePendente?: boolean;
   textoPersonalizado?: string;
   personalizacaoTexto?: TextCustomization;

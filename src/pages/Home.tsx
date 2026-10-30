@@ -9,8 +9,8 @@ import { createCartItemId, formatBrazilianPhone, formatCpf, formatMoney, isHttpU
 import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
 import {
   removePendingArtwork,
+  readPendingPersonalizationModel,
   requestArtworkUrl,
-  requestPersonalizationModelUrl,
   uploadArtwork,
   uploadPersonalizationModel,
   type UploadedArtwork,
@@ -24,7 +24,10 @@ import {
   CheckoutApiError,
 } from '../services/checkoutService';
 import { buildStoreStructuredData, DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata, useStructuredData } from '../lib/seo';
-import TextCustomizationDrawer from '../components/TextCustomizationDrawer';
+import TextCustomizationDrawer, { type BackCoverDraft } from '../components/TextCustomizationDrawer';
+import PersonalizationViewer from '../components/PersonalizationViewer';
+import type { PersonalizationDocument } from '../services/personalizationExport';
+import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
 import {
   activePersonalizationFonts,
   productRequiresArtwork,
@@ -112,11 +115,15 @@ interface ShippingInfo extends ShippingQuoteResponse {
 export interface PersonalizationModelStorage {
   uploadModel: (model: ComposedPersonalizationModel, name: string) => Promise<UploadedArtwork>;
   deleteModel: (path: string) => Promise<void>;
+  readModel: (path: string) => Promise<Blob>;
+  uploadArtwork: (file: File) => Promise<UploadedArtwork>;
 }
 
 const FIREBASE_PERSONALIZATION_MODEL_STORAGE: PersonalizationModelStorage = {
   uploadModel: (model, name) => uploadPersonalizationModel(model.blob, name),
   deleteModel: removePendingArtwork,
+  readModel: readPendingPersonalizationModel,
+  uploadArtwork,
 };
 
 interface HomeProps {
@@ -135,6 +142,7 @@ interface HomeProps {
   ordersError: string | null;
   onCheckoutRedirect?: (url: string) => void;
   personalizationModelStorage?: PersonalizationModelStorage;
+  orderModelLoader?: typeof loadOrderPersonalizationDocument;
 }
 
 export default function Home({
@@ -153,7 +161,14 @@ export default function Home({
   ordersError,
   onCheckoutRedirect,
   personalizationModelStorage = FIREBASE_PERSONALIZATION_MODEL_STORAGE,
+  orderModelLoader = loadOrderPersonalizationDocument,
 }: HomeProps) {
+  const [modelDocument, setModelDocument] = useState<PersonalizationDocument | null>(null);
+  const viewerRequest = useRef(0);
+  React.useEffect(() => {
+    setModelDocument(null);
+    return () => { viewerRequest.current += 1; };
+  }, [user?.uid]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
@@ -346,7 +361,7 @@ export default function Home({
   const removeFromCart = (id: string) => {
     const item = cart.find(candidate => candidate.id === id);
     setCart(prev => prev.filter(i => i.id !== id));
-    const pendingPaths = [item?.arquivoPath, item?.modeloPath]
+    const pendingPaths = [item?.arquivoPath, item?.modeloPath, item?.contracapaPath]
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     void Promise.allSettled(pendingPaths.map(path => removePendingArtwork(path))).then(results => {
       if (results.some(result => result.status === 'rejected')) {
@@ -369,14 +384,29 @@ export default function Home({
 
   const openOrderModel = async (orderId: string, itemId: string) => {
     try {
-      const url = await requestPersonalizationModelUrl(orderId, itemId);
-      openExternal(url);
+      const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
+      if (!item) throw new Error('Item do pedido não encontrado.');
+      const request = ++viewerRequest.current;
+      const model = await orderModelLoader(orderId, item);
+      if (request === viewerRequest.current) setModelDocument(model);
     } catch (error) {
       setNotice({
         type: 'error',
         message: error instanceof Error ? error.message : 'Não foi possível abrir o modelo personalizado.',
       });
     }
+  };
+
+  const openCartModel = async (item: CartItem) => {
+    if (!item.modeloPath) return;
+    const request = ++viewerRequest.current;
+    try {
+      const front = await personalizationModelStorage.readModel(item.modeloPath);
+      const back = item.contracapaPath ? await personalizationModelStorage.readModel(item.contracapaPath) : null;
+      if (request === viewerRequest.current) setModelDocument({ title: item.nome, pages: [
+        { label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : []),
+      ] });
+    } catch (error) { setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível carregar o modelo.' }); }
   };
 
   const scrollToProducts = () => {
@@ -431,6 +461,9 @@ export default function Home({
           arquivoNome: item.arquivoNome || '',
           modeloPath: item.modeloPath || '',
           modeloNome: item.modeloNome || '',
+          contracapaPath: item.contracapaPath || '',
+          contracapaNome: item.contracapaNome || '',
+          ...(item.contracapaModo ? { contracapaModo: item.contracapaModo } : {}),
           textoPersonalizado: item.textoPersonalizado || '',
           personalizacaoTexto: item.personalizacaoTexto,
         })),
@@ -581,7 +614,7 @@ export default function Home({
 
   const handleLogout = async () => {
     const pendingArtworks = cart
-      .flatMap(item => [item.arquivoPath, item.modeloPath])
+      .flatMap(item => [item.arquivoPath, item.modeloPath, item.contracapaPath])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     await Promise.allSettled(pendingArtworks.map(removePendingArtwork));
     setCart([]);
@@ -999,6 +1032,7 @@ export default function Home({
                   promotions={promotions}
                   fonts={config.fontes_personalizacao || []}
                   personalizationModelStorage={personalizationModelStorage}
+                  onOpenModel={setModelDocument}
                 />
               ))}
             </div>
@@ -1107,6 +1141,7 @@ export default function Home({
                         ) : item.textoPersonalizado ? (
                           <div className="mt-2 text-[10px] font-bold text-pink-600">Personalização: {item.textoPersonalizado}</div>
                         ) : null}
+                        {item.modeloPath && <button type="button" onClick={() => void openCartModel(item)} className="mt-2 text-xs font-bold text-purple-600 hover:underline">Visualizar modelo{item.contracapaPath ? ' · capa e contracapa' : ''}</button>}
                         {item.arquivoNome && (
                           <div className="mt-1 text-[10px] text-gray-500">Arte anexada: {item.arquivoNome}</div>
                         )}
@@ -1562,6 +1597,8 @@ export default function Home({
 
       </AnimatePresence>
 
+      {modelDocument && <PersonalizationViewer document={modelDocument} onClose={() => setModelDocument(null)} />}
+
       {/* Floating Chat Button */}
       <motion.button
         type="button"
@@ -1697,6 +1734,7 @@ function ProductCard({
   promotions,
   fonts,
   personalizationModelStorage,
+  onOpenModel,
 }: {
   product: Anuncio;
   user: FirebaseUser | null;
@@ -1706,12 +1744,16 @@ function ProductCard({
   promotions: Promocao[];
   fonts: PersonalizationFont[];
   personalizationModelStorage: PersonalizationModelStorage;
+  onOpenModel: (model: PersonalizationDocument) => void;
   key?: string;
 }) {
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [uploadedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
   const [artworkSourceFile, setArtworkSourceFile] = useState<File | null>(null);
   const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
+  const [uploadedBack, setUploadedBack] = useState<UploadedArtwork | null>(null);
+  const [backDraft, setBackDraft] = useState<BackCoverDraft>({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
+  const [generatedDocument, setGeneratedDocument] = useState<PersonalizationDocument | null>(null);
   const [isUploadingArtwork, setIsUploadingArtwork] = useState(false);
   const [artworkPreviewUrl, setArtworkPreviewUrl] = useState<string | null>(null);
   const [textCustomization, setTextCustomization] = useState<TextCustomization | null>(null);
@@ -1772,14 +1814,18 @@ function ProductCard({
 
     setIsUploadingArtwork(true);
     try {
-      const nextArtwork = await uploadArtwork(file);
+      const nextArtwork = await personalizationModelStorage.uploadArtwork(file);
       const previousArtwork = uploadedArtwork;
       const previousModel = uploadedModel;
+      const previousBack = uploadedBack;
       setUploadedArtwork(nextArtwork);
       setArtworkSourceFile(file);
       setArtworkPreviewUrl(nextPreviewUrl);
       if (previousArtwork) void removePendingArtwork(previousArtwork.path).catch(() => undefined);
       if (previousModel) void personalizationModelStorage.deleteModel(previousModel.path).catch(() => undefined);
+      if (previousBack) void personalizationModelStorage.deleteModel(previousBack.path).catch(() => undefined);
+      setUploadedBack(null);
+      setGeneratedDocument(null);
       setUploadedModel(null);
       setTextCustomization(null);
       onNotify({ type: 'success', message: 'Arte enviada com segurança.' });
@@ -1797,6 +1843,9 @@ function ProductCard({
   const removeArtwork = () => {
     if (uploadedArtwork) void removePendingArtwork(uploadedArtwork.path).catch(() => undefined);
     if (uploadedModel) void personalizationModelStorage.deleteModel(uploadedModel.path).catch(() => undefined);
+    if (uploadedBack) void personalizationModelStorage.deleteModel(uploadedBack.path).catch(() => undefined);
+    setUploadedBack(null);
+    setGeneratedDocument(null);
     setUploadedArtwork(null);
     setArtworkSourceFile(null);
     setUploadedModel(null);
@@ -1822,7 +1871,7 @@ function ProductCard({
     (!requiresText || Boolean(textCustomization && uploadedModel));
 
   const openTextCustomizer = async () => {
-    if (availableFonts.length === 0) {
+    if (requiresText && availableFonts.length === 0) {
       onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
       return;
     }
@@ -1857,7 +1906,7 @@ function ProductCard({
       product.id,
       selections,
       customizationFingerprint,
-      uploadedArtwork?.path || uploadedModel?.path || '',
+      [uploadedArtwork?.path, uploadedModel?.path, uploadedBack?.path].filter(Boolean).join('|'),
     );
     onAddToCart({
       id: cartId,
@@ -1876,11 +1925,17 @@ function ProductCard({
       arquivoNome: uploadedArtwork?.name,
       modeloPath: uploadedModel?.path,
       modeloNome: uploadedModel?.name,
+      contracapaPath: uploadedBack?.path,
+      contracapaNome: uploadedBack?.name,
+      ...(uploadedBack && backDraft.mode !== 'none' ? { contracapaModo: backDraft.mode } : {}),
       textoPersonalizado: textCustomization?.texto,
       personalizacaoTexto: textCustomization || undefined,
     });
 
     // Reset after adding
+    setUploadedBack(null);
+    setGeneratedDocument(null);
+    setBackDraft({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
     setUploadedArtwork(null);
     setArtworkSourceFile(null);
     setUploadedModel(null);
@@ -2015,6 +2070,8 @@ function ProductCard({
               </div>
             )}
 
+            {requiresArtwork && !requiresText && artworkSourceFile && isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size) && <button type="button" onClick={() => void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">Personalizar capa e contracapa</button>}
+            {generatedDocument && <button type="button" onClick={() => onOpenModel(generatedDocument)} className="rounded-xl border border-purple-200 px-4 py-3 text-xs font-bold text-purple-600">Visualizar modelo{uploadedBack ? ' · capa e contracapa' : ''}</button>}
             {requiresText && (
               <div className="flex flex-col">
                 <span className="mb-4 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{product.labelTexto || 'Personalização'}</span>
@@ -2162,20 +2219,31 @@ function ProductCard({
         previewSource={artworkSourceFile || undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
         initialValue={textCustomization}
+        textRequired={requiresText}
+        initialBack={backDraft}
         fonts={fonts}
         onClose={() => setIsTextDrawerOpen(false)}
-        onSave={async (value, model) => {
-          const nextModel = await personalizationModelStorage.uploadModel(
-            model,
-            personalizationModelName(product.nome, uploadedArtwork?.name),
-          );
-          const previousModel = uploadedModel;
+        onSave={async (value, model, back, nextBackDraft) => {
+          const nextModel = await personalizationModelStorage.uploadModel(model, personalizationModelName(product.nome, uploadedArtwork?.name));
+          let nextBack: UploadedArtwork | null = null;
+          try {
+            if (back) nextBack = await personalizationModelStorage.uploadModel(back, personalizationModelName(product.nome, uploadedArtwork?.name, true));
+          } catch (error) {
+            await personalizationModelStorage.deleteModel(nextModel.path).catch(() => undefined);
+            throw error;
+          }
+          const previousModels = [uploadedModel, uploadedBack].filter((model): model is UploadedArtwork => Boolean(model));
+          const document: PersonalizationDocument = { title: product.nome, pages: [
+            { label: 'Capa', blob: model.blob }, ...(back ? [{ label: 'Contracapa' as const, blob: back.blob }] : []),
+          ] };
           setTextCustomization(value);
           setUploadedModel(nextModel);
+          setUploadedBack(nextBack);
+          setBackDraft(nextBackDraft);
+          setGeneratedDocument(document);
           setIsTextDrawerOpen(false);
-          if (previousModel) {
-            void personalizationModelStorage.deleteModel(previousModel.path).catch(() => undefined);
-          }
+          onOpenModel(document);
+          void Promise.allSettled(previousModels.map(model => personalizationModelStorage.deleteModel(model.path)));
         }}
       />
     )}

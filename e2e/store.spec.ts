@@ -126,6 +126,9 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
   await expect(preview).toHaveAttribute('aria-label', /75% horizontal e 25% vertical/);
   await drawer.getByRole('button', { name: 'Aplicar e gerar modelo' }).click();
 
+  const viewer = page.getByRole('dialog', { name: 'Modelo personalizado', exact: true });
+  await expect(viewer).toBeVisible();
+  await viewer.getByRole('button', { name: 'Fechar visualização do modelo' }).click();
   await expect(productCard.getByText('Receitas da Família')).toBeVisible();
   await expect(productCard.getByText(/Georgia/)).toBeVisible();
   await expect(productCard.getByText('Modelo composto pronto')).toBeVisible();
@@ -146,8 +149,8 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
   const payload = (await checkoutRequest).postDataJSON();
   expect(payload.items[0]).toEqual(expect.objectContaining({
     productId: 'livro-receitas',
-    modeloPath: expect.stringMatching(/^artworks\/e2e-user\/pending\/[a-f0-9]{32}[.]webp$/),
-    modeloNome: 'Livro-de-Receitas-Personalizado-modelo.webp',
+    modeloPath: expect.stringMatching(/^artworks\/e2e-user\/pending\/[a-f0-9]{32}[.]png$/),
+    modeloNome: 'Livro-de-Receitas-Personalizado-modelo.png',
     textoPersonalizado: 'Receitas da Família',
     personalizacaoTexto: {
       texto: 'Receitas da Família',

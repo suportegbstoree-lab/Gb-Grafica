@@ -97,7 +97,7 @@ async function decodeImageUrl(source: string): Promise<DecodedImage> {
 	};
 }
 
-async function decodeSource(source: Blob | string): Promise<DecodedImage> {
+export async function decodePersonalizationSource(source: Blob | string): Promise<DecodedImage> {
 	if (source instanceof Blob) return decodeImage(source);
 
 	try {
@@ -152,7 +152,7 @@ function wrappedLines(context: CanvasRenderingContext2D, text: string, maxWidth:
 	return lines.slice(0, 8);
 }
 
-function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+export function personalizationCanvasBlob(canvas: HTMLCanvasElement, type = PERSONALIZATION_MODEL_MIME_TYPE): Promise<Blob> {
 	return new Promise((resolve, reject) => {
 		canvas.toBlob(blob => {
 			if (!blob) {
@@ -160,7 +160,7 @@ function canvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 				return;
 			}
 			resolve(blob);
-		}, PERSONALIZATION_MODEL_MIME_TYPE, 0.92);
+		}, type, 1);
 	});
 }
 
@@ -170,16 +170,16 @@ export async function composePersonalizationModel({
 	fonts,
 }: {
 	source: Blob | string;
-	customization: TextCustomization;
+	customization?: TextCustomization | null;
 	fonts: PersonalizationFont[];
 }): Promise<ComposedPersonalizationModel> {
-	const decoded = await decodeSource(source);
+	const decoded = await decodePersonalizationSource(source);
 	let temporaryFontFace: FontFace | null = null;
+	const canvas = document.createElement('canvas');
 	try {
 		const dimensions = personalizationModelDimensions(decoded.width, decoded.height);
-		if (!dimensions) throw new Error('A imagem usada no modelo não possui dimensões válidas.');
+		if (!dimensions) throw new Error('Não é possível compor esta imagem na resolução original neste navegador. A imagem não foi reduzida.');
 
-		const canvas = document.createElement('canvas');
 		canvas.width = dimensions.width;
 		canvas.height = dimensions.height;
 		const context = canvas.getContext('2d');
@@ -189,47 +189,49 @@ export async function composePersonalizationModel({
 		context.fillRect(0, 0, canvas.width, canvas.height);
 		context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
 
-		const fontSize = Math.max(18, Math.round(canvas.width * personalizationTextScale(customization.texto)));
-		const fontFamily = textFontCssFamily(customization.fonte, fonts, customization.fonteCssFamily);
-		const fontDeclaration = `700 ${fontSize}px ${fontFamily}`;
-		try {
-			const selectedFont = fonts.find(font => font.id === customization.fonte && font.ativo);
-			if (selectedFont?.arquivoUrl && typeof FontFace !== 'undefined' && document.fonts) {
-				temporaryFontFace = await new FontFace(
-					selectedFont.cssFamily,
-					`url(${JSON.stringify(selectedFont.arquivoUrl)}) format("woff2")`,
-					{ weight: '700' },
-				).load();
-				document.fonts.add(temporaryFontFace);
+		if (customization) {
+			const fontSize = Math.max(18, Math.round(canvas.width * personalizationTextScale(customization.texto)));
+			const fontFamily = textFontCssFamily(customization.fonte, fonts, customization.fonteCssFamily);
+			const fontDeclaration = `700 ${fontSize}px ${fontFamily}`;
+			try {
+				const selectedFont = fonts.find(font => font.id === customization.fonte && font.ativo);
+				if (selectedFont?.arquivoUrl && typeof FontFace !== 'undefined' && document.fonts) {
+					temporaryFontFace = await new FontFace(
+						selectedFont.cssFamily,
+						`url(${JSON.stringify(selectedFont.arquivoUrl)}) format("woff2")`,
+						{ weight: '700' },
+					).load();
+					document.fonts.add(temporaryFontFace);
+				}
+				await document.fonts?.load(fontDeclaration, customization.texto);
+			} catch {
+				throw new Error('A fonte escolhida não pôde ser carregada para gerar o modelo.');
 			}
-			await document.fonts?.load(fontDeclaration, customization.texto);
-		} catch {
-			throw new Error('A fonte escolhida não pôde ser carregada para gerar o modelo.');
+			context.font = fontDeclaration;
+			context.textAlign = 'center';
+			context.textBaseline = 'middle';
+			context.lineJoin = 'round';
+
+			const lines = wrappedLines(context, customization.texto, canvas.width * 0.9);
+			const lineHeight = fontSize * 1.18;
+			const blockHeight = Math.max(lineHeight, lines.length * lineHeight);
+			const centerX = canvas.width * (customization.posicao.x / 100);
+			const centerY = canvas.height * (customization.posicao.y / 100);
+			const firstLineY = centerY - (blockHeight / 2) + (lineHeight / 2);
+
+			context.strokeStyle = 'rgba(0, 0, 0, 0.88)';
+			context.lineWidth = Math.max(2, fontSize * 0.1);
+			context.fillStyle = '#ffffff';
+			lines.forEach((line, index) => {
+				const y = firstLineY + index * lineHeight;
+				context.strokeText(line, centerX, y, canvas.width * 0.9);
+				context.fillText(line, centerX, y, canvas.width * 0.9);
+			});
 		}
-		context.font = fontDeclaration;
-		context.textAlign = 'center';
-		context.textBaseline = 'middle';
-		context.lineJoin = 'round';
-
-		const lines = wrappedLines(context, customization.texto, canvas.width * 0.9);
-		const lineHeight = fontSize * 1.18;
-		const blockHeight = Math.max(lineHeight, lines.length * lineHeight);
-		const centerX = canvas.width * (customization.posicao.x / 100);
-		const centerY = canvas.height * (customization.posicao.y / 100);
-		const firstLineY = centerY - (blockHeight / 2) + (lineHeight / 2);
-
-		context.strokeStyle = 'rgba(0, 0, 0, 0.88)';
-		context.lineWidth = Math.max(2, fontSize * 0.1);
-		context.fillStyle = '#ffffff';
-		lines.forEach((line, index) => {
-			const y = firstLineY + index * lineHeight;
-			context.strokeText(line, centerX, y, canvas.width * 0.9);
-			context.fillText(line, centerX, y, canvas.width * 0.9);
-		});
 
 		let modelBlob: Blob;
 		try {
-			modelBlob = await canvasBlob(canvas);
+			modelBlob = await personalizationCanvasBlob(canvas);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === 'SecurityError') {
 				throw new Error('O servidor da imagem bloqueou a composição. Reenvie a imagem pelo painel para armazená-la no Firebase.');
@@ -237,11 +239,12 @@ export async function composePersonalizationModel({
 			throw error;
 		}
 		if (modelBlob.size <= 0 || modelBlob.size > MAX_PERSONALIZATION_MODEL_BYTES) {
-			throw new Error('O modelo gerado ficou grande demais. Use uma imagem menor.');
+			throw new Error('O modelo em resolução original excedeu 15 MB. Escolha outra imagem; nenhuma redução de qualidade foi aplicada.');
 		}
 		return { blob: modelBlob, width: canvas.width, height: canvas.height };
 	} finally {
 		if (temporaryFontFace && document.fonts) document.fonts.delete(temporaryFontFace);
 		decoded.dispose();
+		canvas.width = canvas.height = 1;
 	}
 }

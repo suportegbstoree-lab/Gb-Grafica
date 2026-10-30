@@ -114,6 +114,7 @@ interface ShippingQuote {
 interface NormalizedCartItem {
 	artworkVersion?: ArtworkObjectVersion;
 	modelVersion?: ArtworkObjectVersion;
+	backModelVersion?: ArtworkObjectVersion;
 	cartItem: {
 		id: string;
 		productId: string;
@@ -129,6 +130,9 @@ interface NormalizedCartItem {
 		arquivoNome?: string;
 		modeloPath?: string;
 		modeloNome?: string;
+		contracapaPath?: string;
+		contracapaNome?: string;
+		contracapaModo?: 'automatic' | 'custom';
 		textoPersonalizado?: string;
 		personalizacaoTexto?: TextCustomization;
 	};
@@ -702,11 +706,19 @@ async function normalizeCart(
 		const requiresArtwork = productRequiresArtwork(productType);
 		const requiresText = productRequiresText(productType);
 		const artworkPath = requiresArtwork ? textValue(item.arquivoPath, 300) : '';
-		const modelPath = requiresText ? textValue(item.modeloPath, 300) : '';
+		const modelPath = (requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
+		const backModelPath = textValue(item.contracapaPath, 300);
+		const backMode = item.contracapaModo;
+		if ((backModelPath || backMode !== undefined) &&
+			(!modelPath || !backModelPath || !['automatic', 'custom'].includes(String(backMode)))) {
+			throw new HttpError(422, `A contracapa de ${productName} é inválida. Gere as duas faces novamente.`);
+		}
 		let artworkName = '';
 		let modelName = '';
+		let backModelName = '';
 		let artworkVersion: ArtworkObjectVersion | undefined;
 		let modelVersion: ArtworkObjectVersion | undefined;
+		let backModelVersion: ArtworkObjectVersion | undefined;
 
 		if (requiresArtwork) {
 			if (item.artePendente === true) {
@@ -762,49 +774,45 @@ async function normalizeCart(
 				throw new HttpError(422, `Informe o texto, a fonte e a posição da personalização de ${productName}.`);
 			}
 
-			if (!modelPath) {
-				throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
-			}
-			if (!isPendingPersonalizationModelPath(modelPath, userId) || modelPath === artworkPath) {
+			if (!modelPath) throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
+		}
+		const validateModel = async (path: string, name: unknown): Promise<ArtworkObjectVersion> => {
+			if (!isPendingPersonalizationModelPath(path, userId) || path === artworkPath) {
 				throw new HttpError(422, `O modelo composto de ${productName} é inválido.`);
 			}
 			try {
-				const modelFile = bucket.file(modelPath);
-				const [metadata] = await modelFile.getMetadata();
-				const size = Number(metadata.size);
-				const ownerId = metadata.metadata?.ownerId;
-				const kind = metadata.metadata?.kind;
+				const [metadata] = await bucket.file(path).getMetadata();
 				const generation = parseArtworkObjectGeneration(metadata.generation);
-				if (
-					!isComposablePersonalizationImage(metadata.contentType, size) ||
-					ownerId !== userId || kind !== 'personalization-model' || generation === null
-				) {
+				if (!isComposablePersonalizationImage(metadata.contentType, Number(metadata.size)) ||
+					metadata.metadata?.ownerId !== userId || metadata.metadata?.kind !== 'personalization-model' || generation === null) {
 					throw new HttpError(422, `O modelo composto de ${productName} não é permitido.`);
 				}
-				const prefix = await readArtworkPrefix(bucket, modelPath, generation);
+				const prefix = await readArtworkPrefix(bucket, path, generation);
 				if (!matchesArtworkSignature(String(metadata.contentType), prefix)) {
 					throw new HttpError(422, `O conteúdo do modelo composto de ${productName} é inválido.`);
 				}
-				modelName = sanitizeArtworkName(
-					textValue(item.modeloNome, 120) || textValue(metadata.metadata?.originalName, 120) || 'modelo.webp',
-				);
-				modelVersion = {
-					path: modelPath, generation, contentType: String(metadata.contentType),
-					kind: 'personalization-model', originalName: modelName,
-				};
+				return { path, generation, contentType: String(metadata.contentType), kind: 'personalization-model',
+					originalName: sanitizeArtworkName(textValue(name, 120) || textValue(metadata.metadata?.originalName, 120) || 'modelo.png') };
 			} catch (error) {
 				if (error instanceof HttpError) throw error;
 				throw new HttpError(422, `Não foi possível validar o modelo composto de ${productName}. Gere-o novamente.`);
 			}
+		};
+		if (modelPath) { modelVersion = await validateModel(modelPath, item.modeloNome); modelName = modelVersion.originalName; }
+		if (backModelPath) {
+			if (backModelPath === modelPath) throw new HttpError(422, 'Capa e contracapa devem ser arquivos distintos.');
+			backModelVersion = await validateModel(backModelPath, item.contracapaNome);
+			backModelName = backModelVersion.originalName;
 		}
 		const customText = textCustomization?.texto;
 		const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
-		const cartId = createCartItemId(productId, selections, customizationFingerprint, artworkPath || modelPath);
+		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath].filter(Boolean).join('|'));
 		const price = (unitAmount / 100).toFixed(2);
 
 		normalizedItems.push({
 			...(artworkVersion ? { artworkVersion } : {}),
 			...(modelVersion ? { modelVersion } : {}),
+			...(backModelVersion ? { backModelVersion } : {}),
 			cartItem: {
 				id: cartId,
 				productId,
@@ -820,6 +828,7 @@ async function normalizeCart(
 				quantidade: quantity,
 				...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
 				...(modelPath ? { modeloPath: modelPath, modeloNome: modelName } : {}),
+				...(backModelPath ? { contracapaPath: backModelPath, contracapaNome: backModelName, contracapaModo: backMode as 'automatic' | 'custom' } : {}),
 				...(textCustomization ? {
 					textoPersonalizado: customText,
 					personalizacaoTexto: textCustomization,
@@ -890,6 +899,7 @@ async function copyArtworksToOrder(
 			const assets = [
 				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
 				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
+				{ field: 'contracapaPath' as const, path: item.cartItem.contracapaPath, version: item.backModelVersion, model: true },
 			];
 
 			for (const asset of assets) {
@@ -1947,7 +1957,9 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 
 		const items = Array.isArray(order.itens) ? order.itens.filter(isPlainRecord) : [];
 		const item = items.find(candidate => candidate.id === itemId);
-		const modelPath = item?.modeloPath;
+		const face = req.query.face ?? 'front';
+		if (face !== 'front' && face !== 'back') throw new HttpError(400, 'Face do modelo inválida.');
+		const modelPath = face === 'back' ? item?.contracapaPath : item?.modeloPath;
 		if (!isOrderPersonalizationModelPath(modelPath, String(order.userId || ''), orderId)) {
 			throw new HttpError(404, 'Este item não possui um modelo composto armazenado.');
 		}
@@ -1960,7 +1972,7 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 			expires: Date.now() + 5 * 60_000,
 			responseDisposition: 'inline',
 		});
-		res.json({ url, expires_in: 300, filename: textValue(item?.modeloNome, 120) || 'modelo.webp' });
+		res.json({ url, expires_in: 300, filename: textValue(face === 'back' ? item?.contracapaNome : item?.modeloNome, 120) || 'modelo.png' });
 	} catch (error) {
 		sendError(res, error);
 	}

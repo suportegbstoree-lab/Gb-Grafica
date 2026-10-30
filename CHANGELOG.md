@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-29 — Capa, contracapa e exportação dos modelos
+
+- Adicionada contracapa opcional, usando a arte da capa sem texto sobreposto ou uma imagem escolhida pelo cliente; disponível também em produtos de arte sem texto.
+- Novos modelos usam PNG e dimensões originais, sem a redução anterior para 3.200 pixels. Limites existentes de bytes foram preservados; falhas de capacidade são apresentadas sem redução silenciosa.
+- Adicionado visualizador interno com escolha de face, ajuste à tela, zoom e download em JPG por face ou PDF com todas as faces. Loja, carrinho, pedidos e produção usam o mesmo visualizador.
+- Checkout valida e vincula cada face ao proprietário e à versão do arquivo; limpeza de pendentes inclui contracapas. Pedidos antigos com apenas uma face continuam disponíveis.
+- Adicionado gerador PDF carregado sob demanda, com `pdf-lib@1.17.1`, e testes de exportação, resolução, experiência móvel e autorização das duas faces.
+- Migração futura de Gemini para OpenAI registrada em TODO, sem alterar o provedor nesta etapa.
+
 ## 2026-10-29 — Revogação administrativa entre serviços Firebase
 
 - Adicionado registro de autorização controlado pelo servidor no banco da loja e espelhado no `(default)` para as regras do Storage.

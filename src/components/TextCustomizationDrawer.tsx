@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Move, X } from 'lucide-react';
 import { motion } from 'motion/react';
-import { personalizationTextScale } from '../lib/personalizationModel';
+import { isComposablePersonalizationImage, personalizationTextScale } from '../lib/personalizationModel';
 import {
   activePersonalizationFonts,
   DEFAULT_TEXT_CUSTOMIZATION,
@@ -17,6 +17,8 @@ import {
   type ComposedPersonalizationModel,
 } from '../services/personalizationModelService';
 
+export interface BackCoverDraft { mode: 'none' | 'automatic' | 'custom'; file?: File; }
+
 interface TextCustomizationDrawerProps {
   productName: string;
   previewImage: string;
@@ -24,8 +26,10 @@ interface TextCustomizationDrawerProps {
   fieldLabel: string;
   fonts: PersonalizationFont[];
   initialValue: TextCustomization | null;
+  textRequired?: boolean;
+  initialBack?: BackCoverDraft;
   onClose: () => void;
-  onSave: (value: TextCustomization, model: ComposedPersonalizationModel) => void | Promise<void>;
+  onSave: (value: TextCustomization | null, model: ComposedPersonalizationModel, back: ComposedPersonalizationModel | undefined, backDraft: BackCoverDraft) => void | Promise<void>;
 }
 
 function clampPosition(value: number): number {
@@ -39,6 +43,8 @@ export default function TextCustomizationDrawer({
   fieldLabel,
   fonts,
   initialValue,
+  textRequired = true,
+  initialBack = { mode: 'none' },
   onClose,
   onSave,
 }: TextCustomizationDrawerProps) {
@@ -55,6 +61,8 @@ export default function TextCustomizationDrawer({
       } : {}),
     };
   });
+  const [backDraft, setBackDraft] = useState<BackCoverDraft>(initialBack);
+  const [backPreview, setBackPreview] = useState('');
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [previewAspectRatio, setPreviewAspectRatio] = useState(1);
@@ -74,7 +82,7 @@ export default function TextCustomizationDrawer({
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    textInputRef.current?.focus();
+    (textInputRef.current || drawerRef.current?.querySelector<HTMLElement>('button'))?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -116,6 +124,13 @@ export default function TextCustomizationDrawer({
     observer.observe(previewRef.current);
     return () => observer.disconnect();
   }, []);
+
+  React.useEffect(() => {
+    if (!backDraft.file) { setBackPreview(''); return; }
+    const url = URL.createObjectURL(backDraft.file);
+    setBackPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [backDraft.file]);
 
   const updatePositionFromPointer = (element: HTMLElement, clientX: number, clientY: number) => {
     const bounds = element.getBoundingClientRect();
@@ -169,10 +184,13 @@ export default function TextCustomizationDrawer({
   };
 
   const save = async () => {
-    const normalized = normalizeTextCustomization(draft, availableFonts);
-    if (!normalized) {
+    const normalized = textRequired ? normalizeTextCustomization(draft, availableFonts) : null;
+    if (textRequired && !normalized) {
       setError(`Informe um texto de até ${MAX_CUSTOM_TEXT_LENGTH} caracteres, uma fonte e uma posição válida.`);
       return;
+    }
+    if (backDraft.mode === 'custom' && !backDraft.file) {
+      setError('Selecione a imagem da contracapa.'); return;
     }
     setIsGenerating(true);
     setError('');
@@ -182,7 +200,11 @@ export default function TextCustomizationDrawer({
         customization: normalized,
         fonts: availableFonts,
       });
-      await onSave(normalized, model);
+      const back = backDraft.mode !== 'none' ? await composePersonalizationModel({
+        source: backDraft.mode === 'custom' ? backDraft.file! : previewSource || previewImage,
+        fonts: [],
+      }) : undefined;
+      await onSave(normalized, model, back, backDraft);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Não foi possível gerar o modelo personalizado.');
     } finally {
@@ -216,14 +238,15 @@ export default function TextCustomizationDrawer({
         <header className="flex items-center justify-between border-b border-gray-100 px-5 py-5 sm:px-8">
           <div>
             <p className="text-[9px] font-black uppercase tracking-[0.2em] text-pink-500">{productName}</p>
-            <h3 id={titleId} className="mt-1 text-xl font-black text-gray-900">Personalizar texto</h3>
+            <h3 id={titleId} className="mt-1 text-xl font-black text-gray-900">{textRequired ? 'Personalizar texto' : 'Personalizar capa e contracapa'}</h3>
           </div>
           <button type="button" onClick={onClose} disabled={isGenerating} aria-label="Fechar personalização" className="rounded-full p-2 text-gray-400 transition-colors hover:bg-gray-100 hover:text-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
             <X size={22} />
           </button>
         </header>
 
-        <div className="flex-1 space-y-7 overflow-y-auto p-5 sm:p-8">
+        <fieldset disabled={isGenerating} className="min-h-0 flex-1 space-y-7 overflow-y-auto p-5 sm:p-8">
+          {textRequired && <>
           <div className="space-y-2">
             <label htmlFor={`${titleId}-text`} className="text-[10px] font-black uppercase tracking-[0.18em] text-gray-500">{fieldLabel}</label>
             <input
@@ -290,8 +313,8 @@ export default function TextCustomizationDrawer({
               onKeyDown={handlePreviewKeyDown}
               aria-describedby={instructionsId}
               aria-label={`Prévia da posição do texto: ${draft.posicao.x}% horizontal e ${draft.posicao.y}% vertical`}
-              style={{ aspectRatio: previewAspectRatio }}
-              className="relative block max-h-[60vh] w-full touch-none overflow-hidden rounded-2xl border-2 border-gray-200 bg-gray-100 text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100"
+              style={{ aspectRatio: previewAspectRatio, width: `min(100%, calc(60vh * ${previewAspectRatio}))` }}
+              className="relative mx-auto block max-h-[60vh] touch-none overflow-hidden rounded-2xl border-2 border-gray-200 bg-gray-100 text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100"
             >
               <img
                 src={previewImage}
@@ -326,12 +349,38 @@ export default function TextCustomizationDrawer({
             <p className="text-[9px] leading-relaxed text-gray-400">Ao aplicar, o site gera e armazena uma imagem privada já composta com a arte, o texto e a fonte escolhida.</p>
           </div>
 
+          </>}
+          {!textRequired && <img src={previewImage} alt="Arte da capa" className="max-h-80 w-full rounded-xl object-contain" />}
+          <fieldset className="space-y-3 rounded-2xl border border-gray-200 p-4">
+            <legend className="px-1 text-sm font-black text-gray-900">Contracapa</legend>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={backDraft.mode !== 'none'} onChange={event => { setError(''); setBackDraft(current => ({ ...current, mode: event.target.checked ? 'automatic' : 'none' })); }} />
+              Incluir contracapa
+            </label>
+            {backDraft.mode !== 'none' && <>
+              <label className="flex items-center gap-2 text-sm text-gray-700"><input type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'automatic'} onChange={() => setBackDraft(current => ({ ...current, mode: 'automatic' }))} />Automática: mesma arte da capa, sem o texto personalizado</label>
+              <label className="flex items-center gap-2 text-sm text-gray-700"><input type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'custom'} onChange={() => setBackDraft(current => ({ ...current, mode: 'custom' }))} />Escolher outra imagem</label>
+              {backDraft.mode === 'custom' && <div className="space-y-2">
+                <label className="block text-xs font-bold text-gray-700">Imagem da contracapa
+                  <input type="file" accept="image/png,image/jpeg,image/webp" className="mt-2 block w-full text-xs" onChange={event => {
+                    const file = event.target.files?.[0]; event.target.value = '';
+                    if (!file) return;
+                    if (!isComposablePersonalizationImage(file.type, file.size)) { setError('Envie uma contracapa JPG, PNG ou WebP de até 15 MB.'); return; }
+                    setError(''); setBackDraft({ mode: 'custom', file });
+                  }} />
+                </label>
+                {backDraft.file && <p className="break-words text-xs text-gray-500">{backDraft.file.name}</p>}
+              </div>}
+              {(backDraft.mode === 'automatic' || backPreview) && <img src={backDraft.mode === 'automatic' ? previewImage : backPreview} alt="Prévia da contracapa" className="max-h-64 w-full rounded-xl bg-gray-50 object-contain" />}
+            </>}
+          </fieldset>
+          <p className="text-xs text-gray-500">O modelo usa a resolução original da imagem. Após gerar, confira as faces no visualizador e baixe em JPG ou PDF.</p>
           {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">{error}</div>}
-        </div>
+        </fieldset>
 
         <footer className="grid grid-cols-2 gap-3 border-t border-gray-100 bg-gray-50/70 p-5 sm:px-8">
           <button type="button" onClick={onClose} disabled={isGenerating} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-black uppercase tracking-wider text-gray-600 hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-40">Cancelar</button>
-          <button type="button" onClick={() => void save()} disabled={availableFonts.length === 0 || isGenerating} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
+          <button type="button" onClick={() => void save()} disabled={(textRequired && availableFonts.length === 0) || isGenerating} className="flex items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-pink-500 disabled:cursor-not-allowed disabled:opacity-40">
             <Check size={16} /> {isGenerating ? 'Gerando modelo...' : 'Aplicar e gerar modelo'}
           </button>
         </footer>

@@ -1,3 +1,4 @@
+import type { PersonalizationDocument } from '../services/personalizationExport';
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -66,6 +67,8 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
   },
 ];
 
+FIXTURE_PRODUCTS.push({ id: 'caderno', nome: 'Caderno Personalizado', desc: 'Caderno com capa e contracapa.', categoria: 'Personalizados', imagem: FIXTURE_IMAGE, preco_base: '20.00', atributos: [], combinacoes: {}, tipoInput: 'arte' });
+
 const FIXTURE_PROMOTIONS: Promocao[] = [
   {
     id: 'promo-teste',
@@ -88,6 +91,9 @@ const FIXTURE_ORDERS: Order[] = [
     data: '2026-09-02T00:00:00.000Z',
     itens: [{
       id: '1yi50l93z-e2e',
+      modeloPath: 'artworks/e2e-user/orders/GB-E2E-PAGO/item/11111111111111111111111111111111.png',
+      contracapaPath: 'artworks/e2e-user/orders/GB-E2E-PAGO/item/22222222222222222222222222222222.png',
+      contracapaModo: 'automatic',
       productId: '1yi50l93z',
       nome: 'Carimbo',
       imagem: '/logo.png',
@@ -115,18 +121,25 @@ const FIXTURE_USER = {
   getIdTokenResult: async () => ({ claims: { admin: true } }),
 } as unknown as FirebaseUser;
 
+async function fixtureOrderModelLoader(_orderId: string, item: CartItem): Promise<PersonalizationDocument> {
+  const blob = new Blob([Uint8Array.from(atob(FIXTURE_IMAGE.split(',')[1]), character => character.charCodeAt(0))], { type: 'image/png' });
+  return { title: item.nome, pages: [{ label: 'Capa', blob }, ...(item.contracapaPath ? [{ label: 'Contracapa' as const, blob }] : [])] };
+}
+
 function StoreFixture() {
   const [cart, setCart] = React.useState<CartItem[]>([]);
   const [checkoutRedirect, setCheckoutRedirect] = React.useState('');
+  const modelBlobs = React.useRef(new Map<string, Blob>());
   const personalizationModelStorage = React.useMemo<PersonalizationModelStorage>(() => ({
-    async uploadModel(_model, name) {
+    async uploadModel(model, name) {
       const uploadId = crypto.randomUUID().replace(/-/g, '');
-      return {
-        path: `artworks/e2e-user/pending/${uploadId}.webp`,
-        name,
-      };
+      const path = `artworks/e2e-user/pending/${uploadId}.png`;
+      modelBlobs.current.set(path, model.blob);
+      return { path, name };
     },
-    async deleteModel() {},
+    async deleteModel(path) { modelBlobs.current.delete(path); },
+    async readModel(path) { const blob = modelBlobs.current.get(path); if (!blob) throw new Error('Modelo de teste ausente'); return blob; },
+    async uploadArtwork(file) { return { path: `artworks/e2e-user/pending/${crypto.randomUUID().replace(/-/g, '')}.png`, name: file.name }; },
   }), []);
 
   return (
@@ -139,6 +152,7 @@ function StoreFixture() {
         cart={cart}
         setCart={setCart}
         orders={FIXTURE_ORDERS}
+        orderModelLoader={fixtureOrderModelLoader}
         user={FIXTURE_USER}
         isAdmin
         productsReady
@@ -230,6 +244,7 @@ function AdminFixture() {
         config={config}
         categories={categories}
         orders={FIXTURE_ORDERS}
+        orderModelLoader={fixtureOrderModelLoader}
         ordersReady
         ordersError={null}
         promotions={promotions}
