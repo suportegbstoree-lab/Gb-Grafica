@@ -1,3 +1,4 @@
+import { initialReference } from '../lib/decorativeInitial';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
@@ -33,6 +34,8 @@ let providerCalls = 0;
 let copiedGeneration: number | undefined;
 let copiedMetadata: Record<string, unknown> | undefined;
 let copiedPath = '';
+let accessAdmin = false;
+let accessStaff = false;
 let copies: Array<{ path: string; generation: number | undefined }> = [];
 
 function ref(path: string) {
@@ -65,7 +68,7 @@ const fakeBucket = {
       async getMetadata() {
         const obj = objects.get(path);
         if (!obj) throw Object.assign(new Error('Objeto ausente'), { code: 404 });
-        return [{ size: String(obj.bytes.length), generation: String(obj.generation), contentType: 'image/png', metadata: obj.metadata }];
+        return [{ size: String(obj.bytes.length), generation: String(obj.generation), contentType: path.endsWith('.pdf') ? 'application/pdf' : 'image/png', metadata: obj.metadata }];
       },
       async download() {
         if (replaceAtDownload) replaceSource();
@@ -105,8 +108,9 @@ before(async () => {
   const storage = getStorage(firebaseApp);
   mock.method(auth, 'verifyIdToken', async (_token: string, checkRevoked?: boolean) => {
     assert.equal(checkRevoked, true);
-    return { uid, sub: uid, email: 'comprador@example.test', name: 'Cliente Teste' } as unknown as DecodedIdToken;
+    return { uid, sub: uid, admin: accessAdmin, ...(accessStaff ? { gbStaffEpoch: 'a'.repeat(32), staffRole: 'designer' } : {}), email: 'comprador@example.test', name: 'Cliente Teste' } as unknown as DecodedIdToken;
   });
+  mock.method(auth, 'getUser', async () => ({ uid, disabled: false, customClaims: { admin: accessAdmin, ...(accessStaff ? { gbStaffEpoch: 'a'.repeat(32), staffRole: 'designer' } : {}) } }) as never);
   mock.method(db, 'collection', ((name: string) => ({
     doc: (id: string) => ref(`${name}/${id}`),
     get: async () => ({ docs: [] }),
@@ -131,6 +135,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
 beforeEach(() => {
+  accessAdmin = false; accessStaff = false;
   scenario += 1; uid = `user${scenario}`;
   sourcePath = `artworks/${uid}/pending/00000000000000000000000000000000.png`;
   replaceAtCopy = false; replaceAtDelete = false; replaceAtDownload = false; providerCalls = 0;
@@ -374,4 +379,50 @@ test('produto com formato exige modelo composto antes da compra', async () => {
   configurePrintProduct();
   const response = await checkout({ printProfile });
   assert.equal(response.status, 422); assert.equal(providerCalls, 0);
+});
+
+function initialProduct() {
+  const id = 'c'.repeat(32), letterPath = `catalog/products/produto/${'d'.repeat(32)}.png`;
+  const template = { id, path: `catalog/templates/produto/${id}.pdf`, name: 'Alfabeto.pdf', pages: ['https://example.test/front.png'], alphabet: { folderName: 'Alfabeto', sizePercent: 60, letters: { A: { path: letterPath, url: 'https://example.test/A.png' } } } };
+  docs.set('config/main', { fontes_personalizacao: [{ id: 'arial', nome: 'Arial', cssFamily: 'Arial', ativo: true }] });
+  docs.set('anuncios/produto', { ...docs.get('anuncios/produto'), imagem: template.pages[0], modelosPdf: [template], tipoInput: 'texto' });
+  objects.set(template.path, { generation: 44, bytes: Buffer.from('%PDF-1.7'), metadata: {} });
+  objects.set(letterPath, { generation: 31, bytes: Buffer.from([137,80,78,71,13,10,26,10]), metadata: { firebaseStorageDownloadTokens: 'public-catalog-token' } });
+  return { template, letterPath, item: { arquivoPath: '', templateId: id, modeloPath: addModel('1', 25), contracapaPath: addModel('2', 26), contracapaModo: 'automatic', inicialReferencia: initialReference(template, 'Ana'), personalizacaoTexto: { texto: 'Ana', fonte: 'arial', posicao: { x: 50, y: 50 } } } };
+}
+
+test('pedido copia a inicial canônica e conserva o PDF e o alfabeto do catálogo', async () => {
+  const { template, letterPath, item } = initialProduct();
+  const response = await checkout({ ...item, inicialPath: 'artworks/outro/pending/falso.png', inicialLetra: 'Z', inicialTamanho: 99 });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  assert.deepEqual(copies.map(copy => copy.generation), [44, 25, 26, 31]);
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))?.[1];
+  const stored = (order!.itens as Array<Record<string, unknown>>)[0];
+  assert.equal(stored.inicialPath, copies[3].path); assert.equal(stored.inicialLetra, 'A'); assert.equal(stored.inicialTamanho, 60);
+  assert.equal(objects.has(template.path), true); assert.equal(objects.has(letterPath), true);
+  assert.equal(objects.has(item.modeloPath), false); assert.equal(objects.has(item.contracapaPath), false);
+  assert.equal(objects.get(copies[3].path)?.metadata.firebaseStorageDownloadTokens, undefined);
+  objects.delete(letterPath); docs.set('anuncios/produto', {});
+  assert.equal(objects.get(copies[3].path)?.bytes[0], 137, 'o pedido mantém uma cópia independente do catálogo');
+});
+
+test('referência antiga da inicial impede o checkout antes de copiar ou chamar o provedor', async () => {
+  const { item } = initialProduct(); const response = await checkout({ ...item, inicialReferencia: 'null' });
+  assert.equal(response.status, 422); assert.equal(providerCalls, 0); assert.equal(copies.length, 0);
+});
+
+test('download da inicial é exclusivo de orders.artwork, inclusive quando o cliente é dono do pedido', async () => {
+  const orderId = 'GB-INITIAL123', itemId = 'item123', path = `artworks/${uid}/orders/${orderId}/${itemId}/${'d'.repeat(32)}.png`;
+  const order = { userId: uid, itens: [{ id: itemId, inicialPath: path }] };
+  docs.set(`orders/${orderId}`, order);
+  const request = () => localFetch(`${baseUrl}/api/admin/orders/${orderId}/initial/${itemId}`, { headers: { authorization: 'Bearer usuario-teste' } });
+  assert.equal((await request()).status, 403);
+  accessStaff = true;
+  docs.set(`_staffAccess/${uid}`, { schemaVersion: 1, enabled: true, roleId: 'designer', epoch: 'a'.repeat(32) });
+  docs.set('_staffRoles/designer', { schemaVersion: 1, enabled: true, revision: 'b'.repeat(32), permissions: ['orders.read'] });
+  assert.equal((await request()).status, 403);
+  docs.set('_staffRoles/designer', { schemaVersion: 1, enabled: true, revision: 'b'.repeat(32), permissions: ['orders.read', 'orders.artwork'] });
+  assert.equal((await request()).status, 200);
+  docs.set(`orders/${orderId}`, { ...order, itens: [{ id: itemId, inicialPath: path.replace('/item123/', '/otheritem/') }] });
+  assert.equal((await request()).status, 404);
 });

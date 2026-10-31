@@ -1,8 +1,11 @@
+import type { DecorativeInitial } from '../lib/decorativeInitial';
+import { drawDecorativeInitial } from '../services/personalizationModelService';
 import React from 'react';
 import type { PersonalizationFont, TextCustomization } from '../lib/textCustomization';
 import { decodePersonalizationSource, drawPersonalizationText, preparePersonalizationFont, type DecodedImage, type PersonalizationTextBox } from '../services/personalizationModelService';
 
-export default function PersonalizationPreview({ source, customization, fonts, onDimensions, onLayout }: {
+export default function PersonalizationPreview({ source, customization, fonts, initial, onDimensions, onLayout }: {
+  initial?: DecorativeInitial;
   source: Blob | string; customization: TextCustomization | null; fonts: PersonalizationFont[];
   onDimensions: (width: number, height: number) => void;
   onLayout?: (boxes: PersonalizationTextBox[]) => void;
@@ -27,10 +30,11 @@ export default function PersonalizationPreview({ source, customization, fonts, o
     if (!decoded) return;
     let cancelled = false; let release = () => {};
     setRendering(true); setError('');
-    void preparePersonalizationFont(customization, fonts).then(cleanup => {
+    void preparePersonalizationFont(customization, fonts).then(async cleanup => {
       if (cancelled) { cleanup(); return; } release = cleanup;
-      const target = canvas.current;
-      if (!target) return;
+      const visible = canvas.current;
+      if (!visible) return;
+      const target = document.createElement('canvas');
       const scale = 1200 / Math.max(decoded.width, decoded.height);
       target.width = Math.max(1, Math.round(decoded.width * scale)); target.height = Math.max(1, Math.round(decoded.height * scale));
       const context = target.getContext('2d');
@@ -38,12 +42,16 @@ export default function PersonalizationPreview({ source, customization, fonts, o
       context.scale(target.width / decoded.width, target.height / decoded.height);
       context.fillStyle = '#ffffff'; context.fillRect(0, 0, decoded.width, decoded.height);
       context.drawImage(decoded.source, 0, 0, decoded.width, decoded.height);
+      if (initial) await drawDecorativeInitial(context, decoded.width, decoded.height, initial);
+      if (cancelled) return;
       const boxes = customization?.texto.trim() ? drawPersonalizationText(context, decoded.width, decoded.height, customization, fonts) : [];
+      visible.width = target.width; visible.height = target.height;
+      visible.getContext('2d')?.drawImage(target, 0, 0);
       layoutCallback.current?.(boxes);
       setRendering(false);
     }).catch(reason => { if (!cancelled) { setError(reason instanceof Error ? reason.message : 'Não foi possível atualizar a prévia.'); layoutCallback.current?.([]); setRendering(false); } });
     return () => { cancelled = true; release(); };
-  }, [decoded, customization, fonts]);
+  }, [decoded, customization, fonts, initial]);
 
   return <>
     <canvas ref={canvas} draggable={false} onContextMenu={event => event.preventDefault()} role="img" aria-label="Prévia do item personalizado" aria-busy={rendering} className="pointer-events-none h-full w-full select-none object-contain" />

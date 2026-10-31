@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { centeredInitialBox, firstInitial, initialReference, matchingAlphabetName, readAlphabetFiles, selectedInitial, validAlphabet } from './decorativeInitial';
+import { validPdfTemplates } from './pdfTemplate';
+
+const path = `catalog/products/product/${'b'.repeat(32)}.png`;
+const alphabet = { folderName: 'Alfabeto Borboleta', sizePercent: 60, letters: { A: { path, url: 'https://example.test/A.png' } } };
+const template = { id: 'a'.repeat(32), path: `catalog/templates/product/${'a'.repeat(32)}.pdf`, name: 'Alfabeto Borboleta.pdf', pages: ['/front.png'], alphabet };
+const file = (name: string, folder = 'Alfabeto Borboleta', nested = '') => Object.assign(new File(['png'], name, { type: 'image/png' }), { webkitRelativePath: `${folder}/${nested}${name}` });
+
+test('associa somente nomes iguais; acentos Unicode equivalentes mantêm a associação', () => {
+  assert.equal(matchingAlphabetName('Alfabeto Borboleta.pdf', 'Alfabeto Borboleta'), true);
+  assert.equal(matchingAlphabetName('Alfabeto Borboleta.PDF', 'Alfabeto Borborboleta'), false);
+  assert.equal(matchingAlphabetName('Coleção.pdf', 'Colec\u0327a\u0303o'), true);
+  assert.equal(matchingAlphabetName('Alfabeto Borboleta.pdf', 'alfabeto borboleta'), false);
+});
+test('usa o primeiro caractere digitado, normaliza caixa e acentos e não pula símbolos', () => {
+  for (const [text, expected] of [['  ána', 'A'], ['çarlos', 'C'], ['\nBruna', 'B'], ['A\nB', 'A'], [' 123 Ana', undefined], ['🌸Ana', undefined], ['', undefined]]) assert.equal(firstInitial(text || ''), expected);
+  assert.equal(selectedInitial(template, 'Ana')?.path, path);
+  assert.equal(selectedInitial(template, 'Beatriz'), undefined);
+  assert.equal(selectedInitial({ ...template, alphabet: undefined }, 'Ana'), undefined);
+  assert.equal(initialReference(template, 'Beatriz'), 'null');
+  assert.notEqual(initialReference(template, 'Ana'), initialReference({ ...template, alphabet: { ...alphabet, sizePercent: 40 } }, 'Ana'));
+});
+test('importação recusa outra pasta, subpastas, letras repetidas e extensões indevidas', () => {
+  assert.deepEqual(readAlphabetFiles([file('B.png'), file('a.png')], template.name).letters.map(item => item.letter), ['A', 'B']);
+  for (const files of [[file('A.png', 'Outra')], [file('A.png'), file('a.png')], [file('A.png', alphabet.folderName, 'sub/')], [file('A.jpg')], [file('AB.png')]]) assert.throws(() => readAlphabetFiles(files, template.name));
+});
+test('metadados rejeitam caminhos fora do produto, tamanhos inválidos e pastas sem correspondência', () => {
+  assert.equal(validAlphabet(alphabet, template.name, 'product'), true);
+  for (const invalid of [{ ...alphabet, sizePercent: 101 }, { ...alphabet, sizePercent: NaN }, { ...alphabet, folderName: 'Outra' }, { ...alphabet, letters: {} }, { ...alphabet, letters: { AA: alphabet.letters.A } }, { ...alphabet, letters: { A: { path: path.replace('/product/', '/other/'), url: alphabet.letters.A.url } } }]) assert.equal(validAlphabet(invalid, template.name, 'product'), false);
+  assert.equal(validPdfTemplates([template], 'product', ['/front.png']), true);
+  assert.equal(validPdfTemplates([{ ...template, alphabet: { ...alphabet, sizePercent: 0 } }], 'product', ['/front.png']), false);
+});
+test('centraliza o canvas completo, mantém proporção e nunca ultrapassa a página', () => {
+  const box = centeredInitialBox(210, 297, 1414, 2000, 60);
+  assert.ok(Math.abs(box.width / box.height - 1414 / 2000) < 1e-9);
+  assert.equal(box.x * 2 + box.width, 210);
+  assert.equal(box.y * 2 + box.height, 297);
+  for (const [w, h] of [[2000, 1414], [1, 20000], [20000, 1]]) { const result = centeredInitialBox(210, 297, w, h, 100); assert.ok(result.x >= 0 && result.y >= 0 && result.width <= 210 && result.height <= 297); }
+  assert.throws(() => centeredInitialBox(0, 297, 1414, 2000, 60));
+});

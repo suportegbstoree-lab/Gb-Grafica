@@ -32,6 +32,10 @@ export interface Anuncio {
 }
 
 export interface CartItem {
+  inicialReferencia?: string;
+  inicialPath?: string;
+  inicialLetra?: string;
+  inicialTamanho?: number;
   templateId?: string;
   printProfile?: PrintProfile;
   aprovarArte?: boolean;

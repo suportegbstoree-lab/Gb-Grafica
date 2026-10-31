@@ -1,3 +1,4 @@
+import { centeredInitialBox, type DecorativeInitial } from '../lib/decorativeInitial';
 import { textLayers } from '../lib/textLines';
 import { personalizationTextLayout } from '../lib/personalizationTextLayout';
 import { matchesArtworkSignature } from '../lib/artwork';
@@ -200,8 +201,10 @@ export async function composePersonalizationModel({
 	source,
 	customization,
 	fonts,
+  initial,
 }: {
 	source: Blob | string;
+  initial?: DecorativeInitial;
 	customization?: TextCustomization | null;
 	fonts: PersonalizationFont[];
 }): Promise<ComposedPersonalizationModel> {
@@ -220,6 +223,8 @@ export async function composePersonalizationModel({
 		context.fillStyle = '#ffffff';
 		context.fillRect(0, 0, canvas.width, canvas.height);
 		context.drawImage(decoded.source, 0, 0, canvas.width, canvas.height);
+
+    if (initial) await drawDecorativeInitial(context, canvas.width, canvas.height, initial);
 
 		if (customization) {
       releaseFont = await preparePersonalizationFont(customization, fonts);
@@ -244,4 +249,9 @@ export async function composePersonalizationModel({
 		decoded.dispose();
 		canvas.width = canvas.height = 1;
 	}
+}
+
+export async function drawDecorativeInitial(context: CanvasRenderingContext2D, width: number, height: number, initial: DecorativeInitial): Promise<void> {
+  const image = await decodePersonalizationSource(initial.source);
+  try { const box = centeredInitialBox(width, height, image.width, image.height, initial.sizePercent); context.drawImage(image.source, box.x, box.y, box.width, box.height); } finally { image.dispose(); }
 }

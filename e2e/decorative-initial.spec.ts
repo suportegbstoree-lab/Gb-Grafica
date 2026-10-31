@@ -1,0 +1,80 @@
+import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { PDFDocument, PDFDict, PDFName, PDFRawStream } from 'pdf-lib';
+
+const folder = 'e2e/fixtures/editor-template';
+test('pasta do PDF seleciona a primeira letra na prévia, sem inicial na contracapa ou download do cliente', async ({ page }) => {
+  await page.goto('/__e2e/admin');
+  await page.getByRole('button', { name: 'Editar Livro de Receitas Personalizado', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Editar Produto' });
+  await editor.getByLabel('Selecionar imagem principal do computador').setInputFiles('e2e/fixtures/editor-template.pdf');
+  await expect(editor.getByText('PDF: editor-template.pdf', { exact: true })).toBeVisible();
+  await editor.getByLabel('Pasta de letras de editor-template.pdf', { exact: true }).setInputFiles(folder);
+  await expect(editor.getByText(/Pasta: editor-template · Letras: A/)).toBeVisible();
+  await editor.getByLabel('Tamanho máximo da inicial (% da página)').fill('55');
+  await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await page.getByRole('link', { name: 'Visualizar como cliente', exact: true }).click();
+  const card = page.locator('#produto-livro-receitas');
+  await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
+  const preview = drawer.getByRole('img', { name: 'Prévia do item personalizado', exact: true });
+  const magentaPixels = () => preview.evaluate((canvas: HTMLCanvasElement) => {
+    const rgba = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+    let found = 0; for (let i = 0; i < rgba.length; i += 4) if (rgba[i] > 245 && rgba[i+1] < 15 && rgba[i+2] > 160 && rgba[i+2] < 200) found++; return found;
+  });
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  const baseline = await magentaPixels();
+  await drawer.getByLabel('Nome para personalização').fill('Ágata');
+  await expect(drawer.getByText('Inicial A aplicada somente na capa.', { exact: true })).toBeVisible();
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  await expect.poll(magentaPixels).toBeGreaterThan(baseline + 1000);
+  const withInitial = await magentaPixels();
+  await drawer.getByLabel('Incluir contracapa').check();
+  await drawer.getByRole('button', { name: 'Contracapa', exact: true }).click();
+  await expect(preview).toHaveAttribute('aria-busy', 'false'); await expect.poll(magentaPixels).toBeLessThan(withInitial - 1000);
+  await drawer.getByRole('button', { name: 'Capa', exact: true }).click();
+  await drawer.getByLabel('Nome para personalização').fill('Beatriz');
+  await expect(drawer.getByText(/A pasta não possui uma imagem para B/)).toBeVisible();
+  await expect(preview).toHaveAttribute('aria-busy', 'false'); await expect.poll(magentaPixels).toBe(baseline);
+  await drawer.getByLabel('Nome para personalização').fill('Ana');
+  await expect(preview).toHaveAttribute('aria-busy', 'false');
+  await drawer.getByRole('button', { name: 'Aplicar e gerar modelo' }).click();
+  const viewer = page.getByRole('dialog', { name: 'Modelo personalizado', exact: true });
+  await expect(viewer).toBeVisible(); await expect(viewer.getByRole('button', { name: /Baixar/ })).toHaveCount(0);
+  await viewer.getByRole('button', { name: 'Fechar visualização do modelo' }).click();
+  await card.getByRole('button', { name: 'Adicionar ao Carrinho', exact: true }).click();
+  await expect(page.getByText('Adicionado ao carrinho', { exact: false }).first()).toBeVisible();
+  const cart = JSON.parse(await page.getByTestId('e2e-cart').textContent() || '[]');
+  expect(cart).toHaveLength(1); expect(cart[0].inicialReferencia).toContain('"A"');
+  expect(cart[0].inicialReferencia).toContain('55');
+});
+
+test('PDF de produção preserva os vetores e o alpha da inicial apenas na primeira página', async ({ page }) => {
+  await page.goto('/__e2e/store');
+  const input = { pdf: (await readFile('e2e/fixtures/editor-template.pdf')).toString('base64'), png: (await readFile(`${folder}/A.png`)).toString('base64') };
+  const result = await page.evaluate(async input => {
+    const exportPath = '/src/services/personalizationExport.ts', previewPath = '/src/services/pdfPreview.ts', modelPath = '/src/services/personalizationModelService.ts';
+    const service = await import(exportPath), renderer = await import(previewPath), composer = await import(modelPath);
+    const blob = (bytes: string, type: string) => new Blob([Uint8Array.from(atob(bytes), c => c.charCodeAt(0))], { type });
+    const originalPdf = blob(input.pdf, 'application/pdf'), initial = { source: blob(input.png, 'image/png'), sizePercent: 60 };
+    const previews = await renderer.pdfPreviewPages(originalPdf);
+    const front = await composer.composePersonalizationModel({ source: previews[0], fonts: [], initial });
+    const back = await composer.composePersonalizationModel({ source: previews[1], fonts: [] });
+    const pdf = await service.exportPersonalizationPdf({ title: 'Inicial de produção', originalPdf, automaticPdfBack: true, initial, pages: [{ label: 'Capa', blob: front.blob }, { label: 'Contracapa', blob: back.blob }] });
+    const render = await renderer.pdfPreviewPages(pdf);
+    async function pixels(blob: Blob) { const b = await createImageBitmap(blob), c = document.createElement('canvas'); c.width = b.width; c.height = b.height; const ctx = c.getContext('2d')!; ctx.drawImage(b, 0, 0); b.close(); return ctx.getImageData(0, 0, c.width, c.height).data; }
+    const a = await pixels(previews[1]), b = await pixels(render[1]);
+    let difference = 0; for (let i = 0; i < a.length; i++) difference += Math.abs(a[i] - b[i]);
+    return { bytes: Array.from(new Uint8Array(await pdf.arrayBuffer())), backMeanDifference: difference / a.length };
+  }, input);
+  const pdf = await PDFDocument.load(Uint8Array.from(result.bytes)); expect(pdf.getPageCount()).toBe(2);
+  const objects = pdf.getPages().map(page => page.node.Resources()!.lookup(PDFName.of('XObject'), PDFDict).values().map(value => pdf.context.lookup(value) as PDFRawStream));
+  expect(objects[0].some(o => o.dict.get(PDFName.of('Subtype'))?.toString() === '/Form')).toBe(true);
+  const image = objects[0].find(o => o.dict.get(PDFName.of('Subtype'))?.toString() === '/Image')!;
+  expect(image.dict.get(PDFName.of('Width'))?.toString()).toBe('100');
+  expect(image.dict.get(PDFName.of('Height'))?.toString()).toBe('200');
+  expect(image.dict.has(PDFName.of('SMask'))).toBe(true);
+  expect(objects[1].some(o => o.dict.get(PDFName.of('Subtype'))?.toString() === '/Image')).toBe(false);
+  expect(result.backMeanDifference).toBeLessThan(0.1);
+});

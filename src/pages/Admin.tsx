@@ -1,3 +1,6 @@
+import PdfTemplatesEditor from '../components/PdfTemplatesEditor';
+import { alphabetUrls } from '../lib/decorativeInitial';
+import { validPdfTemplates } from '../lib/pdfTemplate';
 import OrderDocuments from '../components/OrderDocuments';
 import OperationsWorkbench from '../components/OperationsWorkbench';
 import type { OperationsClient } from '../services/operationsService';
@@ -338,7 +341,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
   const openProductEditor = (draft: Partial<Anuncio>) => {
     const copy = structuredClone(draft);
     const storageId = copy.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-    const originalUrls = [copy.imagem, ...(copy.imagens || [])]
+    const originalUrls = [copy.imagem, ...(copy.imagens || []), ...alphabetUrls(copy.modelosPdf)]
       .filter((value): value is string => typeof value === 'string' && Boolean(value));
     setEditingProduct(copy);
     setProductBaseline(draftFingerprint(copy));
@@ -1003,7 +1006,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
     setIsSaving(true);
     try {
       await persistence.setDocument('anuncios', id, productToSave);
-      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path)]);
+      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
       const original = originalProductImagesRef.current;
       const staleOriginalPaths = original
         ? original.urls
@@ -1040,13 +1043,13 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
     try {
       await persistence.deleteDocument('anuncios', id);
       const catalogPaths = product
-        ? [product.imagem, ...(product.imagens || [])]
+        ? [product.imagem, ...(product.imagens || []), ...alphabetUrls(product.modelosPdf)]
           .map(url => catalogImageStorage.pathFromUrl(url, id))
           .filter((path): path is string => Boolean(path))
         : [];
       let cleanupFailed = false;
       try {
-        await deleteCatalogPaths(catalogPaths);
+        await deleteCatalogPaths([...catalogPaths, ...(product?.modelosPdf || []).map(template => template.path)]);
       } catch (cleanupError) {
         cleanupFailed = true;
         console.error('Produto excluído, mas houve falha ao limpar suas imagens:', cleanupError);
@@ -1085,10 +1088,12 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
     const removed = canEditProductPersonalization(effectivePermissions) && current.printProfile && !draft.printProfile ? ['printProfile'] : [];
     const next = { ...current, ...patch } as Anuncio;
     if (removed.length) delete next.printProfile;
+    if (next.modelosPdf && !validPdfTemplates(next.modelosPdf, next.id, [next.imagem, ...(next.imagens || [])])) throw new Error('Revise os modelos PDF e os alfabetos.');
     if (persistence.patchDocument) await persistence.patchDocument('anuncios', current.id, patch, removed);
     else await persistence.setDocument('anuncios', current.id, next);
-    const used = new Set([next.imagem, ...(next.imagens || [])]);
-    const stale = [current.imagem, ...(current.imagens || [])].filter(url => !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
+    const used = new Set([next.imagem, ...(next.imagens || []), ...alphabetUrls(next.modelosPdf)]);
+    const stale = [current.imagem, ...(current.imagens || []), ...alphabetUrls(current.modelosPdf)].filter(url => !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
+    stale.push(...(current.modelosPdf || []).filter(template => !(next.modelosPdf || []).some(item => item.path === template.path)).map(template => template.path));
     await Promise.allSettled(stale.map(path => (path.startsWith('catalog/templates/') ? (catalogImageStorage.deletePdf || removeCatalogPdf)(path) : catalogImageStorage.deleteImage(path))));
     setSuccessMessage('Arte do produto atualizada.');
     return next;
@@ -2121,7 +2126,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
                   )}
                 </div>
 
-                {(editingProduct.modelosPdf || []).map(template => <div key={template.id} className="rounded-xl border border-gray-700 p-4 text-sm">PDF: {template.name} · {template.pages.length} página(s)<button type="button" className="ml-3 text-red-400" onClick={() => setEditingProduct(current => current ? { ...current, modelosPdf: current.modelosPdf?.filter(item => item.id !== template.id) } : current)}>Desvincular PDF</button></div>)}
+                <PdfTemplatesEditor templates={editingProduct.modelosPdf || []} onChange={modelosPdf => setEditingProduct(current => current ? { ...current, id: productStorageId, modelosPdf } : current)} upload={file => catalogImageStorage.uploadImage(productStorageId!, file)} remove={catalogImageStorage.deleteImage} onUploaded={images => setSessionCatalogUploads(current => [...current, ...images])} onBusy={setIsUploadingCatalogImages} />
                 <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />

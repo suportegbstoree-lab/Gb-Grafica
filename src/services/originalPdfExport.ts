@@ -1,3 +1,4 @@
+import { centeredInitialBox } from '../lib/decorativeInitial';
 import { PDFDocument, degrees } from "pdf-lib";
 import type { PersonalizationDocument } from "./personalizationExport";
 import {
@@ -73,6 +74,12 @@ export async function exportOriginalPdf(
           height: h,
           rotate: degrees(-angle),
         });
+        if (index === 0 && document.initial) {
+          const blob = document.initial.source instanceof Blob ? document.initial.source : await (await fetch(document.initial.source)).blob();
+          const initial = await pdf.embedPng(await blob.arrayBuffer());
+          const box = centeredInitialBox(width, height, initial.width, initial.height, document.initial.sizePercent);
+          sheet.drawImage(initial, box);
+        }
         if (index === 0 && document.customization) {
           const canvas = globalThis.document.createElement("canvas");
           canvas.width = image.width;

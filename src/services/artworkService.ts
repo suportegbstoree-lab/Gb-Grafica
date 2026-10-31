@@ -173,3 +173,9 @@ export async function requestPersonalizationModelUrl(orderId: string, itemId: st
 }
 
 export async function requestBackPdfUrl(orderId: string, itemId: string) { const data = await authenticatedRequest<{ url?: unknown }>(`/api/admin/orders/${encodeURIComponent(orderId)}/back-pdf/${encodeURIComponent(itemId)}`); if (typeof data.url !== 'string' || !data.url.startsWith('https://')) throw new Error('Link do PDF inválido.'); return data.url; }
+
+export async function requestInitialUrl(orderId: string, itemId: string): Promise<string> {
+  const data = await authenticatedRequest<{ url?: unknown }>(`/api/admin/orders/${encodeURIComponent(orderId)}/initial/${encodeURIComponent(itemId)}`);
+  if (typeof data.url !== 'string' || !data.url.startsWith('https://')) throw new Error('Link da inicial inválido.');
+  return data.url;
+}

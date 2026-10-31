@@ -1,4 +1,6 @@
+import { validAlphabet, type DecorativeAlphabet } from './decorativeInitial';
 export interface ProductPdfTemplate {
+  alphabet?: DecorativeAlphabet;
   id: string;
   path: string;
   name: string;
@@ -33,7 +35,8 @@ export function validPdfTemplates(
         isTemplatePath(t.path, productId) &&
         t.path.endsWith(`/${t.id}.pdf`) &&
         typeof t.name === "string" &&
-        t.name.length <= 120 &&
+        t.name.length > 0 && t.name.length <= 120 &&
+        (t.alphabet === undefined || validAlphabet(t.alphabet, t.name, productId)) &&
         Array.isArray(t.pages) &&
         t.pages.length >= 1 &&
         t.pages.length <= 2 &&

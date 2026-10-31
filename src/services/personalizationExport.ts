@@ -10,6 +10,7 @@ export interface PersonalizationPage {
 
 export interface PersonalizationDocument {
   title: string;
+  initial?: import('../lib/decorativeInitial').DecorativeInitial;
   originalPdf?: Blob;
   originalBackPdf?: Blob;
   automaticPdfBack?: boolean;

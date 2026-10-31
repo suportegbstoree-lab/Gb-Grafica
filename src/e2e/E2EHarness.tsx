@@ -181,6 +181,7 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
 
   return (
     <div data-testid="e2e-store">
+      <output hidden data-testid="e2e-cart">{JSON.stringify(cart)}</output>
       <Home
         products={products}
         config={config}

@@ -1,3 +1,4 @@
+import { initialReference } from '../lib/decorativeInitial';
 import OrderDocuments from '../components/OrderDocuments';
 import UploadInput from '../components/UploadInput';
 import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../lib/storePresentation';
@@ -478,6 +479,7 @@ export default function Home({
           ...(item.contracapaModo ? { contracapaModo: item.contracapaModo } : {}),
           textoPersonalizado: item.textoPersonalizado || '',
           personalizacaoTexto: item.personalizacaoTexto,
+          inicialReferencia: item.inicialReferencia,
           ...(item.printProfile ? { printProfile: item.printProfile } : {}),
           ...(item.modeloPath ? { aprovarArte: item.aprovarArte === true } : {}),
         })),
@@ -1801,7 +1803,7 @@ function ProductCard({
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
   }, [artworkPreviewUrl]);
 
-  const sourceKey = `${uploadedArtwork?.path || ''}:${activeImage}:${printProfileKey(printProfile)}`;
+  const sourceKey = `${uploadedArtwork?.path || ''}:${activeImage}:${printProfileKey(printProfile)}:${JSON.stringify(template?.alphabet || null)}`;
   const previousSource = useRef(sourceKey);
   React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
@@ -1967,6 +1969,7 @@ function ProductCard({
       ...(uploadedBack && backDraft.mode !== 'none' ? { contracapaModo: backDraft.mode } : {}),
       textoPersonalizado: textCustomization?.texto,
       personalizacaoTexto: textCustomization || undefined,
+      ...(template?.alphabet && !uploadedArtwork ? { inicialReferencia: initialReference(template, textCustomization?.texto || '') } : {}),
     });
 
     // Reset after adding
@@ -2255,6 +2258,7 @@ function ProductCard({
     {isTextDrawerOpen && (
       <TextCustomizationDrawer
         productName={product.nome}
+        template={!uploadedArtwork ? template : undefined}
         printProfile={printProfile}
         previewImage={artworkPreviewUrl || template?.pages[0] || activeImage || product.imagem || DEFAULT_LOGO_URL}
         previewSource={artworkSourceFile || undefined}

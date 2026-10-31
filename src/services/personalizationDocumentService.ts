@@ -1,7 +1,7 @@
 import { isComposablePersonalizationImage, MAX_PERSONALIZATION_MODEL_BYTES } from '../lib/personalizationModel';
 import { matchesArtworkSignature } from '../lib/artwork';
 import type { CartItem } from '../types';
-import { requestBackPdfUrl, requestArtworkUrl, requestPersonalizationModelUrl } from './artworkService';
+import { requestInitialUrl, requestBackPdfUrl, requestArtworkUrl, requestPersonalizationModelUrl } from './artworkService';
 import type { PersonalizationDocument } from './personalizationExport';
 
 async function readSignedModel(url: string): Promise<Blob> {
@@ -35,8 +35,9 @@ export async function loadOrderPersonalizationDocument(orderId: string, item: Ca
   const back = item.contracapaPath ? await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id, 'back')) : null;
   const originalPdf = production && item.arquivoPath?.endsWith('.pdf') ? await readOriginalPdf(await requestArtworkUrl(orderId, item.id)) : undefined;
   const originalBackPdf = production && item.contracapaOriginalPath ? await readOriginalPdf(await requestBackPdfUrl(orderId, item.id)) : undefined;
+  const initial = originalPdf && item.inicialPath ? { source: await readSignedModel(await requestInitialUrl(orderId, item.id)), sizePercent: item.inicialTamanho! } : undefined;
   const fonts = item.personalizacaoTexto ? (await import('../lib/textLines')).textLayers(item.personalizacaoTexto).map(layer => ({ id: layer.value.fonte, nome: layer.value.fonteNome || layer.value.fonte, cssFamily: layer.value.fonteCssFamily || 'sans-serif', arquivoUrl: layer.value.fonteArquivoUrl, ativo: true })) : [];
-  return { ...(originalBackPdf ? { originalBackPdf } : {}), ...(originalPdf ? { originalPdf, automaticPdfBack: item.contracapaModo === 'automatic', customization: item.personalizacaoTexto, fonts } : {}), title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
+  return { ...(initial ? { initial } : {}), ...(originalBackPdf ? { originalBackPdf } : {}), ...(originalPdf ? { originalPdf, automaticPdfBack: item.contracapaModo === 'automatic', customization: item.personalizacaoTexto, fonts } : {}), title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
 }
 
 async function readOriginalPdf(url: string): Promise<Blob> {

@@ -1,3 +1,5 @@
+import { selectedInitial, firstInitial } from '../lib/decorativeInitial';
+import type { ProductPdfTemplate } from '../lib/pdfTemplate';
 import UploadInput from './UploadInput';
 import PrintGuides from './PrintGuides';
 import PrintProfileNotice from './PrintProfileNotice';
@@ -31,6 +33,7 @@ export interface BackCoverDraft { mode: 'none' | 'automatic' | 'custom'; file?: 
 
 interface TextCustomizationDrawerProps {
   productName: string;
+  template?: ProductPdfTemplate;
   printProfile?: PrintProfile;
   previewImage: string;
   previewSource?: Blob;
@@ -50,6 +53,7 @@ function clampPosition(value: number): number {
 
 export default function TextCustomizationDrawer({
   productName,
+  template,
   printProfile,
   previewImage,
   previewSource,
@@ -224,6 +228,7 @@ export default function TextCustomizationDrawer({
       const model = await composePersonalizationModel({
         source: previewSource || previewImage,
         customization: normalized,
+        initial: initialLayer,
         fonts: availableFonts,
       });
       const back = backDraft.mode !== 'none' ? await composePersonalizationModel({
@@ -241,6 +246,8 @@ export default function TextCustomizationDrawer({
     }
   };
 
+  const selectedLetter = selectedInitial(template, draft.texto);
+  const initialLayer = React.useMemo(() => selectedLetter ? { source: selectedLetter.url, sizePercent: selectedLetter.sizePercent } : undefined, [selectedLetter?.url, selectedLetter?.sizePercent]);
   const previewCustomization = React.useMemo(() => normalizeTextCustomization(draft, availableFonts) || draft, [draft, availableFonts]);
   const isBack = previewFace === 'back' && backDraft.mode !== 'none';
   const currentSource = isBack ? (backDraft.mode === 'custom' && backDraft.file ? backDraft.file : automaticBack || previewSource || previewImage) : previewSource || previewImage;
@@ -265,6 +272,7 @@ export default function TextCustomizationDrawer({
               <TextLineControls draft={draft} fonts={availableFonts} selectedId={activeLine?.id || null} onSelect={setSelectedId} onChange={setDraft} onArrange={() => void arrange()} onPositionTouched={() => { positionTouchedRef.current = true; }} />
             </>}
 
+            {template?.alphabet && <p role="status" className="rounded-xl bg-pink-50 p-3 text-xs text-pink-800">{selectedLetter ? `Inicial ${selectedLetter.letter} aplicada somente na capa.` : draft.texto.trim() ? `A pasta não possui uma imagem para ${firstInitial(draft.texto) || 'o primeiro caractere'}. O modelo será gerado sem inicial.` : 'A primeira letra do texto seleciona a inicial da capa.'}</p>}
             <fieldset className="space-y-3 rounded-2xl border border-gray-200 p-4">
               <legend className="px-1 text-sm font-bold text-gray-900">Contracapa</legend>
               <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={backDraft.mode !== 'none'} onChange={event => { setError(''); setPreviewFace('front'); setBackDraft(current => ({ ...current, mode: event.target.checked ? 'automatic' : 'none' })); }} />Incluir contracapa</label>
@@ -296,7 +304,7 @@ export default function TextCustomizationDrawer({
             </>}
             <p id={instructionsId} className="text-xs leading-relaxed text-gray-500">{textRequired && !isBack ? 'Selecione e arraste cada linha. Use as setas; Shift move 5%.' : 'Confira a arte antes de aplicar a personalização.'}</p>
             <div ref={previewRef} role="group" tabIndex={textRequired && !isBack ? 0 : -1} onPointerDown={textRequired && !isBack ? handlePointerDown : undefined} onPointerMove={textRequired && !isBack ? handlePointerMove : undefined} onPointerUp={handlePointerEnd} onPointerCancel={handlePointerEnd} onKeyDown={textRequired && !isBack ? handlePreviewKeyDown : undefined} aria-describedby={instructionsId} aria-label={textRequired && !isBack ? `Prévia da posição do texto: ${activeLine?.posicao.x ?? draft.posicao.x}% horizontal e ${activeLine?.posicao.y ?? draft.posicao.y}% vertical` : 'Prévia da arte'} style={{ aspectRatio: previewAspectRatio, maxHeight: printProfile ? '40vh' : '56vh', width: `min(100%, calc(${printProfile ? 40 : 56}vh * ${previewAspectRatio}))` }} className="relative mx-auto block max-h-[56vh] touch-none overflow-hidden rounded-xl border-2 border-gray-200 bg-white text-left outline-none focus:border-pink-400 focus:ring-4 focus:ring-pink-100">
-              <PersonalizationPreview source={currentSource} customization={textRequired && !isBack ? previewCustomization : null} fonts={availableFonts} onDimensions={(width, height) => {
+              <PersonalizationPreview initial={!isBack ? initialLayer : undefined} source={currentSource} customization={textRequired && !isBack ? previewCustomization : null} fonts={availableFonts} onDimensions={(width, height) => {
                 setPreviewAspectRatio(width / height);
                 setImageDimensions({ width, height });
                 if (isBack) return;

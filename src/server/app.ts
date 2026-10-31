@@ -1,3 +1,5 @@
+import { resolveOrderInitial } from './decorativeInitial.js';
+import { isAlphabetImagePath } from '../lib/decorativeInitial.js';
 import { createOperationsRouter } from './operationsRouter.js';
 import { createOrderWithDocuments, processOrderEmails, sendOrderEmail } from './orderDocuments.js';
 import { pendingBackPdf, templateArtwork } from './pdfTemplates.js';
@@ -131,6 +133,7 @@ interface ShippingQuote {
 }
 
 interface NormalizedCartItem {
+  initialVersion?: ArtworkObjectVersion;
 	artworkVersion?: ArtworkObjectVersion;
 	modelVersion?: ArtworkObjectVersion;
 	backModelVersion?: ArtworkObjectVersion;
@@ -139,6 +142,9 @@ interface NormalizedCartItem {
 		id: string;
 		productId: string;
 		templateId?: string;
+    inicialPath?: string;
+    inicialLetra?: string;
+    inicialTamanho?: number;
 		nome: string;
 		imagem: string;
 		preco: string;
@@ -864,6 +870,10 @@ async function normalizeCart(
 
 			if (!modelPath) throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
 		}
+    let initial: Awaited<ReturnType<typeof resolveOrderInitial>>;
+    try { initial = await resolveOrderInitial(bucket, productId, product, item.templateId, textCustomization?.texto || '', item.inicialReferencia); }
+    catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Inicial inválida. Gere o modelo novamente.'); }
+    if (initial && !modelPath) throw new HttpError(422, 'Gere o modelo com a inicial antes de concluir o pedido.');
 		const validateModel = async (path: string, name: unknown): Promise<ArtworkObjectVersion> => {
 			if (!isPendingPersonalizationModelPath(path, userId) || path === artworkPath) {
 				throw new HttpError(422, `O modelo composto de ${productName} é inválido.`);
@@ -898,6 +908,7 @@ async function normalizeCart(
 			...(backModelVersion ? { backGeneration: backModelVersion.generation } : {}),
 			designFingerprint: createHash('sha256').update(JSON.stringify({
 				productId, selections, printProfile: printProfile || null, text: textCustomization,
+        initial: initial ? [initial.letter, initial.version.path, initial.version.generation, initial.sizePercent] : null,
 				artwork: artworkVersion ? [artworkVersion.path, artworkVersion.generation] : null,
 				model: [modelVersion.path, modelVersion.generation],
 				backOriginal: backOriginalVersion ? [backOriginalVersion.path, backOriginalVersion.generation] : null,
@@ -911,6 +922,7 @@ async function normalizeCart(
 
 		normalizedItems.push({
 			...(artworkVersion ? { artworkVersion } : {}),
+      ...(initial ? { initialVersion: initial.version } : {}),
 			...(modelVersion ? { modelVersion } : {}),
 			...(backModelVersion ? { backModelVersion } : {}),
 			...(backOriginalVersion ? { backOriginalVersion } : {}),
@@ -918,6 +930,7 @@ async function normalizeCart(
 				id: cartId,
 				productId,
 				...(templateVersion ? { templateId: String(item.templateId) } : {}),
+        ...(initial ? { inicialPath: initial.version.path, inicialLetra: initial.letter, inicialTamanho: initial.sizePercent } : {}),
 				nome: productName,
 				imagem: isPlainRecord(product.imagensPorCombinacao) && typeof product.imagensPorCombinacao[combinationKey] === 'string' && [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].includes(product.imagensPorCombinacao[combinationKey]) ? String(product.imagensPorCombinacao[combinationKey]) : productImage || '',
 				preco: price,
@@ -1005,6 +1018,7 @@ async function copyArtworksToOrder(
 				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
 				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
 				{ field: 'contracapaPath' as const, path: item.cartItem.contracapaPath, version: item.backModelVersion, model: true },
+        { field: 'inicialPath' as const, path: item.cartItem.inicialPath, version: item.initialVersion, model: false },
 				{ field: 'contracapaOriginalPath' as const, path: item.cartItem.contracapaOriginalPath, version: item.backOriginalVersion, model: false },
 			];
 
@@ -1016,16 +1030,17 @@ async function copyArtworksToOrder(
 				}
 				const isValidSource = asset.model
 					? isPendingPersonalizationModelPath(sourcePath, userId)
-					: isPendingArtworkPath(sourcePath, userId) || (asset.version === item.artworkVersion && isTemplatePath(sourcePath, item.cartItem.productId));
+					: isPendingArtworkPath(sourcePath, userId) || (asset.version === item.artworkVersion && isTemplatePath(sourcePath, item.cartItem.productId)) || (asset.version === item.initialVersion && isAlphabetImagePath(sourcePath, item.cartItem.productId));
 				if (!isValidSource) {
 					throw new HttpError(422, `${asset.model ? 'O modelo composto' : 'A arte'} de ${item.cartItem.nome} não está mais disponível.`);
 				}
 
-				const fileName = sourcePath.split('/').at(-1) || '';
+				const fileName = asset.field === 'inicialPath' ? `${randomUUID().replaceAll('-', '')}.png` : sourcePath.split('/').at(-1) || '';
 				const destinationPath = `artworks/${userId}/orders/${orderId}/${item.cartItem.id}/${fileName}`;
 				const isValidDestination = asset.model
 					? isOrderPersonalizationModelPath(destinationPath, userId, orderId)
 					: isOrderArtworkPath(destinationPath, userId, orderId);
+        if (orderPaths.includes(destinationPath)) throw new HttpError(422, 'Os arquivos do item possuem nomes conflitantes. Gere o modelo novamente.');
 				if (!isValidDestination) {
 					throw new HttpError(500, `Não foi possível preparar o destino ${asset.model ? 'do modelo' : 'da arte'}.`);
 				}
@@ -1040,7 +1055,7 @@ async function copyArtworksToOrder(
 					throw error;
 				}
 				item.cartItem[asset.field] = destinationPath;
-				if (!sourcePath.startsWith('catalog/templates/')) pendingPaths.push(asset.version);
+				if (!sourcePath.startsWith('catalog/')) pendingPaths.push(asset.version);
 				orderPaths.push(destinationPath);
 			}
 		}
@@ -2234,6 +2249,20 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 	} catch (error) {
 		sendError(res, error);
 	}
+});
+
+app.get('/api/admin/orders/:orderId/initial/:itemId', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.artwork');
+    const { db, bucket } = getAdminServices(), { orderId, itemId } = req.params;
+    enforceRateLimit(`initial:${user.uid}`, 20, 60000);
+    await enforceDistributedRateLimit(db, `initial:${user.uid}`, 60, 60000);
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId)) throw new HttpError(422, 'Pedido inválido.');
+    const order = (await db.collection('orders').doc(orderId).get()).data();
+    const item = order?.itens?.find((candidate: any) => candidate.id === itemId), path = item?.inicialPath;
+    if (!order || !isOrderArtworkPath(path, order.userId, orderId) || !path.startsWith(`artworks/${order.userId}/orders/${orderId}/${itemId}/`) || !path.endsWith('.png')) throw new HttpError(404, 'Inicial não encontrada.');
+    const [url] = await bucket.file(path).getSignedUrl({ action: 'read', expires: Date.now() + 300000, responseDisposition: 'attachment' }); res.json({ url });
+  } catch (error) { sendError(res, error); }
 });
 
 app.get('/api/admin/orders/:orderId/back-pdf/:itemId', requireAppCheck, async (req, res) => {

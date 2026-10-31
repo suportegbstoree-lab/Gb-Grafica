@@ -1,3 +1,5 @@
+import PdfTemplatesEditor from './PdfTemplatesEditor';
+import { alphabetUrls } from '../lib/decorativeInitial';
 import { uploadCatalogPdf, removeCatalogPdf } from '../services/catalogPdfService';
 import UploadInput from './UploadInput';
 import React from 'react';
@@ -46,7 +48,7 @@ export default function ProductDesignEditor({ product, permissions, storage, onS
   const save = async () => {
     if (busy) return; setBusy(true); setError('');
     try {
-      const stored = await onSave(draft); saved.current = true; savedUrls.current = new Set([stored.imagem, ...(stored.imagens || []), ...(stored.modelosPdf || []).map(template => template.path)]);
+      const stored = await onSave(draft); saved.current = true; savedUrls.current = new Set([stored.imagem, ...(stored.imagens || []), ...(stored.modelosPdf || []).map(template => template.path), ...alphabetUrls(stored.modelosPdf)]);
       if (alive.current) onClose();
     } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'Não foi possível salvar.'); }
     finally { if (alive.current) setBusy(false); }
@@ -61,7 +63,7 @@ export default function ProductDesignEditor({ product, permissions, storage, onS
         <label className="inline-flex cursor-pointer rounded-lg bg-pink-500 px-4 py-3 text-xs font-bold">Enviar imagem principal<UploadInput originalPdf type="file" aria-label="Enviar imagem principal" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={event => void upload(event, false)} className="sr-only" /></label>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{(draft.imagens || []).map((url, index) => <div key={`${url}-${index}`} className="space-y-2"><img src={url} alt={`Imagem ${index + 1} da galeria`} className="h-24 w-full rounded-lg object-cover" /><button type="button" onClick={() => setDraft(current => ({ ...current, imagens: current.imagens?.filter((_, i) => i !== index) }))} aria-label={`Remover imagem ${index + 1} da galeria`} className="text-xs text-red-400">Remover</button></div>)}</div>
         <label className="inline-flex cursor-pointer rounded-lg border border-gray-700 px-4 py-3 text-xs font-bold">Adicionar imagens à galeria<UploadInput originalPdf type="file" aria-label="Adicionar imagens à galeria" multiple accept="application/pdf,image/png,image/jpeg,image/webp" onChange={event => void upload(event, true)} className="sr-only" /></label>
-        {(draft.modelosPdf || []).map(template => <p key={template.id} className="text-sm">PDF: {template.name} <button type="button" className="text-red-400 underline" onClick={() => setDraft(current => ({ ...current, modelosPdf: current.modelosPdf?.filter(item => item.id !== template.id) }))}>Desvincular PDF</button></p>)}
+        <PdfTemplatesEditor templates={draft.modelosPdf || []} onChange={modelosPdf => setDraft(current => ({ ...current, modelosPdf }))} upload={file => storage.uploadImage(product.id, file)} remove={storage.deleteImage} onUploaded={images => { for (const image of images) uploaded.current.set(image.path, image.url); }} onBusy={setBusy} />
         <VariantImagesEditor product={draft} onChange={value => setDraft(value as Anuncio)} />
       </fieldset>}
       {personalization && <fieldset disabled={busy} className="space-y-4">
