@@ -155,3 +155,52 @@ test('product management permission cannot open another customer artwork or call
   assert.equal((await call(`/admin/orders/${order}/fulfillment`, 'manager', { fulfillmentStatus: 'em_producao' })).status, 403);
   assert.equal((await call(`/admin/orders/${order}/production-label`, 'manager', { requestId: '1'.repeat(32) })).status, 403);
 });
+
+test('administrators create named custom roles, assign a name, and employees only reach their permitted modules', async () => {
+  const id = 'custom-production';
+  const created = await call(`/admin/staff/roles/${id}`, 'admin', { name: 'Coordenação', permissions: ['operations.manage'], expectedRevision: null });
+  assert.equal(created.status, 200, JSON.stringify(await created.clone().json()));
+  const assigned = await call('/admin/staff/assign', 'admin', { email: `${employee}@example.test`, name: 'Ana de Teste', role: id });
+  assert.equal(assigned.status, 200, JSON.stringify(await assigned.clone().json()));
+  assert.equal(docs.get(`_staffProfiles/${employee}`)?.name, 'Ana de Teste');
+  assert.equal(accounts.get(employee)!.customClaims.admin, false);
+  tokens.set('custom', { uid: employee, ...accounts.get(employee)!.customClaims });
+  assert.equal((await call('/admin/operations/people', 'custom')).status, 200);
+  assert.equal((await call('/admin/staff', 'custom')).status, 403);
+  assert.equal((await call('/admin/activity/orders', 'custom', {})).status, 403);
+  const overview = await (await call('/admin/staff')).json();
+  assert.equal(overview.members.find((member: any) => member.uid === employee).name, 'Ana de Teste');
+  assert.equal(overview.roles.find((role: any) => role.id === id).name, 'Coordenação');
+});
+
+test('custom roles cannot alter administrator authority and permission edits immediately revoke operational access', async () => {
+  const id = 'custom-reports';
+  const created = await call(`/admin/staff/roles/${id}`, 'admin', { name: 'Relatórios', permissions: ['operations.manage'], expectedRevision: null });
+  const policy = await created.json(); assert.equal(created.status, 200);
+  assert.equal((await assign(id)).status, 200); tokens.set('custom', { uid: employee, ...accounts.get(employee)!.customClaims });
+  assert.equal((await call('/admin/operations/people', 'custom')).status, 200);
+  assert.equal((await call(`/admin/staff/roles/${id}`, 'admin', { name: 'Consulta', permissions: ['orders.read'], expectedRevision: policy.revision })).status, 200);
+  assert.equal((await call('/admin/operations/people', 'custom')).status, 403);
+  assert.equal((await call('/admin/staff/roles/administrator', 'admin', { name: 'Administrador', permissions: [], expectedRevision: null })).status, 422);
+});
+
+test('employee names are admin-owned profile metadata and do not change claims', async () => {
+  assert.equal((await assign()).status, 200); const claims = structuredClone(accounts.get(employee)!.customClaims);
+  assert.equal((await call(`/admin/staff/profiles/${employee}`, 'buyer', { name: 'Nome Forjado' })).status, 403);
+  assert.equal((await call(`/admin/staff/profiles/${employee}`, 'admin', { name: 'Bruno de Teste', admin: true, role: 'administrator' })).status, 200);
+  assert.deepEqual(accounts.get(employee)!.customClaims, claims); assert.equal(docs.get(`_staffProfiles/${employee}`)?.name, 'Bruno de Teste'); assert.equal(docs.get(`_staffProfiles/${employee}`)?.admin, undefined);
+});
+
+test('staff order consultations and artwork exports feed activity; unpermitted or nonexistent exports do not', async () => {
+  assert.equal((await assign()).status, 200); tokens.set('designer', { uid: employee, ...accounts.get(employee)!.customClaims });
+  docs.set(`_staffProfiles/${employee}`, { name: 'Designer da Equipe' });
+  const orderId = 'GB-ACTIVITY', itemId = 'item';
+  docs.set(`orders/${orderId}`, { userId: 'customer', itens: [{ id: itemId, modeloPath: `artworks/customer/orders/${orderId}/${itemId}/${'a'.repeat(32)}.png` }] });
+  assert.equal((await call('/admin/activity/orders', 'designer', { orderId, actor: 'forged' })).status, 200);
+  assert.equal((await call('/admin/activity/artwork', 'designer', { orderId, itemId, format: 'pdf', actor: 'forged' })).status, 200);
+  assert.equal((await call('/admin/activity/artwork', 'buyer', { orderId, itemId, format: 'pdf' })).status, 403);
+  assert.equal((await call('/admin/activity/artwork', 'designer', { orderId, itemId: 'missing', format: 'pdf' })).status, 404);
+  const events = [...docs].filter(([key]) => key.startsWith('_operationsActivity/')).map(([, value]) => value);
+  assert.equal(events.length, 2); assert.ok(events.every(event => event.actor === employee && event.actorName === 'Designer da Equipe'));
+  assert.deepEqual(events.map(event => event.action), ['order.viewed', 'artwork.exported']);
+});

@@ -20,7 +20,8 @@ service firebase.storage {
 
     function validStaffToken() {
       return request.auth != null && request.auth.token.get('admin', false) != true &&
-        request.auth.token.get('staffRole', '') in ['designer', 'product-manager'] &&
+        request.auth.token.get('staffRole', '').matches('^[a-z][a-z0-9-]{1,63}$') &&
+        !(request.auth.token.get('staffRole', '') in ['admin', 'administrator', 'administrador', 'none', 'owner', 'root', 'constructor', 'prototype']) &&
         request.auth.token.get('gbStaffEpoch', '').matches('^[a-f0-9]{32}$');
     }
 
@@ -122,10 +123,8 @@ service firebase.storage {
       allow delete: if canScope(scope) && scope in ['categories', 'site', 'promotions'];
     }
 
-    match /operations/releases/{releaseId}/{fileName} {
-      allow read, delete: if can('operations.manage');
-      allow create: if can('operations.manage') && resource == null && releaseId.matches('^[a-f0-9-]{36}$') && fileName.matches('^[a-f0-9]{32}[.](zip|exe|msi)$') && request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 && request.resource.contentType in ['application/zip', 'application/octet-stream'] && request.resource.metadata.uploadedBy == request.auth.uid;
-      allow update: if false;
+    match /operations/releases/{allPaths=**} {
+      allow read, write: if false;
     }
 
     match /catalog/templates/{productId}/{fileName} {

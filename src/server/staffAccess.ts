@@ -4,7 +4,7 @@ import { getAdminServices } from './firebaseAdmin.js';
 import { createAdminAccessBackend, revokeAdminAccess } from './adminAccess.js';
 import {
   STAFF_ACCESS_COLLECTION, STAFF_ROLES_COLLECTION, STAFF_EPOCH_CLAIM, STAFF_ROLE_CLAIM,
-  DEFAULT_ROLE_PERMISSIONS, validStaffAccess, validStaffRole, staffPermissions, parseStaffPermissions,
+  isStaffRoleId, staffRoleName, DEFAULT_ROLE_PERMISSIONS, validStaffAccess, validStaffRole, staffPermissions, parseStaffPermissions,
   type StaffAccessRecord, type StaffRoleRecord, type StaffRoleId, type StaffPermission,
 } from '../lib/staffAccess.js';
 
@@ -62,14 +62,16 @@ export function createStaffBackend(): StaffBackend {
 }
 
 /** Both databases start closed; CAS prevents a failed operation reopening newer changes. */
-export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId, input: unknown, expectedRevision: string | null, actor: string): Promise<StaffRoleRecord> {
-  if (roleId !== 'designer' && roleId !== 'product-manager') throw new StaffAccessError(422, 'A função de administrador é protegida.');
+export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId, input: unknown, expectedRevision: string | null, actor: string, name?: unknown): Promise<StaffRoleRecord> {
+  if (!isStaffRoleId(roleId)) throw new StaffAccessError(422, 'A função de administrador é protegida.');
   const permissions = parseStaffPermissions(input);
   if (!permissions) throw new StaffAccessError(422, 'Permissões inválidas. Artes e produção precisam da consulta de pedidos.');
   const previous: Array<StaffRoleRecord | null> = [];
   for (const target of backend.stores) previous.push(await target.readRole(roleId));
   if ((previous[0]?.revision ?? null) !== expectedRevision) throw new StaffAccessError(409, 'Esta função mudou. Atualize a lista antes de salvar.');
-  const closed: StaffRoleRecord = { schemaVersion: 1, enabled: false, revision: epoch(), permissions, updatedAt: new Date().toISOString(), updatedBy: actor };
+  const label = name === undefined ? staffRoleName(roleId, previous[0] || undefined) : typeof name === 'string' ? name.trim() : '';
+  if (['admin', 'administrator', 'administrador'].includes(label.toLowerCase()) || !label || label.length > 80 || /[\x00-\x1f\x7f]/.test(label)) throw new StaffAccessError(422, 'Informe um nome de cargo com até 80 caracteres.');
+  const closed: StaffRoleRecord = { name: label, schemaVersion: 1, enabled: false, revision: epoch(), permissions, updatedAt: new Date().toISOString(), updatedBy: actor };
   try {
     for (const [i, target] of backend.stores.entries()) await target.writeRole(roleId, closed, previous[i]?.revision ?? null);
     for (const target of backend.stores) await target.writeRole(roleId, { ...closed, enabled: true }, closed.revision);
@@ -85,7 +87,7 @@ export async function assignStaffRole(backend: StaffBackend, uid: string, roleId
   let account = await backend.getAccount(uid);
   if (account.disabled || !account.email) throw new StaffAccessError(422, 'A conta precisa estar ativa e possuir e-mail.');
   let role = await backend.stores[0].readRole(roleId);
-  if (!role) role = await updateStaffRole(backend, roleId, DEFAULT_ROLE_PERMISSIONS[roleId], null, actor);
+  if (!role) { if (!Object.hasOwn(DEFAULT_ROLE_PERMISSIONS, roleId)) throw new StaffAccessError(422, 'Cadastre o cargo e suas permissões antes de atribuí-lo.'); role = await updateStaffRole(backend, roleId, DEFAULT_ROLE_PERMISSIONS[roleId], null, actor); }
   if (!role.enabled) throw new StaffAccessError(409, 'A função está bloqueada. Salve suas permissões novamente antes de atribuí-la.');
   const mirrors = await Promise.all(backend.stores.map(target => target.readRole(roleId)));
   if (mirrors.some(value => !value?.enabled || value.revision !== role!.revision)) throw new StaffAccessError(409, 'As permissões da função não estão sincronizadas nos bancos. Salve-as novamente.');

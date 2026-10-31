@@ -2,11 +2,13 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { PDFDocument, PDFName, PDFDict, PDFRawStream } from 'pdf-lib';
 
-test('tema acompanha o sistema, preserva cor e chega aos modais; categoria tem URL própria', async ({ page }) => {
+test('tema acompanha o sistema, alterna por botão e chega aos modais; categoria tem URL própria', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' }); await page.goto('/__e2e/store');
   await expect(page.locator('html')).toHaveAttribute('data-store-theme', 'dark');
-  await page.getByText('Aparência', { exact: true }).click(); await page.getByLabel('Cor do modo escuro').fill('#102030'); await page.getByLabel('Tema da loja').selectOption('dark');
-  await page.reload(); await expect(page.locator('html')).toHaveCSS('--store-base', '#102030');
+  await page.getByRole('button', { name: 'Ativar tema claro', exact: true }).click();
+  await page.reload(); await expect(page.locator('html')).toHaveAttribute('data-store-theme', 'light');
+  await expect(page.locator('html')).toHaveCSS('--store-base', '#111111');
+  await page.getByRole('button', { name: 'Ativar tema escuro', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Produtos em promoção' })).toContainText('Carimbo');
   await page.getByRole('navigation', { name: 'Categorias de produtos' }).getByRole('button', { name: /Livros de Receita/ }).click();
   await expect(page).toHaveURL(/\/categoria\//); await expect(page.locator('#produtos article')).toHaveCount(1);
@@ -32,7 +34,7 @@ test('checkout aponta campos ausentes, foca o primeiro e não chama pagamento', 
 });
 
 test('operações têm páginas, lançamento corrigível, histórico e cancelamento sem apagar dados', async ({ page }) => {
-  await page.goto('/admin/operations'); await page.getByRole('link', { name: 'Novo lançamento', exact: true }).click();
+  await page.goto('/admin/operations'); await page.getByRole('navigation', { name: 'Páginas de operações' }).getByRole('link', { name: 'Produção', exact: true }).click(); await page.getByRole('link', { name: 'Novo lançamento', exact: true }).click();
   await page.getByRole('combobox', { name: 'Funcionário', exact: true }).selectOption('e2e-user'); await page.getByLabel('Serviço', { exact: true }).fill('Cadernos do teste');
   await page.getByLabel('Concluídas', { exact: true }).fill('30'); await page.getByLabel('Com retrabalho', { exact: true }).fill('2'); await page.getByLabel('Motivo', { exact: true }).fill('Ajuste da impressão');
   await page.getByRole('button', { name: 'Salvar lançamento' }).click(); await expect(page).toHaveURL(/\/production\/[a-f0-9-]{36}$/);

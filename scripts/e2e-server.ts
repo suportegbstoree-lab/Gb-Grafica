@@ -38,6 +38,8 @@ async function startE2EServer() {
     } catch (error) { next(error); }
   });
 
+  app.get('/__e2e/pixel.png', (_request, response) => { response.type('image/png').send(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')); });
+
   app.get('/__e2e/cover.png', async (_request, response, next) => {
     try { response.type('image/png').send(await readFile(new URL('../e2e/fixtures/editor-cover.png', import.meta.url))); }
     catch (error) { next(error); }

@@ -714,3 +714,30 @@ test('Storage: TTF e OTF mantêm autorização, MIME correspondente e arquivos i
     await assertSucceeds(admin.ref(path).delete());
   }
 });
+
+test('Custom roles: registered policies grant only selected Firestore/Storage access and revocation closes an unchanged token', async () => {
+  const epoch = 'a'.repeat(32), role = 'custom-imagens';
+  await seedDocuments([
+    ['_staffAccess/worker', { schemaVersion: 1, enabled: true, epoch, roleId: role }],
+    [`_staffRoles/${role}`, { schemaVersion: 1, enabled: true, revision: 'b'.repeat(32), name: 'Design', permissions: ['products.images'] }],
+    ['anuncios/produto-1', validProduct()],
+  ]);
+  const context = authenticatedContext('worker', { admin: false, staffRole: role, gbStaffEpoch: epoch });
+  await assertSucceeds(context.firestore().doc('anuncios/produto-1').update({ imagem: 'https://example.com/new.png' }));
+  await assertFails(context.firestore().doc('anuncios/produto-1').update({ nome: 'Nome proibido' }));
+  const upload = `catalog/products/produto-1/${'ab'.repeat(16)}.png`;
+  await assertUploadSucceeds(context.storage().ref(upload).put(new Uint8Array([1]), catalogImageMetadata('worker', 'image/png')));
+  await assertFails(context.firestore().doc('_staffProfiles/worker').set({ name: 'Forjado' }));
+  await assertFails(context.firestore().collection('_operationsActivity').add({ actor: 'worker', action: 'product.images' }));
+  await seedDocuments([[`_staffRoles/${role}`, { schemaVersion: 1, enabled: true, revision: 'c'.repeat(32), name: 'Design', permissions: [] }]]);
+  await assertFails(context.firestore().doc('anuncios/produto-1').update({ imagem: 'https://example.com/revoked.png' }));
+  await assertUploadFails(context.storage().ref(`catalog/products/produto-1/${'bc'.repeat(16)}.png`).put(new Uint8Array([1]), catalogImageMetadata('worker', 'image/png')));
+});
+
+test('Removed operations packages stay private even for administrators', async () => {
+  const path = `operations/releases/12345678-1234-4234-8234-123456789012/${'a'.repeat(32)}.zip`;
+  await seedStorageObject(path, 'admin-claim', 'application/zip');
+  const reference = authenticatedContext('admin-claim', { admin: true }).storage().ref(path);
+  await assertFails(reference.getMetadata()); await assertFails(reference.delete());
+  await assertUploadFails(reference.put(new Uint8Array([80,75,3,4]), catalogImageMetadata('admin-claim', 'application/zip')));
+});

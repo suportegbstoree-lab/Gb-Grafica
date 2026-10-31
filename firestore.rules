@@ -89,7 +89,8 @@ service cloud.firestore {
 
     function validStaffToken() {
       return isAuthenticated() && request.auth.token.get('admin', false) != true &&
-        request.auth.token.get('staffRole', '') in ['designer', 'product-manager'] &&
+        request.auth.token.get('staffRole', '').matches('^[a-z][a-z0-9-]{1,63}$') &&
+        !(request.auth.token.get('staffRole', '') in ['admin', 'administrator', 'administrador', 'none', 'owner', 'root', 'constructor', 'prototype']) &&
         request.auth.token.get('gbStaffEpoch', '').matches('^[a-f0-9]{32}$');
     }
 

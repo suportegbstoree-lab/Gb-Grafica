@@ -1,3 +1,4 @@
+import { ACTIVITY_LABELS } from '../lib/staffActivity';
 import ProductionChart from "./ProductionChart";
 import React from "react";
 import {
@@ -16,7 +17,6 @@ import {
   type OperationsClient,
 } from "../services/operationsService";
 import { downloadPersonalization } from "../services/personalizationExport";
-import UploadInput from "./UploadInput";
 
 const Client = React.createContext(operationsClient);
 const inputStyle =
@@ -38,14 +38,7 @@ const labels: Record<string, string> = {
   cancelledAt: "Cancelado em",
   cancellationReason: "Motivo do cancelamento",
 };
-const actionLabels: Record<string, string> = {
-  "production.created": "Produção registrada",
-  "production.corrected": "Produção corrigida",
-  "production.cancelled": "Produção cancelada",
-  "machine.saved": "Equipamento atualizado",
-  "release.created": "Versão cadastrada",
-  OPERATIONS_FAILURE: "Falha operacional",
-};
+const actionLabels = ACTIVITY_LABELS;
 function useData(path: string) {
   const client = React.useContext(Client),
     [data, setData] = React.useState<any>(),
@@ -130,7 +123,7 @@ function CSVButton({ path }: { path: string }) {
     </>
   );
 }
-function Filters() {
+function Filters({ activity = false }: { activity?: boolean }) {
   const [params, setParams] = useSearchParams(),
     persons = useData("/people");
   const end = params.get("end") || localToday(),
@@ -184,6 +177,7 @@ function Filters() {
           ))}
         </select>
       </label>
+      {!activity && <>
       <label className="text-xs">
         Unidade
         <select
@@ -217,6 +211,7 @@ function Filters() {
         />
         Mostrar cancelados
       </label>
+      </>}
     </div>
   );
 }
@@ -681,17 +676,34 @@ function EntryDetail({
     </div>
   );
 }
-function Logs({ kind }: { kind: "activity" | "errors" }) {
+function ActivityOverview() {
+  const [params] = useSearchParams(), { data, error, reload } = useData(`/activity?${params}`);
+  const summary = data?.summary;
+  const maximum = Math.max(1, ...(summary?.days || []).map(day => day.count));
+  return <div className="space-y-5">
+    <Filters activity />
+    <div className="flex flex-wrap items-center gap-3"><button type="button" onClick={reload} className={buttonStyle}>Atualizar atividade</button><CSVButton path={`/activity?${params}`} /></div>
+    <p className="text-sm text-gray-400">As ações da equipe alimentam este painel automaticamente. Contagens de atividade não representam tempo trabalhado nem quantidade de peças produzidas.</p>
+    {!summary ? <Loading error={error} /> : <>
+      {data.truncated && <p role="alert">Há mais de 10.000 eventos. Reduza o período para conferir todos os registros.</p>}
+      <div className="grid gap-4 sm:grid-cols-2"><article className="rounded-xl border border-gray-800 p-5"><h3>Ações registradas</h3><p className="mt-2 text-3xl font-black">{summary.total}</p></article><article className="rounded-xl border border-gray-800 p-5"><h3>Funcionários com atividade</h3><p className="mt-2 text-3xl font-black">{summary.employees.length}</p></article></div>
+      {summary.days.length > 0 && <figure className="rounded-xl border border-gray-800 p-4"><figcaption className="font-bold">Atividade por dia</figcaption><svg viewBox="0 0 600 180" role="img" aria-label="Quantidade de ações da equipe por dia" className="mt-3 w-full"><line x1="20" y1="150" x2="580" y2="150" stroke="#6b7280" />{summary.days.map((day, index) => <rect key={day.date} x={20 + index * 560 / summary.days.length} y={150 - day.count / maximum * 130} width={Math.max(0.5, 440 / summary.days.length)} height={day.count / maximum * 130} fill="#ff4d79"><title>{day.date}: {day.count} ações</title></rect>)}<text x="20" y="175" fill="#c4c5ce" fontSize="12">{summary.days[0]?.date}</text><text x="580" y="175" textAnchor="end" fill="#c4c5ce" fontSize="12">{summary.days.at(-1)?.date}</text></svg></figure>}
+      <h3 className="font-bold">Atividade por funcionário</h3><Table headings={["Nome", "Cargo", "Ações"]}>{summary.employees.map(person => <tr key={person.id}><td className="p-3">{person.name}</td><td>{person.role}</td><td>{person.count}</td></tr>)}</Table>
+      <h3 className="font-bold">Tipos de ação</h3><Table headings={["Ação", "Quantidade"]}>{summary.actions.map(row => <tr key={row.action}><td className="p-3">{ACTIVITY_LABELS[row.action] || row.action}</td><td>{row.count}</td></tr>)}</Table>
+      {!summary.total && <p>Nenhuma atividade registrada no período.</p>}
+    </>}
+  </div>;
+}
+function Logs({ kind }: { kind: "activity" }) {
   const [params] = useSearchParams(),
     path = `/${kind}?${params}`,
     { data, error } = useData(path);
   return (
     <div className="space-y-5">
-      <Filters />
+      <Filters activity />
       <CSVButton path={path} />
       <p className="text-sm text-gray-400">
-        Eventos reais das operações realizadas neste painel. Não indica presença
-        ou uso de programas externos.
+        Ações registradas pelo servidor com o funcionário e o cargo associados. Acessos às artes indicam solicitação de acesso ou exportação.
       </p>
       {!data ? (
         <Loading error={error} />
@@ -706,7 +718,7 @@ function Logs({ kind }: { kind: "activity" | "errors" }) {
                 <td className="p-3">
                   {new Date(row.at).toLocaleString("pt-BR")}
                 </td>
-                <td>{row.actor}</td>
+                <td className="break-words">{row.actorName || row.actor}{row.actorRole && <span className="block text-xs text-gray-400">{row.actorRole}</span>}</td>
                 <td>
                   {actionLabels[row.action || row.code] ||
                     row.action ||
@@ -747,266 +759,6 @@ function People() {
     </div>
   );
 }
-function Machines({ id, create }: { id?: string; create?: boolean }) {
-  const data = useData(id ? `/machines/${id}` : "/machines");
-  if (create) return <MachineForm />;
-  if (!data.data) return <Loading error={data.error} />;
-  if (id)
-    return (
-      <MachineForm
-        key={`${id}-${data.data.record.version}`}
-        initial={data.data.record}
-      />
-    );
-  return (
-    <div className="space-y-5">
-      <Link to="/admin/operations/machines/new" className={primaryStyle}>
-        Novo equipamento
-      </Link>
-      <p className="text-sm text-gray-400">
-        Inventário manual. A autorização deste cadastro não conecta nem controla
-        computadores externos.
-      </p>
-      {data.data.truncated && (
-        <p role="alert">Exibindo os 500 cadastros mais recentes.</p>
-      )}
-      <Table
-        headings={["Nome", "ID", "Versão informada", "Autorizado", "Cadastro"]}
-      >
-        {data.data.records.map((row) => (
-          <tr key={row.id}>
-            <td className="p-3">{row.name}</td>
-            <td>{row.machineId}</td>
-            <td>{row.installedVersion || "—"}</td>
-            <td>{row.authorized ? "Sim" : "Não"}</td>
-            <td className="p-3">
-              <Link
-                to={`/admin/operations/machines/${row.id}/edit`}
-                className="text-pink-400 underline"
-              >
-                Editar
-              </Link>
-            </td>
-          </tr>
-        ))}
-      </Table>
-    </div>
-  );
-}
-function MachineForm({ initial }: { initial?: any; key?: string }) {
-  const client = React.useContext(Client),
-    navigate = useNavigate(),
-    [draft, setDraft] = React.useState(
-      initial || {
-        id: crypto.randomUUID(),
-        name: "",
-        machineId: "",
-        installedVersion: "",
-        authorized: false,
-        version: 0,
-      },
-    ),
-    [error, setError] = React.useState(""),
-    [busy, setBusy] = React.useState(false);
-  return (
-    <form
-      className="max-w-xl space-y-4"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setBusy(true);
-        setError("");
-        void client
-          .post(`/machines/${draft.id}`, draft)
-          .then(() => navigate("/admin/operations/machines"))
-          .catch((error) => setError(error.message))
-          .finally(() => setBusy(false));
-      }}
-    >
-      <fieldset disabled={busy} className="space-y-4">
-        {[
-          ["name", "Nome", 120],
-          ["machineId", "ID do equipamento", 64],
-          ["installedVersion", "Versão instalada (informada)", 30],
-        ].map(([key, label, max]) => (
-          <label key={key} className="block text-sm">
-            {label}
-            <input
-              required={key !== "installedVersion"}
-              maxLength={Number(max)}
-              value={draft[key]}
-              onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
-              className={inputStyle}
-            />
-          </label>
-        ))}
-        <label className="flex gap-2">
-          <input
-            type="checkbox"
-            checked={draft.authorized}
-            onChange={(e) =>
-              setDraft({ ...draft, authorized: e.target.checked })
-            }
-          />
-          Cadastro autorizado
-        </label>
-      </fieldset>
-      {error && <p role="alert">{error}</p>}
-      <button disabled={busy} className={primaryStyle}>
-        Salvar equipamento
-      </button>
-    </form>
-  );
-}
-function Releases({ create }: { create: boolean }) {
-  const { data, error } = useData("/releases"),
-    client = React.useContext(Client),
-    [actionError, setActionError] = React.useState("");
-  if (create) return <ReleaseForm />;
-  return (
-    <div className="space-y-5">
-      <Link to="/admin/operations/releases/new" className={primaryStyle}>
-        Cadastrar versão
-      </Link>
-      <p className="text-sm text-gray-400">
-        Arquivos privados para distribuição manual. Não instala atualizações nos
-        computadores.
-      </p>
-      {actionError && <p role="alert">{actionError}</p>}
-      {!data ? (
-        <Loading error={error} />
-      ) : (
-        <>
-          {data.truncated && <p>Exibindo as 500 versões mais recentes.</p>}
-          <Table
-            headings={[
-              "Versão",
-              "Descrição",
-              "Obrigatória",
-              "SHA-256",
-              "Arquivo",
-            ]}
-          >
-            {data.records.map((row) => (
-              <tr key={row.id}>
-                <td className="p-3">{row.version}</td>
-                <td>{row.description}</td>
-                <td>{row.mandatory ? "Sim" : "Não"}</td>
-                <td className="max-w-xs break-all p-3 font-mono text-xs">
-                  {row.sha256}
-                </td>
-                <td className="p-3">
-                  <button
-                    type="button"
-                    className={buttonStyle}
-                    onClick={() => {
-                      setActionError("");
-                      void client
-                        .get(`/releases/${encodeURIComponent(row.id)}/download`)
-                        .then((result) => window.location.assign(result.url))
-                        .catch((error) => setActionError(error.message));
-                    }}
-                  >
-                    Baixar
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </Table>
-        </>
-      )}
-    </div>
-  );
-}
-function ReleaseForm() {
-  const client = React.useContext(Client),
-    navigate = useNavigate(),
-    [draft, setDraft] = React.useState({
-      version: "",
-      description: "",
-      mandatory: false,
-    }),
-    [file, setFile] = React.useState<File>(),
-    [busy, setBusy] = React.useState(false),
-    [error, setError] = React.useState(""),
-    upload = React.useRef<string>();
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!file || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      if (!upload.current) upload.current = await client.uploadRelease(file);
-      await client.post("/releases", { ...draft, path: upload.current });
-      upload.current = undefined;
-      navigate("/admin/operations/releases");
-    } catch (error) {
-      setError(error.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <form onSubmit={submit} className="max-w-xl space-y-4">
-      <fieldset disabled={busy} className="space-y-4">
-        <label className="block text-sm">
-          Versão
-          <input
-            required
-            pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,29}"
-            maxLength={30}
-            value={draft.version}
-            onChange={(e) => setDraft({ ...draft, version: e.target.value })}
-            className={inputStyle}
-          />
-        </label>
-        <label className="block text-sm">
-          Descrição
-          <textarea
-            maxLength={2000}
-            value={draft.description}
-            onChange={(e) =>
-              setDraft({ ...draft, description: e.target.value })
-            }
-            className={inputStyle}
-          />
-        </label>
-        <label className="flex gap-2">
-          <input
-            type="checkbox"
-            checked={draft.mandatory}
-            onChange={(e) =>
-              setDraft({ ...draft, mandatory: e.target.checked })
-            }
-          />
-          Versão obrigatória
-        </label>
-        <label className="block rounded-xl border border-dashed border-gray-600 p-4">
-          Arquivo ZIP, EXE ou MSI · até 50 MB
-          <UploadInput
-            originalPdf
-            accept=".zip,.exe,.msi"
-            className="mt-2 block w-full"
-            onChange={(event) => {
-              const next = event.target.files?.[0];
-              if (upload.current) {
-                setError(
-                  "Este formulário já enviou um arquivo. Abra um novo cadastro para trocá-lo.",
-                );
-                return;
-              }
-              setFile(next);
-            }}
-          />
-        </label>
-        {file && <p>{file.name}</p>}
-      </fieldset>
-      {error && <p role="alert">{error}</p>}
-      <button disabled={busy || !file} className={primaryStyle}>
-        {busy ? "Enviando e validando..." : "Salvar versão"}
-      </button>
-    </form>
-  );
-}
 export default function OperationsWorkbench({
   client = operationsClient,
 }: {
@@ -1021,10 +773,10 @@ export default function OperationsWorkbench({
     ["", "Visão geral"],
     ["production", "Produção"],
     ["activity", "Atividade"],
-    ["errors", "Erros"],
+
     ["people", "Pessoas"],
-    ["machines", "Equipamentos"],
-    ["releases", "Versões"],
+
+
   ];
   const valid = navigation.some(([key]) => key === section);
   return (
@@ -1037,7 +789,7 @@ export default function OperationsWorkbench({
               "Página não encontrada"}
           </h2>
           <p className="mt-2 text-sm text-gray-400">
-            Produção, inventário e histórico da loja.
+            Atividade da equipe, produção e histórico da loja.
           </p>
         </header>
         <nav aria-label="Páginas de operações" className="flex flex-wrap gap-2">
@@ -1062,16 +814,12 @@ export default function OperationsWorkbench({
           ) : (
             <ProductionReport />
           )
-        ) : section === "activity" || section === "errors" ? (
+        ) : section === "activity" ? (
           <Logs kind={section} />
         ) : section === "people" ? (
           <People />
-        ) : section === "machines" ? (
-          <Machines id={id !== "new" ? id : undefined} create={id === "new"} />
-        ) : section === "releases" ? (
-          <Releases create={id === "new"} />
         ) : (
-          <ProductionReport overview />
+          <ActivityOverview />
         )}
       </section>
     </Client.Provider>

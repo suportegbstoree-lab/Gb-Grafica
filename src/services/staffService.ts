@@ -6,8 +6,9 @@ import type { StaffOverview, StaffRoleId, StaffRoleView, StaffPermission, Assign
 export interface StaffAssignmentResult { changed: boolean; uid: string; email: string; role: AssignedRole; notification: { id?: string; status: string }; }
 export interface StaffAdministrationApi {
   load(): Promise<StaffOverview>;
-  saveRole(id: StaffRoleId, permissions: StaffPermission[], expectedRevision: string | null): Promise<StaffRoleView>;
-  assign(email: string, role: AssignedRole): Promise<StaffAssignmentResult>;
+  saveRole(id: StaffRoleId, permissions: StaffPermission[], expectedRevision: string | null, name?: string): Promise<StaffRoleView>;
+  assign(email: string, role: AssignedRole, name?: string): Promise<StaffAssignmentResult>;
+  saveName?(uid: string, name: string): Promise<void>;
   retryNotification(id: string): Promise<{ status: string }>;
 }
 async function request<T>(path: string, body?: unknown): Promise<T> {
@@ -22,6 +23,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 export const staffAdministrationApi: StaffAdministrationApi = {
-  load: () => request(''), saveRole: (id, permissions, expectedRevision) => request(`/roles/${id}`, { permissions, expectedRevision }),
-  assign: (email, role) => request('/assign', { email, role }), retryNotification: id => request(`/notifications/${encodeURIComponent(id)}/retry`, {}),
+  saveName: (uid, name) => request(`/profiles/${encodeURIComponent(uid)}`, { name }),
+  load: () => request(''), saveRole: (id, permissions, expectedRevision, name) => request(`/roles/${encodeURIComponent(id)}`, { permissions, expectedRevision, name }),
+  assign: (email, role, name) => request('/assign', { email, role, name }), retryNotification: id => request(`/notifications/${encodeURIComponent(id)}/retry`, {}),
 };

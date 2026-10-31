@@ -45,6 +45,7 @@ test('product manager has the full product form and promotion/category areas wit
 test('administrator assigns registered email, edits role permissions and sees pending email status', async ({ page }) => {
   await page.goto('/__e2e/admin');
   await page.getByRole('button', { name: 'Funcionários', exact: true }).click();
+  await page.getByLabel('Nome do funcionário', { exact: true }).fill('Designer Teste');
   await page.getByLabel('E-mail cadastrado', { exact: true }).fill('designer@example.com');
   await page.getByLabel('Função', { exact: true }).selectOption('designer');
   await page.getByRole('button', { name: 'Aplicar função', exact: true }).click();

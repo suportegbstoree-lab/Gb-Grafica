@@ -1,3 +1,6 @@
+import { recordStaffActivity } from './staffActivity.js';
+import { createCatalogManagementRouter } from './catalogManagement.js';
+import { staffRoleName, validStaffName } from '../lib/staffAccess.js';
 import { resolveOrderInitial } from './decorativeInitial.js';
 import { isAlphabetImagePath } from '../lib/decorativeInitial.js';
 import { createOperationsRouter } from './operationsRouter.js';
@@ -1966,12 +1969,15 @@ app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
   try {
     const actor = await requireAdminUser(req), { db, auth } = getAdminServices();
     enforceRateLimit(`staff-list:${actor.uid}`, 30, 60_000);
-    const roleIds: StaffRoleId[] = ['designer', 'product-manager'];
-    const roles = await Promise.all(roleIds.map(async id => {
-      const data = (await db.collection(STAFF_ROLES_COLLECTION).doc(id).get()).data();
-      if (data && !validStaffRole(data)) throw new HttpError(409, 'Configuração de função inválida. Confira os registros no servidor.');
-      return { id, configured: Boolean(data), ...(data || { schemaVersion: 1, enabled: true, revision: '', permissions: DEFAULT_ROLE_PERMISSIONS[id], updatedAt: '', updatedBy: '' }) };
-    }));
+    const storedRoles = await db.collection(STAFF_ROLES_COLLECTION).limit(201).get();
+    if (storedRoles.size > 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
+    const roleMap = new Map(storedRoles.docs.filter(doc => isStaffRoleId(doc.id)).map(doc => [doc.id, doc.data()]));
+    const roleIds = [...new Set(['designer', 'product-manager', ...roleMap.keys()])];
+    const roles = roleIds.map(id => {
+      const data = roleMap.get(id);
+      if (data && !validStaffRole(data)) throw new HttpError(409, 'Configuração de cargo inválida.');
+      return { id, configured: Boolean(data), ...(data || { schemaVersion: 1, enabled: true, revision: '', name: STAFF_ROLE_LABELS[id], permissions: DEFAULT_ROLE_PERMISSIONS[id], updatedAt: '', updatedBy: '' }) };
+    });
     const [staff, administrators] = await Promise.all([
       db.collection(STAFF_ACCESS_COLLECTION).limit(201).get(), db.collection(ADMIN_ACCESS_COLLECTION).limit(201).get(),
     ]);
@@ -1980,7 +1986,8 @@ app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
     for (const doc of administrators.docs) if (doc.data().enabled === true) active.set(doc.id, 'administrator');
     const ids = [...active.keys()].slice(0, 200);
     const accounts = (await Promise.all([ids.slice(0, 100), ids.slice(100)].filter(batch => batch.length).map(batch => auth.getUsers(batch.map(uid => ({ uid })))))).flatMap(batch => batch.users);
-    const members = accounts.map(account => ({ uid: account.uid, email: account.email || account.uid, role: active.get(account.uid)!, enabled: !account.disabled }));
+    const profiles = await Promise.all(accounts.map(account => db.collection('_staffProfiles').doc(account.uid).get()));
+    const members = accounts.map((account, index) => ({ uid: account.uid, email: account.email || account.uid, name: profiles[index].data()?.name || account.displayName || '', role: active.get(account.uid)!, enabled: !account.disabled }));
     const pending = await db.collection('_staffNotifications').where('status', '==', 'pending').limit(30).get();
     const notifications = pending.docs.map(doc => ({ id: doc.id, email: textValue(doc.data().email, 254), createdAt: textValue(doc.data().createdAt, 40) }));
     res.json({ roles, members, notifications, emailConfigured: staffEmailConfigured(), truncated: staff.size > 200 || administrators.size > 200 || active.size > 200 });
@@ -1992,7 +1999,11 @@ app.post('/api/admin/staff/roles/:roleId', requireAppCheck, async (req, res) => 
     const actor = await requireAdminUser(req), roleId = req.params.roleId;
     enforceRateLimit(`staff-role:${actor.uid}`, 20, 60_000);
     if (!isStaffRoleId(roleId) || !(req.body?.expectedRevision === null || typeof req.body?.expectedRevision === 'string')) throw new HttpError(422, 'Função ou versão inválida.');
-    const value = await staffMutation(req, () => updateStaffRole(createStaffBackend(), roleId, req.body.permissions, req.body.expectedRevision, actor.uid));
+    const value = await staffMutation(req, async () => {
+      const { db } = getAdminServices();
+      if (!(await db.collection(STAFF_ROLES_COLLECTION).doc(roleId).get()).exists && (await db.collection(STAFF_ROLES_COLLECTION).limit(200).get()).size >= 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
+      return updateStaffRole(createStaffBackend(), roleId, req.body.permissions, req.body.expectedRevision, actor.uid, req.body.name);
+    });
     res.json({ id: roleId, configured: true, ...value });
   } catch (error) { sendStaffError(res, error); }
 });
@@ -2004,7 +2015,8 @@ app.post('/api/admin/staff/assign', requireAppCheck, async (req, res) => {
     await enforceDistributedRateLimit(db, `staff-assign:${actor.uid}`, 30, 60_000);
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const role = req.body?.role;
-    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !Object.hasOwn(STAFF_ROLE_LABELS, role)) throw new HttpError(422, 'Informe um e-mail cadastrado e uma função válida.');
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !(role === 'administrator' || role === 'none' || isStaffRoleId(role))) throw new HttpError(422, 'Informe um e-mail cadastrado e uma função válida.');
+    if (req.body.name !== undefined && !validStaffName(req.body.name)) throw new HttpError(422, 'Informe o nome do funcionário com 2 a 120 caracteres.');
     let target;
     try { target = await auth.getUserByEmail(email); }
     catch (error) { if ((error as { code?: string }).code === 'auth/user-not-found') throw new HttpError(404, 'Este e-mail ainda não possui uma conta cadastrada na loja.'); throw error; }
@@ -2019,12 +2031,26 @@ app.post('/api/admin/staff/assign', requireAppCheck, async (req, res) => {
       if (latest.customClaims?.admin === true && adminAccessRecordAllows(current, latest.customClaims)) return false;
       await grantAdminAccess(createAdminAccessBackend(), target.uid); return true;
     });
+    if (req.body.name !== undefined) await db.collection('_staffProfiles').doc(target.uid).set({ name: req.body.name.trim(), updatedAt: new Date().toISOString(), updatedBy: actor.uid });
     let notification: { id?: string; status: string } = { status: 'unchanged' };
     if (changed) {
-      try { notification = await queueStaffEmail(db, target.email!, role as AssignedRole); }
+      try { notification = await queueStaffEmail(db, target.email!, role as AssignedRole, staffRoleName(role, isStaffRoleId(role) ? (await db.collection(STAFF_ROLES_COLLECTION).doc(role).get()).data() : undefined)); }
       catch { notification = { status: 'pending' }; logEvent('error', 'staff_notification_queue_failed', { request_id: responseRequestId(res), uid: target.uid }); }
     }
     res.json({ changed, uid: target.uid, email: target.email, role, notification });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/profiles/:uid', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), uid = req.params.uid;
+    enforceRateLimit(`staff-profile:${actor.uid}`, 30, 60_000);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid) || !validStaffName(req.body?.name)) throw new HttpError(422, 'Nome ou funcionário inválido.');
+    await staffMutation(req, async () => {
+      const { db, auth } = getAdminServices(); await auth.getUser(uid);
+      await db.collection('_staffProfiles').doc(uid).set({ name: req.body.name.trim(), updatedAt: new Date().toISOString(), updatedBy: actor.uid });
+    });
+    res.json({ saved: true });
   } catch (error) { sendStaffError(res, error); }
 });
 
@@ -2245,6 +2271,7 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 			expires: Date.now() + 5 * 60_000,
 			responseDisposition: 'attachment',
 		});
+		await recordStaffActivity(db, firebaseUser, 'artwork.accessed', orderId);
 		res.json({ url, expires_in: 300, filename: textValue(item?.arquivoNome, 120) || 'arte' });
 	} catch (error) {
 		sendError(res, error);
@@ -2315,6 +2342,7 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 			expires: Date.now() + 5 * 60_000,
 			responseDisposition: 'inline',
 		});
+    if (await userHasPermission(firebaseUser, db, 'orders.artwork')) await recordStaffActivity(db, firebaseUser, 'artwork.accessed', orderId);
 		res.json({ url, expires_in: 300, filename: textValue(face === 'back' ? item?.contracapaNome : item?.modeloNome, 120) || 'modelo.png' });
 	} catch (error) {
 		sendError(res, error);
@@ -2503,6 +2531,40 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 		});
 		sendError(res, new HttpError(500, 'Erro ao processar notificação.', 'WEBHOOK_PROCESSING_FAILED'));
 	}
+});
+
+app.use('/api/admin/catalog', requireAppCheck, createCatalogManagementRouter({ services: getAdminServices, authorize: async req => {
+  const user = await requireFirebaseUser(req), { db } = getAdminServices(), admin = await userIsAdmin(user, db);
+  enforceRateLimit(`catalog:${user.uid}`, 120, 60_000);
+  await enforceDistributedRateLimit(db, `catalog:${user.uid}`, 240, 60_000);
+  return { ...user, admin, permissions: admin ? [] : await userStaffPermissions(user), claims: user };
+} }));
+
+app.post('/api/admin/activity/artwork', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.artwork'), { db } = getAdminServices();
+    enforceRateLimit(`artwork-export:${user.uid}`, 30, 60000);
+    const { orderId, itemId, format } = req.body || {};
+    if (typeof orderId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof itemId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId) || !['jpg', 'pdf'].includes(format)) throw new HttpError(422, 'Exportação inválida.');
+    const order = (await db.collection('orders').doc(orderId).get()).data();
+    if (!order?.itens?.some((item: any) => item.id === itemId && isOrderPersonalizationModelPath(item.modeloPath, order.userId, orderId))) throw new HttpError(404, 'Arte não encontrada.');
+    await recordStaffActivity(db, user, 'artwork.exported', orderId);
+    res.json({ recorded: true });
+  } catch (error) { sendError(res, error); }
+});
+
+app.post('/api/admin/activity/orders', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.read'), { db } = getAdminServices();
+    enforceRateLimit(`order-activity:${user.uid}`, 30, 60000);
+    const id = req.body?.orderId;
+    if (id !== undefined && (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id))) throw new HttpError(422, 'Pedido inválido.');
+    // Log an actual server-side consultation, never an arbitrary event supplied by a client.
+    const snapshot = id ? await db.collection('orders').doc(id).get() : await db.collection('orders').limit(1).get();
+    if (id && !(snapshot as any).exists) throw new HttpError(404, 'Pedido não encontrado.');
+    await recordStaffActivity(db, user, id ? 'order.viewed' : 'orders.consulted', id || 'orders');
+    res.json({ recorded: true });
+  } catch (error) { sendError(res, error); }
 });
 
 app.use('/api/admin/operations', requireAppCheck, createOperationsRouter({ authorize: req => requirePermissionUser(req, 'operations.manage'), services: getAdminServices }));

@@ -1,3 +1,5 @@
+import { ADMIN_ACTIVITY_API, type AdminActivityApi } from '../services/staffActivityService';
+import { catalogPersistence } from '../services/catalogManagementService';
 import PdfTemplatesEditor from '../components/PdfTemplatesEditor';
 import { alphabetUrls } from '../lib/decorativeInitial';
 import { validPdfTemplates } from '../lib/pdfTemplate';
@@ -99,6 +101,7 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
   orderOperations?: OrderOperationsApi;
   fullAdmin?: boolean;
@@ -126,17 +129,7 @@ interface ConfirmationState {
   onConfirm: () => void | Promise<void>;
 }
 
-const FIREBASE_PERSISTENCE: AdminPersistence = {
-  async patchDocument(collectionName, documentId, value, removedFields = []) {
-    await updateDoc(doc(db, collectionName, documentId), { ...value, ...Object.fromEntries(removedFields.map(key => [key, deleteField()])) });
-  },
-  async setDocument(collectionName, documentId, value) {
-    await setDoc(doc(db, collectionName, documentId), value);
-  },
-  async deleteDocument(collectionName, documentId) {
-    await deleteDoc(doc(db, collectionName, documentId));
-  },
-};
+const FIREBASE_PERSISTENCE: AdminPersistence = catalogPersistence;
 
 const FIREBASE_CATALOG_IMAGE_STORAGE: AdminCatalogImageStorage = {
   uploadImage: uploadCatalogImage,
@@ -184,7 +177,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({ operationsClient, orderOperations = ORDER_OPERATIONS_API,
+export default function Admin({ activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
   fullAdmin = false,
   permissions = [],
   staffApi = staffAdministrationApi,
@@ -201,6 +194,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
   orderModelLoader = loadOrderPersonalizationDocument,
   onLogout = logout,
 }: AdminProps) {
+  const [modelSource, setModelSource] = useState<{ orderId: string; itemId: string } | null>(null);
   const [modelDocument, setModelDocument] = useState<PersonalizationDocument | null>(null);
   const modelRequest = React.useRef(0);
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
@@ -257,6 +251,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  React.useEffect(() => { if (activeTab !== 'orders' || !can('orders.read')) return; let active = true; void activityApi.orders().catch(error => { if (active) setErrorMessage(error.message); }); return () => { active = false; }; }, [activeTab, accessKey, activityApi]);
   const [isSaving, setIsSaving] = useState(false);
   const [productStorageId, setProductStorageId] = useState<string | null>(null);
   const [sessionCatalogUploads, setSessionCatalogUploads] = useState<UploadedCatalogImage[]>([]);
@@ -1137,7 +1132,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
       if (!item) throw new Error('Item do pedido não encontrado.');
       const request = ++modelRequest.current;
       const document = await orderModelLoader(orderId, item, true);
-      if (request === modelRequest.current) setModelDocument(document);
+      if (request === modelRequest.current) { setModelSource({ orderId, itemId }); setModelDocument(document); }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Não foi possível abrir o modelo composto.');
     }
@@ -2504,7 +2499,7 @@ export default function Admin({ operationsClient, orderOperations = ORDER_OPERAT
         )}
       </AnimatePresence>
       {editingProduct?.id && !can('products.manage') && productDesignAllowed && <ProductDesignEditor product={editingProduct as Anuncio} permissions={effectivePermissions} storage={catalogImageStorage} onSave={saveProductDesign} onClose={() => { setEditingProduct(null); setProductBaseline(null); }} />}
-      {modelDocument && <PersonalizationViewer allowDownload={can('orders.artwork')} document={modelDocument} onClose={() => setModelDocument(null)} />}
+      {modelDocument && <PersonalizationViewer onExport={format => { if (!modelSource) throw new Error('Item não encontrado.'); return activityApi.exportArtwork(modelSource.orderId, modelSource.itemId, format); }} allowDownload={can('orders.artwork')} document={modelDocument} onClose={() => setModelDocument(null)} />}
       {/* Removidos modais de upload */}
     </div>
   );

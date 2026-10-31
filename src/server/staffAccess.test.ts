@@ -63,3 +63,14 @@ test('disabled accounts and mismatched mirrors cannot receive staff roles', asyn
   f.roles[1].set('designer', { ...f.roles[1].get('designer')!, revision: 'f'.repeat(32) });
   await assert.rejects(assignStaffRole(f.backend, 'employee', 'designer', 'administrator'), /sincronizadas/);
 });
+
+test('custom role policies are mirrored and missing, invalid or administrative roles cannot be assigned', async () => {
+  const f = fixture(), id = 'custom-design';
+  await assert.rejects(assignStaffRole(f.backend, 'employee', id, 'admin'), /Cadastre o cargo/);
+  await updateStaffRole(f.backend, id, ['products.images'], null, 'admin', 'Design Gráfico');
+  await assignStaffRole(f.backend, 'employee', id, 'admin');
+  assert.equal(f.account.customClaims.admin, false); assert.equal(f.account.customClaims.staffRole, id);
+  for (let i = 0; i < 2; i++) { assert.equal(f.roles[i].get(id)?.name, 'Design Gráfico'); assert.deepEqual(staffPermissions(f.access[i].get('employee'), f.roles[i].get(id), f.account.customClaims), ['products.images']); }
+  for (const invalid of ['admin', 'administrator', 'owner', 'constructor', '../role']) await assert.rejects(updateStaffRole(f.backend, invalid, [], null, 'admin', 'Outro'));
+  await assert.rejects(updateStaffRole(f.backend, 'other-design', ['invalid.permission'], null, 'admin', 'Outro'));
+});

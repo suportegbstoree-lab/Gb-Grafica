@@ -3,7 +3,7 @@ import { getAdminServices } from '../src/server/firebaseAdmin.js';
 import { createAdminAccessBackend } from '../src/server/adminAccess.js';
 import { createStaffBackend } from '../src/server/staffAccess.js';
 import { adminAccessRecordAllows } from '../src/lib/adminAccess.js';
-import { ALL_STAFF_PERMISSIONS, STAFF_ROLE_LABELS, isStaffRoleId, staffPermissions } from '../src/lib/staffAccess.js';
+import { ALL_STAFF_PERMISSIONS, staffRoleName, isStaffRoleId, staffPermissions } from '../src/lib/staffAccess.js';
 import { mayEnterPanel, allowedPanelSections } from '../src/lib/panelAccess.js';
 import { parseStaffCheckArguments } from '../src/server/staffAccessCli.js';
 import clientConfig from '../firebase-applet-config.json' with { type: 'json' };
@@ -41,7 +41,7 @@ async function main() {
   const primary = reports[0];
   console.log(`Conta: ${account.email || options.email}`);
   console.table({ projetoCompativel: projectMatches, bancoCompativel: databaseMatches, contaAtiva: !account.disabled,
-    claimAdmin: claims.admin === true, funcaoFuncionario: isStaffRoleId(claims.staffRole) ? STAFF_ROLE_LABELS[claims.staffRole] : 'Nenhuma', acessoAoPainel: primary.entry });
+    claimAdmin: claims.admin === true, funcaoFuncionario: isStaffRoleId(claims.staffRole) ? staffRoleName(claims.staffRole, primary.policy || undefined) : 'Nenhuma', acessoAoPainel: primary.entry });
   console.table(reports.map(report => ({ banco: report.name, administrador: report.administrator,
     registroFuncionarioAtivo: report.access?.enabled === true,
     epocaFuncionarioCompativel: Boolean(report.access?.enabled && report.access.epoch === claims.gbStaffEpoch && report.access.roleId === claims.staffRole),

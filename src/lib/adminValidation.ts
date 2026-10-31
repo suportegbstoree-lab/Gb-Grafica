@@ -1,15 +1,15 @@
-import { validPdfTemplates } from './pdfTemplate';
-import { validPromotionWindow } from './promotions';
-import { parsePrintProfile } from './printProfile';
-import { parseStoreContacts, parseStoreBenefits } from './storePresentation';
-import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
-import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce';
-import { parseShippingProfile, type ProductShippingProfile } from './shipping';
+import { validPdfTemplates } from './pdfTemplate.js';
+import { validPromotionWindow } from './promotions.js';
+import { parsePrintProfile } from './printProfile.js';
+import { parseStoreContacts, parseStoreBenefits } from './storePresentation.js';
+import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types.js';
+import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce.js';
+import { parseShippingProfile, type ProductShippingProfile } from './shipping.js';
 import {
   isProductCustomizationType,
   normalizePersonalizationFonts,
   productRequiresText,
-} from './textCustomization';
+} from './textCustomization.js';
 
 export const ADMIN_LIMITS = {
   categoryName: 80,

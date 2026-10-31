@@ -4,7 +4,7 @@ export const STAFF_EPOCH_CLAIM = 'gbStaffEpoch';
 export const STAFF_ROLE_CLAIM = 'staffRole';
 
 export const STAFF_PERMISSIONS = [
-  { id: 'operations.manage', label: 'Gerenciar produção, equipamentos e relatórios operacionais' },
+  { id: 'operations.manage', label: 'Gerenciar produção e relatórios operacionais' },
   { id: 'products.manage', label: 'Criar, editar e excluir produtos' },
   { id: 'products.images', label: 'Alterar imagens dos produtos' },
   { id: 'products.personalization', label: 'Alterar opções de personalização dos produtos' },
@@ -19,7 +19,7 @@ export const STAFF_PERMISSIONS = [
   { id: 'ai.generate', label: 'Usar IA para textos dos produtos' },
 ] as const;
 export type StaffPermission = typeof STAFF_PERMISSIONS[number]['id'];
-export type StaffRoleId = 'designer' | 'product-manager';
+export type StaffRoleId = string;
 export type AssignedRole = StaffRoleId | 'administrator' | 'none';
 export const ALL_STAFF_PERMISSIONS: StaffPermission[] = STAFF_PERMISSIONS.map(permission => permission.id);
 export const STAFF_ROLE_LABELS: Record<AssignedRole, string> = {
@@ -35,14 +35,14 @@ export interface StaffAccessRecord {
   updatedAt: string; updatedBy: string;
 }
 export interface StaffRoleRecord {
-  schemaVersion: 1; enabled: boolean; revision: string; permissions: StaffPermission[];
+  name?: string; schemaVersion: 1; enabled: boolean; revision: string; permissions: StaffPermission[];
   updatedAt: string; updatedBy: string;
 }
 export interface StaffRoleView extends StaffRoleRecord { id: StaffRoleId; configured: boolean; }
-export interface StaffMember { uid: string; email: string; role: AssignedRole; enabled: boolean; }
+export interface StaffMember { uid: string; email: string; name?: string; role: AssignedRole; enabled: boolean; }
 export interface StaffOverview { notifications?: Array<{ id: string; email: string; createdAt: string }>; roles: StaffRoleView[]; members: StaffMember[]; emailConfigured: boolean; truncated: boolean; }
 
-export function isStaffRoleId(value: unknown): value is StaffRoleId { return value === 'designer' || value === 'product-manager'; }
+export function isStaffRoleId(value: unknown): value is StaffRoleId { return typeof value === 'string' && /^[a-z][a-z0-9-]{1,63}$/.test(value) && !['admin', 'administrator', 'administrador', 'none', 'owner', 'root', 'constructor', 'prototype'].includes(value); }
 export function parseStaffPermissions(value: unknown): StaffPermission[] | null {
   if (!Array.isArray(value) || value.length > ALL_STAFF_PERMISSIONS.length || new Set(value).size !== value.length ||
       value.some(entry => !ALL_STAFF_PERMISSIONS.includes(entry as StaffPermission))) return null;
@@ -59,7 +59,7 @@ export function validStaffRole(value: unknown): value is StaffRoleRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.schemaVersion === 1 && typeof record.enabled === 'boolean' && typeof record.revision === 'string' &&
-    /^[a-f0-9]{32}$/.test(record.revision) && parseStaffPermissions(record.permissions) !== null;
+    /^[a-f0-9]{32}$/.test(record.revision) && parseStaffPermissions(record.permissions) !== null && (record.name === undefined || (typeof record.name === 'string' && record.name.trim().length > 0 && record.name.length <= 80));
 }
 export function staffRecordMatches(value: unknown, claims: Record<string, unknown>): value is StaffAccessRecord {
   return claims.admin !== true && validStaffAccess(value) && value.enabled && value.epoch === claims[STAFF_EPOCH_CLAIM] && value.roleId === claims[STAFF_ROLE_CLAIM];
@@ -81,3 +81,6 @@ export function permittedProductPatch(product: Record<string, unknown>, permissi
   const fields = [...(canEditProductImages(permissions) ? PRODUCT_IMAGE_FIELDS : []), ...(canEditProductPersonalization(permissions) ? PRODUCT_PERSONALIZATION_FIELDS : [])];
   return Object.fromEntries(fields.filter(key => Object.hasOwn(product, key)).map(key => [key, product[key]]));
 }
+
+export function staffRoleName(id: string, role?: { name?: string }): string { return role?.name || (Object.hasOwn(STAFF_ROLE_LABELS, id) ? STAFF_ROLE_LABELS[id] : id); }
+export function validStaffName(value: unknown): value is string { return typeof value === 'string' && value.trim().length >= 2 && value.trim().length <= 120 && !/[\x00-\x1f\x7f]/.test(value); }

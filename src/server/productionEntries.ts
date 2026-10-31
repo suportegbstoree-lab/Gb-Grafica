@@ -8,6 +8,7 @@ export async function saveProduction(
   actor: string,
   version?: number,
   cancellation?: string,
+  actorInfo?: { actorName: string; actorRole: string },
 ) {
   if (!/^[a-f0-9-]{36}$/.test(id))
     throw new OperationsError("Identificador do lançamento inválido.");
@@ -58,7 +59,7 @@ export async function saveProduction(
     });
     transaction.create(
       db.collection("_operationsActivity").doc(`${id}-${next.version}`),
-      { actor, action: `production.${action}`, entityId: id, at: now },
+      { ...actorInfo, actor, action: `production.${action}`, entityId: id, at: now },
     );
     return { id, ...next };
   });

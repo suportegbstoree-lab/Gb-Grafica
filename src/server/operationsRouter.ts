@@ -1,5 +1,7 @@
+import { activityActor } from './staffActivity.js';
+import { activitySummary, ACTIVITY_LABELS, type StaffActivity } from '../lib/staffActivity.js';
+import { staffRoleName } from '../lib/staffAccess.js';
 import express from "express";
-import { createHash, randomUUID } from "node:crypto";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import {
   validStaffAccess,
@@ -20,24 +22,23 @@ import {
 import { saveProduction } from "./productionEntries.js";
 type Services = ReturnType<typeof getAdminServices>;
 type Dependencies = {
-  authorize: (req: express.Request) => Promise<{ uid: string }>;
+  authorize: (req: express.Request) => Promise<{ uid: string; name?: unknown; email?: unknown; admin?: unknown }>;
   services: () => Services;
 };
 const collections = {
   activity: "_operationsActivity",
-  errors: "_operationsErrors",
-  machines: "_operationsMachines",
-  releases: "_operationsReleases",
 } as const;
 const idPattern = /^[a-f0-9-]{36}$/;
 
 async function people(services: Services) {
   const { db, auth } = services;
-  const [admins, staff, roles] = await Promise.all([
+  const [admins, staff, roles, profiles] = await Promise.all([
     db.collection("_adminAccess").limit(1001).get(),
     db.collection("_staffAccess").limit(1001).get(),
     db.collection("_staffRoles").get(),
+    db.collection("_staffProfiles").limit(1001).get(),
   ]);
+  const names = new Map(profiles.docs.map(doc => [doc.id, doc.data().name]));
   const policies = new Map(roles.docs.map((doc) => [doc.id, doc.data()]));
   const ids = [
     ...new Set([...admins.docs, ...staff.docs].map((doc) => doc.id)),
@@ -72,13 +73,11 @@ async function people(services: Services) {
       ? [
           {
             id: account.uid,
-            name: account.displayName || account.email || account.uid,
+            name: String(names.get(account.uid) || account.displayName || account.email || account.uid),
             email: account.email || "",
             role: root
               ? "Administrador"
-              : record!.roleId === "designer"
-                ? "Designer"
-                : "Gestor de Produtos",
+              : staffRoleName(record!.roleId, policy || undefined),
           },
         ]
       : [];
@@ -111,6 +110,7 @@ export function createOperationsRouter(deps: Dependencies) {
       .authorize(req)
       .then((actor) => {
         res.locals.actor = actor.uid;
+        res.locals.user = actor;
         next();
       })
       .catch(next);
@@ -253,6 +253,7 @@ export function createOperationsRouter(deps: Dependencies) {
         String(req.body.requestId),
         entry,
         res.locals.actor,
+        undefined, undefined, await activityActor(services.db, res.locals.user),
       ),
     );
   });
@@ -287,10 +288,11 @@ export function createOperationsRouter(deps: Dependencies) {
         res.locals.actor,
         req.body.version,
         cancellation,
+        await activityActor(services.db, res.locals.user),
       ),
     );
   });
-  for (const kind of ["activity", "errors"] as const)
+  for (const kind of ["activity"] as const)
     route("get", `/${kind}`, async (req, res, { db }) => {
       const filters = range(req.query),
         query = await db
@@ -322,212 +324,24 @@ export function createOperationsRouter(deps: Dependencies) {
               ["Data", "Autor", "Ação/código", "Registro"],
               ...rows.map((row: any) => [
                 row.at,
-                row.actor,
-                row.action || row.code,
+                row.actorName || row.actor,
+                ACTIVITY_LABELS[row.action] || row.action || row.code,
                 row.entityId || "",
               ]),
             ]),
           );
         return;
       }
+      const clipped = rows.slice(0, 10000);
       res.json({
-        records: rows.slice((filters.page - 1) * 50, filters.page * 50),
-        count: rows.length,
+        summary: activitySummary(clipped as StaffActivity[]),
+        records: clipped.slice((filters.page - 1) * 50, filters.page * 50),
+        count: clipped.length,
         page: filters.page,
         truncated: query.size > 10000,
       });
     });
-  for (const kind of ["machines", "releases"] as const)
-    route("get", `/${kind}`, async (_req, res, { db }) => {
-      const records = await db
-        .collection(collections[kind])
-        .orderBy("createdAt", "desc")
-        .limit(501)
-        .get();
-      res.json({
-        records: records.docs
-          .slice(0, 500)
-          .map((doc) => ({ id: doc.id, ...doc.data() })),
-        truncated: records.size > 500,
-      });
-    });
-  route("get", "/machines/:id", async (req, res, { db }) => {
-    if (!idPattern.test(req.params.id))
-      throw new OperationsError("Equipamento inválido.");
-    const data = (
-      await db.collection(collections.machines).doc(req.params.id).get()
-    ).data();
-    if (!data) throw new OperationsError("Equipamento não encontrado.", 404);
-    res.json({ record: { id: req.params.id, ...data } });
-  });
-  route("post", "/machines/:id", async (req, res, { db }) => {
-    const id = req.params.id;
-    if (!idPattern.test(id)) throw new OperationsError("Equipamento inválido.");
-    const machineId = boundedText(
-        req.body.machineId,
-        "ID do equipamento",
-        64,
-        true,
-      ),
-      name = boundedText(req.body.name, "Nome", 120, true),
-      installedVersion = boundedText(
-        req.body.installedVersion || "",
-        "Versão instalada",
-        30,
-      );
-    const ref = db.collection(collections.machines).doc(id),
-      unique = db
-        .collection("_operationsMachineIds")
-        .doc(createHash("sha256").update(machineId).digest("hex"));
-    await db.runTransaction(async (transaction) => {
-      const old = (await transaction.get(ref)).data(),
-        reserved = (await transaction.get(unique)).data();
-      if (old ? old.version !== req.body.version : req.body.version !== 0)
-        throw new OperationsError(
-          "O equipamento mudou. Atualize a página.",
-          409,
-        );
-      if (reserved && reserved.id !== id)
-        throw new OperationsError(
-          "Este ID de equipamento já está cadastrado.",
-          409,
-        );
-      const at = new Date().toISOString();
-      if (old && old.machineId !== machineId)
-        transaction.delete(
-          db
-            .collection("_operationsMachineIds")
-            .doc(
-              createHash("sha256").update(String(old.machineId)).digest("hex"),
-            ),
-        );
-      transaction.set(unique, { id });
-      transaction.set(ref, {
-        name,
-        machineId,
-        installedVersion,
-        authorized: req.body.authorized === true,
-        version: Number(old?.version || 0) + 1,
-        createdAt: old?.createdAt || at,
-        updatedAt: at,
-        updatedBy: res.locals.actor,
-      });
-      transaction.create(
-        db.collection(collections.activity).doc(randomUUID()),
-        { actor: res.locals.actor, action: "machine.saved", entityId: id, at },
-      );
-    });
-    res.json({ id });
-  });
-  route("post", "/releases", async (req, res, { db, bucket }) => {
-    const version = boundedText(req.body.version, "Versão", 30, true);
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,29}$/.test(version))
-      throw new OperationsError("Versão inválida.");
-    const path = String(req.body.path),
-      pattern =
-        /^operations\/releases\/[a-f0-9-]{36}\/[a-f0-9]{32}\.(zip|exe|msi)$/;
-    if (!pattern.test(path))
-      throw new OperationsError("Arquivo da versão inválido.");
-    const [metadata] = await bucket.file(path).getMetadata(),
-      size = Number(metadata.size),
-      generation = Number(metadata.generation),
-      extension = path.split(".").at(-1);
-    if (
-      metadata.metadata?.uploadedBy !== res.locals.actor ||
-      !Number.isSafeInteger(generation) ||
-      size <= 0 ||
-      size > 50 * 1024 * 1024
-    )
-      throw new OperationsError(
-        "O arquivo da versão não pertence a este envio.",
-      );
-    const hash = createHash("sha256");
-    let received = 0;
-    let header = Buffer.alloc(0);
-    for await (const chunk of bucket
-      .file(path, { generation })
-      .createReadStream()) {
-      const bytes = Buffer.from(chunk);
-      received += bytes.length;
-      if (received > 50 * 1024 * 1024)
-        throw new OperationsError("Arquivo muito grande.");
-      if (header.length < 8)
-        header = Buffer.concat([header, bytes]).subarray(0, 8);
-      hash.update(bytes);
-    }
-    if (
-      received !== size ||
-      !(extension === "zip"
-        ? header[0] === 0x50 && header[1] === 0x4b
-        : extension === "exe"
-          ? header[0] === 0x4d && header[1] === 0x5a
-          : header.toString("hex") === "d0cf11e0a1b11ae1")
-    )
-      throw new OperationsError(
-        "O conteúdo não corresponde ao formato informado.",
-      );
-    const sha256 = hash.digest("hex"),
-      description = boundedText(req.body.description || "", "Descrição", 2000),
-      mandatory = req.body.mandatory === true;
-    const ref = db.collection(collections.releases).doc(version);
-    await db.runTransaction(async (transaction) => {
-      const old = (await transaction.get(ref)).data();
-      if (old) {
-        if (
-          old.path === path &&
-          old.sha256 === sha256 &&
-          old.description === description &&
-          old.mandatory === mandatory
-        )
-          return;
-        throw new OperationsError("A versão já existe.", 409);
-      }
-      const at = new Date().toISOString();
-      transaction.create(ref, {
-        version,
-        path,
-        generation,
-        sha256,
-        size,
-        description,
-        mandatory,
-        createdAt: at,
-        createdBy: res.locals.actor,
-      });
-      transaction.create(
-        db.collection(collections.activity).doc(randomUUID()),
-        {
-          actor: res.locals.actor,
-          action: "release.created",
-          entityId: version,
-          at,
-        },
-      );
-    });
-    res.json({ id: version, sha256 });
-  });
-  route("get", "/releases/:id/download", async (req, res, { db, bucket }) => {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,29}$/.test(req.params.id))
-      throw new OperationsError("Versão inválida.");
-    const release = (
-      await db.collection(collections.releases).doc(req.params.id).get()
-    ).data();
-    if (
-      !release ||
-      !/^operations\/releases\/[a-f0-9-]{36}\/[a-f0-9]{32}\.(zip|exe|msi)$/.test(
-        release.path,
-      )
-    )
-      throw new OperationsError("Versão não encontrada.", 404);
-    const [url] = await bucket
-      .file(release.path, { generation: release.generation })
-      .getSignedUrl({
-        action: "read",
-        expires: Date.now() + 300_000,
-        responseDisposition: "attachment",
-      });
-    res.json({ url });
-  });
+  router.use((_req, res) => { res.status(404).json({ error: 'Página de operações não encontrada.' }); });
   router.use(
     (
       error: unknown,
@@ -541,17 +355,6 @@ export function createOperationsRouter(deps: Dependencies) {
           : typeof (error as any)?.status === "number"
             ? (error as any).status
             : 500;
-      if (status >= 500 && res.locals.actor)
-        void deps
-          .services()
-          .db.collection(collections.errors)
-          .doc(randomUUID())
-          .create({
-            actor: res.locals.actor,
-            code: "OPERATIONS_FAILURE",
-            at: new Date().toISOString(),
-          })
-          .catch(() => {});
       res
         .status(status >= 400 && status <= 599 ? status : 500)
         .json({

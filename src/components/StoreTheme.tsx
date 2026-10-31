@@ -1,3 +1,4 @@
+import { Moon, Sun } from 'lucide-react';
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -9,7 +10,7 @@ const Context = createContext({
   mode: "system" as ThemeMode,
   color: DEFAULT_DARK_COLOR,
   setMode: (_: ThemeMode) => {},
-  setColor: (_: string) => {},
+  dark: false,
 });
 export function StoreThemeProvider({
   children,
@@ -26,9 +27,7 @@ export function StoreThemeProvider({
   const [mode, setMode] = useState<ThemeMode>(
     ["system", "light", "dark"].includes(saved.mode) ? saved.mode : "system",
   );
-  const [color, setColor] = useState(
-    /^#[a-f0-9]{6}$/i.test(saved.color) ? saved.color : DEFAULT_DARK_COLOR,
-  );
+  const color = DEFAULT_DARK_COLOR;
   const [systemDark, setSystemDark] = useState(
     () => matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -41,7 +40,7 @@ export function StoreThemeProvider({
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem("gb_theme", JSON.stringify({ mode, color }));
+      localStorage.setItem("gb_theme", JSON.stringify({ mode }));
     } catch {}
   }, [mode, color]);
   const dark = mode === "dark" || (mode === "system" && systemDark);
@@ -60,7 +59,7 @@ export function StoreThemeProvider({
     Object.entries(palette).map(([key, value]) => [`--store-${key}`, value]),
   ) as React.CSSProperties;
   return (
-    <Context.Provider value={{ mode, color, setMode, setColor }}>
+    <Context.Provider value={{ mode, color, setMode, dark }}>
       <div
         data-store-theme={
           location.pathname.startsWith("/admin")
@@ -78,36 +77,7 @@ export function StoreThemeProvider({
 }
 export function StoreThemeControl() {
   const theme = useContext(Context);
-  return (
-    <details className="relative text-sm">
-      <summary className="cursor-pointer font-bold">Aparência</summary>
-      <div className="absolute right-0 top-8 z-50 w-64 space-y-4 rounded-xl border border-gray-200 bg-white p-4 text-gray-900 shadow-xl">
-        <label className="block">
-          Tema
-          <select
-            aria-label="Tema da loja"
-            value={theme.mode}
-            onChange={(e) => theme.setMode(e.target.value as ThemeMode)}
-            className="mt-1 block w-full rounded border border-gray-300 p-2"
-          >
-            <option value="system">Seguir sistema</option>
-            <option value="light">Claro</option>
-            <option value="dark">Escuro</option>
-          </select>
-        </label>
-        <label className="flex items-center justify-between gap-3">
-          Cor do modo escuro
-          <input
-            aria-label="Cor do modo escuro"
-            type="color"
-            value={theme.color}
-            onChange={(e) => theme.setColor(e.target.value)}
-          />
-        </label>
-        <p className="text-xs text-gray-500">
-          A intensidade é ajustada para manter a leitura.
-        </p>
-      </div>
-    </details>
-  );
+  return <button type="button" aria-label={theme.dark ? 'Ativar tema claro' : 'Ativar tema escuro'} aria-pressed={theme.dark} onClick={() => theme.setMode(theme.dark ? 'light' : 'dark')} className="inline-flex items-center gap-2 rounded-lg px-3 py-1 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+    {theme.dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}<span>{theme.dark ? 'Tema claro' : 'Tema escuro'}</span>
+  </button>;
 }

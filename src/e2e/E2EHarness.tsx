@@ -48,7 +48,8 @@ const FIXTURE_CONFIG: SiteConfig = {
 
 const PRINT_PROFILE: PrintProfile = { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 };
 const PRINT_FIXTURE = new URLSearchParams(window.location.search).has('print');
-const FIXTURE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+const FIXTURE_IMAGE = '/__e2e/pixel.png';
+const FIXTURE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 const FIXTURE_CATEGORIES: Category[] = [
   { id: 'personalizados', nome: 'Personalizados', icon: '', ordem: 0 },
@@ -153,7 +154,7 @@ const FIXTURE_USER = {
 const FixtureCatalog = React.createContext<{ products: Anuncio[]; setProducts: React.Dispatch<React.SetStateAction<Anuncio[]>>; config: SiteConfig; setConfig: React.Dispatch<React.SetStateAction<SiteConfig>> }>(null!);
 
 async function fixtureOrderModelLoader(_orderId: string, item: CartItem): Promise<PersonalizationDocument> {
-  let blob = new Blob([Uint8Array.from(atob(FIXTURE_IMAGE.split(',')[1]), character => character.charCodeAt(0))], { type: 'image/png' });
+  let blob = new Blob([Uint8Array.from(atob(FIXTURE_PNG_BASE64), character => character.charCodeAt(0))], { type: 'image/png' });
   if (item.printProfile) {
     const canvas = document.createElement('canvas'); canvas.width = 1040; canvas.height = 1540;
     const context = canvas.getContext('2d')!; context.fillStyle = '#2563eb'; context.fillRect(0, 0, 1040, 1540);
@@ -207,20 +208,22 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
 }
 
 function AdminFixture({ permissionOverride }: { permissionOverride?: import('../lib/staffAccess').StaffPermission[] }) {
+  const activityApi = React.useMemo<import('../services/staffActivityService').AdminActivityApi>(() => ({ orders: async orderId => { await fetch('/api/admin/activity/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) }); }, exportArtwork: async (orderId, itemId, format) => { await fetch('/api/admin/activity/artwork', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId, itemId, format }) }); } }), []);
   const [selectedRole] = React.useState(() => new URLSearchParams(window.location.search).get('role'));
   const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
   const fixturePermissions = permissionOverride ?? (fixtureRole === 'administrator' ? [] : DEFAULT_ROLE_PERMISSIONS[fixtureRole]);
   const rolePolicies = React.useRef(new Map<StaffRoleId, StaffRoleView>((['designer', 'product-manager'] as const).map(id => [id, { id, schemaVersion: 1, configured: true, enabled: true, revision: (id === 'designer' ? 'a' : 'b').repeat(32), permissions: [...DEFAULT_ROLE_PERMISSIONS[id]], updatedAt: '', updatedBy: '' }])));
-  const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
+  const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', name: 'Administrador Teste', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
   const staffApi = React.useMemo<StaffAdministrationApi>(() => ({
     async load() { return { roles: structuredClone([...rolePolicies.current.values()]), members: structuredClone(members.current), emailConfigured: false, truncated: false }; },
-    async saveRole(id, permissions) { const value = { ...rolePolicies.current.get(id)!, permissions, revision: crypto.randomUUID().replaceAll('-', '') }; rolePolicies.current.set(id, value); return structuredClone(value); },
-    async assign(email, role) {
+    async saveRole(id, permissions, _revision, name) { const value: StaffRoleView = { id, schemaVersion: 1, configured: true, enabled: true, updatedAt: '', updatedBy: '', ...rolePolicies.current.get(id), name, permissions, revision: crypto.randomUUID().replaceAll('-', '') }; rolePolicies.current.set(id, value); return structuredClone(value); },
+    async assign(email, role, name) {
       if (!['admin@example.com', 'designer@example.com', 'manager@example.com'].includes(email)) throw new Error('Este e-mail ainda não possui uma conta cadastrada na loja.');
       if (email === 'admin@example.com' && role !== 'administrator') throw new Error('Sua própria função administrativa não pode ser removida por esta tela.');
-      members.current = [...members.current.filter(member => member.email !== email), ...(role === 'none' ? [] : [{ uid: email, email, role, enabled: true }])];
+      members.current = [...members.current.filter(member => member.email !== email), ...(role === 'none' ? [] : [{ uid: email, email, name: name || email, role, enabled: true }])];
       return { changed: true, uid: email, email, role, notification: { id: crypto.randomUUID(), status: 'not_configured' } };
     },
+    async saveName(uid, name) { members.current = members.current.map(member => member.uid === uid ? { ...member, name } : member); },
     async retryNotification() { return { status: 'not_configured' }; },
   }), []);
   const { products, setProducts, config, setConfig } = React.useContext(FixtureCatalog);
@@ -236,8 +239,14 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
     async refreshTracking(id) { setOrders(current => current.map(order => order.id === id ? { ...order, fulfillmentStatus: 'entregue', status: 'Entregue', tracking: { ...order.tracking!, status: 'Objeto entregue ao destinatário', eventAt: new Date().toISOString(), updatedAt: new Date().toISOString() } } : order)); },
   }), []);
 
+  const catalogState = React.useRef({ products, categories, promotions, config }); catalogState.current = { products, categories, promotions, config };
+  const saveCatalogFixture = async (collection: string, id: string, mode: string, value?: unknown) => {
+    const response = await fetch(`/__e2e/catalog/${collection}/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-E2E-Role': fixtureRole }, body: JSON.stringify({ mode, value, seed: catalogState.current }) });
+    const data = await response.json(); if (!response.ok) throw new Error(data.error);
+  };
   const persistence = React.useMemo<AdminPersistence>(() => ({
     async setDocument(collectionName, documentId, value) {
+      await saveCatalogFixture(collectionName, documentId, 'set', value);
       if (collectionName === 'anuncios') {
         const product = value as Anuncio;
         setProducts(current => [...current.filter(item => item.id !== documentId), product]);
@@ -253,6 +262,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
       setLastAction(`set:${collectionName}:${documentId}`);
     },
     async deleteDocument(collectionName, documentId) {
+      await saveCatalogFixture(collectionName, documentId, 'delete');
       if (collectionName === 'anuncios') setProducts(current => current.filter(item => item.id !== documentId));
       if (collectionName === 'categories') setCategories(current => current.filter(item => item.id !== documentId));
       if (collectionName === 'promocoes') setPromotions(current => current.filter(item => item.id !== documentId));
@@ -305,6 +315,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   return (
     <div data-testid="e2e-admin">
       <Admin
+        activityApi={activityApi}
         operationsClient={operationsFixtureClient}
         fullAdmin={permissionOverride === undefined && fixtureRole === 'administrator'}
         permissions={fixturePermissions}

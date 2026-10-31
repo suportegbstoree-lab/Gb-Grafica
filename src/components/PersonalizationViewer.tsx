@@ -7,10 +7,11 @@ import {
   personalizationDownloadName, type PersonalizationDocument, type PersonalizationPage,
 } from '../services/personalizationExport';
 
-export default function PersonalizationViewer({ document: model, onClose, allowDownload = false }: {
+export default function PersonalizationViewer({ document: model, onClose, allowDownload = false, onExport }: {
   document: PersonalizationDocument;
   onClose: () => void;
   allowDownload?: boolean;
+  onExport?: (format: 'jpg' | 'pdf') => void | Promise<void>;
 }) {
   const [pageIndex, setPageIndex] = React.useState(0);
   const [zoom, setZoom] = React.useState<number | null>(null);
@@ -59,6 +60,7 @@ export default function PersonalizationViewer({ document: model, onClose, allowD
     setExporting(true); setError('');
     try {
       const blob = format === 'pdf' ? await exportPersonalizationPdf(model) : await exportPersonalizationImage(page.blob, 'image/jpeg');
+      await onExport?.(format);
       downloadPersonalization(blob, personalizationDownloadName(model.title, format === 'pdf' ? 'modelo' : page.label.toLowerCase(), format));
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Não foi possível exportar o modelo.');
