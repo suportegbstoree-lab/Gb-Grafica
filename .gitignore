@@ -5,6 +5,7 @@ coverage/
 playwright-report/
 test-results/
 docs/
+.tsupgrader
 
 # Marcadores temporários das regressões do servidor local (inclusive execução interrompida).
 /.security-probe-*.json
@@ -27,6 +28,7 @@ request.json
 .github/*.yml
 .git/
 *.patch
+
 
 # Estado local das ferramentas de deploy
 /.vercel/
@@ -51,4 +53,3 @@ request.json
 CHANGELOG.md
 TODO.md
 .github/modernize/
-/docs

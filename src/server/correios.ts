@@ -1,13 +1,11 @@
 import axios from 'axios';
+import { validTrackingCode } from '../lib/tracking.js';
+import { parseCorreiosTracking, type CorreiosTrackingEvent } from './correiosTrackingResponse.js';
 import { createHash } from 'node:crypto';
 import { isRecord, validShippingParcel, type ShippingOption, type ShippingParcel } from '../lib/shipping.js';
 
-export class CorreiosError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
-    super(message);
-    this.name = 'CorreiosError';
-  }
-}
+import { CorreiosError } from './correiosError.js';
+export { CorreiosError } from './correiosError.js';
 
 type Environment = Record<string, string | undefined>;
 export interface CorreiosConfig {
@@ -119,12 +117,19 @@ function providerError(status: number, authenticating = false): CorreiosError {
   return new CorreiosError(502, 'CORREIOS_UNAVAILABLE', 'O serviço de frete está indisponível. Tente novamente em instantes.');
 }
 
+export type TrackingTransport = (url: string, authorization: string, signal: AbortSignal) => Promise<{ status: number; data: unknown }>;
+const trackingTransport: TrackingTransport = async (url, authorization, signal) => {
+  try { return await axios.get(url, { headers: { Authorization: authorization, Accept: 'application/json' }, timeout: 6000,
+    signal, maxRedirects: 0, maxContentLength: 512 * 1024, responseType: 'json', validateStatus: () => true }); }
+  catch { throw new CorreiosError(502, 'CORREIOS_TRACKING_UNAVAILABLE', 'Não foi possível consultar o rastreio agora.'); }
+};
+
 export class CorreiosClient {
   private cachedToken: { token: string; expiresAt: number } | null = null;
   private tokenPending: Promise<string> | null = null;
 
   constructor(private readonly config: CorreiosConfig, private readonly request: CorreiosTransport = transport,
-    private readonly now: () => number = Date.now) {}
+    private readonly now: () => number = Date.now, private readonly trackingRequest: TrackingTransport = trackingTransport) {}
 
   private async getToken(): Promise<string> {
     if (this.config.token) {
@@ -172,6 +177,20 @@ export class CorreiosClient {
         }),
       ]);
     } finally { clearTimeout(timer!); controller.abort(); }
+  }
+
+  async track(code: string): Promise<CorreiosTrackingEvent> {
+    if (!validTrackingCode(code)) throw new CorreiosError(422, 'CORREIOS_TRACKING_INVALID', 'Código de rastreio inválido.');
+    const signal = AbortSignal.timeout(20_000);
+    let token = await this.getToken();
+    const consult = () => this.trackingRequest(`${this.config.baseUrl}/srorastro/v1/objetos/${code}?resultado=T`, `Bearer ${token}`, signal);
+    let response = await consult();
+    if (response.status === 401 && !this.config.token) {
+      if (this.cachedToken?.token === token) this.cachedToken = null;
+      token = await this.getToken(); response = await consult();
+    }
+    if (response.status !== 200) throw new CorreiosError(response.status === 404 ? 404 : 503, 'CORREIOS_TRACKING_ACCESS', 'Confira o código e a liberação da API Rastro no contrato dos Correios.');
+    return parseCorreiosTracking(response.data, code, this.now());
   }
 
   private async performQuote(destinationCep: string, parcels: ShippingParcel[], signal: AbortSignal): Promise<ShippingOption[]> {

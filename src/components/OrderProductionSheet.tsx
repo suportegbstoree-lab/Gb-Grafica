@@ -3,7 +3,7 @@ import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderSta
 import { printProfileLabel } from '../lib/printProfile';
 import EditorModal from './EditorModal';
 
-export default function OrderProductionSheet({ order, onClose, onOpenModel }: { order: Order; onClose: () => void; onOpenModel: (orderId: string, itemId: string) => void }) {
+export default function OrderProductionSheet({ order, onClose, onOpenModel, canOpenFiles = false }: { order: Order; onClose: () => void; canOpenFiles?: boolean; onOpenModel: (orderId: string, itemId: string) => void }) {
   const paid = order.paymentStatus ? order.paymentStatus === 'pago' : order.status === 'Pago';
   return <EditorModal title={`Ficha de produção · ${order.id}`} onClose={onClose} closeLabel="Fechar ficha de produção" doneLabel="Fechar ficha" footerText="Os dados da arte e do formato são os salvos na compra. Confira pagamento e arquivos antes de produzir.">
     <div className="space-y-5 text-sm">
@@ -24,7 +24,7 @@ export default function OrderProductionSheet({ order, onClose, onOpenModel }: { 
         {item.personalizacaoTexto && <p className="whitespace-pre-wrap break-words text-sm">Texto: {item.personalizacaoTexto.texto}</p>}
         <p className={item.aprovacaoArte ? 'text-xs text-green-400' : 'text-xs text-amber-400'}>{item.aprovacaoArte ? `Arte aprovada pelo cliente em ${new Date(item.aprovacaoArte.acceptedAt).toLocaleString('pt-BR')}` : 'Sem registro de aprovação da arte — conferir antes de produzir.'}</p>
         {item.aprovacaoArte && <p className="break-all text-[10px] text-gray-500">Versão aprovada: {item.aprovacaoArte.designFingerprint}</p>}
-        {item.modeloPath && <button type="button" onClick={() => onOpenModel(order.id, item.id)} className="rounded-lg bg-pink-500 px-4 py-2 text-xs font-bold">Conferir arquivos de produção</button>}
+        {canOpenFiles && item.modeloPath && <button type="button" onClick={() => onOpenModel(order.id, item.id)} className="rounded-lg bg-pink-500 px-4 py-2 text-xs font-bold">Conferir arquivos de produção</button>}
       </section>)}
     </div>
   </EditorModal>;

@@ -18,6 +18,28 @@ service firebase.storage {
       return request.auth != null && request.auth.token.get('admin', false) == true && currentAdminAccess();
     }
 
+    function validStaffToken() {
+      return request.auth != null && request.auth.token.get('admin', false) != true &&
+        request.auth.token.get('staffRole', '') in ['designer', 'product-manager'] &&
+        request.auth.token.get('gbStaffEpoch', '').matches('^[a-f0-9]{32}$');
+    }
+
+    function staffCan(permission) {
+      let access = firestore.get(/databases/(default)/documents/_staffAccess/$(request.auth.uid)).data;
+      let policy = firestore.get(/databases/(default)/documents/_staffRoles/$(request.auth.token.staffRole)).data;
+      return access.get('schemaVersion', 0) == 1 && access.get('enabled', false) == true &&
+        access.get('epoch', '') == request.auth.token.gbStaffEpoch && access.get('roleId', '') == request.auth.token.staffRole &&
+        policy.get('schemaVersion', 0) == 1 && policy.get('enabled', false) == true && permission in policy.get('permissions', []);
+    }
+
+    function can(permission) { return isAdmin() || (validStaffToken() && staffCan(permission)); }
+    function canProductImage() { return can('products.manage') || can('products.images'); }
+    function canScope(scope) {
+      return (scope == 'categories' && can('categories.manage')) ||
+        (scope == 'site' && can('branding.manage')) ||
+        (scope == 'promotions' && can('promotions.manage'));
+    }
+
     function isValidPendingArtwork(fileName, contentType) {
       return contentType is string && (
         (contentType == 'application/pdf' && fileName.matches('^[a-f0-9]{32}[.]pdf$')) ||
@@ -71,8 +93,8 @@ service firebase.storage {
     match /catalog/products/{productId}/{fileName} {
       // Imagens do catálogo são públicas; listagem e alterações continuam restritas.
       allow get: if true;
-      allow list: if isAdmin();
-      allow create: if isAdmin() &&
+      allow list: if canProductImage();
+      allow create: if canProductImage() &&
         resource == null &&
         request.resource.size > 0 &&
         request.resource.size <= 8 * 1024 * 1024 &&
@@ -80,13 +102,13 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if isAdmin();
+      allow delete: if canProductImage();
     }
 
     match /catalog/{scope}/{ownerId}/{fileName} {
       allow get: if scope in ['categories', 'site', 'promotions'];
-      allow list: if isAdmin() && scope in ['categories', 'site', 'promotions'];
-      allow create: if isAdmin() &&
+      allow list: if canScope(scope) && scope in ['categories', 'site', 'promotions'];
+      allow create: if canScope(scope) &&
         scope in ['categories', 'site', 'promotions'] &&
         isValidAdminOwner(ownerId) &&
         resource == null &&
@@ -96,13 +118,13 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if isAdmin() && scope in ['categories', 'site', 'promotions'];
+      allow delete: if canScope(scope) && scope in ['categories', 'site', 'promotions'];
     }
 
     match /catalog/fonts/{fontId}/{fileName} {
       allow get: if true;
-      allow list: if isAdmin();
-      allow create: if isAdmin() &&
+      allow list: if can('fonts.manage');
+      allow create: if can('fonts.manage') &&
         isValidAdminOwner(fontId) &&
         resource == null &&
         request.resource.size > 0 &&
@@ -113,7 +135,7 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if isAdmin();
+      allow delete: if can('fonts.manage');
     }
 
     match /{allPaths=**} {

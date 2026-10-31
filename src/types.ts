@@ -67,6 +67,7 @@ export interface DeliveryAddress {
 }
 
 export interface Order {
+  tracking?: import('./lib/tracking').OrderTracking;
   id: string;
   userId: string;
   data: string;
@@ -110,6 +111,9 @@ export type PromotionTargetType = 'produto' | 'categoria';
 export type PromotionDiscountType = 'percentual' | 'valor_fixo';
 
 export interface Promocao {
+  relampago?: boolean;
+  startsAt?: number;
+  endsAt?: number;
   id: string;
   titulo: string;
   imagem?: string;

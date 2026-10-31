@@ -71,7 +71,7 @@ test('modal mostra Enter, tamanho e cor na prévia e no modelo em resolução or
 
 test('fontes TTF e OTF são validadas, publicadas e usadas no canvas do cliente', async ({ page }) => {
   await page.goto('/__e2e/admin');
-  await page.getByRole('button', { name: 'Configurações', exact: true }).click();
+  await page.getByRole('button', { name: 'Fontes', exact: true }).click();
   await expect(page.getByLabel('Nome da fonte 1')).toHaveCount(0);
   const trigger = page.getByRole('button', { name: 'Gerenciar fontes' });
   await trigger.click();
@@ -85,7 +85,7 @@ test('fontes TTF e OTF são validadas, publicadas e usadas no canvas do cliente'
   await expect(modal.getByRole('alert')).toContainText('inválido');
   await modal.getByRole('button', { name: 'Concluir edição de fontes' }).click();
   await expect(trigger).toBeFocused();
-  await page.getByRole('button', { name: 'Salvar Todas as Configurações' }).click();
+  await page.getByRole('button', { name: 'Salvar fontes' }).click();
   await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
   const card = page.locator('#produtos article').filter({ has: page.getByRole('heading', { name: 'Livro de Receitas Personalizado' }) });
   await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();

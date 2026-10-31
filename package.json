@@ -23,6 +23,7 @@
     "test:server-security": "node --import tsx --test --test-concurrency=1 test/dev-server/*.test.ts",
     "security:storage-report": "node --import tsx scripts/report-pending-artworks.ts",
     "security:app-check": "node --import tsx scripts/check-app-check-config.ts",
+    "security:staff-check": "node --import tsx scripts/check-staff-access.ts",
     "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
     "shipping:check": "node --import tsx scripts/check-correios.ts",
     "admin:catalog-lease": "tsx scripts/admin-catalog-lease.ts",

@@ -186,14 +186,14 @@ test('valida duplicidade, cria e exclui produto com confirmação', async ({ pag
 });
 
 test('protege configurações pendentes ao trocar de seção', async ({ page }) => {
-  await page.getByRole('button', { name: 'Configurações' }).click();
+  await page.getByRole('button', { name: 'Identidade Visual' }).click();
   await page.getByLabel('Título do Banner', { exact: true }).fill('Título ainda não salvo');
   await page.getByRole('button', { name: 'Produtos' }).click();
 
   const confirmation = page.getByRole('alertdialog', { name: 'Sair sem salvar?' });
   await expect(confirmation).toBeVisible();
   await confirmation.getByRole('button', { name: 'Voltar' }).click();
-  await expect(page.getByRole('heading', { name: 'Configurações do Site' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Identidade Visual', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Produtos' }).click();
   await page.getByRole('alertdialog', { name: 'Sair sem salvar?' })

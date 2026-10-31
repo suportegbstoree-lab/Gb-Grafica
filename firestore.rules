@@ -87,6 +87,39 @@ service cloud.firestore {
       return exists(path) && validAdminEpoch(get(path).data);
     }
 
+    function validStaffToken() {
+      return isAuthenticated() && request.auth.token.get('admin', false) != true &&
+        request.auth.token.get('staffRole', '') in ['designer', 'product-manager'] &&
+        request.auth.token.get('gbStaffEpoch', '').matches('^[a-f0-9]{32}$');
+    }
+
+    function staffIdentity(access) {
+      return access.get('schemaVersion', 0) == 1 && access.get('enabled', false) == true &&
+        access.get('epoch', '') == request.auth.token.gbStaffEpoch &&
+        access.get('roleId', '') == request.auth.token.staffRole;
+    }
+
+    function staffCan(permission) {
+      return validStaffToken() &&
+        staffIdentity(get(/databases/$(database)/documents/_staffAccess/$(request.auth.uid)).data) &&
+        get(/databases/$(database)/documents/_staffRoles/$(request.auth.token.staffRole)).data.get('schemaVersion', 0) == 1 &&
+        get(/databases/$(database)/documents/_staffRoles/$(request.auth.token.staffRole)).data.get('enabled', false) == true &&
+        permission in get(/databases/$(database)/documents/_staffRoles/$(request.auth.token.staffRole)).data.get('permissions', []);
+    }
+
+    function can(permission) { return isAdmin() || staffCan(permission); }
+
+    function allowedProductFields() {
+      return (staffCan('products.images') ? ['imagem', 'imagens'] : []).concat(
+        staffCan('products.personalization') ? ['tipoInput', 'labelTexto', 'printProfile'] : []);
+    }
+
+    function allowedConfigFields() {
+      return (staffCan('branding.manage') ? ['logo_url', 'banner_principal', 'banner_titulo', 'banner_subtitulo', 'banner_botao'] : []).concat(
+        staffCan('fonts.manage') ? ['fontes_personalizacao'] : []).concat(
+        staffCan('settings.manage') ? ['contatos', 'beneficios', 'telefone1', 'telefone2', 'beneficio1_titulo', 'beneficio1_desc', 'beneficio2_titulo', 'beneficio2_desc', 'beneficio3_titulo', 'beneficio3_desc', 'razao_social', 'documento_fiscal', 'endereco_comercial', 'email_atendimento', 'email_privacidade', 'prazo_producao'] : []);
+    }
+
     function isValidEmail(email) {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
@@ -133,6 +166,9 @@ service cloud.firestore {
                data.descontoPercentual > 0 && data.descontoPercentual < 100) ||
               (data.descontoTipo == 'valor_fixo' && data.descontoFixoCentavos is int &&
                data.descontoFixoCentavos > 0)) &&
+             (!('relampago' in data) || data.relampago is bool) &&
+             ((!('startsAt' in data) && !('endsAt' in data) && data.get('relampago', false) == false) ||
+              (data.get('startsAt', -1) is int && data.get('endsAt', -1) is int && data.startsAt >= 0 && data.endsAt > data.startsAt && data.endsAt <= 4102444800000)) &&
              (!('link' in data) || (data.link is string && data.link.size() < 2048));
     }
 
@@ -157,29 +193,32 @@ service cloud.firestore {
 
     match /anuncios/{anuncioId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidAnuncio(request.resource.data);
-      allow delete: if isAdmin();
+      allow create: if can('products.manage') && isValidAnuncio(request.resource.data);
+      allow update: if isValidAnuncio(request.resource.data) &&
+        (can('products.manage') || (validStaffToken() && (staffCan('products.images') || staffCan('products.personalization')) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedProductFields())));
+      allow delete: if can('products.manage');
     }
 
     match /categories/{categoryId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidCategory(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if can('categories.manage') && isValidCategory(request.resource.data);
+      allow delete: if can('categories.manage');
     }
 
     match /promocoes/{promocaoId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidPromotion(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update: if can('promotions.manage') && isValidPromotion(request.resource.data);
+      allow delete: if can('promotions.manage');
     }
 
     match /config/main {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (validStaffToken() && (staffCan('branding.manage') || staffCan('fonts.manage') || staffCan('settings.manage')) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedConfigFields()));
     }
 
     match /orders/{orderId} {
-      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || isAdmin());
+      allow read: if isAuthenticated() && (isOwner(resource.data.userId) || can('orders.read'));
       // Orders are created and updated by the server after PagBank validation.
       allow create: if false;
       // Pagamento, produção e histórico são alterados somente pela API autenticada.
@@ -209,6 +248,16 @@ service cloud.firestore {
     // Clients may observe their own authorization, but only the server changes it.
     match /_adminAccess/{userId} {
       allow get: if isOwner(userId);
+      allow list, create, update, delete: if false;
+    }
+
+    match /_staffAccess/{userId} {
+      allow get: if isOwner(userId);
+      allow list, create, update, delete: if false;
+    }
+    match /_staffRoles/{roleId} {
+      allow get: if isAdmin() || (validStaffToken() && request.auth.token.staffRole == roleId &&
+        staffIdentity(get(/databases/$(database)/documents/_staffAccess/$(request.auth.uid)).data));
       allow list, create, update, delete: if false;
     }
 

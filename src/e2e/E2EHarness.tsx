@@ -1,3 +1,11 @@
+import PanelAccessGate from '../components/PanelAccessGate';
+import { mayEnterPanel } from '../lib/panelAccess';
+import { useStaffEntryFixture } from './StaffEntryFixture';
+import { PDFDocument } from 'pdf-lib';
+import type { OrderOperationsApi } from '../services/orderService';
+import { legacyStatusForFulfillment } from '../lib/orderStatus';
+import { DEFAULT_ROLE_PERMISSIONS, type StaffRoleId, type StaffRoleView } from '../lib/staffAccess';
+import type { StaffAdministrationApi } from '../services/staffService';
 import type { PrintProfile } from '../lib/printProfile';
 import { validateAdminFontFile } from '../services/adminFontValidation';
 import { adminFontFormat } from '../lib/adminAsset';
@@ -74,8 +82,10 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
 
 FIXTURE_PRODUCTS.push({ id: 'caderno', nome: 'Caderno Personalizado', desc: 'Caderno com capa e contracapa.', categoria: 'Personalizados', imagem: FIXTURE_IMAGE, preco_base: '20.00', atributos: [], combinacoes: {}, tipoInput: 'arte' });
 
+const FLASH_FIXTURE = new URLSearchParams(window.location.search).has('flash');
 const FIXTURE_PROMOTIONS: Promocao[] = [
   {
+    ...(FLASH_FIXTURE ? { relampago: true, startsAt: Date.now() - 1000, endsAt: Date.now() + 60_000 } : {}),
     id: 'promo-teste',
     titulo: 'Promoção de teste',
     imagem: '/logo.png',
@@ -118,6 +128,11 @@ const FIXTURE_ORDERS: Order[] = [
   },
 ];
 
+if (new URLSearchParams(window.location.search).has('delivery')) FIXTURE_ORDERS.push({
+  ...FIXTURE_ORDERS[0], id: 'GB-E2E-ENVIO', metodoEntrega: 'entrega', fulfillmentStatus: 'em_producao',
+  shipping: { service_code: '03220', service_name: 'SEDEX', amount_cents: 1290, delivery_days: 3, home_delivery: true, saturday_delivery: false, origin_cep: '14400000', destination_cep: '01001000', quoted_at: '2026-10-30T10:00:00.000Z', parcels: [{ weightGrams: 500, lengthCm: 20, widthCm: 15, heightCm: 5 }] },
+  enderecoEntrega: { cep: '01001000', rua: 'Praça da Sé', numero: '1', bairro: 'Sé', cidade: 'São Paulo', estado: 'SP' },
+});
 if (PRINT_FIXTURE) {
   FIXTURE_PRODUCTS.find(product => product.id === 'caderno')!.printProfile = PRINT_PROFILE;
   FIXTURE_ORDERS[0].itens[0].printProfile = { ...PRINT_PROFILE };
@@ -144,7 +159,7 @@ async function fixtureOrderModelLoader(_orderId: string, item: CartItem): Promis
   return { title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob }, ...(item.contracapaPath ? [{ label: 'Contracapa' as const, blob }] : [])] };
 }
 
-function StoreFixture() {
+function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAccess?: boolean; panelAccessNeedsCheck?: boolean }) {
   const { products, config } = React.useContext(FixtureCatalog);
   const [cart, setCart] = React.useState<CartItem[]>([]);
   const [checkoutRedirect, setCheckoutRedirect] = React.useState('');
@@ -173,7 +188,8 @@ function StoreFixture() {
         orders={FIXTURE_ORDERS}
         orderModelLoader={fixtureOrderModelLoader}
         user={FIXTURE_USER}
-        isAdmin
+        canAccessPanel={panelAccess ?? true}
+        panelAccessNeedsCheck={panelAccessNeedsCheck}
         productsReady
         productsError={null}
         ordersReady
@@ -186,11 +202,35 @@ function StoreFixture() {
   );
 }
 
-function AdminFixture() {
+function AdminFixture({ permissionOverride }: { permissionOverride?: import('../lib/staffAccess').StaffPermission[] }) {
+  const selectedRole = new URLSearchParams(window.location.search).get('role');
+  const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
+  const fixturePermissions = permissionOverride ?? (fixtureRole === 'administrator' ? [] : DEFAULT_ROLE_PERMISSIONS[fixtureRole]);
+  const rolePolicies = React.useRef(new Map<StaffRoleId, StaffRoleView>((['designer', 'product-manager'] as const).map(id => [id, { id, schemaVersion: 1, configured: true, enabled: true, revision: (id === 'designer' ? 'a' : 'b').repeat(32), permissions: [...DEFAULT_ROLE_PERMISSIONS[id]], updatedAt: '', updatedBy: '' }])));
+  const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
+  const staffApi = React.useMemo<StaffAdministrationApi>(() => ({
+    async load() { return { roles: structuredClone([...rolePolicies.current.values()]), members: structuredClone(members.current), emailConfigured: false, truncated: false }; },
+    async saveRole(id, permissions) { const value = { ...rolePolicies.current.get(id)!, permissions, revision: crypto.randomUUID().replaceAll('-', '') }; rolePolicies.current.set(id, value); return structuredClone(value); },
+    async assign(email, role) {
+      if (!['admin@example.com', 'designer@example.com', 'manager@example.com'].includes(email)) throw new Error('Este e-mail ainda não possui uma conta cadastrada na loja.');
+      if (email === 'admin@example.com' && role !== 'administrator') throw new Error('Sua própria função administrativa não pode ser removida por esta tela.');
+      members.current = [...members.current.filter(member => member.email !== email), ...(role === 'none' ? [] : [{ uid: email, email, role, enabled: true }])];
+      return { changed: true, uid: email, email, role, notification: { id: crypto.randomUUID(), status: 'not_configured' } };
+    },
+    async retryNotification() { return { status: 'not_configured' }; },
+  }), []);
   const { products, setProducts, config, setConfig } = React.useContext(FixtureCatalog);
   const [categories, setCategories] = React.useState(FIXTURE_CATEGORIES);
   const [promotions, setPromotions] = React.useState(FIXTURE_PROMOTIONS);
   const [lastAction, setLastAction] = React.useState('');
+  const [orders, setOrders] = React.useState(FIXTURE_ORDERS);
+  const orderOperations = React.useMemo<OrderOperationsApi>(() => ({
+    async updateFulfillment(id, status, code) {
+      setOrders(current => current.map(order => order.id === id ? { ...order, fulfillmentStatus: status, status: legacyStatusForFulfillment(status) as Order['status'], ...(code ? { tracking: { provider: 'correios', code, status: 'Aguardando consulta', updatedAt: new Date().toISOString() } } : {}) } : order));
+    },
+    async productionLabel(id) { const pdf = await PDFDocument.create(); pdf.addPage([297.64, 419.53]); const blob = new Blob([await pdf.save() as Uint8Array<ArrayBuffer>], { type: 'application/pdf' }); setOrders(current => current.map(order => order.id === id && order.fulfillmentStatus === 'pagamento_confirmado' ? { ...order, fulfillmentStatus: 'em_producao', status: 'Processando' } : order)); return blob; },
+    async refreshTracking(id) { setOrders(current => current.map(order => order.id === id ? { ...order, fulfillmentStatus: 'entregue', status: 'Entregue', tracking: { ...order.tracking!, status: 'Objeto entregue ao destinatário', eventAt: new Date().toISOString(), updatedAt: new Date().toISOString() } } : order)); },
+  }), []);
 
   const persistence = React.useMemo<AdminPersistence>(() => ({
     async setDocument(collectionName, documentId, value) {
@@ -259,10 +299,14 @@ function AdminFixture() {
   return (
     <div data-testid="e2e-admin">
       <Admin
+        fullAdmin={permissionOverride === undefined && fixtureRole === 'administrator'}
+        permissions={fixturePermissions}
+        staffApi={staffApi}
         products={products}
         config={config}
         categories={categories}
-        orders={FIXTURE_ORDERS}
+        orders={permissionOverride === undefined || permissionOverride.includes('orders.read') ? orders : []}
+        orderOperations={orderOperations}
         orderModelLoader={fixtureOrderModelLoader}
         ordersReady
         ordersError={null}
@@ -272,12 +316,16 @@ function AdminFixture() {
         adminAssetStorage={adminAssetStorage}
         onLogout={() => setLastAction('logout')}
       />
+      <output hidden data-testid="e2e-products">{JSON.stringify(products)}</output>
       <output hidden data-testid="e2e-admin-action">{lastAction}</output>
     </div>
   );
 }
 
 export default function E2EHarness() {
+  const entry = useStaffEntryFixture();
+  const teamPanel = <PanelAccessGate user={entry.signedIn ? FIXTURE_USER : null} ready={entry.access.ready} allowed={mayEnterPanel(false, entry.permissions)} issue={entry.access.issue} onSignIn={entry.signIn} onSignOut={entry.signOut} onRetry={entry.retry}><AdminFixture permissionOverride={entry.permissions} /></PanelAccessGate>;
+  const teamStore = <StoreFixture panelAccess={mayEnterPanel(false, entry.permissions)} panelAccessNeedsCheck={entry.access.assigned && Boolean(entry.access.issue)} />;
   const [products, setProducts] = React.useState(FIXTURE_PRODUCTS);
   const [config, setConfig] = React.useState(FIXTURE_CONFIG);
   return (
@@ -286,7 +334,10 @@ export default function E2EHarness() {
       <Routes>
         <Route path="/__e2e/store" element={<StoreFixture />} />
         <Route path="/__e2e/admin" element={<AdminFixture />} />
-        <Route path="/admin" element={<AdminFixture />} />
+        <Route path="/__e2e/team" element={teamStore} />
+        <Route path="/__e2e/team/admin" element={teamPanel} />
+        <Route path="/admin" element={entry.active ? teamPanel : <AdminFixture />} />
+        <Route path="/" element={entry.active ? teamStore : <Navigate to="/__e2e/store" replace />} />
         <Route path="*" element={<Navigate to="/__e2e/store" replace />} />
       </Routes>
     </BrowserRouter>

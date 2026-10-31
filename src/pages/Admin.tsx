@@ -1,3 +1,11 @@
+import { allowedPanelSections, type PanelSection } from '../lib/panelAccess';
+import StaffManagement from '../components/StaffManagement';
+import ProductDesignEditor from '../components/ProductDesignEditor';
+import { ALL_STAFF_PERMISSIONS, BRANDING_FIELDS, FONTS_FIELDS, SETTINGS_FIELDS, canEditProductImages, canEditProductPersonalization, permittedProductPatch, type StaffPermission } from '../lib/staffAccess';
+import { staffAdministrationApi, type StaffAdministrationApi } from '../services/staffService';
+import { parsePrintProfile } from '../lib/printProfile';
+import { isProductCustomizationType, productRequiresText } from '../lib/textCustomization';
+import { deleteField } from 'firebase/firestore';
 import ProductPrintEditor from '../components/ProductPrintEditor';
 import OrderProductionSheet from '../components/OrderProductionSheet';
 import EditorModal from '../components/EditorModal';
@@ -14,7 +22,7 @@ import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDow
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
-import { db, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, logout } from '../firebase';
+import { db, setDoc, doc, deleteDoc, handleFirestoreError, OperationType, logout, updateDoc } from '../firebase';
 import { INITIAL_PRODUCTS, INITIAL_CATEGORIES } from '../constants';
 import { generateDescriptionFromTitle, improveTitle, improveDescription, generateDescriptionWithCustomPrompt } from '../services/geminiService';
 import { formatMoney, isHttpUrl, parseMoneyToCents, slugifyDocumentId } from '../lib/commerce';
@@ -26,7 +34,10 @@ import {
   uploadCatalogImage,
   type UploadedCatalogImage,
 } from '../services/catalogImageService';
-import { updateOrderFulfillment } from '../services/orderService';
+import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
+import OrderActions from '../components/OrderActions';
+import FlashPromotionEditor from '../components/FlashPromotionEditor';
+import { promotionActiveAt } from '../lib/promotions';
 import { missingLegalBusinessFields } from '../lib/legal';
 import { DEFAULT_LOGO_URL, resolvePublicImage, usePageMetadata } from '../lib/seo';
 import { isAllowedCatalogImage, MAX_CATALOG_IMAGE_BYTES } from '../lib/catalogImage';
@@ -34,6 +45,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import {
   ADMIN_LIMITS,
   draftFingerprint,
+  isSafeAdminUrl,
   generateProductCombinations,
   validateCategoryDraft,
   validateProductDraft,
@@ -53,9 +65,10 @@ import { adminFontUploadType, adminFontFormat } from '../lib/adminAsset';
 import type { AdminImageScope } from '../lib/adminAsset';
 import { formattedDiscountPercentage } from '../lib/promotions';
 
-type AdminTab = 'products' | 'categories' | 'config' | 'orders' | 'promotions';
+type AdminTab = PanelSection;
 
 export interface AdminPersistence {
+  patchDocument?: (collectionName: string, documentId: string, value: Record<string, unknown>, removedFields?: string[]) => Promise<void>;
   setDocument: (collectionName: string, documentId: string, value: unknown) => Promise<void>;
   deleteDocument: (collectionName: string, documentId: string) => Promise<void>;
 }
@@ -74,6 +87,10 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  orderOperations?: OrderOperationsApi;
+  fullAdmin?: boolean;
+  permissions?: StaffPermission[];
+  staffApi?: StaffAdministrationApi;
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
@@ -97,6 +114,9 @@ interface ConfirmationState {
 }
 
 const FIREBASE_PERSISTENCE: AdminPersistence = {
+  async patchDocument(collectionName, documentId, value, removedFields = []) {
+    await updateDoc(doc(db, collectionName, documentId), { ...value, ...Object.fromEntries(removedFields.map(key => [key, deleteField()])) });
+  },
   async setDocument(collectionName, documentId, value) {
     await setDoc(doc(db, collectionName, documentId), value);
   },
@@ -133,6 +153,7 @@ const ORDER_QUEUE_STYLES: Record<OrderQueue, string> = {
   pagamento_confirmado: 'text-green-400 border-green-500/30',
   em_producao: 'text-blue-400 border-blue-500/30',
   pronto_retirada: 'text-purple-400 border-purple-500/30',
+  enviado: 'text-cyan-400 border-cyan-500/30',
   entregue: 'text-gray-400 border-gray-700',
 };
 
@@ -149,7 +170,10 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({
+export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
+  fullAdmin = false,
+  permissions = [],
+  staffApi = staffAdministrationApi,
   products,
   config,
   categories,
@@ -168,6 +192,32 @@ export default function Admin({
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
   const [savingHighlight, setSavingHighlight] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>('products');
+  const effectivePermissions = fullAdmin ? ALL_STAFF_PERMISSIONS : permissions;
+  const can = (permission: StaffPermission) => effectivePermissions.includes(permission);
+  const productDesignAllowed = canEditProductImages(effectivePermissions) || canEditProductPersonalization(effectivePermissions);
+  const allowedSections = allowedPanelSections(fullAdmin, permissions);
+  const allowedSectionsRef = React.useRef(allowedSections); allowedSectionsRef.current = allowedSections;
+  const navItems = [
+    { id: 'products' as const, label: 'Produtos', icon: Layout },
+    { id: 'categories' as const, label: 'Categorias', icon: List },
+    { id: 'orders' as const, label: 'Pedidos', icon: Package },
+    { id: 'promotions' as const, label: 'Promoções', icon: Tag },
+    { id: 'branding' as const, label: 'Identidade Visual', icon: Image },
+    { id: 'fonts' as const, label: 'Fontes', icon: Type },
+    { id: 'config' as const, label: 'Configurações', icon: Settings },
+    { id: 'staff' as const, label: 'Funcionários', icon: Settings },
+  ];
+  const allowedTabs = navItems.filter(item => allowedSections.includes(item.id));
+  const tabAllowed = (tab: AdminTab) => allowedTabs.some(item => item.id === tab);
+  const accessKey = `${fullAdmin}:${effectivePermissions.join(',')}`;
+  React.useEffect(() => {
+    if (!tabAllowed(activeTab)) {
+      setActiveTab(allowedTabs[0]?.id || 'products'); setEditingProduct(null); setEditingPromotion(null);
+      setIsFontsEditorOpen(false);
+    }
+    if (!can('orders.artwork')) { modelRequest.current++; setModelDocument(null); }
+  }, [activeTab, accessKey]);
+
   const [editingProduct, setEditingProduct] = useState<Partial<Anuncio> | null>(null);
   const [editingPromotion, setEditingPromotion] = useState<Partial<Promocao> | null>(null);
   const [productBaseline, setProductBaseline] = useState<string | null>(null);
@@ -360,21 +410,22 @@ export default function Admin({
   const aiPreviewOpen = aiPreview !== null;
 
   const requestTabChange = (nextTab: AdminTab) => {
-    if (nextTab === activeTab) return;
-    if (activeTab === 'config' && configDirty) {
+    if (!tabAllowed(nextTab) || nextTab === activeTab) return;
+    if (['config', 'branding', 'fonts'].includes(activeTab) && configDirty) {
       setConfirmation({
         title: 'Sair sem salvar?',
         message: 'As alterações feitas nas configurações serão perdidas.',
         confirmLabel: 'Sair sem salvar',
         danger: true,
         onConfirm: async () => {
+          if (!allowedSectionsRef.current.includes(nextTab)) return;
           await deleteAdminPaths(Object.values(configUploads)
             .filter((upload): upload is UploadedAdminAsset => Boolean(upload))
             .map(upload => upload.path));
           setConfigUploads({});
           setConfigDraft(structuredClone(config));
           setConfigDirty(false);
-          setActiveTab(nextTab);
+          if (allowedSectionsRef.current.includes(nextTab)) setActiveTab(nextTab);
         },
       });
       return;
@@ -470,6 +521,7 @@ export default function Admin({
   }, [productEditorOpen, promotionEditorOpen, confirmationOpen, aiPreviewOpen, showCustomAiPrompt, showBulkImageForm]);
 
   const handleAiAction = async (action: 'generate' | 'improveTitle' | 'improveDescription' | 'custom', prompt?: string) => {
+    if (!can('ai.generate') || !can('products.manage')) return;
     if (!editingProduct) return;
 
     const currentField = action === 'improveTitle' ? 'nome' : 'desc';
@@ -571,7 +623,9 @@ export default function Admin({
       prazo_producao: String(formData.get('prazo_producao') || '').trim(),
     };
 
-    const validation = validateSiteConfig(updatedConfig);
+    const fields = activeTab === 'branding' ? BRANDING_FIELDS : activeTab === 'fonts' ? FONTS_FIELDS : SETTINGS_FIELDS;
+    const scopedConfig = { ...config, ...Object.fromEntries(fields.map(key => [key, updatedConfig[key]])) } as SiteConfig;
+    const validation = validateSiteConfig(scopedConfig);
     if (validation.ok === false) {
       setErrorMessage(validation.message);
       return;
@@ -579,7 +633,9 @@ export default function Admin({
 
     setIsSaving(true);
     try {
-      await persistence.setDocument('config', 'main', validation.value);
+      const patch = Object.fromEntries(fields.filter(key => validation.value[key] !== undefined).map(key => [key, validation.value[key]]));
+      if (persistence.patchDocument) await persistence.patchDocument('config', 'main', patch);
+      else await persistence.setDocument('config', 'main', { ...config, ...patch });
       const usedConfigUrls = new Set([validation.value.logo_url, validation.value.banner_principal]);
       const unusedConfigPaths = Object.values(configUploads)
         .filter((upload): upload is UploadedAdminAsset => Boolean(upload))
@@ -924,7 +980,7 @@ export default function Admin({
 
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingProduct || isSaving || isUploadingCatalogImages) return;
+    if (!can('products.manage') || !editingProduct || isSaving || isUploadingCatalogImages) return;
     setErrorMessage(null);
     const validation = validateProductDraft(editingProduct, categories, products);
     if (validation.ok === false) {
@@ -1009,9 +1065,32 @@ export default function Admin({
   };
 
   // Order Handlers
+  const saveProductDesign = async (draft: Anuncio): Promise<Anuncio> => {
+    const current = products.find(product => product.id === draft.id);
+    if (!current || !productDesignAllowed) throw new Error('Este produto não está disponível para edição.');
+    const patch = permittedProductPatch(draft as unknown as Record<string, unknown>, effectivePermissions);
+    if (typeof patch.imagem === 'string' && patch.imagem !== current.imagem && !isSafeAdminUrl(patch.imagem)) throw new Error('A URL da imagem principal é inválida.');
+    if (Array.isArray(patch.imagens) && (patch.imagens.length > 50 || patch.imagens.some(url => typeof url !== 'string' || (!(current.imagens || []).includes(url) && !isSafeAdminUrl(url))))) throw new Error('A galeria contém uma imagem inválida.');
+    if (patch.tipoInput !== undefined && !isProductCustomizationType(patch.tipoInput)) throw new Error('Selecione um tipo de personalização válido.');
+    if (productRequiresText(patch.tipoInput ?? current.tipoInput) && typeof (patch.labelTexto ?? current.labelTexto) !== 'string') throw new Error('Informe o rótulo da personalização.');
+    if (productRequiresText(patch.tipoInput ?? current.tipoInput) && !String(patch.labelTexto ?? current.labelTexto ?? '').trim()) throw new Error('Informe o rótulo da personalização.');
+    if (patch.printProfile !== undefined && !parsePrintProfile(patch.printProfile)) throw new Error('Revise o formato de impressão.');
+    const removed = canEditProductPersonalization(effectivePermissions) && current.printProfile && !draft.printProfile ? ['printProfile'] : [];
+    const next = { ...current, ...patch } as Anuncio;
+    if (removed.length) delete next.printProfile;
+    if (persistence.patchDocument) await persistence.patchDocument('anuncios', current.id, patch, removed);
+    else await persistence.setDocument('anuncios', current.id, next);
+    const used = new Set([next.imagem, ...(next.imagens || [])]);
+    const stale = [current.imagem, ...(current.imagens || [])].filter(url => !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
+    await Promise.allSettled(stale.map(path => catalogImageStorage.deleteImage(path)));
+    setSuccessMessage('Arte do produto atualizada.');
+    return next;
+  };
+
   const handleStatusChange = async (orderId: string, newStatus: FulfillmentStatus) => {
+    if (!can('orders.fulfillment')) return;
     try {
-      await updateOrderFulfillment(orderId, newStatus);
+      await orderOperations.updateFulfillment(orderId, newStatus);
       setSuccessMessage('Etapa do pedido atualizada.');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
@@ -1029,6 +1108,7 @@ export default function Admin({
   };
 
   const handleOpenArtwork = async (orderId: string, itemId: string) => {
+    if (!can('orders.artwork')) return;
     try {
       const url = await requestArtworkUrl(orderId, itemId);
       const opened = window.open(url, '_blank', 'noopener,noreferrer');
@@ -1039,6 +1119,7 @@ export default function Admin({
   };
 
   const handleOpenModel = async (orderId: string, itemId: string) => {
+    if (!can('orders.artwork')) return;
     try {
       const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
       if (!item) throw new Error('Item do pedido não encontrado.');
@@ -1201,41 +1282,7 @@ export default function Admin({
           </div>
 
           <nav aria-label="Seções administrativas" className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
-            <button
-              onClick={() => requestTabChange('products')}
-              aria-current={activeTab === 'products' ? 'page' : undefined}
-              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'products' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
-            >
-              <Layout size={18} /> Produtos
-            </button>
-            <button
-              onClick={() => requestTabChange('categories')}
-              aria-current={activeTab === 'categories' ? 'page' : undefined}
-              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'categories' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
-            >
-              <List size={18} /> Categorias
-            </button>
-            <button
-              onClick={() => requestTabChange('orders')}
-              aria-current={activeTab === 'orders' ? 'page' : undefined}
-              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'orders' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
-            >
-              <Package size={18} /> Pedidos
-            </button>
-            <button
-              onClick={() => requestTabChange('promotions')}
-              aria-current={activeTab === 'promotions' ? 'page' : undefined}
-              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'promotions' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
-            >
-              <Tag size={18} /> Promoções
-            </button>
-            <button
-              onClick={() => requestTabChange('config')}
-              aria-current={activeTab === 'config' ? 'page' : undefined}
-              className={cn("w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors", activeTab === 'config' ? "bg-[#ff4d79] text-white" : "text-gray-400 hover:bg-gray-800")}
-            >
-              <Settings size={18} /> Configurações
-            </button>
+            {allowedTabs.map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => requestTabChange(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} className={cn('w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors', activeTab === item.id ? 'bg-[#ff4d79] text-white' : 'text-gray-400 hover:bg-gray-800')}><Icon size={18} />{item.label}</button>; })}
           </nav>
         </div>
 
@@ -1276,12 +1323,12 @@ export default function Admin({
             </motion.div>
           )}
         </AnimatePresence>
-        {activeTab === 'products' && (
+        {activeTab === 'products' && tabAllowed('products') && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-4">
                 <h2 className="text-2xl font-bold">Gerenciar Produtos</h2>
-                {products.length === 0 && (
+                {fullAdmin && products.length === 0 && (
                   <button
                     onClick={bootstrapData}
                     disabled={isBootstrapping}
@@ -1291,7 +1338,7 @@ export default function Admin({
                   </button>
                 )}
               </div>
-              <button
+              {can('products.manage') && <button
                 onClick={() => openProductEditor({
                   nome: '',
                   desc: '',
@@ -1306,22 +1353,22 @@ export default function Admin({
                 className="bg-[#ff4d79] px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 hover:bg-[#e6004c] transition-colors"
               >
                 <Plus size={18} /> Novo Produto
-              </button>
+              </button>}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {products.map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
-                  <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>
+                  {can('products.manage') && <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>}
                   <div className="aspect-video bg-gray-900 relative">
                     <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
                     <div className="absolute inset-0 bg-black/60 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity flex items-center justify-center gap-4">
                       <button type="button" onClick={() => openProductEditor(p)} aria-label={`Editar ${p.nome}`} className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform">
                         <Edit2 size={18} />
                       </button>
-                      <button type="button" onClick={() => handleDeleteProduct(p.id)} aria-label={`Excluir ${p.nome}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
+                      {can('products.manage') && <button type="button" onClick={() => handleDeleteProduct(p.id)} aria-label={`Excluir ${p.nome}`} className="p-3 bg-red-500 text-white rounded-full hover:scale-110 transition-transform">
                         <Trash2 size={18} />
-                      </button>
+                      </button>}
                     </div>
                   </div>
                   <div className="p-6">
@@ -1335,7 +1382,7 @@ export default function Admin({
           </div>
         )}
 
-        {activeTab === 'categories' && (
+        {activeTab === 'categories' && tabAllowed('categories') && (
           <div className="max-w-4xl space-y-8">
             <h2 className="text-2xl font-bold">Categorias e Navegação</h2>
 
@@ -1415,7 +1462,7 @@ export default function Admin({
           </div>
         )}
 
-        {activeTab === 'orders' && (
+        {activeTab === 'orders' && tabAllowed('orders') && (
           <div className="space-y-8">
             <div>
               <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
@@ -1436,7 +1483,7 @@ export default function Admin({
                   >
                     <span className="flex items-center gap-3">
                       <Package size={20} />
-                      <span className="text-lg font-bold">{orderQueueLabel(queue)}</span>
+                      <span className="min-w-0 text-base sm:text-lg font-bold">{orderQueueLabel(queue)}</span>
                       <span className="rounded-full bg-white/5 px-2.5 py-1 text-xs font-black text-gray-300">{queueOrders.length}</span>
                     </span>
                     {collapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
@@ -1449,6 +1496,11 @@ export default function Admin({
                         <OrderCard
                           key={order.id}
                           order={order}
+                          canFulfill={can('orders.fulfillment')}
+                          operations={orderOperations}
+                          onOperationError={setErrorMessage}
+                          onOperationSuccess={setSuccessMessage}
+                          canOpenFiles={can('orders.artwork')}
                           handleStatusChange={handleStatusChange}
                           handleOpenArtwork={handleOpenArtwork}
                           handleOpenModel={handleOpenModel}
@@ -1462,14 +1514,15 @@ export default function Admin({
           </div>
         )}
 
-        {activeTab === 'config' && (
+        {['config', 'branding', 'fonts'].includes(activeTab) && tabAllowed(activeTab) && (
           <div className="max-w-5xl space-y-8">
             <div>
-              <h2 className="text-2xl font-bold">Configurações do Site</h2>
-              <p className="mt-2 text-sm text-gray-500">Identidade, atendimento, conteúdo da página inicial, personalização e dados legais.</p>
+              <h2 className="text-2xl font-bold">{activeTab === 'branding' ? 'Identidade Visual' : activeTab === 'fonts' ? 'Fontes da personalização' : 'Configurações do Site'}</h2>
+              <p className="mt-2 text-sm text-gray-500">{activeTab === 'branding' ? 'Logo e banner da loja.' : activeTab === 'fonts' ? 'Fontes usadas pelos clientes na personalização.' : 'Atendimento, benefícios e dados comerciais da loja.'}</p>
             </div>
 
             <form key={draftFingerprint(config)} onSubmit={handleSaveConfig} onChange={() => setConfigDirty(true)} className="space-y-8">
+              {activeTab === 'branding' && <>
               <section className="rounded-xl border border-gray-800 bg-[#111111] p-6 space-y-6">
                 <div className="flex items-center gap-3">
                   <Image className="text-[#ff4d79]" size={20} />
@@ -1503,14 +1556,18 @@ export default function Admin({
                   <div className="space-y-2"><label htmlFor="config-banner-button" className="text-xs font-bold uppercase tracking-widest text-gray-500">Texto do botão</label><input id="config-banner-button" name="banner_botao" defaultValue={config.banner_botao} maxLength={80} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></div>
                 </div>
               </section>
+              </>}
 
-              <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
+              {activeTab === 'config' && <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />}
 
+              {activeTab === 'fonts' && <>
               <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-purple-500/30 bg-[#111111] p-6">
                 <div className="flex items-center gap-3"><Type className="text-purple-400" size={20} /><div><h3 className="font-bold">Fontes da personalização</h3><p className="mt-1 text-xs text-gray-500">{(configDraft.fontes_personalizacao || []).filter(font => font.ativo).length} fontes ativas · WOFF2, TTF ou OTF</p></div></div>
                 <button type="button" onClick={() => setIsFontsEditorOpen(true)} className="rounded-xl bg-purple-500 px-5 py-3 text-xs font-bold hover:bg-purple-600">Gerenciar fontes</button>
               </section>
+              </>}
 
+              {activeTab === 'config' && <>
               <section className="p-6 bg-[#111111] border border-amber-500/30 rounded-xl space-y-6">
                 <div className="space-y-2">
                   <h3 className="text-sm font-bold uppercase tracking-widest text-amber-400">Dados comerciais e documentos legais</h3>
@@ -1553,17 +1610,21 @@ export default function Admin({
                   </div>
                 </div>
               </section>
+              </>}
 
               <div className="flex justify-end border-t border-gray-800 pt-6">
                 <button type="submit" disabled={isSaving || isUploadingAdminAsset} className="bg-[#ff4d79] px-12 py-4 rounded-full font-bold hover:bg-[#e6004c] transition-colors shadow-lg shadow-[#ff4d79]/20 disabled:opacity-50 flex items-center justify-center gap-2">
-                  {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Todas as Configurações'}
+                  {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : activeTab === 'branding' ? 'Salvar identidade visual' : activeTab === 'fonts' ? 'Salvar fontes' : 'Salvar Todas as Configurações'}
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        {activeTab === 'promotions' && (
+        {activeTab === 'staff' && fullAdmin && <StaffManagement api={staffApi} />}
+        {allowedTabs.length === 0 && <p role="status">Sua função não possui áreas disponíveis no painel.</p>}
+
+        {activeTab === 'promotions' && tabAllowed('promotions') && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Gerenciar Promoções</h2>
@@ -1600,8 +1661,8 @@ export default function Admin({
                         <Trash2 size={18} />
                       </button>
                     </div>
-                    {!promo.ativa && (
-                      <div className="absolute top-2 right-2 bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded">Inativa</div>
+                    {!promotionActiveAt(promo) && (
+                      <div className="absolute top-2 right-2 bg-gray-500 text-white text-[10px] font-bold px-2 py-1 rounded">{promo.endsAt && promo.endsAt <= Date.now() ? 'Encerrada' : promo.ativa ? 'Agendada' : 'Inativa'}</div>
                     )}
                   </div>
                   <div className="p-4">
@@ -1664,7 +1725,7 @@ export default function Admin({
 
       {/* Modal Editor de Produto */}
       <AnimatePresence>
-        {editingProduct && (
+        {editingProduct && can('products.manage') && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={requestCloseProductEditor} />
             <motion.div
@@ -1688,6 +1749,7 @@ export default function Admin({
                       <button
                         type="button"
                         onClick={() => handleAiAction('improveTitle')}
+                          disabled={!can('ai.generate')}
                         className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
                       >
                         <Sparkles size={10} /> Melhorar com IA
@@ -1716,6 +1778,7 @@ export default function Admin({
                         <button
                           type="button"
                           onClick={() => handleAiAction('generate')}
+                          disabled={!can('ai.generate')}
                           className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
                         >
                           <Sparkles size={10} /> Gerar da IA
@@ -1723,6 +1786,7 @@ export default function Admin({
                         <button
                           type="button"
                           onClick={() => handleAiAction('improveDescription')}
+                          disabled={!can('ai.generate')}
                           className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
                         >
                           <Sparkles size={10} /> Melhorar com IA
@@ -2426,6 +2490,7 @@ export default function Admin({
                   <label htmlFor="promo-ativa" className="text-sm font-bold">Promoção Ativa</label>
                 </div>
 
+                <FlashPromotionEditor value={editingPromotion} onChange={setEditingPromotion} />
                 <div className="pt-4 flex gap-4">
                   <button type="submit" disabled={isSaving || isUploadingAdminAsset} className="flex-grow bg-[#ff4d79] py-3 rounded-lg font-bold hover:bg-[#e6004c] transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                     {isSaving ? <><Loader2 size={18} className="animate-spin" /> Salvando...</> : 'Salvar Promoção'}
@@ -2456,7 +2521,8 @@ export default function Admin({
           />
         )}
       </AnimatePresence>
-      {modelDocument && <PersonalizationViewer allowDownload document={modelDocument} onClose={() => setModelDocument(null)} />}
+      {editingProduct?.id && !can('products.manage') && productDesignAllowed && <ProductDesignEditor product={editingProduct as Anuncio} permissions={effectivePermissions} storage={catalogImageStorage} onSave={saveProductDesign} onClose={() => { setEditingProduct(null); setProductBaseline(null); }} />}
+      {modelDocument && <PersonalizationViewer allowDownload={can('orders.artwork')} document={modelDocument} onClose={() => setModelDocument(null)} />}
       {/* Removidos modais de upload */}
     </div>
   );
@@ -2486,12 +2552,18 @@ function formatAdminDate(value: string): string {
 }
 
 function OrderCard({
+  canFulfill, canOpenFiles, operations, onOperationError, onOperationSuccess,
   order,
   handleStatusChange,
   handleOpenArtwork,
   handleOpenModel,
 }: {
   order: Order;
+  canFulfill: boolean;
+  operations: OrderOperationsApi;
+  onOperationError: (message: string) => void;
+  onOperationSuccess: (message: string) => void;
+  canOpenFiles: boolean;
   handleStatusChange: (id: string, status: FulfillmentStatus) => void;
   handleOpenArtwork: (orderId: string, itemId: string) => void;
   handleOpenModel: (orderId: string, itemId: string) => void;
@@ -2507,18 +2579,18 @@ function OrderCard({
       paymentConfirmed ? 'pago' : order.paymentStatus,
       order.metodoEntrega,
     ),
-  ]));
+  ])).filter(status => status === fulfillment || !(status === 'enviado' || (status === 'entregue' && order.tracking?.provider === 'correios')));
   return (
-    <div className="bg-[#111111] border border-gray-800 rounded-xl p-6 space-y-6">
-      <div className="flex justify-between items-start border-b border-gray-800 pb-4">
-        <div>
+    <div className="min-w-0 bg-[#111111] border border-gray-800 rounded-xl p-4 sm:p-6 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between items-start border-b border-gray-800 pb-4">
+        <div className="min-w-0 max-w-full break-words [overflow-wrap:anywhere]">
           <div className="text-xs text-[#ff4d79] font-bold uppercase tracking-widest mb-1">Pedido #{order.id}</div>
           <div className="text-sm text-gray-400">{formatAdminDate(order.data)}</div>
           <div className="text-xs text-gray-300 mt-2 font-semibold">{order.clienteNome || 'Cliente não informado'}</div>
           {order.clienteEmail && <div className="text-xs text-gray-500 mt-1">{order.clienteEmail}</div>}
           {order.clienteTelefone && <div className="text-xs text-gray-500 mt-1">Telefone: {order.clienteTelefone}</div>}
           <div className="text-[10px] text-gray-600 mt-1">ID Usuário: {order.userId}</div>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className={cn(
                "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded flex items-center gap-1.5",
                order.metodoEntrega === 'retirada'
@@ -2549,7 +2621,7 @@ function OrderCard({
             </span>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex w-full flex-wrap items-center justify-between gap-4 sm:w-auto sm:justify-end">
           <div className="flex flex-col items-end">
             <span className={cn(
               "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded mb-2",
@@ -2563,8 +2635,8 @@ function OrderCard({
               aria-label={`Andamento do pedido ${order.id}`}
               value={fulfillment}
               onChange={(e) => handleStatusChange(order.id, e.target.value as FulfillmentStatus)}
-              disabled={transitionOptions.length <= 1}
-              className="bg-black border border-gray-700 rounded px-3 py-1 text-xs outline-none focus:border-[#ff4d79]"
+              disabled={!canFulfill || transitionOptions.length <= 1}
+              className="max-w-full bg-black border border-gray-700 rounded px-3 py-1 text-xs outline-none focus:border-[#ff4d79]"
             >
               {transitionOptions.map(status => (
                 <option key={status} value={status}>{fulfillmentStatusLabel(status)}</option>
@@ -2575,8 +2647,10 @@ function OrderCard({
         </div>
       </div>
 
+      {canFulfill && <OrderActions order={order} api={operations} onError={onOperationError} onSuccess={onOperationSuccess} />}
+      {order.tracking && <p className="break-words text-xs text-cyan-300">Rastreio: {order.tracking.code} · {order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
-      {sheetOpen && <OrderProductionSheet order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}
+      {sheetOpen && <OrderProductionSheet canOpenFiles={canOpenFiles} order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}
       {order.metodoEntrega === 'entrega' && order.enderecoEntrega && (
         <div className="rounded-lg border border-gray-800 bg-black/30 p-4 text-xs text-gray-400">
           <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-gray-600">Endereço de entrega</div>
@@ -2600,7 +2674,7 @@ function OrderCard({
           {order.itens.map((item) => (
             <div key={item.id} className="flex gap-3 items-start bg-black/40 p-3 rounded-lg border border-gray-800/50">
               <img src={item.imagem || DEFAULT_LOGO_URL} alt={item.nome} className="w-10 h-10 object-cover rounded" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-              <div className="flex-grow">
+              <div className="min-w-0 flex-grow break-words">
                 <div className="text-xs font-bold">{item.nome}</div>
                 <div className="text-[10px] text-gray-500">
                   {item.quantidade}x - {Object.entries(item.selecoes).map(([k, v]) => `${k}: ${v}`).join(', ')}
@@ -2613,7 +2687,7 @@ function OrderCard({
                     <div className="mt-1 text-[10px] text-gray-400">
                       Fonte: {textCustomizationFontLabel(item.personalizacaoTexto)}
                     </div>
-                    {item.modeloPath ? (
+                    {canOpenFiles && (item.modeloPath ? (
                       <button
                         type="button"
                         onClick={() => handleOpenModel(order.id, item.id)}
@@ -2625,16 +2699,16 @@ function OrderCard({
                       <div className="mt-2 text-[10px] font-bold text-amber-400">
                         Pedido antigo sem modelo composto: confira os dados de personalização antes da produção
                       </div>
-                    )}
+                    ))}
                   </div>
                 ) : item.textoPersonalizado ? (
                   <div className="mt-1 text-[10px] font-bold text-[#ff4d79]">
                     Personalização legada: {item.textoPersonalizado}
                   </div>
                 ) : null}
-                {item.modeloPath && !item.personalizacaoTexto && <button type="button" onClick={() => handleOpenModel(order.id, item.id)} className="mt-2 text-xs font-bold text-pink-400 hover:underline">Abrir modelo composto</button>}
+                {canOpenFiles && item.modeloPath && !item.personalizacaoTexto && <button type="button" onClick={() => handleOpenModel(order.id, item.id)} className="mt-2 text-xs font-bold text-pink-400 hover:underline">Abrir modelo composto</button>}
                 {item.contracapaPath && <div className="mt-1 text-[10px] text-gray-400">Capa e contracapa disponíveis no modelo</div>}
-                {item.arquivoPath && (
+                {canOpenFiles && item.arquivoPath && (
                   <button
                     type="button"
                     onClick={() => handleOpenArtwork(order.id, item.id)}

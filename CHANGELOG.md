@@ -1,4 +1,21 @@
-# Changelog
+## 2026-10-30 — Entrada da equipe e isolamento das seções
+
+- Painel aguarda a primeira política de função antes de decidir o acesso, evitando recusa durante o carregamento.
+- Sessão antiga, falha de consulta e ausência de seção liberada têm orientação explícita em `/admin`, com e-mail conectado e nova entrada Google.
+- Entrada pelo cabeçalho usa permissões de funcionário; verificação de sessão disponível quando existe função pendente de renovação.
+- Seções permitidas centralizadas; Pedidos administrativos não é renderizado nem recebe dados sem `orders.read`, e revogação fecha a área e o visualizador.
+- Meus Pedidos da loja exibe somente compras da própria conta, inclusive para membros da equipe.
+- Diagnóstico `security:staff-check -- --email` consulta Auth, política e espelhos sem alterar permissões.
+
+## 2026-10-30 — Funcionários, pedidos e promoções relâmpago
+
+- Funções Designer e Gestor de Produtos com permissões editáveis, atribuição por e-mail cadastrado e avisos de e-mail com fila/repetição.
+- Autorização por função na API, no Firestore e no Storage, com épocas de sessão, revogação e espelhos privados.
+- Abas Identidade Visual e Fontes separadas de Configurações; Designer altera somente imagens e opções de personalização dos produtos.
+- Etiqueta A6 interna por pedido; geração inicia produção após conferência financeira, reimpressão não retrocede etapa.
+- Ações explícitas de retirada/envio, fila A Caminho, código de rastreio e consulta Correios para confirmação de entrega.
+- Detalhes de pedidos para o cliente e promoções relâmpago com prazo salvo, contador e preço revalidado no checkout.
+- Manutenção diária protegida por segredo para rastreio e inativação de ofertas; ativação externa documentada.
 
 ## 2026-10-30 — Impressão e produção de pedidos
 
@@ -30,6 +47,8 @@
 - Prévia e exportação compartilham composição; Enter e linhas vazias são preservados.
 - Fontes TTF e OTF, além de WOFF2: validação de conteúdo no navegador, caminhos, MIME, relay e regras do Storage.
 - Gerenciamento de fontes em modal, mantendo a gravação das configurações e os pedidos antigos.
+
+# Changelog
 
 ## 2026-10-30 — Destaques, contatos e acesso temporário
 

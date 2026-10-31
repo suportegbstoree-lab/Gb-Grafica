@@ -23,6 +23,7 @@ export type OrderQueue =
   | 'pagamento_confirmado'
   | 'em_producao'
   | 'pronto_retirada'
+  | 'enviado'
   | 'entregue';
 
 export const ORDER_QUEUE_ORDER: OrderQueue[] = [
@@ -30,6 +31,7 @@ export const ORDER_QUEUE_ORDER: OrderQueue[] = [
   'pagamento_confirmado',
   'em_producao',
   'pronto_retirada',
+  'enviado',
   'entregue',
 ];
 
@@ -38,6 +40,7 @@ const ORDER_QUEUE_LABELS: Record<OrderQueue, string> = {
   pagamento_confirmado: 'Pagamento confirmado',
   em_producao: 'Em produção',
   pronto_retirada: 'Pronto para retirada',
+  enviado: 'A Caminho',
   entregue: 'Entregue',
 };
 
@@ -46,7 +49,7 @@ const LABELS: Record<FulfillmentStatus, string> = {
   pagamento_confirmado: 'Pagamento confirmado',
   em_producao: 'Em produção',
   pronto_retirada: 'Pronto para retirada',
-  enviado: 'Enviado',
+  enviado: 'A Caminho',
   entregue: 'Entregue',
   cancelado: 'Cancelado',
 };
@@ -71,8 +74,9 @@ export function orderQueueFor(input: {
     case 'em_producao':
       return 'em_producao';
     case 'pronto_retirada':
-    case 'enviado':
       return 'pronto_retirada';
+    case 'enviado':
+      return 'enviado';
     case 'entregue':
       return 'entregue';
     case 'aguardando_pagamento':

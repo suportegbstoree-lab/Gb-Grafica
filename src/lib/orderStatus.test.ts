@@ -42,10 +42,11 @@ test('organiza as filas administrativas por prioridade operacional', () => {
     'pagamento_confirmado',
     'em_producao',
     'pronto_retirada',
+    'enviado',
     'entregue',
   ]);
   assert.equal(orderQueueFor({ status: 'Pendente', paymentStatus: 'pendente' }), 'aguardando_pagamento');
   assert.equal(orderQueueFor({ status: 'Pago', paymentStatus: 'pago', fulfillmentStatus: 'em_producao' }), 'em_producao');
-  assert.equal(orderQueueFor({ status: 'Enviado', paymentStatus: 'pago', fulfillmentStatus: 'enviado' }), 'pronto_retirada');
+  assert.equal(orderQueueFor({ status: 'Enviado', paymentStatus: 'pago', fulfillmentStatus: 'enviado' }), 'enviado');
   assert.equal(orderQueueFor({ status: 'Entregue', paymentStatus: 'pago', fulfillmentStatus: 'entregue' }), 'entregue');
 });

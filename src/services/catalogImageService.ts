@@ -24,7 +24,7 @@ function catalogStorageError(error: unknown): Error {
     : '';
 
   if (code === 'storage/unauthorized') {
-    return new Error('Sua sessão não possui permissão para alterar imagens do catálogo. Saia, entre novamente e confirme a claim administrativa.');
+    return new Error('Sua função não possui permissão para alterar imagens do catálogo. Se o acesso acabou de mudar, saia e entre novamente.');
   }
   if (code === 'storage/quota-exceeded') {
     return new Error('O limite do Firebase Storage foi atingido.');

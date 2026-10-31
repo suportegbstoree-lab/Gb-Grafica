@@ -272,3 +272,49 @@ test('uma tentativa recusada anterior não impede a conciliação de uma nova co
   assert.equal(docs.get(`orders/${orderId}`)!.paymentStatus, 'pago');
   assert.equal(docs.get(`orders/${orderId}`)!.pagbankChargeId, chargeId);
 });
+
+
+async function labelRequest(id = '11111111-1111-4111-8111-111111111111') {
+  return localFetch(`${baseUrl}/api/admin/orders/${orderId}/production-label`, { method: 'POST', headers: { authorization: 'Bearer id-token', 'content-type': 'application/json' }, body: JSON.stringify({ requestId: id }) });
+}
+function withLabelItems() {
+  Object.assign(docs.get(`orders/${orderId}`)!, { data: '2026-10-29T12:00:00Z', clienteNome: 'Cliente de teste', itens: [{ id: 'item', nome: 'Caderno', quantidade: 2, selecoes: { Cor: 'Azul' }, personalizacaoTexto: { texto: 'Linha 1\nLinha 2' } }] });
+}
+test('production label verifies PagBank, starts production once and safely reprints with the same request', async () => {
+  withLabelItems();
+  const first = await labelRequest(); assert.equal(first.status, 200, await first.clone().text());
+  assert.match(first.headers.get('content-type')!, /application\/pdf/); assert.match(await first.text(), /^%PDF/);
+  assert.equal(docs.get(`orders/${orderId}`)!.fulfillmentStatus, 'em_producao');
+  const labels = [...docs.keys()].filter(key => key.includes('/productionLabels/')); assert.equal(labels.length, 1);
+  const again = await labelRequest(); assert.equal(again.status, 200); assert.equal([...docs.keys()].filter(key => key.includes('/productionLabels/')).length, 1);
+  Object.assign(docs.get(`orders/${orderId}`)!, { fulfillmentStatus: 'pronto_retirada' });
+  assert.equal((await labelRequest('22222222-2222-4222-8222-222222222222')).status, 200);
+  assert.equal(docs.get(`orders/${orderId}`)!.fulfillmentStatus, 'pronto_retirada');
+});
+test('production label cannot advance unpaid/refunded orders or proceed when PagBank is unavailable', async () => {
+  withLabelItems(); providerRefund = 100;
+  assert.equal((await labelRequest()).status, 409); assert.notEqual(docs.get(`orders/${orderId}`)!.fulfillmentStatus, 'em_producao');
+  providerRefund = 0; providerUnavailable = true; Object.assign(docs.get(`orders/${orderId}`)!, { paymentStatus: 'pago', pagbankRefundedAmountCents: 0 });
+  assert.equal((await labelRequest()).status, 503); assert.equal([...docs.keys()].some(key => key.includes('/productionLabels/')), false);
+  providerUnavailable = false; docs.get(`orders/${orderId}`)!.paymentStatus = 'pendente';
+  assert.equal((await labelRequest()).status, 409);
+});
+test('label endpoint rejects customers and invalid request identifiers', async () => {
+  withLabelItems(); tokenAdmin = false; currentAdmin = false;
+  assert.equal((await labelRequest()).status, 403);
+  tokenAdmin = true; currentAdmin = true; assert.equal((await labelRequest('arbitrary')).status, 422);
+});
+test('Correios shipments require a code and cannot be manually marked delivered', async () => {
+  const order = docs.get(`orders/${orderId}`)!; Object.assign(order, { fulfillmentStatus: 'em_producao', metodoEntrega: 'entrega', shipping: { service_code: '03220' } });
+  const change = (body: unknown) => localFetch(`${baseUrl}/api/admin/orders/${orderId}/fulfillment`, { method: 'POST', headers: { authorization: 'Bearer id-token', 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await change({ fulfillmentStatus: 'enviado' })).status, 422);
+  assert.equal((await change({ fulfillmentStatus: 'enviado', trackingCode: 'AA123456789BR' })).status, 200);
+  assert.equal(docs.get(`orders/${orderId}`)!.fulfillmentStatus, 'enviado'); assert.ok(docs.get(`_trackingJobs/${orderId}`));
+  assert.equal((await change({ fulfillmentStatus: 'entregue' })).status, 409);
+  assert.equal((await change({ fulfillmentStatus: 'enviado', trackingCode: 'BB123456789BR' })).status, 200);
+  assert.equal(docs.get(`_trackingJobs/${orderId}`)!.code, 'BB123456789BR');
+});
+test('maintenance rejects absent and incorrect cron secrets before accessing Firestore', async () => {
+  assert.equal((await localFetch(`${baseUrl}/api/internal/maintenance`)).status, 401);
+  assert.equal((await localFetch(`${baseUrl}/api/internal/maintenance`, { headers: { 'user-agent': 'vercel-cron/1.0', authorization: 'Bearer wrong' } })).status, 401);
+});

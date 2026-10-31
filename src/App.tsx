@@ -1,3 +1,7 @@
+import { mayEnterPanel } from './lib/panelAccess';
+import PanelAccessGate from './components/PanelAccessGate';
+import { LOADING_STAFF_ACCESS, type StaffAccessState, observeStaffAccess } from './services/staffAccessClient';
+import type { StaffPermission } from './lib/staffAccess';
 import { observeAdminAccess } from './services/adminAccessClient';
 /**
  * @license
@@ -5,7 +9,7 @@ import { observeAdminAccess } from './services/adminAccessClient';
  */
 
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import Home from './pages/Home';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from './types';
 import { INITIAL_CONFIG } from './constants';
@@ -67,6 +71,10 @@ function LegalRoute({ documentId, config }: { documentId: LegalDocumentId; confi
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [staffPermissions, setStaffPermissions] = useState<StaffPermission[]>([]);
+  const [staffAccessState, setStaffAccessState] = useState<StaffAccessState>(LOADING_STAFF_ACCESS);
+  const canReadOrders = isAdmin || staffPermissions.includes('orders.read');
+  const canAccessPanel = mayEnterPanel(isAdmin, staffPermissions);
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   const [products, setProducts] = useState<Anuncio[]>([]);
@@ -86,22 +94,24 @@ export default function App() {
   // Authorization is observed independently from the cached ID token.
   useEffect(() => {
     let stopAuthorization = () => {};
+    let stopStaffAuthorization = () => {};
     let generation = 0;
     let currentUid: string | null = null;
     let adminAllowed = false;
+    let staffOrdersAllowed = false;
     const unsubscribe = onIdTokenChanged(auth, (firebaseUser) => {
       const current = ++generation;
-      stopAuthorization();
+      stopAuthorization(); stopStaffAuthorization();
       setUser(firebaseUser);
       if ((firebaseUser?.uid || null) !== currentUid) {
         currentUid = firebaseUser?.uid || null;
-        adminAllowed = false;
-        setIsAdmin(false);
+        adminAllowed = false; staffOrdersAllowed = false;
+        setIsAdmin(false); setStaffPermissions([]); setStaffAccessState(LOADING_STAFF_ACCESS);
         setIsAuthReady(false);
         ordersGeneration.current++;
         setOrders([]);
       }
-      if (!firebaseUser) { setIsAdmin(false); setIsAuthReady(true); return; }
+      if (!firebaseUser) { setIsAdmin(false); setIsAuthReady(true); setStaffAccessState({ ready: true, assigned: false, issue: null }); return; }
       stopAuthorization = observeAdminAccess(firebaseUser, {
         watchProfile: (uid, next, error) => onSnapshot(doc(db, 'users', uid), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
         watchAccess: (uid, next, error) => onSnapshot(doc(db, '_adminAccess', uid), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
@@ -113,6 +123,17 @@ export default function App() {
           setIsAuthReady(true);
         },
       });
+      stopStaffAuthorization = observeStaffAccess(firebaseUser, {
+        watchAccess: (uid, next, error) => onSnapshot(doc(db, '_staffAccess', uid), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
+        watchRole: (id, next, error) => onSnapshot(doc(db, '_staffRoles', id), { includeMetadataChanges: true }, snapshot => { if (!snapshot.metadata.fromCache) next(snapshot.data()); }, error),
+        changed: (permissions, state) => {
+          if (current !== generation) return;
+          if (!adminAllowed && staffOrdersAllowed && !permissions.includes('orders.read')) { ordersGeneration.current++; setOrders([]); }
+          staffOrdersAllowed = permissions.includes('orders.read');
+          setStaffPermissions(permissions);
+          setStaffAccessState(state);
+        },
+      });
       // Preserve basic profile creation; all administrative fields remain server-owned.
       void getDoc(doc(db, 'users', firebaseUser.uid)).then(async snapshot => {
         if (current === generation && !snapshot.exists()) {
@@ -120,7 +141,7 @@ export default function App() {
         }
       }).catch(() => console.error('Não foi possível preparar o perfil do usuário.'));
     });
-    return () => { generation++; stopAuthorization(); unsubscribe(); };
+    return () => { generation++; stopAuthorization(); stopStaffAuthorization(); unsubscribe(); };
   }, []);
 
   // Firestore Listeners
@@ -183,7 +204,7 @@ export default function App() {
     }
     setOrdersReady(false);
     setOrdersError(null);
-    const q = isAdmin
+    const q = canReadOrders
       ? query(collection(db, 'orders'), orderBy('data', 'desc'))
       : query(collection(db, 'orders'), where('userId', '==', user.uid));
 
@@ -205,7 +226,7 @@ export default function App() {
     });
 
     return () => { if (generation === ordersGeneration.current) ordersGeneration.current++; unsubscribe(); };
-  }, [user, isAdmin]);
+  }, [user, canReadOrders]);
 
   // Sync Cart to LocalStorage
   useEffect(() => {
@@ -247,9 +268,10 @@ export default function App() {
               promotions={promotions}
               cart={cart}
               setCart={setCart}
-              orders={orders}
+              orders={orders.filter(order => order.userId === user?.uid)}
               user={user}
-              isAdmin={isAdmin}
+              canAccessPanel={canAccessPanel}
+              panelAccessNeedsCheck={staffAccessState.assigned && Boolean(staffAccessState.issue)}
               productsReady={productsReady}
               productsError={productsError}
               ordersReady={ordersReady}
@@ -260,21 +282,21 @@ export default function App() {
         <Route
           path="/admin"
           element={
-            !isAuthReady ? <LoadingScreen /> : isAdmin ? (
+            <PanelAccessGate user={user} ready={isAuthReady && (isAdmin || staffAccessState.ready)} allowed={canAccessPanel} issue={staffAccessState.issue} diagnostic={staffAccessState.diagnostic}>
               <Suspense fallback={<LoadingScreen />}>
                 <Admin
+                  fullAdmin={isAdmin}
+                  permissions={staffPermissions}
                   products={products}
                   config={config}
                   categories={categories}
-                  orders={orders}
-                  ordersReady={ordersReady}
-                  ordersError={ordersError}
+                  orders={canReadOrders ? orders : []}
+                  ordersReady={canReadOrders ? ordersReady : true}
+                  ordersError={canReadOrders ? ordersError : null}
                   promotions={promotions}
                 />
               </Suspense>
-            ) : (
-              <Navigate to="/" replace />
-            )
+            </PanelAccessGate>
           }
         />
         <Route path={LEGAL_ROUTES.about} element={<LegalRoute documentId="about" config={config} />} />

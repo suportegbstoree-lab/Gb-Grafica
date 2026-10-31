@@ -1,3 +1,4 @@
+import { validPromotionWindow } from './promotions';
 import { parsePrintProfile } from './printProfile';
 import { parseStoreContacts, parseStoreBenefits } from './storePresentation';
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types';
@@ -248,6 +249,8 @@ export function validatePromotionDraft(
     return { ok: false, message: 'Escolha o tipo de desconto.' };
   }
 
+  if (!validPromotionWindow(draft)) return { ok: false, message: 'Defina um prazo válido para a promoção relâmpago.' };
+
   let descontoPercentual: number | undefined;
   let descontoFixoCentavos: number | undefined;
   if (draft.descontoTipo === 'percentual') {
@@ -276,6 +279,7 @@ export function validatePromotionDraft(
     value: {
       titulo,
       imagem,
+      ...(draft.relampago ? { relampago: true, startsAt: draft.startsAt, endsAt: draft.endsAt } : {}),
       link: draft.alvoTipo === 'produto' ? `#produto-${target.id}` : '#produtos',
       ativa: draft.ativa ?? true,
       alvoTipo: draft.alvoTipo,

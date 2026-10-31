@@ -1,9 +1,18 @@
+import { validTrackingCode } from '../lib/tracking.js';
+import { cronAuthorized, syncCorreiosTracking, processTrackingJobs } from './correiosTracking.js';
+import { expirePromotions } from './maintenance.js';
+import { createProductionLabel, productionLabelFingerprint } from './productionLabel.js';
+import type { Order } from '../types.js';
 import { CatalogRelayError, startCatalogRelay, sendCatalogRelayChunk } from './catalogRelay.js';
 import { ADMIN_CATALOG_LEASE_COLLECTION, catalogLeaseAllows } from './adminCatalogLease.js';
 import { isAdminImagePath, isAdminFontPath } from '../lib/adminAsset.js';
 import { isCatalogImagePath } from '../lib/catalogImage.js';
 import type { AdminAccessRecord } from '../lib/adminAccess.js';
 import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
+import { createStaffBackend, assignStaffRole, updateStaffRole, userStaffPermissions, StaffAccessError } from './staffAccess.js';
+import { grantAdminAccess, revokeAdminAccess, createAdminAccessBackend } from './adminAccess.js';
+import { queueStaffEmail, sendStaffEmail, staffEmailConfigured } from './staffEmail.js';
+import { STAFF_ACCESS_COLLECTION, STAFF_ROLES_COLLECTION, STAFF_ROLE_LABELS, DEFAULT_ROLE_PERMISSIONS, isStaffRoleId, validStaffRole, validStaffAccess, type StaffPermission, type StaffRoleId, type AssignedRole } from '../lib/staffAccess.js';
 import { parsePrintProfile, printProfileKey, type PrintProfile, type ArtworkApproval } from '../lib/printProfile.js';
 import { createHash, randomUUID } from 'node:crypto';
 import express from 'express';
@@ -529,6 +538,38 @@ async function requireAdminUser(req: express.Request) {
 	return firebaseUser;
 }
 
+async function userHasPermission(user: Awaited<ReturnType<typeof requireFirebaseUser>>, db: ReturnType<typeof getAdminServices>['db'], permission: StaffPermission): Promise<boolean> {
+  return await userIsAdmin(user, db) || (await userStaffPermissions(user)).includes(permission);
+}
+
+async function requirePermissionUser(req: express.Request, permission: StaffPermission) {
+  const user = await requireFirebaseUser(req);
+  if (!await userHasPermission(user, getAdminServices().db, permission)) throw new HttpError(403, 'Sua função não permite esta ação.');
+  return user;
+}
+
+// Serialize UI access changes and recheck the actor after acquiring the lock.
+// This prevents two administrators simultaneously demoting each other.
+async function staffMutation<T>(req: express.Request, action: () => Promise<T>): Promise<T> {
+  const { db } = getAdminServices(), nonce = randomUUID();
+  const ref = db.collection('_staffLocks').doc('management');
+  await db.runTransaction(async transaction => {
+    const current = (await transaction.get(ref)).data();
+    if (current?.expiresAt > Date.now()) throw new HttpError(409, 'Outra alteração de acesso está em andamento. Tente novamente.');
+    transaction.set(ref, { nonce, expiresAt: Date.now() + 120_000 });
+  });
+  try { await requireAdminUser(req); return await action(); }
+  finally {
+    await db.runTransaction(async transaction => {
+      if ((await transaction.get(ref)).data()?.nonce === nonce) transaction.delete(ref);
+    }).catch(() => undefined);
+  }
+}
+
+function sendStaffError(res: express.Response, error: unknown) {
+  sendError(res, error instanceof StaffAccessError ? new HttpError(error.status, error.message) : error);
+}
+
 async function getShippingQuote(
 	deliveryMethod: unknown,
 	cepValue: unknown,
@@ -611,6 +652,7 @@ async function normalizeCart(
 	shippingProducts: Map<string, PlainRecord>;
 }> {
 	const { db, bucket } = services;
+	const pricingNow = Date.now();
 	if (!Array.isArray(itemsValue) || itemsValue.length === 0 || itemsValue.length > 50) {
 		throw new HttpError(422, 'O carrinho está vazio ou possui itens demais.');
 	}
@@ -709,8 +751,14 @@ async function normalizeCart(
 			originalUnitAmount,
 			{ id: productId, categoria: productCategory } as Pick<Anuncio, 'id' | 'categoria'>,
 			promotions,
+			pricingNow,
 		);
 		const unitAmount = appliedPromotion?.finalCents ?? originalUnitAmount;
+        if (item.expectedUnitAmountCents !== undefined) {
+          if (!Number.isSafeInteger(item.expectedUnitAmountCents) || (item.expectedUnitAmountCents as number) <= 0) throw new HttpError(422, 'Preço esperado inválido.');
+          if (item.expectedUnitAmountCents !== unitAmount) throw new HttpError(409, 'O preço ou a promoção mudou. Revise o carrinho antes de continuar.', 'PRICE_CHANGED');
+        }
+
 
 		const lineAmount = unitAmount * quantity;
 		subtotalCents += lineAmount;
@@ -1877,9 +1925,83 @@ app.get('/api/payment-status/:orderId', requireAppCheck, async (req, res) => {
 	}
 });
 
+app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), { db, auth } = getAdminServices();
+    enforceRateLimit(`staff-list:${actor.uid}`, 30, 60_000);
+    const roleIds: StaffRoleId[] = ['designer', 'product-manager'];
+    const roles = await Promise.all(roleIds.map(async id => {
+      const data = (await db.collection(STAFF_ROLES_COLLECTION).doc(id).get()).data();
+      if (data && !validStaffRole(data)) throw new HttpError(409, 'Configuração de função inválida. Confira os registros no servidor.');
+      return { id, configured: Boolean(data), ...(data || { schemaVersion: 1, enabled: true, revision: '', permissions: DEFAULT_ROLE_PERMISSIONS[id], updatedAt: '', updatedBy: '' }) };
+    }));
+    const [staff, administrators] = await Promise.all([
+      db.collection(STAFF_ACCESS_COLLECTION).limit(201).get(), db.collection(ADMIN_ACCESS_COLLECTION).limit(201).get(),
+    ]);
+    const active = new Map<string, AssignedRole>();
+    for (const doc of staff.docs) { const data = doc.data(); if (validStaffAccess(data) && data.enabled) active.set(doc.id, data.roleId); }
+    for (const doc of administrators.docs) if (doc.data().enabled === true) active.set(doc.id, 'administrator');
+    const ids = [...active.keys()].slice(0, 200);
+    const accounts = (await Promise.all([ids.slice(0, 100), ids.slice(100)].filter(batch => batch.length).map(batch => auth.getUsers(batch.map(uid => ({ uid })))))).flatMap(batch => batch.users);
+    const members = accounts.map(account => ({ uid: account.uid, email: account.email || account.uid, role: active.get(account.uid)!, enabled: !account.disabled }));
+    const pending = await db.collection('_staffNotifications').where('status', '==', 'pending').limit(30).get();
+    const notifications = pending.docs.map(doc => ({ id: doc.id, email: textValue(doc.data().email, 254), createdAt: textValue(doc.data().createdAt, 40) }));
+    res.json({ roles, members, notifications, emailConfigured: staffEmailConfigured(), truncated: staff.size > 200 || administrators.size > 200 || active.size > 200 });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/roles/:roleId', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), roleId = req.params.roleId;
+    enforceRateLimit(`staff-role:${actor.uid}`, 20, 60_000);
+    if (!isStaffRoleId(roleId) || !(req.body?.expectedRevision === null || typeof req.body?.expectedRevision === 'string')) throw new HttpError(422, 'Função ou versão inválida.');
+    const value = await staffMutation(req, () => updateStaffRole(createStaffBackend(), roleId, req.body.permissions, req.body.expectedRevision, actor.uid));
+    res.json({ id: roleId, configured: true, ...value });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/assign', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), { auth, db } = getAdminServices();
+    enforceRateLimit(`staff-assign:${actor.uid}`, 12, 60_000);
+    await enforceDistributedRateLimit(db, `staff-assign:${actor.uid}`, 30, 60_000);
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const role = req.body?.role;
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !Object.hasOwn(STAFF_ROLE_LABELS, role)) throw new HttpError(422, 'Informe um e-mail cadastrado e uma função válida.');
+    let target;
+    try { target = await auth.getUserByEmail(email); }
+    catch (error) { if ((error as { code?: string }).code === 'auth/user-not-found') throw new HttpError(404, 'Este e-mail ainda não possui uma conta cadastrada na loja.'); throw error; }
+    if (target.uid === actor.uid && role !== 'administrator') throw new HttpError(422, 'Sua própria função administrativa não pode ser removida por esta tela.');
+    if (target.disabled && role !== 'none') throw new HttpError(422, 'A conta está desativada.');
+    const changed = await staffMutation(req, async () => {
+      if (isStaffRoleId(role)) return (await assignStaffRole(createStaffBackend(), target.uid, role, actor.uid)).changed;
+      if (role === 'none') { await revokeAdminAccess(createAdminAccessBackend(), target.uid); return true; }
+      const current = (await db.collection(ADMIN_ACCESS_COLLECTION).doc(target.uid).get()).data();
+      const latest = await auth.getUser(target.uid);
+      if (latest.customClaims?.admin === true && adminAccessRecordAllows(current, latest.customClaims)) return false;
+      await grantAdminAccess(createAdminAccessBackend(), target.uid); return true;
+    });
+    let notification: { id?: string; status: string } = { status: 'unchanged' };
+    if (changed) {
+      try { notification = await queueStaffEmail(db, target.email!, role as AssignedRole); }
+      catch { notification = { status: 'pending' }; logEvent('error', 'staff_notification_queue_failed', { request_id: responseRequestId(res), uid: target.uid }); }
+    }
+    res.json({ changed, uid: target.uid, email: target.email, role, notification });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/notifications/:id/retry', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req);
+    enforceRateLimit(`staff-email:${actor.uid}`, 5, 60_000);
+    if (!/^[a-f0-9-]{36}$/.test(req.params.id)) throw new HttpError(422, 'Aviso inválido.');
+    res.json({ status: await sendStaffEmail(getAdminServices().db, req.params.id) });
+  } catch (error) { sendStaffError(res, error); }
+});
+
 app.post('/api/admin/ai/suggestions', requireAppCheck, async (req, res) => {
 	try {
-		const user = await requireAdminUser(req);
+		const user = await requirePermissionUser(req, 'ai.generate');
 		const instruction = adminAiInstruction(req.body);
 		const { app: firebaseApp, db } = getAdminServices();
 		const config = vertexAiConfig(firebaseApp.options.projectId);
@@ -1898,88 +2020,126 @@ app.post('/api/admin/ai/suggestions', requireAppCheck, async (req, res) => {
 	}
 });
 
+async function performOrderOperation(req: express.Request, res: express.Response, label = false) {
+  const firebaseUser = await requirePermissionUser(req, 'orders.fulfillment');
+  const { db } = getAdminServices();
+  enforceRateLimit(`admin-order:${firebaseUser.uid}`, 20, 60_000);
+  await enforceDistributedRateLimit(db, `admin-order:${firebaseUser.uid}`, 60, 60_000);
+  const orderId = textValue(req.params.orderId, 64), body = isPlainRecord(req.body) ? req.body : {};
+  if (!orderId || !/^[A-Za-z0-9_-]+$/.test(orderId) || (!label && !isFulfillmentStatus(body.fulfillmentStatus))) {
+    throw new HttpError(422, 'Pedido ou etapa operacional inválida.');
+  }
+  const requestId = label ? normalizeCheckoutRequestId(body.requestId) : null;
+  if (label && !requestId) throw new HttpError(422, 'Identificador da etiqueta inválido.');
+  const orderRef = db.collection('orders').doc(orderId), before = await orderRef.get();
+  if (!before.exists) throw new HttpError(404, 'Pedido não encontrado.');
+  const initial = before.data() as PlainRecord;
+  const initialStage = currentFulfillmentStatus(initial);
+  if (label && (initial.paymentStatus !== 'pago' || !['pagamento_confirmado', 'em_producao', 'pronto_retirada', 'enviado', 'entregue'].includes(initialStage))) {
+    throw new HttpError(409, 'A etiqueta exige pagamento confirmado e pedido ativo.');
+  }
+  const requested = label ? (initialStage === 'pagamento_confirmado' ? 'em_producao' : initialStage) : body.fulfillmentStatus as FulfillmentStatus;
+  const trackingCode = typeof body.trackingCode === 'string' ? body.trackingCode.trim().toUpperCase() : '';
+  if (trackingCode && !validTrackingCode(trackingCode)) throw new HttpError(422, 'Código de rastreio inválido.');
+  const changingTracking = !label && requested === 'enviado' && Boolean(trackingCode) && (!isPlainRecord(initial.tracking) || initial.tracking.code !== trackingCode);
+  const fingerprint = label ? productionLabelFingerprint(initial) : '';
+  // Rendering failures must happen before any operational transition.
+  const pdf = label ? await createProductionLabel(orderId, initial as unknown as Order) : null;
+  let verifiedChargeId: string | null = null;
+  if (initial.paymentStatus === 'pago' && (label || requested !== initialStage || changingTracking)) {
+    verifiedChargeId = await verifyOperationalPayment(db, orderId, initial, res);
+  }
+  let appliedStatus = requested;
+  await db.runTransaction(async transaction => {
+    const snapshot = await transaction.get(orderRef);
+    if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
+    const order = snapshot.data() as PlainRecord, current = currentFulfillmentStatus(order);
+    const labelRef = requestId ? orderRef.collection('productionLabels').doc(requestId) : null;
+    const existingLabel = labelRef ? await transaction.get(labelRef) : null;
+    if (label && productionLabelFingerprint(order) !== fingerprint) throw new HttpError(409, 'Os dados do pedido mudaram. Atualize e gere novamente.');
+    const target = label ? (current === 'pagamento_confirmado' ? 'em_producao' : current) : requested;
+    const updateTracking = !label && target === 'enviado' && Boolean(trackingCode) && (!isPlainRecord(order.tracking) || order.tracking.code !== trackingCode);
+    if (updateTracking && order.paymentStatus !== 'pago') throw new HttpError(409, 'Confira o pagamento antes de alterar o rastreio.');
+    if ((label || target !== current || updateTracking) && order.paymentStatus === 'pago' &&
+      (!verifiedChargeId || verifiedChargeId !== order.pagbankChargeId || Number(order.pagbankRefundedAmountCents) > 0)) {
+      throw new HttpError(409, 'O estado financeiro do pedido mudou. Atualize e tente novamente.');
+    }
+    if (label && (order.paymentStatus !== 'pago' || current === 'cancelado' || current === 'aguardando_pagamento')) throw new HttpError(409, 'O pedido não pode iniciar produção.');
+    if (!allowedFulfillmentTransitions(current, order.paymentStatus as PaymentStatus | undefined, order.metodoEntrega as DeliveryMethod | undefined).includes(target)) {
+      throw new HttpError(409, order.paymentStatus !== 'pago' ? 'O pedido precisa estar pago antes de avançar para produção ou entrega.' : 'Essa mudança não respeita a sequência operacional do pedido.');
+    }
+    if (!label && target === 'entregue' && order.tracking && isPlainRecord(order.tracking) && order.tracking.provider === 'correios') {
+      throw new HttpError(409, 'A entrega deste envio é confirmada pelo rastreamento dos Correios. Use Consultar rastreio.');
+    }
+    if (!label && target === 'enviado' && current !== 'enviado' && order.shipping && !trackingCode) throw new HttpError(422, 'Informe o código de rastreio dos Correios antes de enviar.');
+    const timestamp = new Date().toISOString();
+    if (updateTracking) {
+      transaction.set(orderRef, { tracking: { provider: 'correios', code: trackingCode, status: 'Aguardando consulta', updatedAt: timestamp } }, { merge: true });
+      transaction.set(db.collection('_trackingJobs').doc(orderId), { code: trackingCode, nextCheckAt: Date.now(), attempts: 0 });
+      transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'shipment_tracking_changed', code: trackingCode, actorUid: firebaseUser.uid, createdAt: timestamp });
+    }
+    appliedStatus = target;
+    if (existingLabel?.exists) {
+      if (existingLabel.data()?.fingerprint !== fingerprint) throw new HttpError(409, 'Este identificador já foi usado para outra versão da etiqueta.');
+      return;
+    }
+    if (target !== current) {
+      transaction.set(orderRef, { fulfillmentStatus: target, status: legacyStatusForFulfillment(target), fulfillmentUpdatedAt: timestamp }, { merge: true });
+      transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'fulfillment_status_changed', from: current, to: target, actorUid: firebaseUser.uid, createdAt: timestamp });
+    }
+    if (labelRef) transaction.create(labelRef, { schemaVersion: 1, requestId, fingerprint, actorUid: firebaseUser.uid, createdAt: timestamp });
+  });
+  if (pdf) {
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="etiqueta-${orderId}.pdf"`, 'Cache-Control': 'private, no-store' });
+    res.send(Buffer.from(pdf));
+  } else res.json({ updated: true, fulfillmentStatus: appliedStatus });
+}
+
+async function verifyOperationalPayment(db: ReturnType<typeof getAdminServices>['db'], orderId: string, initial: PlainRecord, res?: express.Response): Promise<string> {
+  let verified: StoredPaymentReconciliationResult;
+  try { verified = await reconcileStoredOrderPayment(db, orderId, initial, getPagBankConfig()); }
+  catch (error) {
+    logEvent('warn', 'fulfillment_payment_verification_failed', { ...(res ? { request_id: responseRequestId(res) } : {}), order_id: orderId, error });
+    throw new HttpError(503, 'Não foi possível conferir o pagamento no PagBank. Tente novamente.');
+  }
+  const payment = verified.providerEvent;
+  if (!payment || payment.kind !== 'payment' || !payment.chargeId || payment.refundedCents == null || payment.paidCents == null || payment.amountCents == null ||
+    payment.paidCents !== payment.amountCents || payment.currency !== 'BRL' || (payment.paymentStatus !== 'pago' && !(payment.refundedCents > 0))) {
+    throw new HttpError(503, 'Não foi possível confirmar o estado financeiro do pedido no PagBank.');
+  }
+  return payment.chargeId;
+}
+
 app.post('/api/admin/orders/:orderId/fulfillment', requireAppCheck, async (req, res) => {
-	try {
-		const firebaseUser = await requireAdminUser(req);
-		const services = getAdminServices();
-		const { db } = services;
-		enforceRateLimit(`admin-order:${firebaseUser.uid}`, 20, 60_000);
-		await enforceDistributedRateLimit(db, `admin-order:${firebaseUser.uid}`, 60, 60_000);
+  try { await performOrderOperation(req, res); } catch (error) { sendError(res, error); }
+});
+app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (req, res) => {
+  try { await performOrderOperation(req, res, true); } catch (error) { sendError(res, error); }
+});
 
-		const orderId = textValue(req.params.orderId, 64);
-		const body = isPlainRecord(req.body) ? req.body : {};
-		const requestedStatus = body.fulfillmentStatus;
-		if (!orderId || !/^[A-Za-z0-9_-]+$/.test(orderId) || !isFulfillmentStatus(requestedStatus)) {
-			throw new HttpError(422, 'Pedido ou etapa operacional inválida.');
-		}
+app.post('/api/admin/orders/:orderId/tracking/refresh', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requirePermissionUser(req, 'orders.fulfillment');
+    if (process.env.CORREIOS_TRACKING_ENABLED !== 'true') throw new HttpError(503, 'Ative a API Rastro dos Correios na configuração da loja.', 'CORREIOS_TRACKING_DISABLED');
+    const orderId = textValue(req.params.orderId, 64);
+    if (!/^[A-Za-z0-9_-]+$/.test(orderId)) throw new HttpError(422, 'Pedido inválido.');
+    const { db } = getAdminServices();
+    enforceRateLimit(`tracking:${actor.uid}`, 6, 60_000);
+    await enforceDistributedRateLimit(db, `tracking-order:${orderId}`, 1, 60_000);
+    res.json({ tracking: await syncCorreiosTracking(db, orderId, (id, order) => verifyOperationalPayment(db, id, order, res)) });
+  } catch (error) { sendError(res, error instanceof CorreiosError ? new HttpError(error.status, error.message, error.code) : error); }
+});
 
-		const orderRef = db.collection('orders').doc(orderId);
-		const beforeTransition = await orderRef.get();
-		if (!beforeTransition.exists) throw new HttpError(404, 'Pedido não encontrado.');
-		const initialOrder = beforeTransition.data() as PlainRecord;
-		let verifiedChargeId: string | null = null;
-		if (initialOrder.paymentStatus === 'pago' && requestedStatus !== currentFulfillmentStatus(initialOrder)) {
-			let verified: StoredPaymentReconciliationResult;
-			try {
-				verified = await reconcileStoredOrderPayment(db, orderId, initialOrder, getPagBankConfig());
-			} catch (error) {
-				logEvent('warn', 'fulfillment_payment_verification_failed', {
-					request_id: responseRequestId(res), order_id: orderId, error,
-				});
-				throw new HttpError(503, 'Não foi possível conferir o pagamento no PagBank. Tente novamente.');
-			}
-			const payment = verified.providerEvent;
-			if (!payment || payment.kind !== 'payment' || !payment.chargeId ||
-				payment.refundedCents == null || payment.paidCents == null ||
-				payment.amountCents == null || payment.paidCents !== payment.amountCents ||
-				payment.currency !== 'BRL' ||
-				(payment.paymentStatus !== 'pago' && !(payment.refundedCents > 0))) {
-				throw new HttpError(503, 'Não foi possível confirmar o estado financeiro do pedido no PagBank.');
-			}
-			verifiedChargeId = payment.chargeId;
-		}
-		let appliedStatus: FulfillmentStatus = requestedStatus;
-		await db.runTransaction(async transaction => {
-			const snapshot = await transaction.get(orderRef);
-			if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
-			const order = snapshot.data() as PlainRecord;
-			const current = currentFulfillmentStatus(order);
-			const paymentStatus = order.paymentStatus as PaymentStatus | undefined;
-			const deliveryMethod = order.metodoEntrega as DeliveryMethod | undefined;
-			if (requestedStatus !== current && paymentStatus === 'pago' &&
-				(!verifiedChargeId || verifiedChargeId !== order.pagbankChargeId ||
-					Number(order.pagbankRefundedAmountCents) > 0)) {
-				throw new HttpError(409, 'O estado financeiro do pedido mudou. Atualize e tente novamente.');
-			}
-			const allowed = allowedFulfillmentTransitions(current, paymentStatus, deliveryMethod);
-			if (!allowed.includes(requestedStatus)) {
-				throw new HttpError(
-					409,
-					paymentStatus !== 'pago'
-						? 'O pedido precisa estar pago antes de avançar para produção ou entrega.'
-						: 'Essa mudança não respeita a sequência operacional do pedido.',
-				);
-			}
-
-			appliedStatus = requestedStatus;
-			transaction.set(orderRef, {
-				fulfillmentStatus: requestedStatus,
-				status: legacyStatusForFulfillment(requestedStatus),
-				fulfillmentUpdatedAt: new Date().toISOString(),
-			}, { merge: true });
-			transaction.create(orderRef.collection('events').doc(randomUUID()), {
-				type: 'fulfillment_status_changed',
-				from: current,
-				to: requestedStatus,
-				actorUid: firebaseUser.uid,
-				createdAt: new Date().toISOString(),
-			});
-		});
-
-		res.json({ updated: true, fulfillmentStatus: appliedStatus });
-	} catch (error) {
-		sendError(res, error);
-	}
+app.get('/api/internal/maintenance', async (req, res) => {
+  try {
+    if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
+    const { db } = getAdminServices();
+    await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
+    const [expiredPromotions, tracking] = await Promise.all([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)),
+    ]);
+    res.json({ expiredPromotions, tracking });
+  } catch (error) { sendError(res, error); }
 });
 
 app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res) => {
@@ -1999,7 +2159,7 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 		const snapshot = await db.collection('orders').doc(orderId).get();
 		if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
 		const order = snapshot.data() as PlainRecord;
-		if (order.userId !== firebaseUser.uid && !(await userIsAdmin(firebaseUser, db))) {
+		if (order.userId !== firebaseUser.uid && !(await userHasPermission(firebaseUser, db, 'orders.artwork'))) {
 			throw new HttpError(403, 'Você não pode acessar esta arte.');
 		}
 
@@ -2041,7 +2201,7 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 		const snapshot = await db.collection('orders').doc(orderId).get();
 		if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
 		const order = snapshot.data() as PlainRecord;
-		if (order.userId !== firebaseUser.uid && !(await userIsAdmin(firebaseUser, db))) {
+		if (order.userId !== firebaseUser.uid && !(await userHasPermission(firebaseUser, db, 'orders.artwork'))) {
 			throw new HttpError(403, 'Você não pode acessar este modelo personalizado.');
 		}
 

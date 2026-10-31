@@ -38,7 +38,10 @@ import {
   textCustomizationFontLabel,
   type TextCustomization,
 } from '../lib/textCustomization';
-import { formattedDiscountPercentage, promotionalPrice } from '../lib/promotions';
+import { formattedDiscountPercentage, promotionalPrice, promotionActiveAt } from '../lib/promotions';
+import { repriceCart } from '../lib/cartPricing';
+import FlashOffers from '../components/FlashOffers';
+import CustomerOrderDetails from '../components/CustomerOrderDetails';
 import {
   isComposablePersonalizationImage,
   personalizationModelName,
@@ -139,7 +142,8 @@ interface HomeProps {
   setCart: React.Dispatch<React.SetStateAction<CartItem[]>>;
   orders: Order[];
   user: FirebaseUser | null;
-  isAdmin: boolean;
+  canAccessPanel: boolean;
+  panelAccessNeedsCheck?: boolean;
   productsReady: boolean;
   productsError: string | null;
   ordersReady: boolean;
@@ -158,7 +162,8 @@ export default function Home({
   setCart,
   orders,
   user,
-  isAdmin,
+  canAccessPanel,
+  panelAccessNeedsCheck = false,
   productsReady,
   productsError,
   ordersReady,
@@ -175,6 +180,8 @@ export default function Home({
   }, [user?.uid]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
+  const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
+  const detailOrder = user && !ordersError ? orders.find(order => order.id === detailOrderId) : undefined;
   const [isHowToBuyOpen, setIsHowToBuyOpen] = useState(false);
   const [cep, setCep] = useState('');
   const [storedShippingInfo, setShippingInfo] = useState<ShippingInfo | null>(null);
@@ -208,6 +215,13 @@ export default function Home({
     ? storedShippingInfo : null;
   const shouldReduceMotion = useReducedMotion();
 
+  const [promotionNow, setPromotionNow] = useState(Date.now);
+  React.useEffect(() => {
+    setPromotionNow(Date.now());
+    if (!promotions.some(promotion => promotion.ativa && promotion.endsAt)) return;
+    const timer = window.setInterval(() => setPromotionNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [promotions]);
   const contacts = storeContacts(config);
   const benefits = storeBenefits(config);
   const primaryContact = contacts.find(contact => contact.type === 'whatsapp') || contacts[0];
@@ -224,7 +238,7 @@ export default function Home({
     const highlighted = featuredProducts(products).map(product => ({ productId: product.id, image: product.imagem, title: product.nome, subtitle: product.desc, link: '' }));
     const availableSlides: HomeSlide[] = [
       ...(highlighted.length ? highlighted : [{ image: config.banner_principal, title: config.banner_titulo, link: '' }]),
-      ...promotions.filter(promotion => promotion.ativa).map(promotion => ({
+      ...promotions.filter(promotion => promotionActiveAt(promotion, promotionNow)).map(promotion => ({
         image: promotion.imagem,
         title: promotion.titulo,
         link: promotion.link || '',
@@ -236,7 +250,7 @@ export default function Home({
     return availableSlides.length > 0
       ? availableSlides
       : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
-  }, [config.banner_principal, config.banner_titulo, promotions, products]);
+  }, [config.banner_principal, config.banner_titulo, promotions, products, promotionNow]);
 
   const visibleProducts = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
@@ -270,29 +284,8 @@ export default function Home({
   }, [storedShippingInfo]);
 
   React.useEffect(() => {
-    setCart(current => current.map(item => {
-      const product = products.find(candidate => candidate.id === item.productId);
-      if (!product) return item;
-      const originalCents = productPriceForSelections(product, item.selecoes);
-      if (originalCents === null || originalCents <= 0) return item;
-      const discount = promotionalPrice(originalCents, product, promotions);
-      const nextPrice = ((discount?.finalCents ?? originalCents) / 100).toFixed(2);
-      const nextOriginal = discount ? (originalCents / 100).toFixed(2) : undefined;
-      const nextPromotionId = discount?.promotion.id;
-      const nextPercentage = discount?.percentage;
-      if (
-        item.preco === nextPrice && item.precoOriginal === nextOriginal &&
-        item.promocaoId === nextPromotionId && item.descontoPercentual === nextPercentage
-      ) return item;
-      return {
-        ...item,
-        preco: nextPrice,
-        precoOriginal: nextOriginal,
-        promocaoId: nextPromotionId,
-        descontoPercentual: nextPercentage,
-      };
-    }));
-  }, [products, promotions, setCart]);
+    setCart(current => repriceCart(current, products, promotions, promotionNow));
+  }, [products, promotions, promotionNow, setCart]);
 
   React.useEffect(() => {
     if (slides.length <= 1) {
@@ -467,6 +460,7 @@ export default function Home({
       const checkoutResult = await createHostedCheckout({
         items: cart.map(item => ({
           productId: item.productId,
+          expectedUnitAmountCents: parseMoneyToCents(item.preco),
           quantidade: item.quantidade,
           selecoes: item.selecoes,
           arquivoPath: item.arquivoPath || '',
@@ -504,6 +498,9 @@ export default function Home({
       else window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
       if (error instanceof CheckoutApiError && error.code?.startsWith('SHIPPING_')) setShippingInfo(null);
+      if (error instanceof CheckoutApiError && error.code === 'PRICE_CHANGED') {
+        setCart(current => repriceCart(current, products, promotions, Date.now()));
+      }
       console.error('Checkout error:', error);
       setNotice({
         type: 'error',
@@ -703,11 +700,12 @@ export default function Home({
           {contacts.map(contact => <a key={contact.id} href={contactHref(contact)} target={contact.type === 'whatsapp' ? '_blank' : undefined} rel="noopener noreferrer" aria-label={`${contact.label}: ${contact.value}`} className="flex items-center gap-2 break-all font-bold transition-colors hover:text-pink-100">{contact.type === 'email' ? <Mail size={14} /> : <Phone size={14} />} {contact.value}</a>)}
         </div>
         <div className="flex flex-wrap justify-end gap-x-8 gap-y-2 items-center">
-          {isAdmin && (
+          {canAccessPanel && (
             <Link to="/admin" className="hover:text-pink-100 flex items-center gap-2 transition-colors font-bold">
               <Settings size={14} /> Área Admin
             </Link>
           )}
+          {!canAccessPanel && panelAccessNeedsCheck && <Link to="/admin" className="flex items-center gap-2 font-bold hover:text-pink-100"><Settings size={14} />Verificar acesso</Link>}
           {user && (
             <button type="button" onClick={openOrders} className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold">
               <Package size={14} /> Meus Pedidos
@@ -976,6 +974,7 @@ export default function Home({
       </section>}
 
       {/* Main Content */}
+      <FlashOffers products={products} promotions={promotions} now={promotionNow} />
       <main id="produtos" className="max-w-7xl mx-auto px-4 md:px-12 py-16 flex flex-col md:flex-row gap-12">
         {/* Sidebar */}
         <aside className="w-full md:w-72 flex-shrink-0">
@@ -1466,9 +1465,9 @@ export default function Home({
           </Modal>
         )}
 
-        {isOrdersOpen && (
-          <Modal title="Meus Pedidos" onClose={() => setIsOrdersOpen(false)}>
-            {!ordersReady ? (
+        {(isOrdersOpen || detailOrder) && (
+          <Modal title={detailOrder ? `Detalhes do pedido ${detailOrder.id}` : 'Meus Pedidos'} onClose={() => { if (detailOrder) { setDetailOrderId(null); setIsOrdersOpen(true); } else setIsOrdersOpen(false); }}>
+            {detailOrder ? <CustomerOrderDetails order={detailOrder} /> : !ordersReady ? (
               <div className="py-12 text-center text-gray-500" role="status"><Loader2 className="mx-auto mb-3 animate-spin text-pink-500" /> Carregando pedidos...</div>
             ) : ordersError ? (
               <div className="py-12 text-center text-red-600" role="alert">{ordersError}</div>
@@ -1563,6 +1562,7 @@ export default function Home({
                       <span className="text-sm font-black text-gray-900 uppercase tracking-widest">Total</span>
                       <span className="text-lg font-black text-pink-500">{formatMoney(order.total)}</span>
                     </div>
+                    <button type="button" onClick={() => { setIsOrdersOpen(false); setDetailOrderId(order.id); }} className="w-full rounded-xl border border-purple-200 px-4 py-3 text-xs font-bold text-purple-600">Ver detalhes do pedido {order.id}</button>
                     {order.paymentStatus !== 'pago' &&
                       trustedStoredPaymentLink(order.pagbankPayUrl) &&
                       (!order.checkoutExpiresAt || Date.parse(order.checkoutExpiresAt) > Date.now()) && (
@@ -1635,6 +1635,7 @@ export default function Home({
 }
 
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  const closeAction = React.useRef(onClose); closeAction.current = onClose;
   const titleId = React.useId();
   const dialogRef = React.useRef<HTMLDivElement>(null);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -1648,7 +1649,7 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        closeAction.current();
         return;
       }
 

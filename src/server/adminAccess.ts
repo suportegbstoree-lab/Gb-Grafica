@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { STAFF_ACCESS_COLLECTION, STAFF_EPOCH_CLAIM, STAFF_ROLE_CLAIM, isStaffRoleId } from '../lib/staffAccess.js';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { getAdminServices } from './firebaseAdmin.js';
 import { ADMIN_ACCESS_COLLECTION, ADMIN_EPOCH_CLAIM, validAdminAccessRecord, type AdminAccessRecord } from '../lib/adminAccess.js';
@@ -13,6 +14,7 @@ export interface AdminAccessStore {
   write(uid: string, record: AdminAccessRecord, expected?: string | null): Promise<void>;
 }
 export interface AdminAccessBackend {
+  closeStaffAccess?(uid: string): Promise<void>;
   stores: AdminAccessStore[];
   getAccount(uid: string): Promise<AdminAccount>;
   getProfileRole(uid: string): Promise<unknown>;
@@ -51,6 +53,18 @@ export function createAdminAccessBackend(): AdminAccessBackend {
   if (db.databaseId !== '(default)') stores.push(firestoreAdminAccessStore(getFirestore(app)));
   return {
     stores,
+    async closeStaffAccess(uid) {
+      const failures: string[] = [];
+      for (const target of db.databaseId === '(default)' ? [db] : [db, getFirestore(app)]) {
+        try {
+          const ref = target.collection(STAFF_ACCESS_COLLECTION).doc(uid);
+          const current = (await ref.get()).data();
+          await ref.set({ schemaVersion: 1, enabled: false, epoch: randomBytes(16).toString('hex'),
+            roleId: isStaffRoleId(current?.roleId) ? current.roleId : 'designer', updatedAt: new Date().toISOString(), updatedBy: 'admin-access' });
+        } catch { failures.push(target.databaseId); }
+      }
+      if (failures.length) throw new Error(`Staff revocation incomplete (${failures.join(', ')}). Retry and verify both databases.`);
+    },
     getAccount: uid => auth.getUser(uid),
     getProfileRole: async uid => (await db.collection('users').doc(uid).get()).data()?.role,
     setClaims: (uid, claims) => auth.setCustomUserClaims(uid, claims),
@@ -73,6 +87,7 @@ const accountMissing = (error: unknown) => (error as { code?: unknown })?.code =
 export async function grantAdminAccess(backend: AdminAccessBackend, uid: string): Promise<void> {
   const account = await backend.getAccount(uid);
   if (account.disabled || !account.email) throw new Error('Cannot grant admin access to a disabled account or an account without email.');
+  await backend.closeStaffAccess?.(uid);
   const previous: Array<AdminAccessRecord | null> = [];
   for (const store of backend.stores) previous.push(await store.read(uid));
   const closed = record(false);
@@ -81,7 +96,9 @@ export async function grantAdminAccess(backend: AdminAccessBackend, uid: string)
     const current = await backend.getAccount(uid);
     if (current.disabled) throw new Error('Account disabled during authorization.');
     await backend.setProfile(uid, account.email, 'admin');
-    await backend.setClaims(uid, { ...current.customClaims, admin: true, [ADMIN_EPOCH_CLAIM]: closed.epoch });
+    const claims = { ...current.customClaims, admin: true, [ADMIN_EPOCH_CLAIM]: closed.epoch };
+    delete claims[STAFF_EPOCH_CLAIM]; delete claims[STAFF_ROLE_CLAIM];
+    await backend.setClaims(uid, claims);
     // Primary database first: a concurrent revocation stops activation of Storage.
     for (const store of backend.stores) await store.write(uid, { ...closed, enabled: true }, closed.epoch);
   } catch (error) {
@@ -99,6 +116,7 @@ export async function grantAdminAccess(backend: AdminAccessBackend, uid: string)
 export async function revokeAdminAccess(backend: AdminAccessBackend, uid: string): Promise<void> {
   const closed = record(false);
   const failures: string[] = [];
+  try { await backend.closeStaffAccess?.(uid); } catch { failures.push('staff-registry'); }
   for (const store of backend.stores) {
     try { await store.write(uid, closed); } catch { failures.push(`registry:${store.name}`); }
   }
@@ -107,6 +125,7 @@ export async function revokeAdminAccess(backend: AdminAccessBackend, uid: string
     const current = await backend.getAccount(uid);
     const claims = { ...current.customClaims, admin: false };
     delete claims[ADMIN_EPOCH_CLAIM];
+    delete claims[STAFF_EPOCH_CLAIM]; delete claims[STAFF_ROLE_CLAIM];
     await backend.setClaims(uid, claims);
   } catch (error) { if (!accountMissing(error)) failures.push('claims'); }
   try { await backend.revokeSessions(uid); } catch (error) { if (!accountMissing(error)) failures.push('sessions'); }

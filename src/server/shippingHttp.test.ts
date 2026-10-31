@@ -57,7 +57,7 @@ before(async () => {
     assert.equal(checkRevoked, true);
     return { uid, sub: uid, email: 'comprador@example.test', name: 'Cliente Teste' } as unknown as DecodedIdToken;
   });
-  mock.method(db, 'collection', ((name: string) => ({ doc: (id: string) => ref(`${name}/${id}`), get: async () => ({ docs: [] }) })) as unknown as typeof db.collection);
+  mock.method(db, 'collection', ((name: string) => ({ doc: (id: string) => ref(`${name}/${id}`), get: async () => ({ docs: [...docs.entries()].filter(([path]) => path.startsWith(`${name}/`) && path.split('/').length === 2).map(([path, data]) => ({ id: path.split('/')[1], data: () => data })) }) })) as unknown as typeof db.collection);
   mock.method(db, 'runTransaction', (async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx)) as unknown as typeof db.runTransaction);
   mock.method(db, 'batch', (() => {
     const writes: Array<[Ref, Record<string, unknown>]> = [];
@@ -189,4 +189,14 @@ test('HTTP: produto sem peso não recebe frete fictício; retirada continua func
   const pickup = await checkout({ deliveryMethod: 'retirada' });
   assert.equal(pickup.status, 201, await pickup.clone().text());
   assert.equal(pagbankBodies[0].shipping, undefined);
+});
+
+
+test('HTTP: expired flash promotion or stale displayed price blocks checkout before payment creation', async () => {
+  docs.set('promocoes/flash', { ativa: true, relampago: true, startsAt: Date.now() - 120_000, endsAt: Date.now() - 1, alvoTipo: 'produto', alvoId: 'produto', descontoTipo: 'percentual', descontoPercentual: 20 });
+  const stale = await checkout({ deliveryMethod: 'retirada', items: [{ ...items[0], expectedUnitAmountCents: 800 }] });
+  assert.equal(stale.status, 409); assert.equal((await stale.json()).code, 'PRICE_CHANGED'); assert.equal(pagbankBodies.length, 0);
+  uid += '-fresh';
+  const fresh = await checkout({ deliveryMethod: 'retirada', items: [{ ...items[0], expectedUnitAmountCents: 1000 }] });
+  assert.equal(fresh.status, 201, await fresh.clone().text()); assert.equal(pagbankBodies.length, 1);
 });
