@@ -1,4 +1,4 @@
-import { validAlphabet, type DecorativeAlphabet } from './decorativeInitial';
+import { validAlphabet, type DecorativeAlphabet } from './decorativeInitial.js';
 export interface ProductPdfTemplate {
   alphabet?: DecorativeAlphabet;
   id: string;
