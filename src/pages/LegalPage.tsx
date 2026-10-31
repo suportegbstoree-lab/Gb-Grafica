@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import type { SiteConfig } from '../types';
 import {
   LEGAL_EFFECTIVE_DATE,
+  PRIVACY_EFFECTIVE_DATE,
   LEGAL_ROUTES,
   type LegalDocumentId,
   missingLegalBusinessFields,
@@ -125,7 +126,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
               <li>itens do pedido, personalizações, histórico de pagamento e andamento da produção;</li>
               <li>arquivos de arte, nomes de arquivo e metadados necessários à produção;</li>
               <li>registros técnicos de acesso, segurança, prevenção a fraude, rate limit e funcionamento da aplicação;</li>
-              <li>mensagens e solicitações enviadas aos canais de atendimento.</li>
+              <li>mensagens e solicitações enviadas aos canais de atendimento;</li>
+              <li>preferências de e-mail e registros de autorização ou descadastro de mensagens opcionais.</li>
             </ul>
           ),
         },
@@ -143,6 +145,12 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
                 falhas e proteção da loja e de seus clientes. Consentimento será solicitado separadamente quando ele
                 for a base legal adequada, sem autorizações genéricas ou presumidas.
               </p>
+              <p>
+                Avisos de boas-vindas, confirmação da compra e andamento de pedidos são enviados para apoiar o uso da
+                conta e o atendimento da compra. Promoções e novidades são opcionais e dependem de autorização separada
+                nas preferências de e-mail. Você pode retirar essa autorização pela loja ou pelo link de descadastro
+                das mensagens, sem perder o acesso à conta ou aos avisos dos seus pedidos.
+              </p>
             </div>
           ),
         },
@@ -155,6 +163,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
                 <li>Google Firebase, para autenticação, banco de dados e armazenamento privado de artes;</li>
                 <li>Vercel, para hospedagem e execução da aplicação;</li>
                 <li>PagBank, para criação, processamento e confirmação do pagamento;</li>
+                <li>Resend, para envio dos e-mails autorizados e dos avisos de conta e pedidos;</li>
                 <li>transportadoras ou serviços de frete, quando houver entrega;</li>
                 <li>autoridades públicas, quando houver obrigação legal ou ordem válida.</li>
               </ul>
@@ -653,7 +662,7 @@ export default function LegalPage({ documentId, config }: LegalPageProps) {
         <article className="min-w-0">
           <div className="mb-10">
             <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-pink-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-pink-600">
-              <ShieldCheck size={14} /> Vigente desde {LEGAL_EFFECTIVE_DATE}
+              <ShieldCheck size={14} /> Vigente desde {documentId === 'privacy' ? PRIVACY_EFFECTIVE_DATE : LEGAL_EFFECTIVE_DATE}
             </div>
             <h1 className="text-3xl font-black tracking-tight text-gray-950 md:text-5xl">{legalDocument.title}</h1>
             <p className="mt-4 max-w-3xl text-base leading-relaxed text-gray-500">{legalDocument.description}</p>

@@ -1,10 +1,13 @@
+import { createEmailRouters } from './emailRouter.js';
+import { queueOrderStatusEmail, sendLatestOrderEmail } from './customerEmails.js';
+import { dispatchCustomerEmails } from './emailCampaigns.js';
 import { recordStaffActivity } from './staffActivity.js';
 import { createCatalogManagementRouter } from './catalogManagement.js';
 import { staffRoleName, validStaffName } from '../lib/staffAccess.js';
 import { resolveOrderInitial } from './decorativeInitial.js';
 import { isAlphabetImagePath } from '../lib/decorativeInitial.js';
 import { createOperationsRouter } from './operationsRouter.js';
-import { createOrderWithDocuments, processOrderEmails, sendOrderEmail } from './orderDocuments.js';
+import { createOrderWithDocuments, sendOrderEmail } from './orderDocuments.js';
 import { pendingBackPdf, templateArtwork } from './pdfTemplates.js';
 import { isTemplatePath } from '../lib/pdfTemplate.js';
 import { validTrackingCode } from '../lib/tracking.js';
@@ -325,7 +328,7 @@ app.use(cors({
 }));
 
 app.use('/api', (req, res, next) => {
-	if (['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is(['application/json', 'application/*+json'])) {
+	if (req.path !== '/email/unsubscribe' && ['POST', 'PUT', 'PATCH'].includes(req.method) && !req.is(['application/json', 'application/*+json'])) {
 		sendError(res, new HttpError(415, 'Envie o corpo da requisição em JSON.', 'UNSUPPORTED_MEDIA_TYPE'));
 		return;
 	}
@@ -1211,11 +1214,13 @@ async function reconcileStoredOrderPayment(
 		if (!transition) return;
 		const update = paymentUpdateFromEvent(currentOrder, event, eventAt, transition);
 		transaction.set(orderRef, update, { merge: true });
+		queueOrderStatusEmail(transaction, db, orderId, currentOrder, update);
 		paymentStatus = transition.paymentStatus;
 		pagbankStatus = event.providerStatus;
 		reconciled = true;
 	});
 
+	if (reconciled) await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
 	return { paymentStatus, pagbankStatus, reconciled, providerEvent: event };
 }
 
@@ -2163,8 +2168,10 @@ async function performOrderOperation(req: express.Request, res: express.Response
       transaction.set(orderRef, { fulfillmentStatus: target, status: legacyStatusForFulfillment(target), fulfillmentUpdatedAt: timestamp }, { merge: true });
       transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'fulfillment_status_changed', from: current, to: target, actorUid: firebaseUser.uid, createdAt: timestamp });
     }
+    if (target !== current || updateTracking) queueOrderStatusEmail(transaction, db, orderId, order, { fulfillmentStatus: target, ...(updateTracking ? { tracking: { code: trackingCode } } : {}) });
     if (labelRef) transaction.create(labelRef, { schemaVersion: 1, requestId, fingerprint, actorUid: firebaseUser.uid, createdAt: timestamp });
   });
+  await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
   if (pdf) {
     res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="etiqueta-${orderId}.pdf"`, 'Cache-Control': 'private, no-store' });
     res.send(Buffer.from(pdf));
@@ -2231,7 +2238,9 @@ app.post('/api/admin/orders/:orderId/tracking/refresh', requireAppCheck, async (
     const { db } = getAdminServices();
     enforceRateLimit(`tracking:${actor.uid}`, 6, 60_000);
     await enforceDistributedRateLimit(db, `tracking-order:${orderId}`, 1, 60_000);
-    res.json({ tracking: await syncCorreiosTracking(db, orderId, (id, order) => verifyOperationalPayment(db, id, order, res)) });
+    const tracking = await syncCorreiosTracking(db, orderId, (id, order) => verifyOperationalPayment(db, id, order, res));
+    await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
+    res.json({ tracking });
   } catch (error) { sendError(res, error instanceof CorreiosError ? new HttpError(error.status, error.message, error.code) : error); }
 });
 
@@ -2240,10 +2249,10 @@ app.get('/api/internal/maintenance', async (req, res) => {
     if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
-    const [expiredPromotions, tracking, orderEmails] = await Promise.all([
-      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), processOrderEmails(db),
+    const [expiredPromotions, tracking, customerEmails] = await Promise.all([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),
     ]);
-    res.json({ expiredPromotions, tracking, orderEmails });
+    res.json({ expiredPromotions, tracking, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 
@@ -2493,8 +2502,10 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 			if (!transition) return;
 			const update = paymentUpdateFromEvent(currentOrder, event, new Date().toISOString(), transition);
 			transaction.set(orderRef, update, { merge: true });
+		queueOrderStatusEmail(transaction, db, event.referenceId, currentOrder, update);
 		});
 
+		if (applied) await sendLatestOrderEmail(db, getAdminServices().auth, event.referenceId).catch(() => undefined);
 		const webhookResponseBody = { received: true, duplicate, applied };
 		try {
 			const webhookUrl = `${getPublicAppUrl(req)}/api/webhook/pagbank`;
@@ -2543,6 +2554,14 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 		});
 		sendError(res, new HttpError(500, 'Erro ao processar notificação.', 'WEBHOOK_PROCESSING_FAILED'));
 	}
+});
+
+const emailRouters = createEmailRouters({ services: getAdminServices, user: requireFirebaseUser, manage: req => requirePermissionUser(req, 'emails.manage'), appCheck: requireAppCheck, limit: enforceRateLimit });
+app.use('/api/email', emailRouters.customer);
+app.use('/api/admin/email', emailRouters.admin);
+app.get('/api/internal/email-dispatch', async (req, res) => {
+  try { if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.'); const { db, auth } = getAdminServices(); res.json(await dispatchCustomerEmails(db, auth)); }
+  catch (error) { sendError(res, error); }
 });
 
 app.use('/api/admin/catalog', requireAppCheck, createCatalogManagementRouter({ services: getAdminServices, authorize: async req => {

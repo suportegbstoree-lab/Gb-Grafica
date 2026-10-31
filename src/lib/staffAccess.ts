@@ -4,6 +4,7 @@ export const STAFF_EPOCH_CLAIM = 'gbStaffEpoch';
 export const STAFF_ROLE_CLAIM = 'staffRole';
 
 export const STAFF_PERMISSIONS = [
+  { id: 'emails.manage', label: 'Gerenciar campanhas e fila de e-mails' },
   { id: 'operations.manage', label: 'Gerenciar produção e relatórios operacionais' },
   { id: 'products.manage', label: 'Criar, editar e excluir produtos' },
   { id: 'products.images', label: 'Alterar imagens dos produtos' },

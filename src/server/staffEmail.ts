@@ -5,7 +5,7 @@ import { STAFF_ROLE_LABELS, isStaffRoleId, type AssignedRole } from '../lib/staf
 export const STAFF_EMAIL_COLLECTION = '_staffNotifications';
 export type StaffEmailStatus = 'accepted' | 'pending' | 'not_configured';
 export function staffEmailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY?.trim() && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(process.env.STAFF_EMAIL_FROM?.trim() || ''));
+  return Boolean(process.env.RESEND_API_KEY?.trim() && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test((process.env.STAFF_EMAIL_FROM || process.env.EMAIL_FROM)?.trim() || ''));
 }
 
 export async function queueStaffEmail(db: Firestore, email: string, role: AssignedRole, roleName = STAFF_ROLE_LABELS[role] || role): Promise<{ id: string; status: StaffEmailStatus }> {
@@ -35,7 +35,7 @@ export async function sendStaffEmail(db: Firestore, id: string, fetcher: typeof 
   try {
     const response = await fetcher('https://api.resend.com/emails', {
       method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY!.trim()}`, 'Content-Type': 'application/json', 'Idempotency-Key': `staff-role-${id}` },
-      body: JSON.stringify({ from: process.env.STAFF_EMAIL_FROM!.trim(), to: [locked.email],
+      body: JSON.stringify({ from: (process.env.STAFF_EMAIL_FROM || process.env.EMAIL_FROM)!.trim(), to: [locked.email],
         subject: 'Sua função na GB Gráfica foi atualizada',
         text: `Sua função foi atualizada para: ${locked.roleName}.\n\n${locked.role === 'none' ? 'Seu acesso ao painel foi removido.' : 'Saia e entre novamente na loja para atualizar sua sessão. As áreas disponíveis dependem das permissões da sua função.'}\n\nSe você não esperava esta alteração, entre em contato com a administração da loja.`,
       }), signal: AbortSignal.timeout(8_000), redirect: 'error',

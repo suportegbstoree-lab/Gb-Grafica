@@ -1,3 +1,4 @@
+import { queueOrderStatusEmail } from './customerEmails.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Firestore } from 'firebase-admin/firestore';
 import type { CorreiosTrackingEvent } from './correiosTrackingResponse.js';
@@ -42,6 +43,7 @@ export async function syncCorreiosTracking(db: Firestore, orderId: string, verif
     if (event.delivered) {
       if (order.paymentStatus !== 'pago' || !verifiedCharge || order.pagbankChargeId !== verifiedCharge || Number(order.pagbankRefundedAmountCents) > 0) throw new CorreiosError(409, 'TRACKING_PAYMENT_CHANGED', 'Confira o estado financeiro antes de concluir a entrega.');
       tracking.deliveredAt = event.at;
+      queueOrderStatusEmail(transaction, db, orderId, order, { tracking, fulfillmentStatus: 'entregue' }, now);
       transaction.set(ref, { tracking, fulfillmentStatus: 'entregue', status: 'Entregue', fulfillmentUpdatedAt: new Date(now).toISOString() }, { merge: true });
       transaction.create(ref.collection('events').doc(randomUUID()), { type: 'correios_delivery_confirmed', code, eventCode: event.code, eventType: event.type, eventAt: event.at, createdAt: new Date(now).toISOString() });
       transaction.delete(job);

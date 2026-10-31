@@ -4,6 +4,7 @@ import { allowedPanelSections, mayEnterPanel, type PanelSection } from './panelA
 import { ALL_STAFF_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, type StaffPermission } from './staffAccess';
 test('each permission exposes only its own administrative section; order artwork/fulfillment alone do not grant order reads', () => {
   const expected: Record<StaffPermission, PanelSection[]> = {
+    'emails.manage': ['email'],
     'operations.manage': ['operations'],
     'products.manage': ['products'], 'products.images': ['products'], 'products.personalization': ['products'],
     'categories.manage': ['categories'], 'promotions.manage': ['promotions'], 'branding.manage': ['branding'],

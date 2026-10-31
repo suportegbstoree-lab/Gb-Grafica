@@ -1,0 +1,47 @@
+import { expect, test } from '@playwright/test';
+test('customer chooses optional email preferences, persists changes and can opt out', async ({ page }) => {
+  await page.goto('/__e2e/store');
+  await page.getByRole('button', { name: 'Preferências de e-mail', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Preferências de e-mail', exact: true });
+  await expect(dialog.getByLabel('Receber promoções', { exact: true })).not.toBeChecked();
+  await expect(dialog.getByLabel('Receber novidades e informativos', { exact: true })).not.toBeChecked();
+  await dialog.getByLabel('Receber promoções', { exact: true }).check();
+  await dialog.getByRole('button', { name: 'Salvar preferências', exact: true }).click();
+  await expect(dialog.getByText('Preferências de e-mail salvas.', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Preferências de e-mail', exact: true }).click();
+  await expect(dialog.getByLabel('Receber promoções', { exact: true })).toBeChecked();
+  await dialog.getByLabel('Receber promoções', { exact: true }).uncheck();
+  await dialog.getByRole('button', { name: 'Salvar preferências', exact: true }).click();
+  await expect(dialog.getByText('Preferências de e-mail salvas.', { exact: true })).toBeVisible();
+});
+test('authorized admin prepares a draft, cancels confirmation, and explicitly confirms a campaign', async ({ page }) => {
+  await page.goto('/admin/email');
+  await expect(page.getByRole('heading', { name: 'E-mails e campanhas', exact: true })).toBeVisible();
+  await page.getByLabel('Tipo de campanha').selectOption('news');
+  await page.getByLabel('Assunto', { exact: true }).fill('Novidades de novembro');
+  await page.getByLabel('Mensagem', { exact: true }).fill('Chegaram novos modelos de cadernos.');
+  await page.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
+  const send = page.getByRole('button', { name: 'Enviar campanha Novidades de novembro', exact: true });
+  await expect(send).toBeVisible(); await send.click();
+  const dialog = page.getByRole('alertdialog', { name: 'Enviar campanha', exact: true });
+  await expect(dialog).toContainText('novidades e informativos');
+  await page.keyboard.press('Escape'); await expect(send).toBeVisible();
+  await send.click(); await dialog.getByRole('button', { name: 'Confirmar envio', exact: true }).click();
+  await expect(page.getByText(/Processamento concluído/)).toBeVisible();
+  await expect(send).toHaveCount(0);
+  await expect(page.getByText(/Aceitos: 1/)).toBeVisible();
+});
+test('campaign permission is independent and the customer settings fit on mobile', async ({ page }) => {
+  await page.goto('/__e2e/admin?role=designer');
+  await expect(page.getByRole('navigation', { name: 'Seções administrativas' }).getByRole('button', { name: 'E-mails', exact: true })).toHaveCount(0);
+  await page.goto('/__e2e/team/admin?permissions=emails.manage');
+  await page.getByRole('button', { name: 'E-mails', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'E-mails e campanhas', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pedidos', exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/__e2e/store');
+  await page.getByRole('button', { name: 'Preferências de e-mail', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Preferências de e-mail', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+});

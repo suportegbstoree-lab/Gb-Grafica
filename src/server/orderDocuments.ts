@@ -73,7 +73,7 @@ export async function sendOrderEmail(
     if (data.lockUntil > now) return { status: "pending" as const };
     const from =
       data.from ||
-      email(process.env.ORDER_EMAIL_FROM || process.env.STAFF_EMAIL_FROM);
+      email(process.env.ORDER_EMAIL_FROM || process.env.EMAIL_FROM || process.env.STAFF_EMAIL_FROM);
     const recipient =
       email(data.recipient) ||
       (data.kind === "merchant" && !data.firstAttemptAt

@@ -1,3 +1,5 @@
+import EmailPreferences from '../components/EmailPreferences';
+import type { EmailApi } from '../services/emailService';
 import { initialReference } from '../lib/decorativeInitial';
 import OrderDocuments from '../components/OrderDocuments';
 import UploadInput from '../components/UploadInput';
@@ -138,6 +140,7 @@ const FIREBASE_PERSONALIZATION_MODEL_STORAGE: PersonalizationModelStorage = {
 };
 
 interface HomeProps {
+  emailApi?: EmailApi;
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
@@ -157,7 +160,7 @@ interface HomeProps {
   orderModelLoader?: typeof loadOrderPersonalizationDocument;
 }
 
-export default function Home({
+export default function Home({ emailApi,
   products,
   config,
   categories,
@@ -183,6 +186,8 @@ export default function Home({
     return () => { viewerRequest.current += 1; };
   }, [user?.uid]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isEmailPreferencesOpen, setIsEmailPreferencesOpen] = useState(false);
+  React.useEffect(() => setIsEmailPreferencesOpen(false), [user?.uid]);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
   const [detailOrderId, setDetailOrderId] = useState<string | null>(null);
   const detailOrder = user && !ordersError ? orders.find(order => order.id === detailOrderId) : undefined;
@@ -716,6 +721,7 @@ export default function Home({
           )}
           <StoreThemeControl />
           {!canAccessPanel && panelAccessNeedsCheck && <Link to="/admin" className="flex items-center gap-2 font-bold hover:text-pink-100"><Settings size={14} />Verificar acesso</Link>}
+          {user && <button type="button" onClick={() => setIsEmailPreferencesOpen(true)} className="flex items-center gap-2 font-bold"><Mail size={14} />Preferências de e-mail</button>}
           {user && (
             <button type="button" onClick={openOrders} className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold">
               <Package size={14} /> Meus Pedidos
@@ -1471,6 +1477,7 @@ export default function Home({
           </Modal>
         )}
 
+        {user && isEmailPreferencesOpen && <Modal title="Preferências de e-mail" onClose={() => setIsEmailPreferencesOpen(false)}><React.Fragment key={user.uid}><EmailPreferences api={emailApi} /></React.Fragment></Modal>}
         {(isOrdersOpen || detailOrder) && (
           <Modal title={detailOrder ? `Detalhes do pedido ${detailOrder.id}` : 'Meus Pedidos'} onClose={() => { if (detailOrder) { setDetailOrderId(null); setIsOrdersOpen(true); } else setIsOrdersOpen(false); }}>
             {detailOrder ? <CustomerOrderDetails order={detailOrder} /> : !ordersReady ? (

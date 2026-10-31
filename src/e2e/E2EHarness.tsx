@@ -1,3 +1,4 @@
+import { fixtureEmailApi } from './emailClient';
 import { operationsFixtureClient } from './operationsClient';
 import { StoreThemeProvider } from '../components/StoreTheme';
 import { pdfPreviewPages } from '../services/pdfPreview';
@@ -184,6 +185,7 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
     <div data-testid="e2e-store">
       <output hidden data-testid="e2e-cart">{JSON.stringify(cart)}</output>
       <Home
+        emailApi={fixtureEmailApi}
         products={products}
         config={config}
         categories={FIXTURE_CATEGORIES}
@@ -320,6 +322,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   return (
     <div data-testid="e2e-admin">
       <Admin
+        emailApi={fixtureEmailApi}
         activityApi={activityApi}
         operationsClient={operationsFixtureClient}
         fullAdmin={permissionOverride === undefined && fixtureRole === 'administrator'}

@@ -1,3 +1,4 @@
+import { prepareEmailSession } from './services/emailService';
 import { mayEnterPanel } from './lib/panelAccess';
 import PanelAccessGate from './components/PanelAccessGate';
 import { LOADING_STAFF_ACCESS, type StaffAccessState, observeStaffAccess } from './services/staffAccessClient';
@@ -104,6 +105,7 @@ export default function App() {
       const current = ++generation;
       stopAuthorization(); stopStaffAuthorization();
       setUser(firebaseUser);
+      if (firebaseUser) void prepareEmailSession(firebaseUser).catch(() => console.warn('[Email] A preparação dos avisos está indisponível.'));
       if ((firebaseUser?.uid || null) !== currentUid) {
         currentUid = firebaseUser?.uid || null;
         adminAllowed = false; staffOrdersAllowed = false;

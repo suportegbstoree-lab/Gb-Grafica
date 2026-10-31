@@ -1,3 +1,5 @@
+import EmailManagement from '../components/EmailManagement';
+import type { EmailApi } from '../services/emailService';
 import { ADMIN_ACTIVITY_API, type AdminActivityApi } from '../services/staffActivityService';
 import { catalogPersistence } from '../services/catalogManagementService';
 import PdfTemplatesEditor from '../components/PdfTemplatesEditor';
@@ -101,6 +103,7 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  emailApi?: EmailApi;
   activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
   orderOperations?: OrderOperationsApi;
@@ -177,7 +180,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({ activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
+export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
   fullAdmin = false,
   permissions = [],
   staffApi = staffAdministrationApi,
@@ -217,6 +220,7 @@ export default function Admin({ activityApi = ADMIN_ACTIVITY_API, operationsClie
     { id: 'branding' as const, label: 'Identidade Visual', icon: Image },
     { id: 'fonts' as const, label: 'Fontes', icon: Type },
     { id: 'config' as const, label: 'Configurações', icon: Settings },
+    { id: 'email' as const, label: 'E-mails', icon: Settings },
     { id: 'staff' as const, label: 'Funcionários', icon: Settings },
   ];
   const allowedTabs = navItems.filter(item => allowedSections.includes(item.id));
@@ -1631,6 +1635,7 @@ export default function Admin({ activityApi = ADMIN_ACTIVITY_API, operationsClie
         )}
 
         {activeTab === 'staff' && fullAdmin && <StaffManagement api={staffApi} />}
+        {activeTab === 'email' && tabAllowed('email') && <EmailManagement api={emailApi} />}
         {allowedTabs.length === 0 && <p role="status">Sua função não possui áreas disponíveis no painel.</p>}
 
         {activeTab === 'promotions' && tabAllowed('promotions') && (

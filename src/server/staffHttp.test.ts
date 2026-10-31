@@ -6,6 +6,7 @@ import { getAuth, type DecodedIdToken, type UserRecord } from 'firebase-admin/au
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import app from './app';
+import { unsubscribeToken } from './emailPreferences';
 import { DEFAULT_ROLE_PERMISSIONS } from '../lib/staffAccess';
 
 const env = { NODE_ENV: 'production', APP_URL: 'https://loja.example.test', LOG_LEVEL: 'silent', FIREBASE_APP_CHECK_MODE: 'off', FIREBASE_FIRESTORE_DATABASE_ID: '(default)', FIREBASE_STORAGE_BUCKET: 'demo-staff.firebasestorage.app', RESEND_API_KEY: '', STAFF_EMAIL_FROM: '' };
@@ -16,7 +17,7 @@ const tokens = new Map<string, Record<string, unknown>>();
 let firebase: App, server: Server, origin = '', count = 0, actor = '', employee = '';
 let transactionTail = Promise.resolve<unknown>(undefined);
 function reference(path: string) {
-  return { path, id: path.split('/').at(-1)!, async get() { const data = docs.get(path); return { exists: Boolean(data), data: () => data }; },
+  return { path, id: path.split('/').at(-1)!, collection: (name: string) => collection(`${path}/${name}`), async get() { const data = docs.get(path); return { exists: Boolean(data), data: () => data }; },
     async set(value: Record<string, unknown>, options?: { merge?: boolean }) { docs.set(path, options?.merge ? { ...docs.get(path), ...value } : { ...value }); },
     async create(value: Record<string, unknown>) { if (docs.has(path)) throw new Error('exists'); docs.set(path, { ...value }); },
     async delete() { docs.delete(path); },
@@ -24,6 +25,7 @@ function reference(path: string) {
 }
 type Ref = ReturnType<typeof reference>;
 const transaction = {
+  create(ref: Ref, data: Record<string, unknown>) { if (docs.has(ref.path)) throw new Error('exists'); docs.set(ref.path, data); },
   get: (ref: Ref) => ref.get(), set(ref: Ref, data: Record<string, unknown>) { docs.set(ref.path, data); },
   update(ref: Ref, data: Record<string, unknown>) { docs.set(ref.path, { ...docs.get(ref.path), ...data }); }, delete(ref: Ref) { docs.delete(ref.path); },
 };
@@ -249,4 +251,24 @@ test('deleted role records do not consume the active role limit', async () => {
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   const overview = await (await call('/admin/staff')).json();
   assert.deepEqual(overview.roles.map((role: any) => role.id).sort(), ['designer', 'new-role', 'product-manager']);
+});
+
+
+test('public one-click unsubscribe accepts the mail form while App Check still protects account preferences', async () => {
+  const secret = process.env.EMAIL_UNSUBSCRIBE_SECRET, mode = process.env.FIREBASE_APP_CHECK_MODE;
+  process.env.EMAIL_UNSUBSCRIBE_SECRET = 'test-only-signing-secret'.repeat(3); process.env.FIREBASE_APP_CHECK_MODE = 'enforce';
+  try {
+    const email = `${employee}@example.test`;
+    docs.set(`_emailPreferences/${employee}`, { uid: employee, email, promotions: true, news: true, revision: 'before' });
+    const token = unsubscribeToken(employee, email);
+    const response = await request(`${origin}/api/email/unsubscribe?token=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' });
+    assert.equal(response.status, 200, await response.text());
+    assert.equal(docs.get(`_emailPreferences/${employee}`)?.promotions, false);
+    assert.equal(docs.get(`_emailPreferences/${employee}`)?.news, false);
+    assert.ok((await call('/email/preferences', 'buyer')).status >= 400);
+    assert.equal((await request(`${origin}/api/admin/staff/assign`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'role=administrator' })).status, 415);
+  } finally {
+    secret === undefined ? delete process.env.EMAIL_UNSUBSCRIBE_SECRET : process.env.EMAIL_UNSUBSCRIBE_SECRET = secret;
+    process.env.FIREBASE_APP_CHECK_MODE = mode;
+  }
 });

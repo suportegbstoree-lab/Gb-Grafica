@@ -167,3 +167,11 @@ test('deleted and pending roles revoke Firestore and Storage access for an uncha
   await seed([['orders/customer-order', { userId: 'designer', total: '20.00', status: 'Pago', itens: [] }]]);
   await assertSucceeds(db.doc('orders/customer-order').get());
 });
+
+test('email preferences, consent history, campaigns and delivery queues cannot be forged by clients', async () => {
+  const db = designer().firestore();
+  for (const name of ['_emailPreferences/designer', '_emailPreferences/designer/consents/forged', '_emailCampaigns/campaign', '_emailOutbox/job', '_emailLocks/dispatch']) {
+    await assertFails(db.doc(name).set({ uid: 'designer', promotions: true, news: true, status: 'pending' }));
+    await assertFails(db.doc(name).get());
+  }
+});
