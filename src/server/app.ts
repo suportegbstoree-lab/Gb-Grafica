@@ -18,7 +18,7 @@ import { isAdminImagePath, isAdminFontPath } from '../lib/adminAsset.js';
 import { isCatalogImagePath } from '../lib/catalogImage.js';
 import type { AdminAccessRecord } from '../lib/adminAccess.js';
 import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
-import { createStaffBackend, assignStaffRole, updateStaffRole, userStaffPermissions, StaffAccessError } from './staffAccess.js';
+import { createStaffBackend, assignStaffRole, updateStaffRole, deleteStaffRole, userStaffPermissions, StaffAccessError } from './staffAccess.js';
 import { grantAdminAccess, revokeAdminAccess, createAdminAccessBackend } from './adminAccess.js';
 import { queueStaffEmail, sendStaffEmail, staffEmailConfigured } from './staffEmail.js';
 import { STAFF_ACCESS_COLLECTION, STAFF_ROLES_COLLECTION, STAFF_ROLE_LABELS, DEFAULT_ROLE_PERMISSIONS, isStaffRoleId, validStaffRole, validStaffAccess, type StaffPermission, type StaffRoleId, type AssignedRole } from '../lib/staffAccess.js';
@@ -1969,10 +1969,10 @@ app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
   try {
     const actor = await requireAdminUser(req), { db, auth } = getAdminServices();
     enforceRateLimit(`staff-list:${actor.uid}`, 30, 60_000);
-    const storedRoles = await db.collection(STAFF_ROLES_COLLECTION).limit(201).get();
-    if (storedRoles.size > 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
+    const storedRoles = await db.collection(STAFF_ROLES_COLLECTION).get();
+    if (storedRoles.docs.filter(doc => doc.data().deleted !== true).length > 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
     const roleMap = new Map(storedRoles.docs.filter(doc => isStaffRoleId(doc.id)).map(doc => [doc.id, doc.data()]));
-    const roleIds = [...new Set(['designer', 'product-manager', ...roleMap.keys()])];
+    const roleIds = [...new Set(['designer', 'product-manager', ...roleMap.keys()])].filter(id => !roleMap.get(id)?.deleted);
     const roles = roleIds.map(id => {
       const data = roleMap.get(id);
       if (data && !validStaffRole(data)) throw new HttpError(409, 'Configuração de cargo inválida.');
@@ -1982,7 +1982,7 @@ app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
       db.collection(STAFF_ACCESS_COLLECTION).limit(201).get(), db.collection(ADMIN_ACCESS_COLLECTION).limit(201).get(),
     ]);
     const active = new Map<string, AssignedRole>();
-    for (const doc of staff.docs) { const data = doc.data(); if (validStaffAccess(data) && data.enabled) active.set(doc.id, data.roleId); }
+    for (const doc of staff.docs) { const data = doc.data(); if (validStaffAccess(data) && data.enabled) active.set(doc.id, roleMap.get(data.roleId)?.deleted || roleMap.get(data.roleId)?.deletionPending ? 'none' : data.roleId); }
     for (const doc of administrators.docs) if (doc.data().enabled === true) active.set(doc.id, 'administrator');
     const ids = [...active.keys()].slice(0, 200);
     const accounts = (await Promise.all([ids.slice(0, 100), ids.slice(100)].filter(batch => batch.length).map(batch => auth.getUsers(batch.map(uid => ({ uid })))))).flatMap(batch => batch.users);
@@ -2001,10 +2001,22 @@ app.post('/api/admin/staff/roles/:roleId', requireAppCheck, async (req, res) => 
     if (!isStaffRoleId(roleId) || !(req.body?.expectedRevision === null || typeof req.body?.expectedRevision === 'string')) throw new HttpError(422, 'Função ou versão inválida.');
     const value = await staffMutation(req, async () => {
       const { db } = getAdminServices();
-      if (!(await db.collection(STAFF_ROLES_COLLECTION).doc(roleId).get()).exists && (await db.collection(STAFF_ROLES_COLLECTION).limit(200).get()).size >= 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
+      if (!(await db.collection(STAFF_ROLES_COLLECTION).doc(roleId).get()).exists && (await db.collection(STAFF_ROLES_COLLECTION).get()).docs.filter(doc => doc.data().deleted !== true).length >= 200) throw new HttpError(422, 'A loja aceita até 200 cargos.');
       return updateStaffRole(createStaffBackend(), roleId, req.body.permissions, req.body.expectedRevision, actor.uid, req.body.name);
     });
     res.json({ id: roleId, configured: true, ...value });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/roles/:roleId/delete', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), roleId = req.params.roleId, expected = req.body?.expectedRevision;
+    const { db } = getAdminServices();
+    enforceRateLimit(`staff-delete-role:${actor.uid}`, 12, 60_000);
+    await enforceDistributedRateLimit(db, `staff-delete-role:${actor.uid}`, 30, 60_000);
+    if (!isStaffRoleId(roleId) || !(expected === null || (typeof expected === 'string' && /^[a-f0-9]{32}$/.test(expected)))) throw new HttpError(422, 'Cargo ou versão inválida.');
+    await staffMutation(req, () => deleteStaffRole(createStaffBackend(), roleId, expected, actor.uid));
+    res.json({ id: roleId, deleted: true });
   } catch (error) { sendStaffError(res, error); }
 });
 

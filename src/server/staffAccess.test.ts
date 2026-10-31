@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assignStaffRole, updateStaffRole, type StaffBackend, type StaffStore } from './staffAccess';
+import { assignStaffRole, updateStaffRole, deleteStaffRole, type StaffBackend, type StaffStore } from './staffAccess';
 import { staffPermissions, DEFAULT_ROLE_PERMISSIONS, type StaffAccessRecord, type StaffRoleRecord } from '../lib/staffAccess';
 
 function fixture() {
@@ -73,4 +73,64 @@ test('custom role policies are mirrored and missing, invalid or administrative r
   for (let i = 0; i < 2; i++) { assert.equal(f.roles[i].get(id)?.name, 'Design Gráfico'); assert.deepEqual(staffPermissions(f.access[i].get('employee'), f.roles[i].get(id), f.account.customClaims), ['products.images']); }
   for (const invalid of ['admin', 'administrator', 'owner', 'constructor', '../role']) await assert.rejects(updateStaffRole(f.backend, invalid, [], null, 'admin', 'Outro'));
   await assert.rejects(updateStaffRole(f.backend, 'other-design', ['invalid.permission'], null, 'admin', 'Outro'));
+});
+
+
+test('deleting an assigned role revokes unchanged tokens in both registries and never deletes the account', async () => {
+  const f = fixture();
+  await assignStaffRole(f.backend, 'employee', 'designer', 'administrator');
+  const claims = { ...f.account.customClaims }, before = structuredClone(f.account);
+  await deleteStaffRole(f.backend, 'designer', f.roles[0].get('designer')!.revision, 'administrator');
+  for (let index = 0; index < 2; index++) {
+    const policy = f.roles[index].get('designer')!;
+    assert.equal(policy.deleted, true); assert.equal(policy.deletionPending, false); assert.equal(policy.enabled, false);
+    assert.deepEqual(policy.permissions, []); assert.equal(policy.updatedBy, 'administrator');
+    assert.deepEqual(staffPermissions(f.access[index].get('employee'), policy, claims), []);
+  }
+  assert.deepEqual(f.account, before, 'customer login and unrelated claims stay intact');
+  await assert.rejects(assignStaffRole(f.backend, 'employee', 'designer', 'administrator'), /excluído/);
+  await assert.rejects(updateStaffRole(f.backend, 'designer', ['products.images'], f.roles[0].get('designer')!.revision, 'administrator'), /excluído/);
+  await updateStaffRole(f.backend, 'new-designer', ['products.images'], null, 'administrator', 'Designer');
+  await assignStaffRole(f.backend, 'employee', 'new-designer', 'administrator');
+  assert.deepEqual(staffPermissions(f.access[0].get('employee'), f.roles[0].get('new-designer'), claims), [], 'a new role with the same label does not revive old tokens');
+});
+
+test('deletion protects administrators, requires the current revision and can remove an unconfigured default role', async () => {
+  const f = fixture();
+  await updateStaffRole(f.backend, 'custom-role', [], null, 'admin', 'Temporário');
+  const before = structuredClone(f.roles[0].get('custom-role'));
+  await assert.rejects(deleteStaffRole(f.backend, 'custom-role', 'f'.repeat(32), 'admin'), (error: any) => error.status === 409);
+  assert.deepEqual(f.roles[0].get('custom-role'), before);
+  for (const id of ['administrator', 'admin', 'owner']) await assert.rejects(deleteStaffRole(f.backend, id, null, 'admin'), (error: any) => error.status === 422);
+  await assert.rejects(deleteStaffRole(f.backend, 'missing-role', null, 'admin'), (error: any) => error.status === 404);
+  await deleteStaffRole(f.backend, 'product-manager', null, 'admin');
+  assert.ok(f.roles.every(map => map.get('product-manager')?.deleted));
+  await assert.rejects(assignStaffRole(f.backend, 'employee', 'product-manager', 'admin'), /excluído/);
+});
+
+test('a mirror failure keeps a pending deletion visible and retry closes every mirror without reopening it', async () => {
+  const f = fixture(); await assignStaffRole(f.backend, 'employee', 'designer', 'admin');
+  const revision = f.roles[0].get('designer')!.revision, write = f.backend.stores[1].writeRole;
+  f.backend.stores[1].writeRole = async () => { throw new Error('Mirror unavailable'); };
+  await assert.rejects(deleteStaffRole(f.backend, 'designer', revision, 'admin'), (error: any) => error.status === 503);
+  assert.equal(f.roles[0].get('designer')?.deletionPending, true);
+  assert.equal(f.roles[0].get('designer')?.deleted, undefined);
+  await assert.rejects(updateStaffRole(f.backend, 'designer', ['products.images'], f.roles[0].get('designer')!.revision, 'admin'), /excluído/);
+  f.backend.stores[1].writeRole = write;
+  await deleteStaffRole(f.backend, 'designer', f.roles[0].get('designer')!.revision, 'admin');
+  assert.ok(f.roles.every(map => map.get('designer')?.deleted && !map.get('designer')?.enabled));
+});
+
+test('failure finalizing the primary deletion leaves all access closed and the operation can be resumed', async () => {
+  const f = fixture(); await assignStaffRole(f.backend, 'employee', 'designer', 'admin');
+  const claims = { ...f.account.customClaims }, write = f.backend.stores[0].writeRole;
+  f.backend.stores[0].writeRole = async (id, value, expected) => { if (value.deleted) throw new Error('Primary unavailable'); await write(id, value, expected); };
+  await assert.rejects(deleteStaffRole(f.backend, 'designer', f.roles[0].get('designer')!.revision, 'admin'), (error: any) => error.status === 503);
+  assert.equal(f.roles[0].get('designer')?.deletionPending, true);
+  assert.equal(f.roles[1].get('designer')?.deleted, true);
+  for (let index = 0; index < 2; index++) assert.deepEqual(staffPermissions(f.access[index].get('employee'), f.roles[index].get('designer'), claims), []);
+  await assert.rejects(assignStaffRole(f.backend, 'employee', 'designer', 'admin'), /excluído/);
+  f.backend.stores[0].writeRole = write;
+  await deleteStaffRole(f.backend, 'designer', f.roles[0].get('designer')!.revision, 'admin');
+  assert.ok(f.roles.every(map => map.get('designer')?.deleted));
 });

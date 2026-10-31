@@ -204,3 +204,49 @@ test('staff order consultations and artwork exports feed activity; unpermitted o
   assert.equal(events.length, 2); assert.ok(events.every(event => event.actor === employee && event.actorName === 'Designer da Equipe'));
   assert.deepEqual(events.map(event => event.action), ['order.viewed', 'artwork.exported']);
 });
+
+
+test('only a full administrator can delete a role and its members lose API access with the same token', async () => {
+  assert.equal((await assign()).status, 200);
+  const claims = structuredClone(accounts.get(employee)!.customClaims), revision = docs.get('_staffRoles/designer')!.revision;
+  tokens.set('designer', { uid: employee, ...claims });
+  assert.equal((await call('/admin/activity/orders', 'designer', {})).status, 200);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'designer', { expectedRevision: revision })).status, 403);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'buyer', { expectedRevision: revision })).status, 403);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'bad', { expectedRevision: revision })).status, 401);
+  assert.equal(docs.get('_staffRoles/designer')!.enabled, true);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'admin', { expectedRevision: 'f'.repeat(32) })).status, 409);
+  docs.set(`_staffProfiles/${employee}`, { name: 'Nome preservado' });
+  const response = await call('/admin/staff/roles/designer/delete', 'admin', { expectedRevision: revision });
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  assert.equal((await call('/admin/activity/orders', 'designer', {})).status, 403);
+  assert.deepEqual(accounts.get(employee)!.customClaims, claims); assert.equal(accounts.get(employee)!.disabled, false);
+  assert.equal(docs.get(`_staffProfiles/${employee}`)?.name, 'Nome preservado');
+  const overview = await (await call('/admin/staff')).json();
+  assert.ok(!overview.roles.some((role: any) => role.id === 'designer'));
+  assert.equal(overview.members.find((member: any) => member.uid === employee)?.role, 'none');
+  assert.equal((await assign()).status, 409);
+  const deleted = docs.get('_staffRoles/designer')!;
+  assert.equal((await call('/admin/staff/roles/designer', 'admin', { name: 'Restaurado', permissions: ['orders.read'], expectedRevision: deleted.revision })).status, 409);
+  assert.equal(docs.get('_staffRoles/designer')!.deleted, true);
+  assert.equal(accounts.get(actor)!.customClaims.admin, true);
+});
+
+test('role deletion validates its target/version and deleted default roles do not reappear', async () => {
+  assert.equal((await call('/admin/staff/roles/administrator/delete', 'admin', { expectedRevision: null })).status, 422);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'admin', {})).status, 422);
+  assert.equal((await call('/admin/staff/roles/designer/delete', 'admin', { expectedRevision: 'invalid' })).status, 422);
+  assert.equal((await call('/admin/staff/roles/missing-role/delete', 'admin', { expectedRevision: null })).status, 404);
+  assert.equal((await call('/admin/staff/roles/product-manager/delete', 'admin', { expectedRevision: null })).status, 200);
+  const overview = await (await call('/admin/staff')).json();
+  assert.ok(!overview.roles.some((role: any) => role.id === 'product-manager'));
+  assert.equal((await assign('product-manager')).status, 409);
+});
+
+test('deleted role records do not consume the active role limit', async () => {
+  for (let index = 0; index < 200; index++) docs.set(`_staffRoles/old-role-${index}`, { schemaVersion: 1, name: 'Excluído', enabled: false, permissions: [], revision: 'a'.repeat(32), deleted: true });
+  const response = await call('/admin/staff/roles/new-role', 'admin', { name: 'Novo cargo', permissions: ['products.images'], expectedRevision: null });
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
+  const overview = await (await call('/admin/staff')).json();
+  assert.deepEqual(overview.roles.map((role: any) => role.id).sort(), ['designer', 'new-role', 'product-manager']);
+});

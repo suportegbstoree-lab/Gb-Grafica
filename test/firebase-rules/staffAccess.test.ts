@@ -148,3 +148,22 @@ test('PDF originals are private, images accept >5MB and removed operational rele
   await seed([['_staffRoles/designer', { ...policy, enabled: false, permissions: ['operations.manage'] }]]);
   await assertFails(context.storage().ref(releasePath).getDownloadURL());
 });
+
+test('deleted and pending roles revoke Firestore and Storage access for an unchanged session', async () => {
+  const context = designer(), db = context.firestore(), storage = context.storage(), uploaded = path();
+  await assertSucceeds(db.doc('anuncios/product').update({ imagem: '/before-delete.png' }));
+  await assertSucceeds(db.doc('orders/order').get());
+  await assertSucceeds(storage.ref(uploaded).put(new Uint8Array([1]), metadata()));
+  for (const state of [{ deletionPending: true }, { deleted: true, deletionPending: false, deletedAt: new Date().toISOString() }]) {
+    await seed([['_staffRoles/designer', { ...policy, enabled: false, permissions: [], ...state }]]);
+    await assertFails(db.doc('anuncios/product').update({ imagem: '/after-delete.png' }));
+    await assertFails(db.doc('orders/order').get());
+    await assertFails(storage.ref(path()).put(new Uint8Array([1]), metadata()));
+    await assertFails(storage.ref(uploaded).delete());
+    await assertFails(storage.ref('catalog/products/product').listAll());
+    await assertFails(db.doc('_staffRoles/designer').set(policy));
+  }
+  // Deleting a staff role does not remove the person's customer account or order access.
+  await seed([['orders/customer-order', { userId: 'designer', total: '20.00', status: 'Pago', itens: [] }]]);
+  await assertSucceeds(db.doc('orders/customer-order').get());
+});

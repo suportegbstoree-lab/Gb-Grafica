@@ -69,6 +69,7 @@ export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId
   const previous: Array<StaffRoleRecord | null> = [];
   for (const target of backend.stores) previous.push(await target.readRole(roleId));
   if ((previous[0]?.revision ?? null) !== expectedRevision) throw new StaffAccessError(409, 'Esta função mudou. Atualize a lista antes de salvar.');
+  if (previous.some(value => value?.deleted || value?.deletionPending)) throw new StaffAccessError(409, 'Este cargo foi excluído ou está em exclusão. Crie um novo cargo para conceder outras permissões.');
   const label = name === undefined ? staffRoleName(roleId, previous[0] || undefined) : typeof name === 'string' ? name.trim() : '';
   if (['admin', 'administrator', 'administrador'].includes(label.toLowerCase()) || !label || label.length > 80 || /[\x00-\x1f\x7f]/.test(label)) throw new StaffAccessError(422, 'Informe um nome de cargo com até 80 caracteres.');
   const closed: StaffRoleRecord = { name: label, schemaVersion: 1, enabled: false, revision: epoch(), permissions, updatedAt: new Date().toISOString(), updatedBy: actor };
@@ -82,15 +83,40 @@ export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId
   }
 }
 
+/** Retain a disabled policy so neither default roles nor old sessions can resurrect it. */
+export async function deleteStaffRole(backend: StaffBackend, roleId: StaffRoleId, expectedRevision: string | null, actor: string): Promise<void> {
+  if (!isStaffRoleId(roleId)) throw new StaffAccessError(422, 'A função de administrador é protegida.');
+  const previous = await Promise.all(backend.stores.map(target => target.readRole(roleId)));
+  if ((previous[0]?.revision ?? null) !== expectedRevision) throw new StaffAccessError(409, 'Este cargo mudou. Atualize a lista antes de excluir.');
+  if (!previous[0] && !Object.hasOwn(DEFAULT_ROLE_PERMISSIONS, roleId)) throw new StaffAccessError(404, 'Cargo não encontrado.');
+  if (previous.every(value => value?.deleted)) return;
+  const now = new Date().toISOString();
+  const closed: StaffRoleRecord = { schemaVersion: 1, name: staffRoleName(roleId, previous[0] || undefined), enabled: false,
+    permissions: [], revision: epoch(), updatedAt: now, updatedBy: actor, deletionPending: true };
+  // Attempt every mirror even if one write fails; never restore an open policy.
+  let failed = false;
+  for (const [index, target] of backend.stores.entries()) {
+    try { await target.writeRole(roleId, closed, previous[index]?.revision ?? null); }
+    catch { failed = true; }
+  }
+  if (failed) throw new StaffAccessError(503, 'A exclusão não foi concluída em todos os serviços. Atualize a lista e tente novamente.');
+  const deleted: StaffRoleRecord = { ...closed, deletionPending: false, deleted: true, deletedAt: now };
+  try {
+    // Hide the primary entry only after all Storage mirrors have been finalized.
+    for (const target of [...backend.stores.slice(1), backend.stores[0]]) await target.writeRole(roleId, deleted, closed.revision);
+  } catch { throw new StaffAccessError(503, 'A exclusão está pendente. Atualize a lista e tente novamente para concluí-la.'); }
+}
+
 export async function assignStaffRole(backend: StaffBackend, uid: string, roleId: StaffRoleId, actor: string): Promise<{ changed: boolean; record: StaffAccessRecord }> {
   if (await backend.isAdmin(uid)) throw new StaffAccessError(403, 'Administradores não podem ter sua função alterada pelo painel.');
   let account = await backend.getAccount(uid);
   if (account.disabled || !account.email) throw new StaffAccessError(422, 'A conta precisa estar ativa e possuir e-mail.');
   let role = await backend.stores[0].readRole(roleId);
   if (!role) { if (!Object.hasOwn(DEFAULT_ROLE_PERMISSIONS, roleId)) throw new StaffAccessError(422, 'Cadastre o cargo e suas permissões antes de atribuí-lo.'); role = await updateStaffRole(backend, roleId, DEFAULT_ROLE_PERMISSIONS[roleId], null, actor); }
+  if (role.deleted || role.deletionPending) throw new StaffAccessError(409, 'Este cargo foi excluído ou está em exclusão. Selecione outro cargo.');
   if (!role.enabled) throw new StaffAccessError(409, 'A função está bloqueada. Salve suas permissões novamente antes de atribuí-la.');
   const mirrors = await Promise.all(backend.stores.map(target => target.readRole(roleId)));
-  if (mirrors.some(value => !value?.enabled || value.revision !== role!.revision)) throw new StaffAccessError(409, 'As permissões da função não estão sincronizadas nos bancos. Salve-as novamente.');
+  if (mirrors.some(value => !value?.enabled || value.deleted || value.deletionPending || value.revision !== role!.revision)) throw new StaffAccessError(409, 'As permissões da função não estão sincronizadas nos bancos. Salve-as novamente.');
   const wasAdmin = await backend.isAdmin(uid);
   const previous: Array<StaffAccessRecord | null> = [];
   for (const target of backend.stores) previous.push(await target.readAccess(uid));

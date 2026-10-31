@@ -1,0 +1,50 @@
+import { expect, test } from '@playwright/test';
+
+test('role deletion asks for confirmation, removes assignment options and preserves the employee account', async ({ page }) => {
+  await page.goto('/admin/staff');
+  await page.getByLabel('Nome do novo cargo', { exact: true }).fill('Atendimento temporário');
+  await page.getByRole('button', { name: 'Criar cargo', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Atendimento temporário: Consultar pedidos e fichas de produção', exact: true }).check();
+  await page.getByRole('button', { name: 'Salvar permissões de Atendimento temporário', exact: true }).click();
+  await page.getByLabel('Nome do funcionário', { exact: true }).fill('Ana Teste');
+  await page.getByLabel('E-mail cadastrado', { exact: true }).fill('designer@example.com');
+  await page.getByLabel('Função', { exact: true }).selectOption({ label: 'Atendimento temporário' });
+  await page.getByRole('button', { name: 'Aplicar função', exact: true }).click();
+  await expect(page.getByLabel('Função de designer@example.com', { exact: true })).toHaveValue(/role-/);
+  const remove = page.getByRole('button', { name: 'Excluir cargo Atendimento temporário', exact: true });
+  await remove.click();
+  const dialog = page.getByRole('alertdialog', { name: 'Excluir cargo', exact: true });
+  await expect(dialog).toContainText('ficarão sem acesso ao painel');
+  await expect(dialog.getByRole('button', { name: 'Voltar', exact: true })).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(dialog).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await expect(page.getByLabel('Função de designer@example.com', { exact: true })).toHaveValue(/role-/);
+  await remove.click(); await dialog.getByRole('button', { name: 'Excluir cargo', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(remove).toHaveCount(0);
+  await expect(page.getByLabel('Função', { exact: true }).getByRole('option', { name: 'Atendimento temporário', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Função de designer@example.com', { exact: true })).toHaveValue('none');
+  await expect(page.getByLabel('Nome de designer@example.com', { exact: true })).toHaveValue('Ana Teste');
+  await expect(page.getByLabel('Função', { exact: true })).toHaveValue('none');
+  await expect(page.getByLabel('Função de admin@example.com', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Excluir cargo Administrador', exact: true })).toHaveCount(0);
+  await page.getByLabel('Função de designer@example.com', { exact: true }).selectOption('designer');
+  await expect(page.getByLabel('Função de designer@example.com', { exact: true })).toHaveValue('designer');
+});
+
+test('default role deletion works on mobile and can be cancelled without discarding edited permissions', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin/staff');
+  const changed = page.getByRole('checkbox', { name: 'Designer: Gerenciar categorias', exact: true }); await changed.check();
+  const remove = page.getByRole('button', { name: 'Excluir cargo Designer', exact: true });
+  await remove.click();
+  const dialog = page.getByRole('alertdialog', { name: 'Excluir cargo', exact: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+  await dialog.getByRole('button', { name: 'Voltar', exact: true }).click();
+  await expect(changed).toBeChecked();
+  await remove.click(); await dialog.getByRole('button', { name: 'Excluir cargo', exact: true }).click();
+  await expect(remove).toHaveCount(0);
+  await expect(page.getByLabel('Função', { exact: true })).toHaveValue('none');
+  await expect(page.getByRole('button', { name: 'Aplicar função', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Excluir cargo Gestor de Produtos', exact: true })).toBeVisible();
+});

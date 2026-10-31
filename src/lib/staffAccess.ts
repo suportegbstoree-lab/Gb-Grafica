@@ -35,6 +35,7 @@ export interface StaffAccessRecord {
   updatedAt: string; updatedBy: string;
 }
 export interface StaffRoleRecord {
+  deletionPending?: boolean; deleted?: boolean; deletedAt?: string;
   name?: string; schemaVersion: 1; enabled: boolean; revision: string; permissions: StaffPermission[];
   updatedAt: string; updatedBy: string;
 }
@@ -59,7 +60,11 @@ export function validStaffRole(value: unknown): value is StaffRoleRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.schemaVersion === 1 && typeof record.enabled === 'boolean' && typeof record.revision === 'string' &&
-    /^[a-f0-9]{32}$/.test(record.revision) && parseStaffPermissions(record.permissions) !== null && (record.name === undefined || (typeof record.name === 'string' && record.name.trim().length > 0 && record.name.length <= 80));
+    /^[a-f0-9]{32}$/.test(record.revision) && parseStaffPermissions(record.permissions) !== null &&
+    (record.deleted === undefined || typeof record.deleted === 'boolean') &&
+    (record.deletionPending === undefined || typeof record.deletionPending === 'boolean') &&
+    (!(record.deleted || record.deletionPending) || (record.enabled === false && (record.permissions as unknown[]).length === 0)) &&
+    (record.name === undefined || (typeof record.name === 'string' && record.name.trim().length > 0 && record.name.length <= 80));
 }
 export function staffRecordMatches(value: unknown, claims: Record<string, unknown>): value is StaffAccessRecord {
   return claims.admin !== true && validStaffAccess(value) && value.enabled && value.epoch === claims[STAFF_EPOCH_CLAIM] && value.roleId === claims[STAFF_ROLE_CLAIM];

@@ -215,7 +215,12 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const rolePolicies = React.useRef(new Map<StaffRoleId, StaffRoleView>((['designer', 'product-manager'] as const).map(id => [id, { id, schemaVersion: 1, configured: true, enabled: true, revision: (id === 'designer' ? 'a' : 'b').repeat(32), permissions: [...DEFAULT_ROLE_PERMISSIONS[id]], updatedAt: '', updatedBy: '' }])));
   const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', name: 'Administrador Teste', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
   const staffApi = React.useMemo<StaffAdministrationApi>(() => ({
-    async load() { return { roles: structuredClone([...rolePolicies.current.values()]), members: structuredClone(members.current), emailConfigured: false, truncated: false }; },
+    async load() { return { roles: structuredClone([...rolePolicies.current.values()].filter(value => !value.deleted)), members: structuredClone(members.current), emailConfigured: false, truncated: false }; },
+    async deleteRole(id, expectedRevision) {
+      const value = rolePolicies.current.get(id); if (!value || value.revision !== expectedRevision) throw new Error('Este cargo mudou. Atualize a lista antes de excluir.');
+      rolePolicies.current.set(id, { ...value, enabled: false, deleted: true, permissions: [] });
+      members.current = members.current.map(member => member.role === id ? { ...member, role: 'none' } : member);
+    },
     async saveRole(id, permissions, _revision, name) { const value: StaffRoleView = { id, schemaVersion: 1, configured: true, enabled: true, updatedAt: '', updatedBy: '', ...rolePolicies.current.get(id), name, permissions, revision: crypto.randomUUID().replaceAll('-', '') }; rolePolicies.current.set(id, value); return structuredClone(value); },
     async assign(email, role, name) {
       if (!['admin@example.com', 'designer@example.com', 'manager@example.com'].includes(email)) throw new Error('Este e-mail ainda não possui uma conta cadastrada na loja.');
