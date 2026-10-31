@@ -1,4 +1,4 @@
-export const MAX_ARTWORK_BYTES = 15 * 1024 * 1024;
+export const MAX_ARTWORK_BYTES = 50 * 1024 * 1024;
 
 export const ALLOWED_ARTWORK_TYPES = new Set([
   'application/pdf',

@@ -19,7 +19,7 @@ test('designer only sees permitted areas and has a product editor without commer
   const products = JSON.parse(await page.getByTestId('e2e-products').textContent() || '[]');
   const product = products.find((value: { id: string }) => value.id === '1yi50l93z');
   expect(product).toEqual(expect.objectContaining({ nome: 'Carimbo', desc: 'Carimbo personalizado', categoria: 'Personalizados', preco_base: '8,40', tipoInput: 'texto_arte', labelTexto: 'Seu nome' }));
-  expect(product.imagem).toMatch(/^https:\/\/example.com\//);
+  expect(product.imagem).toMatch(/^\/__e2e\/uploads\//);
 });
 
 test('designer can inspect and export artwork but production transitions remain read-only', async ({ page }) => {
@@ -56,8 +56,7 @@ test('administrator assigns registered email, edits role permissions and sees pe
   await page.getByRole('button', { name: 'Salvar permissões de Designer', exact: true }).click();
   await expect(permission).toBeChecked();
   await expect(page.getByRole('button', { name: 'Aplicar função', exact: true })).toBeEnabled();
-  await page.getByLabel('Função de admin@example.com', { exact: true }).selectOption('none');
-  await expect(page.getByRole('alert')).toContainText('Sua própria função administrativa não pode ser removida');
+  await expect(page.getByLabel('Função de admin@example.com', { exact: true })).toBeDisabled();
 });
 
 test('separate branding and font tabs preserve commercial configuration', async ({ page }) => {

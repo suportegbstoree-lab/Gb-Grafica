@@ -4,6 +4,7 @@ export const STAFF_EPOCH_CLAIM = 'gbStaffEpoch';
 export const STAFF_ROLE_CLAIM = 'staffRole';
 
 export const STAFF_PERMISSIONS = [
+  { id: 'operations.manage', label: 'Gerenciar produção, equipamentos e relatórios operacionais' },
   { id: 'products.manage', label: 'Criar, editar e excluir produtos' },
   { id: 'products.images', label: 'Alterar imagens dos produtos' },
   { id: 'products.personalization', label: 'Alterar opções de personalização dos produtos' },
@@ -70,7 +71,7 @@ export function hasStaffPermission(permissions: readonly StaffPermission[], perm
 export function canEditProductImages(permissions: readonly StaffPermission[]): boolean { return permissions.includes('products.manage') || permissions.includes('products.images'); }
 export function canEditProductPersonalization(permissions: readonly StaffPermission[]): boolean { return permissions.includes('products.manage') || permissions.includes('products.personalization'); }
 
-export const PRODUCT_IMAGE_FIELDS = ['imagem', 'imagens'] as const;
+export const PRODUCT_IMAGE_FIELDS = ['imagem', 'imagens', 'imagensPorCombinacao', 'modelosPdf'] as const;
 export const PRODUCT_PERSONALIZATION_FIELDS = ['tipoInput', 'labelTexto', 'printProfile'] as const;
 export const BRANDING_FIELDS = ['logo_url', 'banner_principal', 'banner_titulo', 'banner_subtitulo', 'banner_botao'] as const;
 export const FONTS_FIELDS = ['fontes_personalizacao'] as const;

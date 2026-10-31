@@ -1,3 +1,4 @@
+import UploadInput from './UploadInput';
 import PrintGuides from './PrintGuides';
 import PrintProfileNotice from './PrintProfileNotice';
 import { isInsideSafeArea, printImageQuality, type PrintProfile } from '../lib/printProfile';
@@ -33,6 +34,7 @@ interface TextCustomizationDrawerProps {
   printProfile?: PrintProfile;
   previewImage: string;
   previewSource?: Blob;
+  automaticBack?: Blob | string;
   fieldLabel: string;
   fonts: PersonalizationFont[];
   initialValue: TextCustomization | null;
@@ -51,6 +53,7 @@ export default function TextCustomizationDrawer({
   printProfile,
   previewImage,
   previewSource,
+  automaticBack,
   fieldLabel,
   fonts,
   initialValue,
@@ -138,11 +141,14 @@ export default function TextCustomizationDrawer({
   }, []);
 
   React.useEffect(() => {
-    if (!backDraft.file) { setBackPreview(''); return; }
-    const url = URL.createObjectURL(backDraft.file);
-    setBackPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [backDraft.file]);
+    let cancelled = false; let url = '';
+    const source = backDraft.mode === 'automatic' ? automaticBack || previewSource || previewImage : backDraft.file;
+    setBackPreview('');
+    if (typeof source === 'string') { setBackPreview(source); return; }
+    if (!source) return;
+    void (async () => { const image = source.type === 'application/pdf' ? (await (await import('../services/pdfPreview')).pdfPreviewPages(source))[0] : source; if (!cancelled) { url = URL.createObjectURL(image); setBackPreview(url); } })().catch(reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Não foi possível carregar a contracapa.'); });
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [backDraft.file, backDraft.mode, automaticBack, previewSource, previewImage]);
 
   const activeLine = draft.linhas?.find(line => line.id === selectedId) || draft.linhas?.[0];
   const changePosition = (lineId: string, posicao: { x: number; y: number }) => {
@@ -221,7 +227,7 @@ export default function TextCustomizationDrawer({
         fonts: availableFonts,
       });
       const back = backDraft.mode !== 'none' ? await composePersonalizationModel({
-        source: backDraft.mode === 'custom' ? backDraft.file! : previewSource || previewImage,
+        source: backDraft.mode === 'custom' ? backDraft.file! : automaticBack || previewSource || previewImage,
         fonts: [],
       }) : undefined;
       if (printProfile && [model, ...(back ? [back] : [])].some(face => !printImageQuality(printProfile, face.width, face.height).ratioMatches)) {
@@ -237,7 +243,7 @@ export default function TextCustomizationDrawer({
 
   const previewCustomization = React.useMemo(() => normalizeTextCustomization(draft, availableFonts) || draft, [draft, availableFonts]);
   const isBack = previewFace === 'back' && backDraft.mode !== 'none';
-  const currentSource = isBack && backDraft.mode === 'custom' && backDraft.file ? backDraft.file : previewSource || previewImage;
+  const currentSource = isBack ? (backDraft.mode === 'custom' && backDraft.file ? backDraft.file : automaticBack || previewSource || previewImage) : previewSource || previewImage;
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
@@ -263,18 +269,18 @@ export default function TextCustomizationDrawer({
               <legend className="px-1 text-sm font-bold text-gray-900">Contracapa</legend>
               <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={backDraft.mode !== 'none'} onChange={event => { setError(''); setPreviewFace('front'); setBackDraft(current => ({ ...current, mode: event.target.checked ? 'automatic' : 'none' })); }} />Incluir contracapa</label>
               {backDraft.mode !== 'none' && <>
-                <label className="flex items-start gap-2 text-xs leading-relaxed text-gray-600"><input className="mt-0.5" type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'automatic'} onChange={() => setBackDraft(current => ({ ...current, mode: 'automatic' }))} />Automática: mesma arte da capa, sem o texto personalizado</label>
+                <label className="flex items-start gap-2 text-xs leading-relaxed text-gray-600"><input className="mt-0.5" type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'automatic'} onChange={() => setBackDraft(current => ({ ...current, mode: 'automatic' }))} />{automaticBack ? 'Automática: segunda página do PDF, sem texto personalizado' : 'Automática: mesma arte da capa, sem o texto personalizado'}</label>
                 <label className="flex items-center gap-2 text-xs text-gray-600"><input type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'custom'} onChange={() => setBackDraft(current => ({ ...current, mode: 'custom' }))} />Escolher outra imagem</label>
                 {backDraft.mode === 'custom' && <div className="min-w-0 space-y-2">
                   <div className="text-xs font-bold text-gray-700">Imagem da contracapa</div>
                   <button type="button" onClick={() => backInputRef.current?.click()} className="flex w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-dashed border-pink-300 bg-pink-50 px-4 py-3 text-sm font-bold text-pink-700 transition-colors hover:border-pink-500 hover:bg-pink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400 focus-visible:ring-offset-2 disabled:opacity-40">
                     <Upload size={17} className="shrink-0" /><span className="min-w-0">{backDraft.file ? 'Trocar imagem da contracapa' : 'Selecionar imagem da contracapa'}</span>
                   </button>
-                  <input ref={backInputRef} type="file" aria-label="Imagem da contracapa" accept="image/png,image/jpeg,image/webp" tabIndex={-1} className="sr-only" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; if (!isComposablePersonalizationImage(file.type, file.size)) { setError('Envie uma contracapa JPG, PNG ou WebP de até 15 MB.'); return; } setError(''); setBackDraft({ mode: 'custom', file }); setPreviewFace('back'); }} />
-                  <p className="text-[10px] text-gray-500">JPG, PNG ou WebP de até 15 MB.</p>
+                  <UploadInput ref={backInputRef} originalPdf type="file" aria-label="Imagem da contracapa" accept="application/pdf,image/png,image/jpeg,image/webp" tabIndex={-1} className="sr-only" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; if (file.type !== 'application/pdf' && !isComposablePersonalizationImage(file.type, file.size)) { setError('Envie uma contracapa PDF (primeira página), JPG, PNG ou WebP de até 50 MB.'); return; } setError(''); setBackDraft({ mode: 'custom', file }); setPreviewFace('back'); }} />
+                  <p className="text-[10px] text-gray-500">PDF (primeira página), JPG, PNG ou WebP de até 50 MB.</p>
                 </div>}
                 {backDraft.file && backDraft.mode === 'custom' && <p className="min-w-0 break-words [overflow-wrap:anywhere] text-xs text-gray-500">{backDraft.file.name}</p>}
-                {(backDraft.mode === 'automatic' || backPreview) && <img src={backDraft.mode === 'automatic' ? previewImage : backPreview} alt="Prévia da contracapa" className="max-h-24 w-full rounded-lg bg-gray-50 object-contain" />}
+                {backPreview && <img src={backPreview} alt="Prévia da contracapa" className="max-h-24 w-full rounded-lg bg-gray-50 object-contain" />}
               </>}
             </fieldset>
             {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700">{error}</div>}

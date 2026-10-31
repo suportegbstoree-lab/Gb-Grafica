@@ -1,3 +1,4 @@
+import { validPdfTemplates } from './pdfTemplate';
 import { validPromotionWindow } from './promotions';
 import { parsePrintProfile } from './printProfile';
 import { parseStoreContacts, parseStoreBenefits } from './storePresentation';
@@ -161,6 +162,9 @@ export function validateProductDraft(
   if (combinationKeys.length > ADMIN_LIMITS.combinations) {
     return { ok: false, message: 'Este produto gera combinações demais. Reduza a quantidade de atributos ou opções.' };
   }
+  if (draft.modelosPdf !== undefined && !validPdfTemplates(draft.modelosPdf, draft.id || '', [imagem, ...imagens])) return { ok: false, message: 'Revise as páginas dos modelos PDF e as imagens da galeria.' };
+  const imagensPorCombinacao = draft.imagensPorCombinacao || {};
+  if (typeof imagensPorCombinacao !== 'object' || Array.isArray(imagensPorCombinacao) || Object.entries(imagensPorCombinacao).some(([key, url]) => !combinationKeys.includes(key) || ![imagem, ...imagens].includes(url))) return { ok: false, message: 'Vincule cada combinação a uma imagem da galeria do produto.' };
   const combinacoes = Object.fromEntries(
     combinationKeys.map(key => [key, normalizedText(draft.combinacoes?.[key])]),
   );
@@ -203,6 +207,8 @@ export function validateProductDraft(
       categoria,
       imagem,
       imagens,
+      imagensPorCombinacao,
+      ...(draft.modelosPdf ? { modelosPdf: draft.modelosPdf } : {}),
       preco_base: precoBase,
       atributos,
       combinacoes,
@@ -240,10 +246,13 @@ export function validatePromotionDraft(
   if (draft.alvoTipo !== 'produto' && draft.alvoTipo !== 'categoria') {
     return { ok: false, message: 'Escolha se a promoção será aplicada a um produto ou a uma categoria.' };
   }
-  const target = draft.alvoTipo === 'produto'
-    ? products.find(product => product.id === draft.alvoId)
-    : categories.find(category => category.id === draft.alvoId);
-  if (!target) return { ok: false, message: 'Selecione um produto ou categoria cadastrada para a promoção.' };
+  const ids = draft.alvoIds ?? (draft.alvoId ? [draft.alvoId] : []);
+  if (!Array.isArray(ids) || !ids.length || ids.length > 100 || new Set(ids).size !== ids.length || ids.some(id => typeof id !== 'string')) return { ok: false, message: 'Selecione de 1 a 100 produtos ou categorias distintos.' };
+  const options = draft.alvoTipo === 'produto' ? products : categories;
+  const targets = ids.map(id => options.find(option => option.id === id));
+  if (targets.some(target => !target)) return { ok: false, message: 'Selecione produtos ou categorias cadastrados.' };
+  const target = targets[0]!;
+  const names = targets.map(target => target!.nome);
 
   if (draft.descontoTipo !== 'percentual' && draft.descontoTipo !== 'valor_fixo') {
     return { ok: false, message: 'Escolha o tipo de desconto.' };
@@ -265,8 +274,8 @@ export function validatePromotionDraft(
       return { ok: false, message: 'Informe um valor fixo de desconto válido.' };
     }
     const targetedProducts = draft.alvoTipo === 'produto'
-      ? products.filter(product => product.id === draft.alvoId)
-      : products.filter(product => product.categoria === target.nome);
+      ? products.filter(product => ids.includes(product.id))
+      : products.filter(product => names.includes(product.categoria));
     const configuredPrices = targetedProducts.flatMap(productConfiguredPrices);
     if (configuredPrices.length > 0 && configuredPrices.some(price => value >= price)) {
       return { ok: false, message: 'O desconto fixo precisa ser menor que todos os preços atingidos pela promoção.' };
@@ -284,6 +293,8 @@ export function validatePromotionDraft(
       ativa: draft.ativa ?? true,
       alvoTipo: draft.alvoTipo,
       alvoId: target.id,
+      alvoIds: ids,
+      alvoNomes: names,
       alvoNome: target.nome,
       descontoTipo: draft.descontoTipo,
       ...(descontoPercentual !== undefined ? { descontoPercentual } : {}),

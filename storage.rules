@@ -76,7 +76,7 @@ service firebase.storage {
         request.auth.uid == userId &&
         resource == null &&
         request.resource.size > 0 &&
-        request.resource.size <= 15 * 1024 * 1024 &&
+        request.resource.size <= 50 * 1024 * 1024 &&
         isValidPendingArtwork(fileName, request.resource.contentType) &&
         request.resource.metadata.keys().hasAll(['ownerId', 'kind']) &&
         request.resource.metadata.ownerId == request.auth.uid &&
@@ -86,7 +86,8 @@ service firebase.storage {
     }
 
     match /artworks/{userId}/orders/{allPaths=**} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+      // Originais só pela API de produção; prévias compostas usam URL temporária autenticada.
+      allow read: if false;
       allow write: if false;
     }
 
@@ -97,7 +98,7 @@ service firebase.storage {
       allow create: if canProductImage() &&
         resource == null &&
         request.resource.size > 0 &&
-        request.resource.size <= 8 * 1024 * 1024 &&
+        request.resource.size <= 50 * 1024 * 1024 &&
         isValidCatalogImage(fileName, request.resource.contentType) &&
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
@@ -113,12 +114,24 @@ service firebase.storage {
         isValidAdminOwner(ownerId) &&
         resource == null &&
         request.resource.size > 0 &&
-        request.resource.size <= 8 * 1024 * 1024 &&
+        request.resource.size <= 50 * 1024 * 1024 &&
         isValidCatalogImage(fileName, request.resource.contentType) &&
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
       allow delete: if canScope(scope) && scope in ['categories', 'site', 'promotions'];
+    }
+
+    match /operations/releases/{releaseId}/{fileName} {
+      allow read, delete: if can('operations.manage');
+      allow create: if can('operations.manage') && resource == null && releaseId.matches('^[a-f0-9-]{36}$') && fileName.matches('^[a-f0-9]{32}[.](zip|exe|msi)$') && request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 && request.resource.contentType in ['application/zip', 'application/octet-stream'] && request.resource.metadata.uploadedBy == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /catalog/templates/{productId}/{fileName} {
+      allow read, delete: if (can('products.manage') || can('products.images'));
+      allow create: if (can('products.manage') || can('products.images')) && isValidAdminOwner(productId) && resource == null && request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 && request.resource.contentType == 'application/pdf' && fileName.matches('^[a-f0-9]{32}[.]pdf$') && request.resource.metadata.uploadedBy == request.auth.uid;
+      allow update: if false;
     }
 
     match /catalog/fonts/{fontId}/{fileName} {
@@ -128,7 +141,7 @@ service firebase.storage {
         isValidAdminOwner(fontId) &&
         resource == null &&
         request.resource.size > 0 &&
-        request.resource.size <= 3 * 1024 * 1024 &&
+        request.resource.size <= 16 * 1024 * 1024 &&
         ((request.resource.contentType == 'font/woff2' && fileName.matches('^[a-f0-9]{32}[.]woff2$')) ||
          (request.resource.contentType == 'font/ttf' && fileName.matches('^[a-f0-9]{32}[.]ttf$')) ||
          (request.resource.contentType == 'font/otf' && fileName.matches('^[a-f0-9]{32}[.]otf$'))) &&

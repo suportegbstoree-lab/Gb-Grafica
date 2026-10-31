@@ -11,6 +11,7 @@ import { observeAdminAccess } from './services/adminAccessClient';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import Home from './pages/Home';
+import { StoreThemeProvider } from './components/StoreTheme';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao } from './types';
 import { INITIAL_CONFIG } from './constants';
 import {
@@ -256,6 +257,7 @@ export default function App() {
 
   return (
     <Router>
+      <StoreThemeProvider>
       <PersonalizationFontLoader fonts={config.fontes_personalizacao || []} />
       <Routes>
         <Route
@@ -280,7 +282,28 @@ export default function App() {
           }
         />
         <Route
-          path="/admin"
+          path="/categoria/:categoryId"
+          element={
+            isAuthReady ? <Home
+              products={products}
+              config={config}
+              categories={categories}
+              promotions={promotions}
+              cart={cart}
+              setCart={setCart}
+              orders={orders.filter(order => order.userId === user?.uid)}
+              user={user}
+              canAccessPanel={canAccessPanel}
+              panelAccessNeedsCheck={staffAccessState.assigned && Boolean(staffAccessState.issue)}
+              productsReady={productsReady}
+              productsError={productsError}
+              ordersReady={ordersReady}
+              ordersError={ordersError}
+            /> : <LoadingScreen />
+          }
+        />
+        <Route
+          path="/admin/*"
           element={
             <PanelAccessGate user={user} ready={isAuthReady && (isAdmin || staffAccessState.ready)} allowed={canAccessPanel} issue={staffAccessState.issue} diagnostic={staffAccessState.diagnostic}>
               <Suspense fallback={<LoadingScreen />}>
@@ -308,6 +331,7 @@ export default function App() {
         <Route path={LEGAL_ROUTES.lgpd} element={<LegalRoute documentId="lgpd" config={config} />} />
         <Route path="*" element={<Suspense fallback={<LoadingScreen />}><NotFound /></Suspense>} />
       </Routes>
+      </StoreThemeProvider>
     </Router>
   );
 }

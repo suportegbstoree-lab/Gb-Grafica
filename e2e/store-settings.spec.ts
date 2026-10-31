@@ -26,6 +26,7 @@ test('atendimento aceita somente email e benefícios podem ser removidos, adicio
   await page.goto('/__e2e/admin');
   await page.getByRole('button', { name: 'Configurações', exact: true }).click();
   const contacts = page.getByRole('region', { name: 'Atendimento', exact: true });
+  await expect(contacts).toBeVisible();
   while (await contacts.getByRole('button', { name: /Remover contato/ }).count()) await contacts.getByRole('button', { name: /Remover contato/ }).first().click();
   await contacts.getByRole('button', { name: 'Adicionar meio de contato' }).click();
   await contacts.getByLabel('Tipo do contato 1', { exact: true }).selectOption('email');
@@ -55,6 +56,7 @@ test('remover todos os contatos e benefícios mantém a configuração vazia no 
   await page.getByRole('button', { name: 'Configurações', exact: true }).click();
   for (const sectionName of ['Atendimento', 'Benefícios da loja']) {
     const section = page.getByRole('region', { name: sectionName, exact: true });
+    await expect(section).toBeVisible();
     while (await section.getByRole('button', { name: /^Remover/ }).count()) await section.getByRole('button', { name: /^Remover/ }).first().click();
   }
   await page.getByRole('button', { name: 'Salvar Todas as Configurações', exact: true }).click();

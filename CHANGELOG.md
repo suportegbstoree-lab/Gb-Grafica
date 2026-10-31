@@ -1,3 +1,14 @@
+## 2026-10-31 — Improvements Part 2
+
+- Promoções para vários produtos ou categorias e vitrine única de descontos.
+- Imagem opcional por combinação, páginas de categoria, banner com slide e tema escuro configurável.
+- Lotes, arrastar e soltar, 50 MB para arquivos e 16 MB para fontes; modelos PDF privados com capa, contracapa e exportação de produção.
+- Ficha inicial com Code128, observações e fila de e-mail independente do pagamento/produção.
+- Páginas operacionais nativas com produção manual, gráficos, histórico, CSV, inventário e versões privadas com SHA-256.
+- Contas Admin protegidas contra rebaixamento pelo painel e navegação administrativa por rotas/permissões.
+- Checkout indica e foca campos obrigatórios ausentes.
+- Preservados os TODOs de arte por inicial e migração do provedor de IA.
+
 ## 2026-10-30 — Entrada da equipe e isolamento das seções
 
 - Painel aguarda a primeira política de função antes de decidir o acesso, evitando recusa durante o carregamento.

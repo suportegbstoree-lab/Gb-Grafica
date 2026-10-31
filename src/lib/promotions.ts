@@ -14,9 +14,9 @@ function positiveInteger(value: unknown): number | null {
 
 export function promotionAppliesToProduct(promotion: Promocao, product: Pick<Anuncio, 'id' | 'categoria'>, now = Date.now()): boolean {
   if (!promotionActiveAt(promotion, now)) return false;
-  if (promotion.alvoTipo === 'produto') return promotion.alvoId === product.id;
+  if (promotion.alvoTipo === 'produto') return (promotion.alvoIds || [promotion.alvoId]).includes(product.id);
   if (promotion.alvoTipo === 'categoria') {
-    return Boolean(promotion.alvoNome) && promotion.alvoNome === product.categoria;
+    return (promotion.alvoNomes || [promotion.alvoNome]).includes(product.categoria);
   }
   return false;
 }

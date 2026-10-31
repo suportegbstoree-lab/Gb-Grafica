@@ -49,7 +49,9 @@ test('guia de corte não altera pixels, aprovação é exigida e checkout inclui
   await cart.getByLabel('Telefone para contato').fill('16999376260');
   await cart.getByLabel('Li e aceito as condições da compra.').check();
   const pay = cart.getByRole('button', { name: 'IR PARA O PAGBANK' });
-  await expect(pay).toBeDisabled();
+  await expect(pay).toBeEnabled();
+  await pay.click();
+  await expect(page.getByRole('alert')).toContainText('Confira e aprove a arte');
   await cart.getByLabel('Aprovar arte de Caderno Personalizado', { exact: true }).check();
   await expect(pay).toBeEnabled();
   const request = page.waitForRequest(request => request.url().endsWith('/api/checkout'));

@@ -108,7 +108,7 @@ test('envia 8 MiB por partes, preserva metadados e não expõe a URI de sessão'
 
 test('valida tipo, tamanho, destino e assinatura antes de publicar', async () => {
   const f = fixture();
-  for (const invalid of [{ ...input, kind: 'artworks' }, { ...input, ownerId: '../x' }, { ...input, size: 8 * 1024 * 1024 + 1 }, { ...input, contentType: 'application/pdf' }]) {
+  for (const invalid of [{ ...input, kind: 'artworks' }, { ...input, ownerId: '../x' }, { ...input, size: 50 * 1024 * 1024 + 1 }, { ...input, contentType: 'application/pdf' }]) {
     await assert.rejects(startCatalogRelay(f.services, 'alice', invalid), (error: CatalogRelayError) => error.status === 422);
   }
   const start = await startCatalogRelay(f.services, 'alice', input);

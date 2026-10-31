@@ -94,7 +94,26 @@ test('unknown emails and arbitrary role identifiers cannot create accounts or pe
 });
 test('an administrator cannot remove their own function through the management endpoint', async () => {
   const response = await call('/admin/staff/assign', 'admin', { email: `${actor}@example.test`, role: 'none' });
-  assert.equal(response.status, 422); assert.equal(accounts.get(actor)!.customClaims.admin, true);
+  assert.equal(response.status, 403); assert.equal(accounts.get(actor)!.customClaims.admin, true);
+});
+test('another administrator also cannot demote an existing administrator', async () => {
+  const second = `${actor}-protected-peer`;
+  accounts.set(second, { ...accounts.get(actor)!, uid: second });
+  tokens.set('protected-peer', { uid: second, admin: true });
+  docs.set(`_adminAccess/${second}`, { schemaVersion: 1, enabled: true, epoch: 'legacy' });
+  for (const role of ['none', 'designer', 'product-manager']) {
+    const response = await call('/admin/staff/assign', 'protected-peer', { email: `${actor}@example.test`, role });
+    assert.equal(response.status, 403);
+    assert.equal(accounts.get(actor)!.customClaims.admin, true);
+    assert.equal(docs.get(`_adminAccess/${actor}`)?.enabled, true);
+    assert.equal(docs.has(`_staffAccess/${actor}`), false);
+  }
+});
+test('a customer cannot obtain original order artwork even when the order is theirs', async () => {
+  docs.set('orders/GB-PRIVATEPDF', { userId: employee, itens: [{ id: 'item', arquivoPath: `artworks/${employee}/orders/GB-PRIVATEPDF/item/${'a'.repeat(32)}.pdf` }] });
+  assert.equal((await call('/orders/GB-PRIVATEPDF/artwork/item', 'buyer')).status, 403);
+  assert.equal((await call('/admin/orders/GB-PRIVATEPDF/back-pdf/item', 'buyer')).status, 403);
+  assert.equal((await call('/admin/operations/production', 'buyer')).status, 403);
 });
 test('a designer can access order artwork but cannot use admin endpoints or production transitions', async () => {
   const response = await assign(); assert.equal(response.status, 200);

@@ -4,6 +4,8 @@ Loja virtual em React/Vite com catálogo e administração no Firebase, autentic
 
 Funcionários, etiquetas de produção, rastreio e promoções relâmpago: consulte [configuração e uso](docs/staff-orders-promotions.md). As abas Identidade Visual e Fontes ficam separadas de Configurações. Para entrada de funcionários, sessão antiga e diagnóstico por e-mail, consulte [acesso ao painel](docs/staff-panel-access.md).
 
+Promoções múltiplas, tema escuro, modelos PDF, fichas de pedido e operações nativas: consulte [Improvements — Part 2](docs/improvements-pt2.md).
+
 ## Rodar localmente
 
 A integração de frete real com os Correios usa credenciais apenas no servidor e perfis de peso/embalagem no catálogo. Consulte [Correios: configuração e testes](docs/correios-integration.md) antes de habilitar entregas. Diagnóstico local: `npm run shipping:check`.

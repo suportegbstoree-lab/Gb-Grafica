@@ -18,6 +18,23 @@ export type CheckoutFormResult =
   | { ok: true; customerName: string; cpf: string; phone: string }
   | { ok: false; message: string };
 
+export interface CheckoutIssue { field: string; label: string; message: string; }
+export function checkoutIssues(input: CheckoutFormInput): CheckoutIssue[] {
+  const issues: CheckoutIssue[] = [];
+  const add = (field: string, label: string) => issues.push({ field, label, message: `[${label} não preenchido ou inválido]` });
+  if (input.customerName.trim().split(/\s+/).length < 2 || input.customerName.trim().length < 3) add('checkout-name', 'Nome completo');
+  if (!isValidCpf(input.cpf.replace(/\D/g, ''))) add('checkout-cpf', 'CPF');
+  if (!isValidBrazilianPhone(input.phone.replace(/\D/g, ''))) add('checkout-phone', 'Telefone');
+  if (input.deliveryMethod === 'entrega') {
+    if (!input.hasShippingQuote) add('shipping-cep', 'CEP e cálculo do frete');
+    if (!input.addressStreet.trim()) add('shipping-street', 'Rua');
+    if (!input.addressNeighborhood.trim()) add('shipping-neighborhood', 'Bairro');
+    if (!input.addressNumber.trim()) add('shipping-number', 'Número');
+  }
+  if (!input.acceptedLegalTerms) add('checkout-legal-acceptance', 'Aceite dos termos');
+  return issues;
+}
+
 export function validateCheckoutForm(input: CheckoutFormInput): CheckoutFormResult {
   if (!input.acceptedLegalTerms) {
     return { ok: false, message: 'Leia e aceite os termos da compra para continuar.' };

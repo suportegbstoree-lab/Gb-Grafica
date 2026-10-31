@@ -1,3 +1,6 @@
+import { operationsFixtureClient } from './operationsClient';
+import { StoreThemeProvider } from '../components/StoreTheme';
+import { pdfPreviewPages } from '../services/pdfPreview';
 import PanelAccessGate from '../components/PanelAccessGate';
 import { mayEnterPanel } from '../lib/panelAccess';
 import { useStaffEntryFixture } from './StaffEntryFixture';
@@ -11,7 +14,7 @@ import { validateAdminFontFile } from '../services/adminFontValidation';
 import { adminFontFormat } from '../lib/adminAsset';
 import type { PersonalizationDocument } from '../services/personalizationExport';
 import React from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
 import Home, { type PersonalizationModelStorage } from '../pages/Home';
@@ -173,7 +176,7 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
     },
     async deleteModel(path) { modelBlobs.current.delete(path); },
     async readModel(path) { const blob = modelBlobs.current.get(path); if (!blob) throw new Error('Modelo de teste ausente'); return blob; },
-    async uploadArtwork(file) { return { path: `artworks/e2e-user/pending/${crypto.randomUUID().replace(/-/g, '')}.png`, name: file.name }; },
+    async uploadArtwork(file) { const path = `artworks/e2e-user/pending/${crypto.randomUUID().replace(/-/g, '')}.${file.type === 'application/pdf' ? 'pdf' : 'png'}`; modelBlobs.current.set(path, file); return { path, name: file.name }; },
   }), []);
 
   return (
@@ -203,7 +206,7 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
 }
 
 function AdminFixture({ permissionOverride }: { permissionOverride?: import('../lib/staffAccess').StaffPermission[] }) {
-  const selectedRole = new URLSearchParams(window.location.search).get('role');
+  const [selectedRole] = React.useState(() => new URLSearchParams(window.location.search).get('role'));
   const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
   const fixturePermissions = permissionOverride ?? (fixtureRole === 'administrator' ? [] : DEFAULT_ROLE_PERMISSIONS[fixtureRole]);
   const rolePolicies = React.useRef(new Map<StaffRoleId, StaffRoleView>((['designer', 'product-manager'] as const).map(id => [id, { id, schemaVersion: 1, configured: true, enabled: true, revision: (id === 'designer' ? 'a' : 'b').repeat(32), permissions: [...DEFAULT_ROLE_PERMISSIONS[id]], updatedAt: '', updatedBy: '' }])));
@@ -262,10 +265,12 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
       const path = `catalog/products/${productId}/${uploadId}.png`;
       return {
         path,
-        url: `https://example.com/${productId}/${uploadId}.png`,
+        url: await (await fetch(`/__e2e/uploads/${uploadId}`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })).json().then(value => value.url),
         name: file.name,
       };
     },
+    async uploadPdf(productId, file) { const pages = await pdfPreviewPages(file), id = crypto.randomUUID().replaceAll('-', ''), images = []; for (const page of pages) { const uid = crypto.randomUUID().replaceAll('-', ''); const response = await fetch(`/__e2e/uploads/${uid}`, { method: 'POST', headers: { 'Content-Type': page.type }, body: page }); images.push({ path: `catalog/products/${productId}/${uid}.png`, url: (await response.json()).url, name: page.name }); } return { template: { id, path: `catalog/templates/${productId}/${id}.pdf`, name: file.name, pages: images.map(image => image.url) }, images }; },
+    async deletePdf() {},
     async deleteImage() {},
     pathFromUrl() {
       return null;
@@ -299,6 +304,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   return (
     <div data-testid="e2e-admin">
       <Admin
+        operationsClient={operationsFixtureClient}
         fullAdmin={permissionOverride === undefined && fixtureRole === 'administrator'}
         permissions={fixturePermissions}
         staffApi={staffApi}
@@ -322,6 +328,8 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   );
 }
 
+function AdminFixtureRedirect() { const location = useLocation(); return <Navigate to={`/admin${location.search}`} replace />; }
+
 export default function E2EHarness() {
   const entry = useStaffEntryFixture();
   const teamPanel = <PanelAccessGate user={entry.signedIn ? FIXTURE_USER : null} ready={entry.access.ready} allowed={mayEnterPanel(false, entry.permissions)} issue={entry.access.issue} onSignIn={entry.signIn} onSignOut={entry.signOut} onRetry={entry.retry}><AdminFixture permissionOverride={entry.permissions} /></PanelAccessGate>;
@@ -331,15 +339,16 @@ export default function E2EHarness() {
   return (
     <FixtureCatalog.Provider value={{ products, setProducts, config, setConfig }}>
     <BrowserRouter>
-      <Routes>
+      <StoreThemeProvider><Routes>
         <Route path="/__e2e/store" element={<StoreFixture />} />
-        <Route path="/__e2e/admin" element={<AdminFixture />} />
+        <Route path="/__e2e/admin" element={<AdminFixtureRedirect />} />
         <Route path="/__e2e/team" element={teamStore} />
         <Route path="/__e2e/team/admin" element={teamPanel} />
-        <Route path="/admin" element={entry.active ? teamPanel : <AdminFixture />} />
-        <Route path="/" element={entry.active ? teamStore : <Navigate to="/__e2e/store" replace />} />
+        <Route path="/admin/*" element={entry.active ? teamPanel : <AdminFixture />} />
+        <Route path="/" element={entry.active ? teamStore : <StoreFixture />} />
+        <Route path="/categoria/:categoryId" element={<StoreFixture />} />
         <Route path="*" element={<Navigate to="/__e2e/store" replace />} />
-      </Routes>
+      </Routes></StoreThemeProvider>
     </BrowserRouter>
     </FixtureCatalog.Provider>
   );

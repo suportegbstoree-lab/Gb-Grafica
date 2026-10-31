@@ -129,7 +129,7 @@ test('recusa outra conta, dados inválidos e arquivo maior que o limite', async 
   const start = await startArtworkRelay(f.services, 'alice', { size: 3, contentType: 'image/png', name: 'x', kind: 'source-artwork' });
   await assert.rejects(sendArtworkRelayChunk(f.services, 'bob', start.uploadId, 0, 'YWJj', f.fetchMock), (e: ArtworkRelayError) => e.status === 404);
   await assert.rejects(sendArtworkRelayChunk(f.services, 'alice', start.uploadId, 0, '***', f.fetchMock), (e: ArtworkRelayError) => e.status === 422);
-  await assert.rejects(startArtworkRelay(f.services, 'alice', { size: 15 * 1024 * 1024 + 1, contentType: 'image/png', name: 'x', kind: 'source-artwork' }), (e: ArtworkRelayError) => e.status === 422);
+  await assert.rejects(startArtworkRelay(f.services, 'alice', { size: 50 * 1024 * 1024 + 1, contentType: 'image/png', name: 'x', kind: 'source-artwork' }), (e: ArtworkRelayError) => e.status === 422);
   assert.equal(f.getUploads(), 0);
 });
 

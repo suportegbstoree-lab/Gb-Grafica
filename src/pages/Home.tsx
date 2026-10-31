@@ -1,6 +1,10 @@
+import OrderDocuments from '../components/OrderDocuments';
+import UploadInput from '../components/UploadInput';
 import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../lib/storePresentation';
 import React, { useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { StoreThemeControl } from '../components/StoreTheme';
+import { variantImage } from '../lib/variantImage';
 import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, Mail, Sparkles, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao, type PersonalizationFont } from '../types';
@@ -11,13 +15,12 @@ import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderSta
 import {
   removePendingArtwork,
   readPendingPersonalizationModel,
-  requestArtworkUrl,
   uploadArtwork,
   uploadPersonalizationModel,
   type UploadedArtwork,
 } from '../services/artworkService';
 import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
-import { validateCheckoutForm } from '../lib/checkoutForm';
+import { checkoutIssues, type CheckoutIssue, validateCheckoutForm } from '../lib/checkoutForm';
 import {
   createHostedCheckout,
   isTrustedPagBankPaymentUrl,
@@ -190,6 +193,7 @@ export default function Home({
   const [customerName, setCustomerName] = useState('');
   const [cpf, setCpf] = useState('');
   const [phone, setPhone] = useState('');
+  const [orderNotes, setOrderNotes] = useState('');
   const [addressStreet, setAddressStreet] = useState('');
   const [addressNeighborhood, setAddressNeighborhood] = useState('');
   const [addressNumber, setAddressNumber] = useState('');
@@ -197,10 +201,17 @@ export default function Home({
   const [currentSlide, setCurrentSlide] = useState(0);
   const [isCarouselPaused, setIsCarouselPaused] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const { categoryId } = useParams();
+  const location = useLocation();
+  const customerPreview = new URLSearchParams(location.search).get('preview') === 'customer';
+  const routeCategory = categories.find(category => category.id === categoryId);
+  const activeCategory = routeCategory?.nome || null;
   const [shippingError, setShippingError] = useState<string | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [acceptedLegalTerms, setAcceptedLegalTerms] = useState(false);
+  const [checkoutErrors, setCheckoutErrors] = useState<CheckoutIssue[]>([]);
+  React.useEffect(() => setCheckoutErrors([]), [customerName, cpf, phone, cep, addressStreet, addressNeighborhood, addressNumber, acceptedLegalTerms, deliveryMethod]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pagbankReturnOrderId, setPagbankReturnOrderId] = useState<string | null>(null);
   const checkoutLock = useRef(false);
@@ -227,9 +238,9 @@ export default function Home({
   const primaryContact = contacts.find(contact => contact.type === 'whatsapp') || contacts[0];
   const storeStructuredData = useMemo(() => buildStoreStructuredData(config), [config]);
   usePageMetadata({
-    title: 'GB Gráfica | Loja Online Oficial',
+    title: routeCategory ? `${routeCategory.nome} | GB Gráfica` : 'GB Gráfica | Loja Online Oficial',
     description: config.banner_subtitulo || 'Produtos gráficos e personalizados da GB Gráfica, com pagamento seguro pelo PagBank.',
-    path: '/',
+    path: categoryId ? `/categoria/${encodeURIComponent(categoryId)}` : '/',
     image: config.banner_principal || config.logo_url,
   });
   useStructuredData('gb-store-structured-data', storeStructuredData);
@@ -255,11 +266,11 @@ export default function Home({
   const visibleProducts = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
     return products.filter(product => {
-      const matchesCategory = !activeCategory || product.categoria === activeCategory;
+      const matchesCategory = categoryId ? Boolean(routeCategory && product.categoria === routeCategory.nome) : !activeCategory || product.categoria === activeCategory;
       const haystack = `${product.nome} ${product.desc} ${product.categoria}`.toLocaleLowerCase('pt-BR');
       return matchesCategory && (!normalizedSearch || haystack.includes(normalizedSearch));
     });
-  }, [activeCategory, products, searchTerm]);
+  }, [activeCategory, categoryId, routeCategory, products, searchTerm]);
 
   const subtotalCents = useMemo(() => cart.reduce((total, item) => {
     const unitAmount = parseMoneyToCents(item.preco);
@@ -362,25 +373,13 @@ export default function Home({
   const removeFromCart = (id: string) => {
     const item = cart.find(candidate => candidate.id === id);
     setCart(prev => prev.filter(i => i.id !== id));
-    const pendingPaths = [item?.arquivoPath, item?.modeloPath, item?.contracapaPath]
+    const pendingPaths = [item?.arquivoPath, item?.modeloPath, item?.contracapaPath, item?.contracapaOriginalPath]
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     void Promise.allSettled(pendingPaths.map(path => removePendingArtwork(path))).then(results => {
       if (results.some(result => result.status === 'rejected')) {
         console.error('Não foi possível remover todos os arquivos temporários do item.');
       }
     });
-  };
-
-  const openOrderArtwork = async (orderId: string, itemId: string) => {
-    try {
-      const url = await requestArtworkUrl(orderId, itemId);
-      openExternal(url);
-    } catch (error) {
-      setNotice({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Não foi possível abrir a arte.',
-      });
-    }
   };
 
   const openOrderModel = async (orderId: string, itemId: string) => {
@@ -415,7 +414,8 @@ export default function Home({
   };
 
   const selectCategory = (category: string | null) => {
-    setActiveCategory(current => current === category ? null : category);
+    const target = categories.find(item => item.nome === category);
+    navigate(target ? `/categoria/${encodeURIComponent(target.id)}${customerPreview ? '?preview=customer' : ''}` : `/${customerPreview ? '?preview=customer' : ''}`);
     window.requestAnimationFrame(scrollToProducts);
   };
 
@@ -435,7 +435,7 @@ export default function Home({
       await handleLogin();
       return;
     }
-    const formResult = validateCheckoutForm({
+    const formInput = {
       acceptedLegalTerms,
       customerName,
       cpf,
@@ -446,7 +446,11 @@ export default function Home({
       addressNeighborhood,
       addressNumber,
       hasInvalidCartPrice,
-    });
+    };
+    const issues = checkoutIssues(formInput);
+    setCheckoutErrors(issues);
+    if (issues.length) { document.getElementById(issues[0].field)?.focus(); return; }
+    const formResult = validateCheckoutForm(formInput);
     if (formResult.ok === false) {
       setNotice({ type: 'error', message: formResult.message });
       return;
@@ -460,6 +464,7 @@ export default function Home({
       const checkoutResult = await createHostedCheckout({
         items: cart.map(item => ({
           productId: item.productId,
+          ...(item.templateId ? { templateId: item.templateId } : {}),
           expectedUnitAmountCents: parseMoneyToCents(item.preco),
           quantidade: item.quantidade,
           selecoes: item.selecoes,
@@ -468,6 +473,7 @@ export default function Home({
           modeloPath: item.modeloPath || '',
           modeloNome: item.modeloNome || '',
           contracapaPath: item.contracapaPath || '',
+          contracapaOriginalPath: item.contracapaOriginalPath || '',
           contracapaNome: item.contracapaNome || '',
           ...(item.contracapaModo ? { contracapaModo: item.contracapaModo } : {}),
           textoPersonalizado: item.textoPersonalizado || '',
@@ -477,6 +483,7 @@ export default function Home({
         })),
         requestId: crypto.randomUUID(),
         customerName: formResult.customerName,
+        observacoes: orderNotes,
         cpf: formResult.cpf,
         phone: formResult.phone,
         deliveryMethod,
@@ -625,7 +632,7 @@ export default function Home({
 
   const handleLogout = async () => {
     const pendingArtworks = cart
-      .flatMap(item => [item.arquivoPath, item.modeloPath, item.contracapaPath])
+      .flatMap(item => [item.arquivoPath, item.modeloPath, item.contracapaPath, item.contracapaOriginalPath])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     await Promise.allSettled(pendingArtworks.map(removePendingArtwork));
     setCart([]);
@@ -636,7 +643,7 @@ export default function Home({
   const activeSlide = slides[currentSlide] || slides[0];
   const handleBannerAction = () => {
     if (activeSlide.productId) {
-      setSearchTerm(''); setActiveCategory(null);
+      setSearchTerm(''); selectCategory(null);
       window.requestAnimationFrame(() => document.getElementById(`produto-${activeSlide.productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
       return;
     }
@@ -647,7 +654,7 @@ export default function Home({
       return;
     }
     if (activeSlide.targetType === 'categoria' && activeSlide.targetName) {
-      setActiveCategory(activeSlide.targetName);
+      selectCategory(activeSlide.targetName);
       window.requestAnimationFrame(scrollToProducts);
       return;
     }
@@ -659,7 +666,7 @@ export default function Home({
   };
 
   return (
-    <div className="min-h-screen bg-[#fcfcfd] text-gray-900 font-sans selection:bg-pink-100 relative overflow-hidden">
+    <div className="store-shell min-h-screen bg-[#fcfcfd] text-gray-900 font-sans selection:bg-pink-100 relative overflow-hidden">
       <a
         href="#produtos"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[120] focus:rounded-full focus:bg-gray-900 focus:px-5 focus:py-3 focus:text-xs focus:font-black focus:uppercase focus:tracking-widest focus:text-white"
@@ -700,11 +707,12 @@ export default function Home({
           {contacts.map(contact => <a key={contact.id} href={contactHref(contact)} target={contact.type === 'whatsapp' ? '_blank' : undefined} rel="noopener noreferrer" aria-label={`${contact.label}: ${contact.value}`} className="flex items-center gap-2 break-all font-bold transition-colors hover:text-pink-100">{contact.type === 'email' ? <Mail size={14} /> : <Phone size={14} />} {contact.value}</a>)}
         </div>
         <div className="flex flex-wrap justify-end gap-x-8 gap-y-2 items-center">
-          {canAccessPanel && (
+          {canAccessPanel && !customerPreview && (
             <Link to="/admin" className="hover:text-pink-100 flex items-center gap-2 transition-colors font-bold">
               <Settings size={14} /> Área Admin
             </Link>
           )}
+          <StoreThemeControl />
           {!canAccessPanel && panelAccessNeedsCheck && <Link to="/admin" className="flex items-center gap-2 font-bold hover:text-pink-100"><Settings size={14} />Verificar acesso</Link>}
           {user && (
             <button type="button" onClick={openOrders} className="hover:text-pink-100 transition-colors flex items-center gap-2 font-bold">
@@ -738,7 +746,7 @@ export default function Home({
       </div>
 
       {/* Header */}
-      <header className="bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
+      <header className="store-header bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
         <div className="flex items-center group">
           {config.logo_url && config.logo_url.trim() !== "" && !logoError ? (
             <img
@@ -806,6 +814,8 @@ export default function Home({
         </div>
       </header>
 
+      {customerPreview && canAccessPanel && <div className="bg-gray-900 px-4 py-3 text-center text-sm text-white">Visualização como cliente · <Link to="/admin" className="underline">Voltar ao painel</Link></div>}
+      {categoryId && <div className="mx-auto max-w-7xl p-4"><Link to="/">Loja</Link> / {routeCategory?.nome || 'Categoria não encontrada'}</div>}
       {/* Navigation */}
       <nav aria-label="Categorias de produtos" className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
         {categories.map((cat) => (
@@ -845,13 +855,13 @@ export default function Home({
       </nav>
 
       {/* Promo Bar */}
-      <div className="bg-[#5dc1c1] py-4 text-center relative z-20">
+      <div className="bg-[#0f5e64] py-4 text-center relative z-20">
         <span className="text-white font-black uppercase tracking-[0.3em] text-[11px]">
           {promotions.find(promotion => promotion.ativa)?.titulo || 'PERSONALIZADOS FEITOS COM CUIDADO PARA VOCÊ'}
         </span>
         {/* Smooth Wave Bottom for Promo */}
         <div className="absolute bottom-[-15px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
-          <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[25px] fill-[#5dc1c1]">
+          <svg viewBox="0 0 1200 120" preserveAspectRatio="none" className="relative block w-[calc(100%+1.3px)] h-[25px] fill-[#0f5e64]">
             <path d="M0,0V46.29c47.79,22.2,103.59,32.17,158,28,70.36-5.37,136.33-33.31,206.8-37.5C438.64,32.43,512.34,53.67,583,72.05c69.27,18,138.3,24.88,209.4,13.08,36.15-6,69.85-17.84,104.45-29.34C989.49,25,1113-14.29,1200,52.47V0Z" opacity=".25"></path>
             <path d="M0,0V15.81C13,36.92,27.64,56.86,47.69,72.05,99.41,111.27,165,111,224.58,91.58c31.15-10.15,60.09-26.07,89.67-39.8,40.92-19,84.73-46,130.83-49.67,36.26-2.85,70.9,9.42,98.6,31.56,31.77,25.39,62.32,62,103.63,73,40.44,10.79,81.35-6.69,119.13-24.28s75.16-39,116.92-43.05c59.73-5.85,113.28,22.88,168.9,38.84,30.2,8.66,59,6.17,87.09-7.5,22.43-10.89,48-26.93,60.65-49.24V0Z" opacity=".5"></path>
             <path d="M0,0V5.63C149.93,59,314.09,71.32,475.83,42.57c43-7.64,84.23-20.12,127.61-26.46,59-8.63,112.48,12.24,165.56,35.4C827.93,77.22,886,95.24,951.2,90c86.53-7,172.46-45.71,248.8-84.81V0Z"></path>
@@ -861,19 +871,19 @@ export default function Home({
 
       {/* Banner Carousel */}
       <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
-        <AnimatePresence mode="wait">
+        <AnimatePresence initial={false}>
           <motion.div
             key={currentSlide}
-            initial={{ opacity: 0, scale: 1.1 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
+            initial={{ x: shouldReduceMotion ? 0 : '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: shouldReduceMotion ? 0 : '-100%' }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.6, ease: "easeOut" }}
             className="absolute inset-0"
           >
             <img
               src={activeSlide.image}
               alt={activeSlide.title || `Destaque ${currentSlide + 1}`}
-              className={activeSlide.productId ? "h-full w-full bg-gray-50 object-contain opacity-40" : "w-full h-full object-cover"}
+              className={activeSlide.productId ? "h-full w-full bg-gray-50 object-contain" : "w-full h-full object-cover"}
               referrerPolicy="no-referrer"
               fetchPriority="high"
               decoding="async"
@@ -886,7 +896,7 @@ export default function Home({
                 }
               }}
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-gray-50/90 via-transparent to-white/10"></div>
+            <div className="absolute inset-0 bg-black/60"></div>
           </motion.div>
         </AnimatePresence>
 
@@ -897,14 +907,14 @@ export default function Home({
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h1 className="break-words text-4xl font-black leading-none tracking-tighter text-gray-900 md:text-7xl">
+              <h1 className="break-words text-4xl font-black leading-none tracking-tighter text-white md:text-7xl">
                 {activeSlide.title ? (
                   <>
                     {activeSlide.title.split('<br/>').map((line, i) => (
                       <React.Fragment key={i}>
                         {i > 0 && <br/>}
                         {line.includes('**') ? (
-                          <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">
+                          <span className="text-pink-200">
                             {line.replace(/\*\*/g, '')}
                           </span>
                         ) : line}
@@ -914,7 +924,7 @@ export default function Home({
                 ) : (
                   <>
                     Impressão com <br/>
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-purple-500">Amor e Cuidado</span>
+                    <span className="text-pink-200">Amor e Cuidado</span>
                   </>
                 )}
               </h1>
@@ -923,7 +933,7 @@ export default function Home({
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="text-gray-600 max-w-xl mx-auto text-base md:text-lg font-medium"
+              className="text-white max-w-xl mx-auto text-base md:text-lg font-medium"
             >
               {activeSlide.subtitle || config.banner_subtitulo || "Produtos personalizados para eternizar os momentos mais especiais da sua vida."}
             </motion.p>
@@ -932,7 +942,7 @@ export default function Home({
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.6 }}
             >
-              <button type="button" onClick={handleBannerAction} className="bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl shadow-pink-100 hover:scale-105 active:scale-95">
+              <button type="button" onClick={handleBannerAction} className="bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl hover:scale-105 active:scale-95">
                 {activeSlide.productId ? 'Ver produto' : activeSlide.link && isHttpUrl(activeSlide.link) ? 'Ver promoção' : (config.banner_botao || 'Ver Produtos')}
               </button>
             </motion.div>
@@ -1030,7 +1040,7 @@ export default function Home({
             <div className="rounded-3xl border border-dashed border-gray-200 bg-white/70 p-12 text-center">
               <Search className="mx-auto mb-4 text-gray-300" size={36} />
               <p className="font-bold text-gray-700">Nenhum produto encontrado.</p>
-              <button type="button" onClick={() => { setSearchTerm(''); setActiveCategory(null); }} className="mt-4 text-sm font-bold text-pink-500 hover:underline">
+              <button type="button" onClick={() => { setSearchTerm(''); selectCategory(null); }} className="mt-4 text-sm font-bold text-pink-500 hover:underline">
                 Limpar filtros
               </button>
             </div>
@@ -1250,7 +1260,7 @@ export default function Home({
                       <div className="flex gap-2">
                         <input
                           type="text"
-                          id="shipping-cep"
+                          id="shipping-cep" aria-invalid={checkoutErrors.some(issue => issue.field === 'shipping-cep')}
                           placeholder="00000000"
                           inputMode="numeric"
                           autoComplete="postal-code"
@@ -1303,7 +1313,7 @@ export default function Home({
                             <div className="sm:col-span-2">
                               <label htmlFor="shipping-street" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-1 font-black">Rua</label>
                               <input
-                                id="shipping-street"
+                                id="shipping-street" aria-invalid={checkoutErrors.some(issue => issue.field === 'shipping-street')}
                                 type="text"
                                 value={addressStreet}
                                 onChange={event => setAddressStreet(event.target.value.slice(0, 160))}
@@ -1315,7 +1325,7 @@ export default function Home({
                             <div>
                               <label htmlFor="shipping-neighborhood" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-1 font-black">Bairro</label>
                               <input
-                                id="shipping-neighborhood"
+                                id="shipping-neighborhood" aria-invalid={checkoutErrors.some(issue => issue.field === 'shipping-neighborhood')}
                                 type="text"
                                 value={addressNeighborhood}
                                 onChange={event => setAddressNeighborhood(event.target.value.slice(0, 60))}
@@ -1327,7 +1337,7 @@ export default function Home({
                             <div>
                               <label htmlFor="shipping-number" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-1 font-black">Número</label>
                               <input
-                                id="shipping-number"
+                                id="shipping-number" aria-invalid={checkoutErrors.some(issue => issue.field === 'shipping-number')}
                                 type="text"
                                 value={addressNumber}
                                 onChange={event => setAddressNumber(event.target.value.slice(0, 20))}
@@ -1358,7 +1368,7 @@ export default function Home({
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
                     <label htmlFor="checkout-name" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">Nome completo</label>
                     <input
-                      id="checkout-name"
+                      id="checkout-name" aria-invalid={checkoutErrors.some(issue => issue.field === 'checkout-name')}
                       type="text"
                       placeholder="Seu nome completo"
                       value={customerName}
@@ -1368,7 +1378,7 @@ export default function Home({
                     />
                     <label htmlFor="checkout-cpf" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">CPF do pagador (obrigatório no PagBank)</label>
                     <input
-                      id="checkout-cpf"
+                      id="checkout-cpf" aria-invalid={checkoutErrors.some(issue => issue.field === 'checkout-cpf')}
                       type="text"
                       placeholder="000.000.000-00"
                       inputMode="numeric"
@@ -1380,7 +1390,7 @@ export default function Home({
                     />
                     <label htmlFor="checkout-phone" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 mt-4 font-black">Telefone para contato</label>
                     <input
-                      id="checkout-phone"
+                      id="checkout-phone" aria-invalid={checkoutErrors.some(issue => issue.field === 'checkout-phone')}
                       type="tel"
                       placeholder="(11) 99999-9999"
                       inputMode="tel"
@@ -1399,7 +1409,7 @@ export default function Home({
                     </p>
                     <div className="flex items-start gap-3">
                       <input
-                        id="checkout-legal-acceptance"
+                        id="checkout-legal-acceptance" aria-invalid={checkoutErrors.some(issue => issue.field === 'checkout-legal-acceptance')}
                         type="checkbox"
                         checked={acceptedLegalTerms}
                         onChange={event => setAcceptedLegalTerms(event.target.checked)}
@@ -1442,18 +1452,12 @@ export default function Home({
                       </span>
                     </div>
                   </div>
+                  <label className="mb-4 block text-sm">Observações do pedido (opcional)<textarea aria-label="Observações do pedido" maxLength={1000} value={orderNotes} onChange={event => setOrderNotes(event.target.value)} className="mt-2 w-full rounded-xl border border-gray-200 p-3" /></label>
+                  {checkoutErrors.length > 0 && <div role="alert" className="mb-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-600"><p className="font-bold">Preencha os campos para continuar:</p><ul>{checkoutErrors.map(issue => <li key={issue.field}><button type="button" className="underline" onClick={() => document.getElementById(issue.field)?.focus()}>{issue.message}</button></li>)}</ul></div>}
                   <button
                     type="button"
                     onClick={checkout}
-                    disabled={
-                      isCheckingOut || isCalculating || hasInvalidCartPrice || cart.some(item => item.modeloPath && item.aprovarArte !== true) ||
-                      (deliveryMethod === 'entrega' && (
-                        !shippingInfo || !addressStreet.trim() || !addressNeighborhood.trim() || !addressNumber.trim()
-                      )) ||
-                      !isValidCpf(cpf) || !isValidBrazilianPhone(phone) ||
-                      customerName.trim().split(/\s+/).filter(Boolean).length < 2 ||
-                      !acceptedLegalTerms
-                    }
+                    disabled={isCheckingOut || isCalculating}
                     className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {isCheckingOut ? <><Loader2 className="animate-spin" size={18} /> REDIRECIONANDO...</> : "IR PARA O PAGBANK"}
@@ -1477,6 +1481,7 @@ export default function Home({
               <div className="space-y-6 pr-2">
                 {orders.map((order) => (
                   <div key={order.id} className="bg-gray-50 p-6 rounded-2xl border border-gray-100 space-y-4">
+                    <OrderDocuments order={order} />
                     <div className="flex justify-between items-center border-b border-gray-200 pb-4">
                       <div>
                         <div className="text-[10px] text-gray-400 uppercase tracking-widest font-black">Pedido #{order.id}</div>
@@ -1527,15 +1532,7 @@ export default function Home({
                               Personalização antiga: {item.textoPersonalizado}
                             </div>
                           ) : null}
-                          {item.arquivoPath && (
-                            <button
-                              type="button"
-                              onClick={() => openOrderArtwork(order.id, item.id)}
-                              className="text-[9px] text-green-600 flex items-center gap-1 font-black uppercase tracking-wider hover:underline"
-                            >
-                              <FileText size={10} /> Abrir arte enviada
-                            </button>
-                          )}
+                          {item.arquivoPath && <span className="text-[9px] text-gray-500">Arte recebida para produção.</span>}
                           {item.modeloPath && (
                             <button
                               type="button"
@@ -1769,6 +1766,7 @@ function ProductCard({
   const [uploadedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
   const [artworkSourceFile, setArtworkSourceFile] = useState<File | null>(null);
   const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
+  const [uploadedBackOriginal, setUploadedBackOriginal] = useState<UploadedArtwork | null>(null);
   const [uploadedBack, setUploadedBack] = useState<UploadedArtwork | null>(null);
   const [backDraft, setBackDraft] = useState<BackCoverDraft>({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
   const [generatedDocument, setGeneratedDocument] = useState<PersonalizationDocument | null>(null);
@@ -1778,6 +1776,9 @@ function ProductCard({
   const [isTextDrawerOpen, setIsTextDrawerOpen] = useState(false);
   const [activeImage, setActiveImage] = useState(product.imagem);
 
+  const template = (product.modelosPdf || []).find(template => template.pages.includes(activeImage));
+  const [pdfBack, setPdfBack] = useState<Blob | undefined>();
+  React.useEffect(() => { let cancelled = false; setPdfBack(undefined); if (artworkSourceFile?.type === 'application/pdf') void import('../services/pdfPreview').then(module => module.pdfPreviewPages(artworkSourceFile)).then(pages => { if (!cancelled) setPdfBack(pages[1]); }).catch(error => onNotify({ type: 'error', message: error.message })); return () => { cancelled = true; }; }, [artworkSourceFile]);
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
   const availableFonts = activePersonalizationFonts(fonts);
@@ -1790,6 +1791,8 @@ function ProductCard({
     setActiveImage(product.imagem);
   }, [product.imagem]);
 
+  React.useEffect(() => { setActiveImage(variantImage(product, selections)); }, [product.imagensPorCombinacao, product.imagem, JSON.stringify(selections)]);
+
   React.useEffect(() => {
     setSelections({});
   }, [product.id, attributeSignature]);
@@ -1797,6 +1800,10 @@ function ProductCard({
   React.useEffect(() => () => {
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
   }, [artworkPreviewUrl]);
+
+  const sourceKey = `${uploadedArtwork?.path || ''}:${activeImage}:${printProfileKey(printProfile)}`;
+  const previousSource = useRef(sourceKey);
+  React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
   const handleSelect = (attrName: string, option: string) => {
     const attributeIndex = product.atributos.findIndex(attribute => attribute.nome === attrName);
@@ -1814,7 +1821,7 @@ function ProductCard({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if ((requiresText || printProfile) && !isComposablePersonalizationImage(file.type, file.size)) {
+    if (file.type !== 'application/pdf' && (requiresText || printProfile) && !isComposablePersonalizationImage(file.type, file.size)) {
       onNotify({
         type: 'error',
         message: 'Produtos com texto ou formato de impressão exigem uma imagem JPG, PNG ou WebP para compor o modelo. PDF continua disponível nos produtos sem essas opções.',
@@ -1886,7 +1893,7 @@ function ProductCard({
   const discount = originalPriceCents === null ? null : promotionalPrice(originalPriceCents, product, promotions);
   const priceCents = discount?.finalCents ?? originalPriceCents;
   const price = priceCents === null ? rawPrice : (priceCents / 100).toFixed(2);
-  const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork)) &&
+  const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork) || Boolean(template)) &&
     (!requiresText || Boolean(textCustomization && uploadedModel));
 
   const openTextCustomizer = async () => {
@@ -1894,7 +1901,7 @@ function ProductCard({
       onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
       return;
     }
-    if (requiresArtwork && (!uploadedArtwork || !artworkSourceFile)) {
+    if (requiresArtwork && !template && (!uploadedArtwork || !artworkSourceFile)) {
       onNotify({ type: 'error', message: 'Envie a imagem antes de posicionar o texto.' });
       return;
     }
@@ -1902,12 +1909,16 @@ function ProductCard({
       const loggedIn = await onRequireLogin();
       if (!loggedIn) return;
     }
+    if (artworkSourceFile?.type === 'application/pdf') {
+      try { const pages = await (await import('../services/pdfPreview')).pdfPreviewPages(artworkSourceFile); setPdfBack(pages[1]); }
+      catch (error) { onNotify({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível abrir o PDF.' }); return; }
+    }
     setIsTextDrawerOpen(true);
   };
 
   const handleAdd = () => {
     if (!isFullySelected || !price || priceCents === null || priceCents <= 0) return;
-    if (requiresArtwork && !uploadedArtwork) {
+    if (requiresArtwork && !uploadedArtwork && !template) {
       onNotify({ type: 'error', message: 'Envie a arte antes de adicionar este produto ao carrinho.' });
       return;
     }
@@ -1928,13 +1939,14 @@ function ProductCard({
       product.id,
       selections,
       customizationFingerprint,
-      [uploadedArtwork?.path, uploadedModel?.path, uploadedBack?.path].filter(Boolean).join('|'),
+      [uploadedArtwork?.path, uploadedModel?.path, uploadedBack?.path, uploadedBackOriginal?.path].filter(Boolean).join('|'),
     );
     onAddToCart({
       id: cartId,
       productId: product.id,
+      ...(template && !uploadedArtwork ? { templateId: template.id } : {}),
       nome: product.nome,
-      imagem: product.imagem,
+      imagem: variantImage(product, selections),
       preco: (priceCents / 100).toFixed(2),
       ...(discount ? {
         precoOriginal: (discount.originalCents / 100).toFixed(2),
@@ -1949,6 +1961,8 @@ function ProductCard({
       modeloPath: uploadedModel?.path,
       modeloNome: uploadedModel?.name,
       contracapaPath: uploadedBack?.path,
+      contracapaOriginalPath: uploadedBackOriginal?.path,
+      contracapaOriginalNome: uploadedBackOriginal?.name,
       contracapaNome: uploadedBack?.name,
       ...(uploadedBack && backDraft.mode !== 'none' ? { contracapaModo: backDraft.mode } : {}),
       textoPersonalizado: textCustomization?.texto,
@@ -1956,6 +1970,7 @@ function ProductCard({
     });
 
     // Reset after adding
+    setUploadedBackOriginal(null);
     setUploadedBack(null);
     setGeneratedDocument(null);
     setBackDraft({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
@@ -2079,9 +2094,9 @@ function ProductCard({
                   )}>
                     {isUploadingArtwork ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
                     {isUploadingArtwork ? 'Enviando...' : 'Selecionar arquivo'}
-                    <input
+                    <UploadInput
                       type="file"
-                      accept={(requiresText || printProfile) ? 'image/png,image/jpeg,image/webp' : 'application/pdf,image/png,image/jpeg,image/webp'}
+                      originalPdf accept="application/pdf,image/png,image/jpeg,image/webp"
                       onChange={handleArtworkFile}
                       disabled={isUploadingArtwork}
                       className="sr-only"
@@ -2089,12 +2104,12 @@ function ProductCard({
                   </label>
                 )}
                 <p className="mt-2 text-[9px] text-gray-400 leading-tight">
-                  {(requiresText || printProfile) ? 'PNG, JPG ou WebP' : 'PDF, PNG, JPG ou WebP'}, até 15 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
+                  {'PDF, PNG, JPG ou WebP'}, até 50 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
                 </p>
               </div>
             )}
 
-            {requiresArtwork && !requiresText && artworkSourceFile && isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size) && <button type="button" onClick={() => void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">Personalizar capa e contracapa</button>}
+            {requiresArtwork && !requiresText && (template || artworkSourceFile && (artworkSourceFile.type === 'application/pdf' || isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size))) && <button type="button" onClick={() => void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">Personalizar capa e contracapa</button>}
             {generatedDocument && <button type="button" onClick={() => onOpenModel(generatedDocument)} className="rounded-xl border border-purple-200 px-4 py-3 text-xs font-bold text-purple-600">Visualizar modelo{uploadedBack ? ' · capa e contracapa' : ''}</button>}
             {requiresText && (
               <div className="flex flex-col">
@@ -2118,7 +2133,7 @@ function ProductCard({
                   <button
                     type="button"
                     onClick={() => void openTextCustomizer()}
-                    disabled={availableFonts.length === 0 || (requiresArtwork && !uploadedArtwork)}
+                    disabled={availableFonts.length === 0 || (requiresArtwork && !uploadedArtwork && !template)}
                     className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200 bg-pink-50 px-4 py-4 text-xs font-bold text-pink-600 transition-colors hover:border-pink-400 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <FileText size={16} /> {availableFonts.length === 0
@@ -2241,30 +2256,34 @@ function ProductCard({
       <TextCustomizationDrawer
         productName={product.nome}
         printProfile={printProfile}
-        previewImage={artworkPreviewUrl || activeImage || product.imagem || DEFAULT_LOGO_URL}
+        previewImage={artworkPreviewUrl || template?.pages[0] || activeImage || product.imagem || DEFAULT_LOGO_URL}
         previewSource={artworkSourceFile || undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
         initialValue={textCustomization}
         textRequired={requiresText}
         initialBack={backDraft}
+        automaticBack={pdfBack || template?.pages[1]}
         fonts={fonts}
         onClose={() => setIsTextDrawerOpen(false)}
         onSave={async (value, model, back, nextBackDraft) => {
           const nextModel = await personalizationModelStorage.uploadModel(model, personalizationModelName(product.nome, uploadedArtwork?.name));
           let nextBack: UploadedArtwork | null = null;
+          let nextBackOriginal: UploadedArtwork | null = null;
           try {
             if (back) nextBack = await personalizationModelStorage.uploadModel(back, personalizationModelName(product.nome, uploadedArtwork?.name, true));
+            if (nextBackDraft.mode === 'custom' && nextBackDraft.file?.type === 'application/pdf') nextBackOriginal = await personalizationModelStorage.uploadArtwork(nextBackDraft.file);
           } catch (error) {
-            await personalizationModelStorage.deleteModel(nextModel.path).catch(() => undefined);
+            await Promise.allSettled([nextModel, nextBack, nextBackOriginal].filter(Boolean).map(file => personalizationModelStorage.deleteModel(file!.path)));
             throw error;
           }
-          const previousModels = [uploadedModel, uploadedBack].filter((model): model is UploadedArtwork => Boolean(model));
+          const previousModels = [uploadedModel, uploadedBack, uploadedBackOriginal].filter((model): model is UploadedArtwork => Boolean(model));
           const document: PersonalizationDocument = { title: product.nome, ...(printProfile ? { printProfile } : {}), pages: [
             { label: 'Capa', blob: model.blob }, ...(back ? [{ label: 'Contracapa' as const, blob: back.blob }] : []),
           ] };
           setTextCustomization(value);
           setUploadedModel(nextModel);
           setUploadedBack(nextBack);
+          setUploadedBackOriginal(nextBackOriginal);
           setBackDraft(nextBackDraft);
           setGeneratedDocument(document);
           setIsTextDrawerOpen(false);

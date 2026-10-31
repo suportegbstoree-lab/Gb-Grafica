@@ -28,8 +28,9 @@ export interface DecodedImage {
 }
 
 async function decodeImage(blob: Blob): Promise<DecodedImage> {
+  if (blob.type === 'application/pdf') { const [page] = await (await import('./pdfPreview')).pdfPreviewPages(blob); return decodeImage(page); }
 	if (!isComposablePersonalizationImage(blob.type, blob.size)) {
-		throw new Error('O modelo com texto exige uma imagem JPG, PNG ou WebP de até 15 MB.');
+		throw new Error('O modelo com texto exige uma imagem JPG, PNG ou WebP de até 50 MB.');
 	}
 	const signature = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
 	if (!matchesArtworkSignature(blob.type, signature)) {
@@ -235,7 +236,7 @@ export async function composePersonalizationModel({
 			throw error;
 		}
 		if (modelBlob.size <= 0 || modelBlob.size > MAX_PERSONALIZATION_MODEL_BYTES) {
-			throw new Error('O modelo em resolução original excedeu 15 MB. Escolha outra imagem; nenhuma redução de qualidade foi aplicada.');
+			throw new Error('O modelo em resolução original excedeu 50 MB. Escolha outra imagem; nenhuma redução de qualidade foi aplicada.');
 		}
 		return { blob: modelBlob, width: canvas.width, height: canvas.height };
 	} finally {

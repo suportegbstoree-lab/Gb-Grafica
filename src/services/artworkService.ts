@@ -1,4 +1,4 @@
-import { deleteObject, getBlob, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getBlob, ref, uploadBytesResumable } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   artworkExtension,
@@ -34,7 +34,7 @@ export async function uploadArtwork(file: File): Promise<UploadedArtwork> {
   const uploadId = crypto.randomUUID().replace(/-/g, '');
   const path = `artworks/${user.uid}/pending/${uploadId}.${extension}`;
 
-  await uploadBytes(ref(storage, path), file, {
+  await uploadBytesResumable(ref(storage, path), file, {
     contentType: file.type,
     customMetadata: {
       ownerId: user.uid,
@@ -65,7 +65,7 @@ export async function uploadPersonalizationModel(blob: Blob, preferredName: stri
   const uploadId = crypto.randomUUID().replace(/-/g, '');
   const path = `artworks/${user.uid}/pending/${uploadId}.${extension}`;
 
-  await uploadBytes(ref(storage, path), blob, {
+  await uploadBytesResumable(ref(storage, path), blob, {
     contentType: blob.type,
     customMetadata: {
       ownerId: user.uid,
@@ -171,3 +171,5 @@ export async function requestPersonalizationModelUrl(orderId: string, itemId: st
   }
   return data.url;
 }
+
+export async function requestBackPdfUrl(orderId: string, itemId: string) { const data = await authenticatedRequest<{ url?: unknown }>(`/api/admin/orders/${encodeURIComponent(orderId)}/back-pdf/${encodeURIComponent(itemId)}`); if (typeof data.url !== 'string' || !data.url.startsWith('https://')) throw new Error('Link do PDF inválido.'); return data.url; }

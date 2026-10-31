@@ -11,9 +11,9 @@ import {
 } from '@firebase/rules-unit-testing';
 
 const PROJECT_ID = 'demo-gb-grafica-rules';
-const MAX_ARTWORK_BYTES = 15 * 1024 * 1024;
-const MAX_CATALOG_IMAGE_BYTES = 8 * 1024 * 1024;
-const MAX_ADMIN_FONT_BYTES = 3 * 1024 * 1024;
+const MAX_ARTWORK_BYTES = 50 * 1024 * 1024;
+const MAX_CATALOG_IMAGE_BYTES = 50 * 1024 * 1024;
+const MAX_ADMIN_FONT_BYTES = 16 * 1024 * 1024;
 
 let testEnvironment: RulesTestEnvironment | undefined;
 
@@ -481,7 +481,7 @@ test('Storage: upload rejeita arquivo vazio, tipo proibido e limite excedido', a
 	));
 });
 
-test('Storage: limite exato de 15 MB continua permitido', async () => {
+test('Storage: limite exato de 50 MB continua permitido', async () => {
 	const objectPath = `artworks/alice/pending/${'3'.repeat(32)}.pdf`;
 	const storageReference = authenticatedContext('alice').storage().ref(objectPath);
 
@@ -541,7 +541,7 @@ test('Storage: arquivo pendente existente não pode ser sobrescrito', async () =
 	await assertSucceeds(storageReference.delete());
 });
 
-test('Storage: arte vinculada ao pedido é somente leitura para o proprietário', async () => {
+test('Storage: originais de pedidos recusam acesso direto inclusive do proprietário', async () => {
 	const objectPath = `artworks/alice/orders/GB-TESTE/item-1/${'a1'.repeat(16)}.pdf`;
 	await seedStorageObject(objectPath, 'alice');
 
@@ -549,7 +549,7 @@ test('Storage: arte vinculada ao pedido é somente leitura para o proprietário'
 	const bobReference = authenticatedContext('bob').storage().ref(objectPath);
 	const adminReference = authenticatedContext('admin-claim', { admin: true }).storage().ref(objectPath);
 
-	await assertSucceeds(aliceReference.getMetadata());
+	await assertFails(aliceReference.getMetadata());
 	await assertFails(bobReference.getMetadata());
 	await assertFails(adminReference.getMetadata());
 	await assertUploadFails(aliceReference.put(

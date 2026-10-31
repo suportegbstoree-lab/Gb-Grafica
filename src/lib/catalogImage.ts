@@ -1,4 +1,4 @@
-export const MAX_CATALOG_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_CATALOG_IMAGE_BYTES = 50 * 1024 * 1024;
 
 const CATALOG_IMAGE_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',

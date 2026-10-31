@@ -1,7 +1,7 @@
 import { isComposablePersonalizationImage, MAX_PERSONALIZATION_MODEL_BYTES } from '../lib/personalizationModel';
 import { matchesArtworkSignature } from '../lib/artwork';
 import type { CartItem } from '../types';
-import { requestPersonalizationModelUrl } from './artworkService';
+import { requestBackPdfUrl, requestArtworkUrl, requestPersonalizationModelUrl } from './artworkService';
 import type { PersonalizationDocument } from './personalizationExport';
 
 async function readSignedModel(url: string): Promise<Blob> {
@@ -30,8 +30,19 @@ async function readSignedModel(url: string): Promise<Blob> {
   return blob;
 }
 
-export async function loadOrderPersonalizationDocument(orderId: string, item: CartItem): Promise<PersonalizationDocument> {
+export async function loadOrderPersonalizationDocument(orderId: string, item: CartItem, production = false): Promise<PersonalizationDocument> {
   const front = await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id));
   const back = item.contracapaPath ? await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id, 'back')) : null;
-  return { title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
+  const originalPdf = production && item.arquivoPath?.endsWith('.pdf') ? await readOriginalPdf(await requestArtworkUrl(orderId, item.id)) : undefined;
+  const originalBackPdf = production && item.contracapaOriginalPath ? await readOriginalPdf(await requestBackPdfUrl(orderId, item.id)) : undefined;
+  const fonts = item.personalizacaoTexto ? (await import('../lib/textLines')).textLayers(item.personalizacaoTexto).map(layer => ({ id: layer.value.fonte, nome: layer.value.fonteNome || layer.value.fonte, cssFamily: layer.value.fonteCssFamily || 'sans-serif', arquivoUrl: layer.value.fonteArquivoUrl, ativo: true })) : [];
+  return { ...(originalBackPdf ? { originalBackPdf } : {}), ...(originalPdf ? { originalPdf, automaticPdfBack: item.contracapaModo === 'automatic', customization: item.personalizacaoTexto, fonts } : {}), title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
+}
+
+async function readOriginalPdf(url: string): Promise<Blob> {
+  const response = await fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer', redirect: 'error', signal: AbortSignal.timeout(30000) });
+  if (!response.ok || response.headers.get('content-type')?.split(';')[0] !== 'application/pdf' || !response.body) throw new Error('Não foi possível carregar o PDF original.');
+  const reader = response.body.getReader(), parts: Uint8Array<ArrayBuffer>[] = []; let size = 0;
+  try { for (;;) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > MAX_PERSONALIZATION_MODEL_BYTES) throw new Error('PDF muito grande.'); parts.push(new Uint8Array(value)); } } finally { await reader.cancel().catch(() => {}); }
+  const blob = new Blob(parts, { type: 'application/pdf' }); if (!matchesArtworkSignature(blob.type, new Uint8Array(await blob.slice(0, 8).arrayBuffer()))) throw new Error('PDF inválido.'); return blob;
 }

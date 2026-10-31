@@ -474,7 +474,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Formatos e envio',
           content: (
             <p>
-              O site aceita PDF, PNG, JPG e WebP com até 15 MB por arquivo. O envio bem-sucedido não significa aprovação
+              O site aceita PDF, PNG, JPG e WebP com até 50 MB por arquivo. O envio bem-sucedido não significa aprovação
               técnica automática. Arquivos corrompidos, ilegíveis, incompletos ou incompatíveis com o produto poderão ser
               devolvidos para correção antes do início da produção.
             </p>

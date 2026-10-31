@@ -1,6 +1,6 @@
 import { validateAdminFontFile } from './adminFontValidation';
 import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
-import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   adminAssetPathFromUrl,
@@ -53,7 +53,7 @@ export async function uploadAdminImage(
   if (!path) throw new Error('Não foi possível gerar um caminho seguro para a imagem.');
   const originalName = sanitizeAdminAssetName(file.name);
   try {
-    const snapshot = await uploadBytes(ref(storage, path), file, {
+    const snapshot = await uploadBytesResumable(ref(storage, path), file, {
       contentType: file.type,
       cacheControl: 'public,max-age=31536000,immutable',
       customMetadata: { uploadedBy: user.uid, originalName },
@@ -74,7 +74,7 @@ export async function uploadAdminFont(fontId: string, file: File): Promise<Uploa
   if (!path) throw new Error('Não foi possível gerar um caminho seguro para a fonte.');
   const originalName = sanitizeAdminAssetName(file.name);
   try {
-    const snapshot = await uploadBytes(ref(storage, path), file, {
+    const snapshot = await uploadBytesResumable(ref(storage, path), file, {
       contentType: normalizedContentType,
       cacheControl: 'public,max-age=31536000,immutable',
       customMetadata: { uploadedBy: user.uid, originalName },

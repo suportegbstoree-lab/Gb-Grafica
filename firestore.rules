@@ -110,7 +110,7 @@ service cloud.firestore {
     function can(permission) { return isAdmin() || staffCan(permission); }
 
     function allowedProductFields() {
-      return (staffCan('products.images') ? ['imagem', 'imagens'] : []).concat(
+      return (staffCan('products.images') ? ['imagem', 'imagens', 'imagensPorCombinacao', 'modelosPdf'] : []).concat(
         staffCan('products.personalization') ? ['tipoInput', 'labelTexto', 'printProfile'] : []);
     }
 
@@ -161,6 +161,7 @@ service cloud.firestore {
              data.alvoTipo in ['produto', 'categoria'] &&
              data.alvoId is string && data.alvoId.size() > 0 && data.alvoId.size() <= 100 &&
              data.alvoNome is string && data.alvoNome.size() > 0 && data.alvoNome.size() < 200 &&
+             ((!('alvoIds' in data) && !('alvoNomes' in data)) || (data.alvoIds is list && data.alvoNomes is list && data.alvoIds.size() > 0 && data.alvoIds.size() <= 100 && data.alvoIds.size() == data.alvoNomes.size() && data.alvoIds.toSet().size() == data.alvoIds.size() && data.alvoIds[0] == data.alvoId && data.alvoNomes[0] == data.alvoNome)) &&
              data.descontoTipo in ['percentual', 'valor_fixo'] &&
              ((data.descontoTipo == 'percentual' && data.descontoPercentual is number &&
                data.descontoPercentual > 0 && data.descontoPercentual < 100) ||

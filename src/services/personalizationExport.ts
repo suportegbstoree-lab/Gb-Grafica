@@ -10,6 +10,11 @@ export interface PersonalizationPage {
 
 export interface PersonalizationDocument {
   title: string;
+  originalPdf?: Blob;
+  originalBackPdf?: Blob;
+  automaticPdfBack?: boolean;
+  customization?: import('../lib/textCustomization').TextCustomization;
+  fonts?: import('../lib/textCustomization').PersonalizationFont[];
   printProfile?: PrintProfile;
   pages: PersonalizationPage[];
 }
@@ -38,6 +43,7 @@ export async function exportPersonalizationImage(blob: Blob, type: 'image/png' |
 
 export async function exportPersonalizationPdf(document: PersonalizationDocument): Promise<Blob> {
   if (document.pages.length < 1 || document.pages.length > 2) throw new Error('Selecione a capa e, se existir, a contracapa.');
+  if (document.originalPdf || document.originalBackPdf) return (await import('./originalPdfExport')).exportOriginalPdf(document);
   const { PDFDocument } = await import('pdf-lib');
   const pdf = await PDFDocument.create();
   pdf.setTitle(document.title);

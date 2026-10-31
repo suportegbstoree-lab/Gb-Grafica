@@ -6,7 +6,7 @@ import {
 } from './catalogImage.js';
 
 export type AdminImageScope = 'categories' | 'site' | 'promotions';
-export const MAX_ADMIN_FONT_BYTES = 3 * 1024 * 1024;
+export const MAX_ADMIN_FONT_BYTES = 16 * 1024 * 1024;
 
 export function isSafeAdminAssetId(value: string): boolean {
   return /^[A-Za-z0-9_-]{1,100}$/.test(value);

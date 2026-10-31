@@ -97,7 +97,8 @@ test('alteração de quantidade invalida a cotação', async ({ page }) => {
   await expect(cart.getByRole('radio', { name: /PAC/ })).toBeVisible();
   await cart.getByRole('button', { name: 'Aumentar quantidade de Carimbo' }).click();
   await expect(cart.getByRole('radio', { name: /PAC/ })).toHaveCount(0);
-  await expect(cart.getByRole('button', { name: 'IR PARA O PAGBANK' })).toBeDisabled();
+  await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();
+  await expect(cart.getByRole('alert')).toContainText('CEP e cálculo do frete');
 });
 
 test('resposta atrasada de outro CEP não restaura uma cotação antiga', async ({ page }) => {

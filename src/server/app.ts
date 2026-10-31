@@ -1,3 +1,7 @@
+import { createOperationsRouter } from './operationsRouter.js';
+import { createOrderWithDocuments, processOrderEmails, sendOrderEmail } from './orderDocuments.js';
+import { pendingBackPdf, templateArtwork } from './pdfTemplates.js';
+import { isTemplatePath } from '../lib/pdfTemplate.js';
 import { validTrackingCode } from '../lib/tracking.js';
 import { cronAuthorized, syncCorreiosTracking, processTrackingJobs } from './correiosTracking.js';
 import { expirePromotions } from './maintenance.js';
@@ -130,9 +134,11 @@ interface NormalizedCartItem {
 	artworkVersion?: ArtworkObjectVersion;
 	modelVersion?: ArtworkObjectVersion;
 	backModelVersion?: ArtworkObjectVersion;
+	backOriginalVersion?: ArtworkObjectVersion;
 	cartItem: {
 		id: string;
 		productId: string;
+		templateId?: string;
 		nome: string;
 		imagem: string;
 		preco: string;
@@ -146,6 +152,8 @@ interface NormalizedCartItem {
 		modeloPath?: string;
 		modeloNome?: string;
 		contracapaPath?: string;
+		contracapaOriginalPath?: string;
+		contracapaOriginalNome?: string;
 		contracapaNome?: string;
 		contracapaModo?: 'automatic' | 'custom';
 		textoPersonalizado?: string;
@@ -777,24 +785,30 @@ async function normalizeCart(
 		const productType = isProductCustomizationType(product.tipoInput) ? product.tipoInput : 'nenhum';
 		const requiresArtwork = productRequiresArtwork(productType);
 		const requiresText = productRequiresText(productType);
-		const artworkPath = requiresArtwork ? textValue(item.arquivoPath, 300) : '';
+		let templateVersion: ArtworkObjectVersion | undefined;
+		try { templateVersion = await templateArtwork(bucket, productId, product, item.templateId); } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Modelo PDF inválido.'); }
+		if (templateVersion && item.arquivoPath) throw new HttpError(422, 'Escolha um modelo da loja ou a sua própria arte.');
+		const artworkPath = templateVersion?.path || (requiresArtwork ? textValue(item.arquivoPath, 300) : '');
 		const modelPath = (requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
 		const backModelPath = textValue(item.contracapaPath, 300);
 		const backMode = item.contracapaModo;
+		let backOriginalVersion: ArtworkObjectVersion | undefined;
+		try { backOriginalVersion = await pendingBackPdf(bucket, userId, item.contracapaOriginalPath); } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Contracapa inválida.'); }
+		if (backOriginalVersion && (backMode !== 'custom' || !backModelPath)) throw new HttpError(422, 'Gere o modelo da contracapa personalizada.');
 		if ((backModelPath || backMode !== undefined) &&
 			(!modelPath || !backModelPath || !['automatic', 'custom'].includes(String(backMode)))) {
 			throw new HttpError(422, `A contracapa de ${productName} é inválida. Gere as duas faces novamente.`);
 		}
 		if (printProfile && requiresArtwork && !modelPath) throw new HttpError(422, `Gere o modelo de ${productName} no formato de impressão cadastrado.`);
 		if (modelPath && item.aprovarArte !== true) throw new HttpError(422, `Confira e aprove a arte de ${productName} antes de concluir o pedido.`);
-		let artworkName = '';
+		let artworkName = templateVersion?.originalName || '';
 		let modelName = '';
 		let backModelName = '';
-		let artworkVersion: ArtworkObjectVersion | undefined;
+		let artworkVersion: ArtworkObjectVersion | undefined = templateVersion;
 		let modelVersion: ArtworkObjectVersion | undefined;
 		let backModelVersion: ArtworkObjectVersion | undefined;
 
-		if (requiresArtwork) {
+		if (requiresArtwork && !templateVersion) {
 			if (item.artePendente === true) {
 				throw new HttpError(422, `O envio posterior de arte não está disponível para ${productName}.`);
 			}
@@ -812,7 +826,7 @@ async function normalizeCart(
 				const generation = parseArtworkObjectGeneration(metadata.generation);
 				if (
 					!isAllowedArtwork(metadata.contentType, size) || ownerId !== userId || generation === null ||
-					(requiresText && !isComposablePersonalizationImage(metadata.contentType, size))
+					(requiresText && metadata.contentType !== 'application/pdf' && !isComposablePersonalizationImage(metadata.contentType, size))
 				) {
 					throw new HttpError(422, `O arquivo enviado para ${productName} não é permitido.`);
 				}
@@ -886,23 +900,26 @@ async function normalizeCart(
 				productId, selections, printProfile: printProfile || null, text: textCustomization,
 				artwork: artworkVersion ? [artworkVersion.path, artworkVersion.generation] : null,
 				model: [modelVersion.path, modelVersion.generation],
+				backOriginal: backOriginalVersion ? [backOriginalVersion.path, backOriginalVersion.generation] : null,
 				back: backModelVersion ? [backModelVersion.path, backModelVersion.generation] : null,
 			})).digest('hex'),
 		} : undefined;
 		const customText = textCustomization?.texto;
 		const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
-		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath].filter(Boolean).join('|'));
+		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath, backOriginalVersion?.path].filter(Boolean).join('|'));
 		const price = (unitAmount / 100).toFixed(2);
 
 		normalizedItems.push({
 			...(artworkVersion ? { artworkVersion } : {}),
 			...(modelVersion ? { modelVersion } : {}),
 			...(backModelVersion ? { backModelVersion } : {}),
+			...(backOriginalVersion ? { backOriginalVersion } : {}),
 			cartItem: {
 				id: cartId,
 				productId,
+				...(templateVersion ? { templateId: String(item.templateId) } : {}),
 				nome: productName,
-				imagem: productImage || '',
+				imagem: isPlainRecord(product.imagensPorCombinacao) && typeof product.imagensPorCombinacao[combinationKey] === 'string' && [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].includes(product.imagensPorCombinacao[combinationKey]) ? String(product.imagensPorCombinacao[combinationKey]) : productImage || '',
 				preco: price,
 				...(appliedPromotion ? {
 					precoOriginal: (originalUnitAmount / 100).toFixed(2),
@@ -914,6 +931,7 @@ async function normalizeCart(
 				...(printProfile ? { printProfile } : {}),
 				...(approval ? { aprovacaoArte: approval } : {}),
 				...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
+				...(backOriginalVersion ? { contracapaOriginalPath: backOriginalVersion.path, contracapaOriginalNome: backOriginalVersion.originalName } : {}),
 				...(modelPath ? { modeloPath: modelPath, modeloNome: modelName } : {}),
 				...(backModelPath ? { contracapaPath: backModelPath, contracapaNome: backModelName, contracapaModo: backMode as 'automatic' | 'custom' } : {}),
 				...(textCustomization ? {
@@ -987,6 +1005,7 @@ async function copyArtworksToOrder(
 				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
 				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
 				{ field: 'contracapaPath' as const, path: item.cartItem.contracapaPath, version: item.backModelVersion, model: true },
+				{ field: 'contracapaOriginalPath' as const, path: item.cartItem.contracapaOriginalPath, version: item.backOriginalVersion, model: false },
 			];
 
 			for (const asset of assets) {
@@ -997,7 +1016,7 @@ async function copyArtworksToOrder(
 				}
 				const isValidSource = asset.model
 					? isPendingPersonalizationModelPath(sourcePath, userId)
-					: isPendingArtworkPath(sourcePath, userId);
+					: isPendingArtworkPath(sourcePath, userId) || (asset.version === item.artworkVersion && isTemplatePath(sourcePath, item.cartItem.productId));
 				if (!isValidSource) {
 					throw new HttpError(422, `${asset.model ? 'O modelo composto' : 'A arte'} de ${item.cartItem.nome} não está mais disponível.`);
 				}
@@ -1021,7 +1040,7 @@ async function copyArtworksToOrder(
 					throw error;
 				}
 				item.cartItem[asset.field] = destinationPath;
-				pendingPaths.push(asset.version);
+				if (!sourcePath.startsWith('catalog/templates/')) pendingPaths.push(asset.version);
 				orderPaths.push(destinationPath);
 			}
 		}
@@ -1644,7 +1663,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		}
 
 		orderRef = db.collection('orders').doc(orderId);
-		await orderRef.create({
+		const orderData = {
 			id: orderId,
 			userId: firebaseUser.uid,
 			data: new Date().toISOString(),
@@ -1671,9 +1690,12 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			clienteNome: customerName,
 			clienteEmail: email,
 			clienteTelefone: phone.digits,
+			observacoes: textValue(body.observacoes, 1000),
 			legalAcceptance,
-		});
+		};
+		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '');
 		orderCreated = true;
+		await Promise.allSettled([sendOrderEmail(db, `${orderId}-customer`), sendOrderEmail(db, `${orderId}-merchant`)]);
 
 		try {
 			const checkoutBody: PlainRecord = {
@@ -1971,6 +1993,7 @@ app.post('/api/admin/staff/assign', requireAppCheck, async (req, res) => {
     let target;
     try { target = await auth.getUserByEmail(email); }
     catch (error) { if ((error as { code?: string }).code === 'auth/user-not-found') throw new HttpError(404, 'Este e-mail ainda não possui uma conta cadastrada na loja.'); throw error; }
+    if (role !== 'administrator' && await createStaffBackend().isAdmin(target.uid)) throw new HttpError(403, 'Administradores não podem ter sua função alterada pelo painel.');
     if (target.uid === actor.uid && role !== 'administrator') throw new HttpError(422, 'Sua própria função administrativa não pode ser removida por esta tela.');
     if (target.disabled && role !== 'none') throw new HttpError(422, 'A conta está desativada.');
     const changed = await staffMutation(req, async () => {
@@ -2113,6 +2136,35 @@ async function verifyOperationalPayment(db: ReturnType<typeof getAdminServices>[
 app.post('/api/admin/orders/:orderId/fulfillment', requireAppCheck, async (req, res) => {
   try { await performOrderOperation(req, res); } catch (error) { sendError(res, error); }
 });
+app.get('/api/orders/:orderId/label', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireFirebaseUser(req), { db } = getAdminServices();
+    const id = req.params.orderId;
+    if (!/^GB-[A-Z0-9]{8,64}$/.test(id)) throw new HttpError(422, 'Pedido inválido.');
+    const order = (await db.collection('orders').doc(id).get()).data();
+    if (!order) throw new HttpError(404, 'Pedido não encontrado.');
+    if (order.userId !== actor.uid && !(await userHasPermission(actor, db, 'orders.read'))) throw new HttpError(403, 'Acesso negado.');
+    const data = (await db.collection('_orderDocuments').doc(id).get()).data();
+    if (!data?.pdf) throw new HttpError(404, 'Este pedido antigo não possui uma ficha inicial.');
+    res.setHeader('Cache-Control', 'private, no-store'); res.type('application/pdf').send(Buffer.from(data.pdf));
+  } catch (error) { sendError(res, error); }
+});
+app.get('/api/admin/orders/:orderId/email-status', requireAppCheck, async (req, res) => {
+  try { await requirePermissionUser(req, 'orders.read');
+    if (!/^GB-[A-Z0-9]{8,64}$/.test(req.params.orderId)) throw new HttpError(422, 'Pedido inválido.');
+    const { db } = getAdminServices(); const statuses = [];
+    for (const kind of ['customer', 'merchant']) { const data = (await db.collection('_orderEmails').doc(`${req.params.orderId}-${kind}`).get()).data(); statuses.push({ kind, status: data?.status || 'unavailable' }); }
+    res.json({ statuses });
+  } catch (error) { sendError(res, error); }
+});
+app.post('/api/admin/orders/:orderId/retry-email', requireAppCheck, async (req, res) => {
+  try { await requireAdminUser(req);
+    if (!/^GB-[A-Z0-9]{8,64}$/.test(req.params.orderId)) throw new HttpError(422, 'Pedido inválido.');
+    const { db } = getAdminServices();
+    res.json({ statuses: await Promise.all(['customer', 'merchant'].map(kind => sendOrderEmail(db, `${req.params.orderId}-${kind}`))) });
+  } catch (error) { sendError(res, error); }
+});
+
 app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (req, res) => {
   try { await performOrderOperation(req, res, true); } catch (error) { sendError(res, error); }
 });
@@ -2135,10 +2187,10 @@ app.get('/api/internal/maintenance', async (req, res) => {
     if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
-    const [expiredPromotions, tracking] = await Promise.all([
-      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)),
+    const [expiredPromotions, tracking, orderEmails] = await Promise.all([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), processOrderEmails(db),
     ]);
-    res.json({ expiredPromotions, tracking });
+    res.json({ expiredPromotions, tracking, orderEmails });
   } catch (error) { sendError(res, error); }
 });
 
@@ -2159,7 +2211,7 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 		const snapshot = await db.collection('orders').doc(orderId).get();
 		if (!snapshot.exists) throw new HttpError(404, 'Pedido não encontrado.');
 		const order = snapshot.data() as PlainRecord;
-		if (order.userId !== firebaseUser.uid && !(await userHasPermission(firebaseUser, db, 'orders.artwork'))) {
+		if (!(await userHasPermission(firebaseUser, db, 'orders.artwork'))) {
 			throw new HttpError(403, 'Você não pode acessar esta arte.');
 		}
 
@@ -2182,6 +2234,18 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 	} catch (error) {
 		sendError(res, error);
 	}
+});
+
+app.get('/api/admin/orders/:orderId/back-pdf/:itemId', requireAppCheck, async (req, res) => {
+  try {
+    await requirePermissionUser(req, 'orders.artwork');
+    const { db, bucket } = getAdminServices(), { orderId, itemId } = req.params;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId)) throw new HttpError(422, 'Pedido inválido.');
+    const order = (await db.collection('orders').doc(orderId).get()).data();
+    const item = order?.itens?.find((candidate: any) => candidate.id === itemId), path = item?.contracapaOriginalPath;
+    if (!order || !isOrderArtworkPath(path, order.userId, orderId) || !path.endsWith('.pdf')) throw new HttpError(404, 'PDF não encontrado.');
+    const [url] = await bucket.file(path).getSignedUrl({ action: 'read', expires: Date.now() + 300000, responseDisposition: 'attachment' }); res.json({ url });
+  } catch (error) { sendError(res, error); }
 });
 
 app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) => {
@@ -2411,6 +2475,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 		sendError(res, new HttpError(500, 'Erro ao processar notificação.', 'WEBHOOK_PROCESSING_FAILED'));
 	}
 });
+
+app.use('/api/admin/operations', requireAppCheck, createOperationsRouter({ authorize: req => requirePermissionUser(req, 'operations.manage'), services: getAdminServices }));
 
 app.use('/api', (_req, res) => {
 	sendError(res, new HttpError(404, 'Rota da API não encontrada.', 'API_ROUTE_NOT_FOUND'));

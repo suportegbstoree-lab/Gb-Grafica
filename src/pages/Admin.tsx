@@ -1,3 +1,8 @@
+import OrderDocuments from '../components/OrderDocuments';
+import OperationsWorkbench from '../components/OperationsWorkbench';
+import type { OperationsClient } from '../services/operationsService';
+import { uploadCatalogPdf, removeCatalogPdf, type UploadedCatalogPdf } from '../services/catalogPdfService';
+import UploadInput from '../components/UploadInput';
 import { allowedPanelSections, type PanelSection } from '../lib/panelAccess';
 import StaffManagement from '../components/StaffManagement';
 import ProductDesignEditor from '../components/ProductDesignEditor';
@@ -17,7 +22,7 @@ import type { PersonalizationDocument } from '../services/personalizationExport'
 import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
 import React, { useState } from 'react';
 import ProductShippingEditor from '../components/ProductShippingEditor';
-import { Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
@@ -36,6 +41,8 @@ import {
 } from '../services/catalogImageService';
 import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
 import OrderActions from '../components/OrderActions';
+import PromotionTargets from '../components/PromotionTargets';
+import VariantImagesEditor from '../components/VariantImagesEditor';
 import FlashPromotionEditor from '../components/FlashPromotionEditor';
 import { promotionActiveAt } from '../lib/promotions';
 import { missingLegalBusinessFields } from '../lib/legal';
@@ -74,6 +81,8 @@ export interface AdminPersistence {
 }
 
 export interface AdminCatalogImageStorage {
+  uploadPdf?: (productId: string, file: File) => Promise<UploadedCatalogPdf>;
+  deletePdf?: (path: string) => Promise<void>;
   uploadImage: (productId: string, file: File) => Promise<UploadedCatalogImage>;
   deleteImage: (path: string) => Promise<void>;
   pathFromUrl: (url: string, productId?: string) => string | null;
@@ -87,6 +96,7 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  operationsClient?: OperationsClient;
   orderOperations?: OrderOperationsApi;
   fullAdmin?: boolean;
   permissions?: StaffPermission[];
@@ -127,6 +137,7 @@ const FIREBASE_PERSISTENCE: AdminPersistence = {
 
 const FIREBASE_CATALOG_IMAGE_STORAGE: AdminCatalogImageStorage = {
   uploadImage: uploadCatalogImage,
+  uploadPdf: uploadCatalogPdf, deletePdf: removeCatalogPdf,
   deleteImage: removeCatalogImage,
   pathFromUrl: storedCatalogImagePath,
 };
@@ -170,7 +181,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
+export default function Admin({ operationsClient, orderOperations = ORDER_OPERATIONS_API,
   fullAdmin = false,
   permissions = [],
   staffApi = staffAdministrationApi,
@@ -191,13 +202,17 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
   const modelRequest = React.useRef(0);
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
   const [savingHighlight, setSavingHighlight] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<AdminTab>('products');
+  const adminLocation = useLocation();
+  const navigate = useNavigate();
+  const activeTab = (/^\/admin\/([^/]+)/.exec(adminLocation.pathname)?.[1] || 'products') as AdminTab;
+  const setActiveTab = (tab: AdminTab) => navigate(`/admin/${tab}${adminLocation.search}`, { replace: false });
   const effectivePermissions = fullAdmin ? ALL_STAFF_PERMISSIONS : permissions;
   const can = (permission: StaffPermission) => effectivePermissions.includes(permission);
   const productDesignAllowed = canEditProductImages(effectivePermissions) || canEditProductPersonalization(effectivePermissions);
   const allowedSections = allowedPanelSections(fullAdmin, permissions);
   const allowedSectionsRef = React.useRef(allowedSections); allowedSectionsRef.current = allowedSections;
   const navItems = [
+    { id: 'operations' as const, label: 'Operações', icon: Layout },
     { id: 'products' as const, label: 'Produtos', icon: Layout },
     { id: 'categories' as const, label: 'Categorias', icon: List },
     { id: 'orders' as const, label: 'Pedidos', icon: Package },
@@ -298,7 +313,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
 
   const deleteCatalogPaths = React.useCallback(async (paths: string[]) => {
     const uniquePaths = [...new Set(paths.filter(Boolean))];
-    const results = await Promise.allSettled(uniquePaths.map(path => catalogImageStorage.deleteImage(path)));
+    const results = await Promise.allSettled(uniquePaths.map(path => (path.startsWith('catalog/templates/') ? (catalogImageStorage.deletePdf || removeCatalogPdf)(path) : catalogImageStorage.deleteImage(path))));
     const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (failed) throw failed.reason;
   }, [catalogImageStorage]);
@@ -707,44 +722,25 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
   };
 
   const handleFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || isUploadingAdminAsset) return;
-    if ((configDraft.fontes_personalizacao || []).length >= MAX_PERSONALIZATION_FONTS) { setErrorMessage(`Use no máximo ${MAX_PERSONALIZATION_FONTS} fontes.`); return; }
-    const fontType = adminFontUploadType(file.name, file.type);
-    if (!fontType) { setErrorMessage('Envie um arquivo WOFF2, TTF ou OTF.'); return; }
-    const nome = file.name.replace(/\.(woff2|ttf|otf)$/i, '').replace(/[-_]+/g, ' ').trim() || 'Fonte personalizada';
-    const baseId = slugifyDocumentId(nome).slice(0, 48) || 'fonte';
-    const existingIds = new Set((configDraft.fontes_personalizacao || []).map(font => font.id));
-    let id = baseId;
-    let suffix = 2;
-    while (existingIds.has(id)) {
-      id = `${baseId.slice(0, 58)}-${suffix}`;
-      suffix += 1;
-    }
-    setIsUploadingAdminAsset(true);
-    setErrorMessage(null);
+    const files = [...(event.target.files || [])]; event.target.value = '';
+    if (!files.length || isUploadingAdminAsset) return;
+    if (files.length > 20 || (configDraft.fontes_personalizacao || []).length + files.length > MAX_PERSONALIZATION_FONTS) { setErrorMessage('Limite de fontes excedido (até 20 arquivos por envio).'); return; }
+    setIsUploadingAdminAsset(true); setErrorMessage(null);
+    const staged: UploadedAdminAsset[] = [], fonts: PersonalizationFont[] = [];
     try {
-      const uploaded = await adminAssetStorage.uploadFont(id, file);
-      const font: PersonalizationFont = {
-        id,
-        nome,
-        cssFamily: `GBFont_${id.replace(/-/g, '_')}`,
-        arquivoUrl: uploaded.url,
-        arquivoFormato: adminFontFormat(fontType)!,
-        ativo: true,
-      };
-      setConfigDraft(current => ({
-        ...current,
-        fontes_personalizacao: [...(current.fontes_personalizacao || []), font],
-      }));
-      setConfigDirty(true);
-      setSuccessMessage('Fonte enviada. Salve as configurações para disponibilizá-la.');
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a fonte.');
-    } finally {
-      setIsUploadingAdminAsset(false);
-    }
+      const ids = new Set((configDraft.fontes_personalizacao || []).map(font => font.id));
+      for (const file of files) {
+        const type = adminFontUploadType(file.name, file.type);
+        if (!type) throw new Error('Envie arquivos WOFF2, TTF ou OTF.');
+        const nome = file.name.replace(/\.(woff2|ttf|otf)$/i, '').replace(/[-_]+/g, ' ').slice(0, 100);
+        const base = slugifyDocumentId(nome).slice(0, 48) || 'fonte'; let id = base, suffix = 2;
+        while (ids.has(id)) id = `${base}-${suffix++}`; ids.add(id);
+        const uploaded = await adminAssetStorage.uploadFont(id, file); staged.push(uploaded);
+        fonts.push({ id, nome, cssFamily: `GBFont_${id.replaceAll('-', '_')}`, arquivoUrl: uploaded.url, arquivoFormato: adminFontFormat(type)!, ativo: true });
+      }
+      setConfigDraft(current => ({ ...current, fontes_personalizacao: [...(current.fontes_personalizacao || []), ...fonts] })); setConfigDirty(true); setSuccessMessage('Fontes enviadas. Salve as configurações para concluir.');
+    } catch (error) { await Promise.allSettled(staged.map(asset => adminAssetStorage.deleteAsset(asset.path))); setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar as fontes.'); }
+    finally { setIsUploadingAdminAsset(false); }
   };
 
   const updateConfiguredFont = (index: number, patch: Partial<PersonalizationFont>) => {
@@ -820,10 +816,11 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
               categoria: validation.value.nome,
             })),
           ...promotions
-            .filter(promotion => promotion.alvoTipo === 'categoria' && promotion.alvoId === previousCategory.id)
+            .filter(promotion => promotion.alvoTipo === 'categoria' && (promotion.alvoIds || [promotion.alvoId]).includes(previousCategory.id))
             .map(promotion => persistence.setDocument('promocoes', promotion.id, {
               ...promotion,
-              alvoNome: validation.value.nome,
+              alvoNome: promotion.alvoId === previousCategory.id ? validation.value.nome : promotion.alvoNome,
+              alvoNomes: (promotion.alvoNomes || [promotion.alvoNome!]).map(name => name === previousCategory.nome ? validation.value.nome : name),
             })),
         ]);
       }
@@ -898,7 +895,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
       setErrorMessage('Esta categoria ainda possui produtos. Mova-os antes de excluir.');
       return;
     }
-    if (promotions.some(promotion => promotion.alvoTipo === 'categoria' && promotion.alvoId === catId)) {
+    if (promotions.some(promotion => promotion.alvoTipo === 'categoria' && (promotion.alvoIds || [promotion.alvoId]).includes(catId))) {
       setErrorMessage('Esta categoria ainda possui uma promoção vinculada. Edite ou exclua a promoção primeiro.');
       return;
     }
@@ -912,25 +909,33 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
   };
 
   // Product Handlers
-  const uploadCatalogFiles = async (files: File[]): Promise<UploadedCatalogImage[]> => {
+  const uploadCatalogFiles = async (files: File[], main = false): Promise<UploadedCatalogImage[]> => {
     if (!editingProduct || !productStorageId || isUploadingCatalogImages) return [];
     if (files.length === 0) return [];
 
-    const invalidFile = files.find(file => !isAllowedCatalogImage(file.type, file.size));
+    const invalidFile = files.find(file => file.type !== 'application/pdf' && !isAllowedCatalogImage(file.type, file.size));
     if (invalidFile) {
       throw new Error(`“${invalidFile.name}” não é JPG, PNG ou WebP válido de até ${MAX_CATALOG_IMAGE_BYTES / 1024 / 1024} MB.`);
     }
 
     setIsUploadingCatalogImages(true);
     const uploaded: UploadedCatalogImage[] = [];
+    const templates: import('../lib/pdfTemplate').ProductPdfTemplate[] = [];
     try {
       for (const file of files) {
-        uploaded.push(await catalogImageStorage.uploadImage(productStorageId, file));
+        if (file.type === 'application/pdf') {
+          const result = await (catalogImageStorage.uploadPdf || uploadCatalogPdf)(productStorageId, file);
+          uploaded.push(...result.images, { path: result.template.path, url: result.template.path, name: result.template.name });
+          templates.push(result.template);
+        } else uploaded.push(await catalogImageStorage.uploadImage(productStorageId, file));
       }
+      const images = uploaded.filter(image => !image.path.startsWith('catalog/templates/'));
+      if ((editingProduct.imagens?.length || 0) + images.length - (main ? 1 : 0) > ADMIN_LIMITS.galleryImages || (editingProduct.modelosPdf?.length || 0) + templates.length > 25) throw new Error('Limite de páginas da galeria ou de modelos PDF excedido.');
+      if (templates.length) setEditingProduct(current => current ? { ...current, id: productStorageId, modelosPdf: [...(current.modelosPdf || []), ...templates] } : current);
       setSessionCatalogUploads(current => [...current, ...uploaded]);
-      return uploaded;
+      return uploaded.filter(image => !image.path.startsWith('catalog/templates/'));
     } catch (error) {
-      await Promise.allSettled(uploaded.map(image => catalogImageStorage.deleteImage(image.path)));
+      await Promise.allSettled(uploaded.map(image => image.path.startsWith('catalog/templates/') ? (catalogImageStorage.deletePdf || removeCatalogPdf)(image.path) : catalogImageStorage.deleteImage(image.path)));
       throw error;
     } finally {
       setIsUploadingCatalogImages(false);
@@ -944,9 +949,10 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
 
     setErrorMessage(null);
     try {
-      const [uploaded] = await uploadCatalogFiles([file]);
+      const allUploaded = await uploadCatalogFiles([file], true);
+      const uploaded = allUploaded[0];
       if (!uploaded) return;
-      setEditingProduct(current => current ? { ...current, imagem: uploaded.url } : current);
+      setEditingProduct(current => current ? { ...current, imagem: uploaded.url, imagens: [...(current.imagens || []), ...allUploaded.slice(1).map(image => image.url)] } : current);
       setSuccessMessage('Imagem principal enviada. Salve o produto para concluir.');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar a imagem principal.');
@@ -997,7 +1003,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
     setIsSaving(true);
     try {
       await persistence.setDocument('anuncios', id, productToSave);
-      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || [])]);
+      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path)]);
       const original = originalProductImagesRef.current;
       const staleOriginalPaths = original
         ? original.urls
@@ -1010,7 +1016,8 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
         .map(upload => upload.path);
       let cleanupFailed = false;
       try {
-        await deleteCatalogPaths([...staleOriginalPaths, ...unusedSessionPaths]);
+        const removedTemplates = (products.find(product => product.id === id)?.modelosPdf || []).filter(template => !(productToSave.modelosPdf || []).some(current => current.path === template.path)).map(template => template.path);
+        await deleteCatalogPaths([...staleOriginalPaths, ...unusedSessionPaths, ...removedTemplates]);
       } catch (cleanupError) {
         cleanupFailed = true;
         console.error('Produto salvo, mas houve falha ao limpar imagens substituídas:', cleanupError);
@@ -1082,7 +1089,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
     else await persistence.setDocument('anuncios', current.id, next);
     const used = new Set([next.imagem, ...(next.imagens || [])]);
     const stale = [current.imagem, ...(current.imagens || [])].filter(url => !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
-    await Promise.allSettled(stale.map(path => catalogImageStorage.deleteImage(path)));
+    await Promise.allSettled(stale.map(path => (path.startsWith('catalog/templates/') ? (catalogImageStorage.deletePdf || removeCatalogPdf)(path) : catalogImageStorage.deleteImage(path))));
     setSuccessMessage('Arte do produto atualizada.');
     return next;
   };
@@ -1124,7 +1131,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
       const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
       if (!item) throw new Error('Item do pedido não encontrado.');
       const request = ++modelRequest.current;
-      const document = await orderModelLoader(orderId, item);
+      const document = await orderModelLoader(orderId, item, true);
       if (request === modelRequest.current) setModelDocument(document);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Não foi possível abrir o modelo composto.');
@@ -1281,6 +1288,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
             GB <span className="text-[#ff4d79]">ADMIN</span>
           </div>
 
+          <Link to="/?preview=customer" className="mb-4 block rounded-lg border border-gray-700 px-4 py-3 text-sm">Visualizar como cliente</Link>
           <nav aria-label="Seções administrativas" className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
             {allowedTabs.map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => requestTabChange(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} className={cn('w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors', activeTab === item.id ? 'bg-[#ff4d79] text-white' : 'text-gray-400 hover:bg-gray-800')}><Icon size={18} />{item.label}</button>; })}
           </nav>
@@ -1323,6 +1331,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
             </motion.div>
           )}
         </AnimatePresence>
+        {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} />}
         {activeTab === 'products' && tabAllowed('products') && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -1410,7 +1419,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                     <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
                       {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
                       {isUploadingAdminAsset ? 'Enviando...' : 'Enviar do computador'}
-                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleCategoryIconUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+                      <UploadInput type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={handleCategoryIconUpload} disabled={isUploadingAdminAsset} className="sr-only" />
                     </label>
                     {categoryDraft.icon && <img src={categoryDraft.icon} alt="Prévia do ícone" className="h-12 w-12 rounded-lg border border-gray-800 bg-white object-contain p-1" />}
                   </div>
@@ -1496,7 +1505,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                         <OrderCard
                           key={order.id}
                           order={order}
-                          canFulfill={can('orders.fulfillment')}
+                          canFulfill={can('orders.fulfillment')} canRetryEmail={fullAdmin}
                           operations={orderOperations}
                           onOperationError={setErrorMessage}
                           onOperationSuccess={setSuccessMessage}
@@ -1534,7 +1543,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                     <div className="flex items-center gap-4">
                       <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
                         {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar logo
-                        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('logo_url', event)} disabled={isUploadingAdminAsset} className="sr-only" />
+                        <UploadInput type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('logo_url', event)} disabled={isUploadingAdminAsset} className="sr-only" />
                       </label>
                       {configDraft.logo_url && <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-gray-800 bg-white p-2"><img src={resolvePublicImage(configDraft.logo_url)} alt="Prévia do logo" className="max-h-full max-w-full object-contain" /></div>}
                     </div>
@@ -1544,7 +1553,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                     <span className="text-xs font-bold uppercase tracking-widest text-gray-500">Imagem do banner principal</span>
                     <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
                       {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar banner
-                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('banner_principal', event)} disabled={isUploadingAdminAsset} className="sr-only" />
+                      <UploadInput type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={event => void handleConfigImageUpload('banner_principal', event)} disabled={isUploadingAdminAsset} className="sr-only" />
                     </label>
                     {configDraft.banner_principal && <img src={configDraft.banner_principal} alt="Prévia do banner" className="h-28 w-full rounded-lg border border-gray-800 object-cover" />}
                     <details className="text-xs text-gray-500"><summary className="cursor-pointer hover:text-gray-300">Usar URL externa</summary><input type="text" inputMode="url" autoComplete="url" spellCheck={false} aria-label="URL externa do banner principal" value={configDraft.banner_principal} onChange={event => { setConfigDraft(current => ({ ...current, banner_principal: event.target.value })); setConfigDirty(true); }} className="mt-2 w-full rounded-lg border border-gray-800 bg-black px-4 py-3 outline-none focus:border-[#ff4d79]" /></details>
@@ -1692,7 +1701,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
       {isFontsEditorOpen && <EditorModal title="Fontes da personalização" busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
         <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} />
         <div className="space-y-5">
-          <p className="text-xs text-gray-400">Somente as fontes ativas aparecem para o cliente. Envie WOFF2, TTF ou OTF de até 3 MB.</p>
+          <p className="text-xs text-gray-400">Somente as fontes ativas aparecem para o cliente. Envie WOFF2, TTF ou OTF de até 16 MB.</p>
           {errorMessage && <p role="alert" className="rounded-xl bg-red-950 p-3 text-sm text-red-300">{errorMessage}</p>}
           {successMessage && <p role="status" className="text-sm text-green-400">{successMessage}</p>}
           <fieldset disabled={isUploadingAdminAsset} className="space-y-5">
@@ -1714,7 +1723,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
             </div>
             <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-purple-500 px-5 py-3 text-xs font-bold text-white hover:bg-purple-600">
               {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar fonte WOFF2, TTF ou OTF
-              <input type="file" accept=".woff2,.ttf,.otf,font/woff2,font/ttf,font/otf,application/font-woff2,application/x-font-ttf,application/x-font-otf" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+              <UploadInput multiple type="file" accept=".woff2,.ttf,.otf,font/woff2,font/ttf,font/otf,application/font-woff2,application/x-font-ttf,application/x-font-otf" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
             </label>
             <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
 
@@ -1840,10 +1849,10 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                         )}>
                           {isUploadingCatalogImages ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
                           {isUploadingCatalogImages ? 'Enviando...' : 'Selecionar do computador'}
-                          <input
+                          <UploadInput
                             type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            onChange={handleMainImageUpload}
+                            accept="application/pdf,image/jpeg,image/png,image/webp"
+                            originalPdf onChange={handleMainImageUpload}
                             disabled={isUploadingCatalogImages}
                             aria-label="Selecionar imagem principal do computador"
                             className="sr-only"
@@ -1860,7 +1869,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                           </div>
                         )}
                       </div>
-                      <p className="text-[10px] text-gray-500">JPG, PNG ou WebP, até 8 MB. A imagem será hospedada no Firebase Storage.</p>
+                      <p className="text-[10px] text-gray-500">JPG, PNG ou WebP, até 50 MB. A imagem será hospedada no Firebase Storage.</p>
                       <label htmlFor="product-main-image" className="text-[10px] font-bold text-gray-600 uppercase">Imagem Principal (URL)</label>
                       <input
                         id="product-main-image"
@@ -1896,12 +1905,12 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                         </div>
                       </div>
 
-                      <input
+                      <UploadInput
                         id="product-gallery-files"
                         type="file"
-                        accept="image/jpeg,image/png,image/webp"
+                        accept="application/pdf,image/jpeg,image/png,image/webp"
                         multiple
-                        onChange={handleGalleryImageUpload}
+                        originalPdf onChange={handleGalleryImageUpload}
                         disabled={isUploadingCatalogImages}
                         aria-label="Adicionar imagens do computador à galeria"
                         className="sr-only"
@@ -2112,6 +2121,8 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                   )}
                 </div>
 
+                {(editingProduct.modelosPdf || []).map(template => <div key={template.id} className="rounded-xl border border-gray-700 p-4 text-sm">PDF: {template.name} · {template.pages.length} página(s)<button type="button" className="ml-3 text-red-400" onClick={() => setEditingProduct(current => current ? { ...current, modelosPdf: current.modelosPdf?.filter(item => item.id !== template.id) } : current)}>Desvincular PDF</button></div>)}
+                <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
 
@@ -2369,41 +2380,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                     className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                   />
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label htmlFor="promotion-target-type" className="text-xs font-bold text-gray-500 uppercase">Aplicar em</label>
-                    <select
-                      id="promotion-target-type"
-                      value={editingPromotion.alvoTipo || 'produto'}
-                      onChange={event => setEditingPromotion({
-                        ...editingPromotion,
-                        alvoTipo: event.target.value as Promocao['alvoTipo'],
-                        alvoId: '',
-                      })}
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                    >
-                      <option value="produto">Produto</option>
-                      <option value="categoria">Categoria</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label htmlFor="promotion-target" className="text-xs font-bold text-gray-500 uppercase">
-                      {editingPromotion.alvoTipo === 'categoria' ? 'Categoria' : 'Produto'}
-                    </label>
-                    <select
-                      id="promotion-target"
-                      required
-                      value={editingPromotion.alvoId || ''}
-                      onChange={event => setEditingPromotion({ ...editingPromotion, alvoId: event.target.value })}
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                    >
-                      <option value="">Selecionar</option>
-                      {(editingPromotion.alvoTipo === 'categoria' ? categories : products).map(target => (
-                        <option key={target.id} value={target.id}>{target.nome}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                <PromotionTargets value={editingPromotion} products={products} categories={categories} onChange={setEditingPromotion} />
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <label htmlFor="promotion-discount-type" className="text-xs font-bold text-gray-500 uppercase">Tipo de desconto</label>
@@ -2460,7 +2437,7 @@ export default function Admin({ orderOperations = ORDER_OPERATIONS_API,
                     <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-[#ff4d79]/50 bg-[#ff4d79]/10 px-4 py-3 text-xs font-bold text-[#ff4d79] hover:border-[#ff4d79]">
                       {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
                       {isUploadingAdminAsset ? 'Enviando...' : 'Enviar banner'}
-                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handlePromotionImageUpload} disabled={isUploadingAdminAsset} className="sr-only" />
+                      <UploadInput type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={handlePromotionImageUpload} disabled={isUploadingAdminAsset} className="sr-only" />
                     </label>
                     {editingPromotion.imagem && <img src={editingPromotion.imagem} alt="Prévia do banner" className="h-16 w-32 rounded-lg border border-gray-800 object-cover" />}
                   </div>
@@ -2552,7 +2529,7 @@ function formatAdminDate(value: string): string {
 }
 
 function OrderCard({
-  canFulfill, canOpenFiles, operations, onOperationError, onOperationSuccess,
+  canFulfill, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
   order,
   handleStatusChange,
   handleOpenArtwork,
@@ -2560,6 +2537,7 @@ function OrderCard({
 }: {
   order: Order;
   canFulfill: boolean;
+  canRetryEmail: boolean;
   operations: OrderOperationsApi;
   onOperationError: (message: string) => void;
   onOperationSuccess: (message: string) => void;
@@ -2647,6 +2625,7 @@ function OrderCard({
         </div>
       </div>
 
+      <OrderDocuments order={order} staff canRetry={canRetryEmail} />
       {canFulfill && <OrderActions order={order} api={operations} onError={onOperationError} onSuccess={onOperationSuccess} />}
       {order.tracking && <p className="break-words text-xs text-cyan-300">Rastreio: {order.tracking.code} · {order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>

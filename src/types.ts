@@ -17,6 +17,8 @@ export interface Anuncio {
   categoria: string;
   imagem: string;
   imagens?: string[];
+  imagensPorCombinacao?: Record<string, string>;
+  modelosPdf?: import('./lib/pdfTemplate').ProductPdfTemplate[];
   preco_base: string;
   atributos: ProductAttribute[];
   combinacoes: Record<string, string>;
@@ -30,6 +32,7 @@ export interface Anuncio {
 }
 
 export interface CartItem {
+  templateId?: string;
   printProfile?: PrintProfile;
   aprovarArte?: boolean;
   aprovacaoArte?: ArtworkApproval;
@@ -49,6 +52,8 @@ export interface CartItem {
   modeloPath?: string;
   modeloNome?: string;
   contracapaPath?: string;
+  contracapaOriginalPath?: string;
+  contracapaOriginalNome?: string;
   contracapaNome?: string;
   contracapaModo?: 'automatic' | 'custom';
   artePendente?: boolean;
@@ -67,6 +72,8 @@ export interface DeliveryAddress {
 }
 
 export interface Order {
+  etiquetaCriada?: boolean;
+  observacoes?: string;
   tracking?: import('./lib/tracking').OrderTracking;
   id: string;
   userId: string;
@@ -121,6 +128,8 @@ export interface Promocao {
   ativa: boolean;
   alvoTipo?: PromotionTargetType;
   alvoId?: string;
+  alvoIds?: string[];
+  alvoNomes?: string[];
   alvoNome?: string;
   descontoTipo?: PromotionDiscountType;
   descontoPercentual?: number;

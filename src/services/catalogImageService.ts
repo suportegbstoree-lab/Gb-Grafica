@@ -1,5 +1,5 @@
 import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
-import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   catalogImageExtension,
@@ -54,7 +54,7 @@ export async function uploadCatalogImage(productId: string, file: File): Promise
   const originalName = sanitizeCatalogImageName(file.name);
 
   try {
-    const snapshot = await uploadBytes(ref(storage, path), file, {
+    const snapshot = await uploadBytesResumable(ref(storage, path), file, {
       contentType: file.type,
       cacheControl: 'public,max-age=31536000,immutable',
       customMetadata: {

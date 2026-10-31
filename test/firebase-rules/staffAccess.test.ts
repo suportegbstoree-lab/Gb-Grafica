@@ -132,3 +132,19 @@ test('flash schedules require integer start/end and private tracking jobs/labels
   await assertFails(db.doc('_trackingJobs/order').get()); await assertFails(db.doc('_trackingJobs/order').set({ code: 'AA123456789BR' }));
   await assertFails(db.doc('orders/order/productionLabels/label').get()); await assertFails(db.doc('orders/order/productionLabels/label').set({ createdAt: 'fake' }));
 });
+
+test('PDF originals are private, images accept >5MB and operational releases require a live dedicated permission', async () => {
+  const context = designer(), pdfPath = `catalog/templates/product/${randomUUID().replaceAll('-', '')}.pdf`;
+  await assertSucceeds(context.storage().ref(pdfPath).put(new Uint8Array([37, 80, 68, 70, 45]), { contentType: 'application/pdf', customMetadata: { uploadedBy: 'designer' } }));
+  await assertFails(env.unauthenticatedContext().storage().ref(pdfPath).getDownloadURL());
+  await assertFails(env.authenticatedContext('customer').storage().ref(pdfPath).getDownloadURL());
+  await assertSucceeds(context.storage().ref(path()).put(new Uint8Array(6 * 1024 * 1024), metadata()));
+  const releasePath = `operations/releases/${randomUUID()}/${randomUUID().replaceAll('-', '')}.zip`, releaseMeta = { contentType: 'application/zip', customMetadata: { uploadedBy: 'designer' } };
+  await assertFails(context.storage().ref(releasePath).put(new Uint8Array([80, 75, 3, 4]), releaseMeta));
+  await seed([['_staffRoles/designer', { ...policy, permissions: ['operations.manage'] }]]);
+  await assertSucceeds(context.storage().ref(releasePath).put(new Uint8Array([80, 75, 3, 4]), releaseMeta));
+  await assertFails(context.firestore().doc('orders/order').get());
+  await assertFails(context.firestore().doc('_productionEntries/arbitrary').set({ completed: 999 }));
+  await seed([['_staffRoles/designer', { ...policy, enabled: false, permissions: ['operations.manage'] }]]);
+  await assertFails(context.storage().ref(releasePath).getDownloadURL());
+});

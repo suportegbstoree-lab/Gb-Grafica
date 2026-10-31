@@ -63,6 +63,7 @@ export function createStaffBackend(): StaffBackend {
 
 /** Both databases start closed; CAS prevents a failed operation reopening newer changes. */
 export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId, input: unknown, expectedRevision: string | null, actor: string): Promise<StaffRoleRecord> {
+  if (roleId !== 'designer' && roleId !== 'product-manager') throw new StaffAccessError(422, 'A função de administrador é protegida.');
   const permissions = parseStaffPermissions(input);
   if (!permissions) throw new StaffAccessError(422, 'Permissões inválidas. Artes e produção precisam da consulta de pedidos.');
   const previous: Array<StaffRoleRecord | null> = [];
@@ -80,6 +81,7 @@ export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId
 }
 
 export async function assignStaffRole(backend: StaffBackend, uid: string, roleId: StaffRoleId, actor: string): Promise<{ changed: boolean; record: StaffAccessRecord }> {
+  if (await backend.isAdmin(uid)) throw new StaffAccessError(403, 'Administradores não podem ter sua função alterada pelo painel.');
   let account = await backend.getAccount(uid);
   if (account.disabled || !account.email) throw new StaffAccessError(422, 'A conta precisa estar ativa e possuir e-mail.');
   let role = await backend.stores[0].readRole(roleId);

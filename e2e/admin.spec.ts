@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/__e2e/admin');
@@ -45,17 +46,17 @@ test('envia imagem principal e galeria pelo computador', async ({ page }) => {
   await editor.getByLabel('Selecionar imagem principal do computador').setInputFiles({
     name: 'capa.png',
     mimeType: 'image/png',
-    buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    buffer: await readFile('e2e/fixtures/editor-cover.png'),
   });
-  await expect(editor.getByLabel('Imagem Principal (URL)')).toHaveValue(/^https:\/\/example\.com\//);
+  await expect(editor.getByLabel('Imagem Principal (URL)')).toHaveValue(/^\/__e2e\/uploads\//);
   await expect(editor.getByAltText('Prévia da imagem principal')).toBeVisible();
 
   await editor.getByLabel('Adicionar imagens do computador à galeria').setInputFiles({
-    name: 'detalhe.webp',
-    mimeType: 'image/webp',
-    buffer: Buffer.from('RIFF0000WEBP'),
+    name: 'detalhe.png',
+    mimeType: 'image/png',
+    buffer: await readFile('e2e/fixtures/editor-cover.png'),
   });
-  await expect(editor.locator('img[src^="https://example.com/"]')).toHaveCount(2);
+  await expect(editor.locator('img[src^="/__e2e/uploads/"]')).toHaveCount(2);
 });
 
 test('permite cadastrar produto com texto e imagem', async ({ page }) => {
@@ -212,7 +213,7 @@ test('rejeita promoção insegura e persiste uma promoção válida', async ({ p
   await expect(page.getByRole('alert')).toContainText('URL inválida');
 
   await editor.getByLabel('URL externa do banner da promoção').fill('/logo.png');
-  await editor.getByLabel('Produto').selectOption('1yi50l93z');
+  await editor.getByRole('checkbox', { name: /Carimbo/ }).check();
   await editor.getByLabel('Desconto (%)').fill('15');
   await editor.getByRole('button', { name: 'Salvar Promoção' }).click();
   await expect(editor).toHaveCount(0);

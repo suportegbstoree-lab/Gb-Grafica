@@ -18,13 +18,13 @@ export function memoryFirestore(initial: Array<[string, Record<string, unknown>]
   });
   type Ref = ReturnType<typeof reference>;
   function collection(path: string) {
-    let limit = Infinity, sort: string | undefined;
+    let limit = Infinity, sort: string | undefined, descending = false;
     const filters: Array<(data: Record<string, unknown>) => boolean> = [];
     const query = { doc: (id: string) => reference(`${path}/${id}`), limit(count: number) { limit = count; return query; },
-      where(field: string, op: string, value: unknown) { filters.push(data => op === '==' ? data[field] === value : typeof data[field] === 'number' && Number(data[field]) <= Number(value)); return query; },
-      orderBy(field: string) { sort = field; return query; },
+      where(field: string, op: string, value: unknown) { filters.push(data => op === '==' ? data[field] === value : op === '>=' ? data[field]! >= value! : op === '>' ? data[field]! > value! : op === '<' ? data[field]! < value! : data[field]! <= value!); return query; },
+      orderBy(field: string, direction?: string) { sort = field; descending = direction === 'desc'; return query; },
       async get() { const entries = [...docs].filter(([key, value]) => key.startsWith(`${path}/`) && key.split('/').length === path.split('/').length + 1 && filters.every(filter => filter(value)))
-        .sort((a, b) => sort ? Number(a[1][sort]) - Number(b[1][sort]) : 0).slice(0, limit);
+        .sort((a, b) => sort ? (a[1][sort]! < b[1][sort]! ? -1 : a[1][sort]! > b[1][sort]! ? 1 : a[0].localeCompare(b[0])) * (descending ? -1 : 1) : 0).slice(0, limit);
         return { size: entries.length, docs: entries.map(([key, data]) => ({ id: key.split('/').at(-1)!, ref: reference(key), data: () => data })) }; },
     }; return query;
   }

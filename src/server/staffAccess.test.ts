@@ -39,9 +39,10 @@ test('changing roles rotates epochs and stale tokens never regain access', async
   await assignStaffRole(f.backend, 'employee', 'designer', 'administrator');
   for (let i = 0; i < 2; i++) assert.deepEqual(staffPermissions(f.access[i].get('employee'), f.roles[i].get('designer'), stale), []);
 });
-test('staff assignment cannot retain administrator authority', async () => {
-  const f = fixture(); f.setAdmin(); await assignStaffRole(f.backend, 'employee', 'designer', 'administrator');
-  assert.equal(f.account.customClaims.admin, false); assert.equal(await f.backend.isAdmin('employee'), false);
+test('staff assignment preserves protected administrator authority', async () => {
+  const f = fixture(); f.setAdmin(); await assert.rejects(assignStaffRole(f.backend, 'employee', 'designer', 'administrator'), (e: { status: number }) => e.status === 403);
+  assert.equal(f.account.customClaims.admin, true); assert.equal(await f.backend.isAdmin('employee'), true);
+  assert.equal(f.access[0].has('employee'), false);
 });
 test('Auth failure leaves its own staff epochs closed and stale policy edits are refused', async () => {
   const f = fixture(); f.backend.setClaims = async () => { throw new Error('Auth unavailable'); };

@@ -38,3 +38,33 @@
 .custom-scrollbar::-webkit-scrollbar-thumb {
   @apply bg-gray-200 rounded-full hover:bg-pink-300 transition-colors;
 }
+
+[data-store-theme="dark"] {
+  color-scheme: dark;
+  background: var(--store-base);
+  color: var(--store-text);
+}
+[data-store-theme="dark"] :is(.bg-white,.bg-gray-50,.bg-pink-50,.bg-purple-50,.bg-brand-bg,.glass-card) { background-color: var(--store-surface); }
+[data-store-theme="dark"] :is(.bg-gray-100,.bg-pink-100,.bg-purple-100,.bg-brand-surface) { background-color: var(--store-raised); }
+[data-store-theme="dark"] :is(.text-gray-900,.text-gray-800,.text-gray-700,.text-brand-text) { color: var(--store-text); }
+[data-store-theme="dark"] :is(.text-gray-600,.text-gray-500,.text-gray-400,.text-brand-muted) { color: var(--store-muted); }
+[data-store-theme="dark"] :is(.border-gray-100,.border-gray-200,.border-gray-300,.border-pink-100,.border-pink-200) { border-color: var(--store-border); }
+[data-store-theme="dark"] :is(input,textarea,select) { background-color: var(--store-raised); color: var(--store-text); border-color: var(--store-border); }
+[data-store-theme="dark"] :is(.from-pink-50,.from-gray-50,.from-white,.via-white,.to-white) { --tw-gradient-from: var(--store-surface); --tw-gradient-via: var(--store-surface); --tw-gradient-to: var(--store-base); }
+[data-store-theme="dark"] :is(.shadow-gray-100,.shadow-pink-100) { --tw-shadow-color: #0004; }
+[data-store-theme="dark"] .text-green-700 { color: #86efac; }
+[data-store-theme="dark"] .text-red-600 { color: #fca5a5; }
+[data-store-theme="dark"] .text-pink-600 { color: #f9a8d4; }
+[data-store-theme="dark"] .bg-green-50 { background-color: #123426; }
+[data-store-theme="dark"] .bg-red-50 { background-color: #401d25; }
+[aria-invalid="true"] { outline: 2px solid #e11d48; outline-offset: 2px; }
+
+[data-store-theme="dark"] body { background-color: var(--store-base); }
+[data-store-theme="dark"] .fill-white { fill: var(--store-surface); }
+[data-store-theme="dark"] .fill-gray-50 { fill: var(--store-base); }
+
+[data-store-theme="dark"] .store-shell { background-color: var(--store-base); }
+[data-store-theme="dark"] .store-header { background-color: var(--store-surface); }
+[data-store-theme="dark"] [class*="bg-white/"] { background-color: var(--store-surface); }
+[data-store-theme="dark"] [class*="bg-pink-50/"] { background-color: var(--store-raised); }
+[data-store-theme="dark"] [class~="fill-[#fffdd6]"] { fill: var(--store-surface); }

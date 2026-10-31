@@ -1,3 +1,4 @@
+import { mountE2EOperations } from './e2e-operations.js';
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { readFile } from 'node:fs/promises';
@@ -17,7 +18,11 @@ async function startE2EServer() {
   app.use(localNetworkMiddleware(policy));
   guardLocalWebSocket(server, policy, true);
   app.disable('x-powered-by');
+  const blobs = new Map<string, { bytes: Buffer; type: string }>();
+  app.post('/__e2e/uploads/:id', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => { blobs.set(req.params.id, { bytes: req.body, type: req.get('content-type') || 'image/png' }); res.json({ url: `/__e2e/uploads/${req.params.id}` }); });
+  app.get('/__e2e/uploads/:id', (req, res) => { const blob = blobs.get(req.params.id); if (!blob) { res.sendStatus(404); return; } res.type(blob.type).send(blob.bytes); });
   app.use(express.json({ limit: '100kb' }));
+  mountE2EOperations(app);
 
   app.get('/__e2e/health', (_request, response) => {
     response.json({ status: 'ok', mode: 'e2e' });

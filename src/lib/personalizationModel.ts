@@ -3,7 +3,7 @@
 import { sanitizeArtworkName } from './artwork.js';
 
 export const PERSONALIZATION_MODEL_MIME_TYPE = 'image/png';
-export const MAX_PERSONALIZATION_MODEL_BYTES = 15 * 1024 * 1024;
+export const MAX_PERSONALIZATION_MODEL_BYTES = 50 * 1024 * 1024;
 // Falhar explicitamente é preferível a reduzir a resolução sem avisar.
 // O navegador ainda pode ter um limite menor de memória/canvas.
 export const MAX_PERSONALIZATION_MODEL_EDGE = 32_767;
