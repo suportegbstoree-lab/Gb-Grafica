@@ -12,7 +12,7 @@ export function memoryFirestore(initial: Array<[string, Record<string, unknown>]
   const reference = (path: string) => ({
     path, id: path.split('/').at(-1)!, collection: (name: string) => collection(`${path}/${name}`),
     async get() { const data = docs.get(path); return { exists: Boolean(data), data: () => data }; },
-    async create(data: Record<string, unknown>) { if (docs.has(path)) throw new Error('exists'); put(docs, path, data); },
+    async create(data: Record<string, unknown>) { if (docs.has(path)) throw Object.assign(new Error('exists'),{code:6}); put(docs, path, data); },
     async set(data: Record<string, unknown>, options?: { merge: boolean }) { put(docs, path, data, options?.merge); },
     async delete() { docs.delete(path); },
   });
@@ -35,7 +35,7 @@ export function memoryFirestore(initial: Array<[string, Record<string, unknown>]
       const result = await fn({ get: async (ref: Ref) => ({ exists: staged.has(ref.path), data: () => staged.get(ref.path) }),
         set: (ref: Ref, data: Record<string, unknown>, options?: { merge: boolean }) => put(staged, ref.path, data, options?.merge),
         update: (ref: Ref, data: Record<string, unknown>) => { if (!staged.has(ref.path)) throw new Error('missing'); put(staged, ref.path, data, true); },
-        create: (ref: Ref, data: Record<string, unknown>) => { if (staged.has(ref.path)) throw new Error('exists'); put(staged, ref.path, data); }, delete: (ref: Ref) => staged.delete(ref.path),
+        create: (ref: Ref, data: Record<string, unknown>) => { if (staged.has(ref.path)) throw Object.assign(new Error('exists'),{code:6}); put(staged, ref.path, data); }, delete: (ref: Ref) => staged.delete(ref.path),
       });
       docs.clear(); for (const [key, data] of staged) docs.set(key, data); return result;
     }); tail = pending.catch(() => {}); return pending;

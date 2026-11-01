@@ -25,7 +25,7 @@ export async function exportOriginalPdf(
     const source =
       index === 0
         ? front?.getPage(0)
-        : customBack?.getPage(0) ||
+        : (document.repeatFrontForBack ? front?.getPage(0) : undefined) || customBack?.getPage(0) ||
           (document.automaticPdfBack && front && front.getPageCount() > 1
             ? front.getPage(1)
             : undefined);

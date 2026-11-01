@@ -17,7 +17,7 @@ test('operations uses team activity and removed modules have neither navigation 
   await page.goto('/admin/operations');
   const nav = page.getByRole('navigation', { name: 'Páginas de operações' });
   for (const name of ['Erros', 'Equipamentos', 'Versões']) await expect(nav.getByRole('link', { name, exact: true })).toHaveCount(0);
-  await expect(page.getByText('Ações registradas', { exact: true })).toBeVisible();
+  await expect(page.getByText('Atividades concluídas', { exact: true })).toBeVisible();
   for (const path of ['/errors', '/machines', '/releases']) expect(await page.evaluate(async path => (await fetch(`/api/admin/operations${path}`, { headers: { Authorization: 'Bearer e2e-operations' } })).status, path)).toBe(404);
   await page.goto('/admin/operations/releases'); await expect(page.getByText('Página não encontrada.', { exact: true })).toBeVisible();
 });
@@ -52,5 +52,5 @@ test('a designer image change automatically reaches the operations report with e
   await expect(page.getByRole('table').first()).toContainText('Designer Teste');
   await expect(page.getByRole('table').first()).toContainText('Designer');
   await expect(page.getByRole('table').last()).toContainText('Imagens do produto alteradas');
-  await expect(page.getByRole('img', { name: 'Quantidade de ações da equipe por dia', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Quantidade de atividades concluídas por dia', exact: true })).toBeVisible();
 });

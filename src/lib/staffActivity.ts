@@ -1,4 +1,6 @@
 export const ACTIVITY_LABELS: Record<string, string> = {
+  'order.label_generated':'Etiqueta de produção gerada', 'order.fulfillment_updated':'Etapa do pedido alterada', 'order.tracking_updated':'Rastreio do pedido alterado', 'order.tracking_consulted':'Rastreio do pedido consultado', 'order.document_downloaded':'Ficha do pedido baixada',
+  'document.generated':'PDF interno gerado', 'document.viewed':'PDF interno consultado', 'document.downloaded':'PDF interno baixado', 'document.printed':'PDF aberto para impressão', 'document.shared':'PDF compartilhado', 'document.emailed':'PDF enviado por e-mail',
   'product.created': 'Produto criado', 'product.updated': 'Produto atualizado', 'product.deleted': 'Produto excluído',
   'product.images': 'Imagens do produto alteradas', 'product.personalization': 'Personalização alterada',
   'category.created': 'Categoria criada', 'category.updated': 'Categoria atualizada', 'category.deleted': 'Categoria excluída',

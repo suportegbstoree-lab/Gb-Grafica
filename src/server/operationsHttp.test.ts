@@ -6,7 +6,7 @@ import { createOperationsRouter } from './operationsRouter';
 import { OperationsError, localToday } from '../lib/operations';
 import { memoryFirestore } from '../../test/helpers/memoryFirestore';
 
-test('operations HTTP denies access before reading data, validates production, and protects revisions while removed modules return 404', async () => {
+test('retired manual production HTTP refuses writes and retains administrator read-only history', async () => {
   const memory = memoryFirestore([['_adminAccess/admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }], ['_staffProfiles/admin', { name: 'Ana Administradora' }]]);
   let serviceReads = 0; const zip = Buffer.from([80, 75, 3, 4, 1, 2, 3, 4]);
   const services = { db: memory.db, auth: { getUsers: async () => ({ users: [{ uid: 'admin', email: 'admin@example.test', customClaims: { admin: true } }] }) }, bucket: { file: () => ({ getMetadata: async () => [{ generation: '42', size: zip.length, metadata: { uploadedBy: 'admin' } }], async *createReadStream() { yield zip; }, getSignedUrl: async () => ['https://signed.example.test/release'] }) } } as any;
@@ -16,20 +16,14 @@ test('operations HTTP denies access before reading data, validates production, a
   try {
     assert.equal((await call('/production', undefined, false)).status, 403); assert.equal(serviceReads, 0);
     assert.equal((await call('/production?end=garbage')).status, 422);
-    const id = '12345678-1234-4234-8234-123456789012', entry = { employeeId: 'admin', date: localToday(), service: 'Cadernos', unit: 'pecas', completed: 5, rework: 1, loss: 0, reason: 'Reimpressão', notes: '', reference: '', requestId: id };
-    assert.equal((await call('/production', { ...entry, employeeId: 'outsider' })).status, 422);
-    assert.equal((await call('/production', entry)).status, 200);
-    assert.equal((await call(`/production/${id}`, { ...entry, version: 0 })).status, 409);
-    assert.equal((await call(`/production/${id}`, { ...entry, completed: 8, version: 1 })).status, 200);
-    const detail = await (await call(`/production/${id}`)).json(); assert.equal(detail.history.length, 2);
-    assert.equal((await call(`/production/${id}`, { cancel: true, reason: '', version: 2 })).status, 422);
-    assert.equal((await call(`/production/${id}`, { cancel: true, reason: 'Duplicado', version: 2 })).status, 200);
-    const report = await (await call('/production')).json(); assert.equal(report.count, 0); assert.equal(report.totals[0].completed, 0);
-    const csv = await (await call('/production?cancelled=true&format=csv')).text(); assert.ok(csv.includes('Duplicado') || csv.includes('Cadernos'));
-    for (const path of ['/machines', '/releases', '/errors']) assert.equal((await call(path)).status, 404);
-    assert.equal((await call(`/machines/${id}`, {})).status, 404);
-    assert.equal((await call('/releases', {})).status, 404);
-    const activity = await (await call('/activity')).json(); assert.equal(activity.summary.total, 3); assert.equal(activity.summary.employees[0].name, 'Ana Administradora'); assert.equal(activity.summary.employees[0].role, 'Administrador');
-    assert.equal((await call('/orders')).status, 404);
+    const id = '12345678-1234-4234-8234-123456789012';
+    memory.docs.set(`_productionEntries/${id}`, { employeeId: 'admin', date: localToday(), service: 'Cadernos antigos', unit: 'pecas', completed: 5, rework: 1, loss: 0, reason: 'Reimpressão', notes: '', reference: 'pedido-antigo', version: 1 });
+    assert.equal((await call('/production', { completed: 999 })).status, 410);
+    assert.equal((await call(`/production/${id}`, { cancel: true })).status, 410);
+    const detail = await (await call(`/production/${id}`)).json(); assert.equal(detail.record.completed, 5);
+    const report = await (await call('/production')).json(); assert.equal(report.count, 1);
+    assert.match(await (await call('/production?format=csv')).text(), /Cadernos antigos/);
+    for (const path of ['/machines', '/releases', '/errors', '/orders']) assert.equal((await call(path)).status, 404);
+    const activity = await (await call('/activity')).json(); assert.equal(activity.summary.total, 0);
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

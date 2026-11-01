@@ -14,6 +14,7 @@ export interface PersonalizationDocument {
   originalPdf?: Blob;
   originalBackPdf?: Blob;
   automaticPdfBack?: boolean;
+  repeatFrontForBack?: boolean;
   customization?: import('../lib/textCustomization').TextCustomization;
   fonts?: import('../lib/textCustomization').PersonalizationFont[];
   printProfile?: PrintProfile;

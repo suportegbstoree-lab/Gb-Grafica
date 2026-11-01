@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { prepareWorkActivity } from './workTracking.js';
 import type { Firestore } from 'firebase-admin/firestore';
 import { staffRoleName, validStaffAccess } from '../lib/staffAccess.js';
 export async function activityActor(db: Firestore, user: { uid: string; name?: unknown; email?: unknown; admin?: unknown }) {
@@ -10,5 +10,5 @@ export async function activityActor(db: Firestore, user: { uid: string; name?: u
 }
 export async function recordStaffActivity(db: Firestore, user: { uid: string; name?: unknown; email?: unknown; admin?: unknown }, action: string, entityId: string) {
   const actor = await activityActor(db, user);
-  await db.collection('_operationsActivity').doc(randomUUID()).create({ ...actor, action, entityId, at: new Date().toISOString() });
+  await db.runTransaction(async tx=>{const activity=await prepareWorkActivity(db,actor,action,entityId,tx);activity.write(tx);});
 }

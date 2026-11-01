@@ -31,7 +31,7 @@ const transaction = {
 };
 function collection(name: string) {
   let limit = 1000, statusFilter: unknown = undefined;
-  const query = { doc: (id: string) => reference(`${name}/${id}`), limit(value: number) { limit = value; return query; }, where(_field: string, _operator: string, value: unknown) { statusFilter = value; return query; },
+  const query = { doc: (id: string) => reference(`${name}/${id}`), limit(value: number) { limit = value; return query; }, orderBy() { return query; }, where(_field: string, _operator: string, value: unknown) { statusFilter = value; return query; },
     async get() { const entries = [...docs].filter(([path]) => path.startsWith(`${name}/`) && path.split('/').length === 2 && (statusFilter === undefined || docs.get(path)?.status === statusFilter)).slice(0, limit); return { size: entries.length, docs: entries.map(([path, data]) => ({ id: path.split('/')[1], data: () => data })) }; },
   };
   return query;
@@ -167,7 +167,7 @@ test('administrators create named custom roles, assign a name, and employees onl
   assert.equal(docs.get(`_staffProfiles/${employee}`)?.name, 'Ana de Teste');
   assert.equal(accounts.get(employee)!.customClaims.admin, false);
   tokens.set('custom', { uid: employee, ...accounts.get(employee)!.customClaims });
-  assert.equal((await call('/admin/operations/people', 'custom')).status, 200);
+  assert.equal((await call('/admin/work/report', 'custom')).status, 200);
   assert.equal((await call('/admin/staff', 'custom')).status, 403);
   assert.equal((await call('/admin/activity/orders', 'custom', {})).status, 403);
   const overview = await (await call('/admin/staff')).json();
@@ -180,9 +180,9 @@ test('custom roles cannot alter administrator authority and permission edits imm
   const created = await call(`/admin/staff/roles/${id}`, 'admin', { name: 'Relatórios', permissions: ['operations.manage'], expectedRevision: null });
   const policy = await created.json(); assert.equal(created.status, 200);
   assert.equal((await assign(id)).status, 200); tokens.set('custom', { uid: employee, ...accounts.get(employee)!.customClaims });
-  assert.equal((await call('/admin/operations/people', 'custom')).status, 200);
+  assert.equal((await call('/admin/work/report', 'custom')).status, 200);
   assert.equal((await call(`/admin/staff/roles/${id}`, 'admin', { name: 'Consulta', permissions: ['orders.read'], expectedRevision: policy.revision })).status, 200);
-  assert.equal((await call('/admin/operations/people', 'custom')).status, 403);
+  assert.equal((await call('/admin/work/report', 'custom')).status, 403);
   assert.equal((await call('/admin/staff/roles/administrator', 'admin', { name: 'Administrador', permissions: [], expectedRevision: null })).status, 422);
 });
 

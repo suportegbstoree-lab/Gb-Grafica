@@ -1,10 +1,14 @@
+import { prepareWorkActivity } from './workTracking.js';
+import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
+import { workRequestContext } from './workTracking.js';
+import { createWorkRouter,type WorkActor } from './workRouter.js';
 import { createCustomerAccountRouters } from './customerAccount.js';
 import { expandBundleShipping } from './bundleShipping.js';
 import { parseBundle, validateBundleItems, discountBundle, orderItems } from '../lib/bundles.js';
 import { createEmailRouters } from './emailRouter.js';
 import { queueOrderStatusEmail, sendLatestOrderEmail } from './customerEmails.js';
 import { dispatchCustomerEmails } from './emailCampaigns.js';
-import { recordStaffActivity } from './staffActivity.js';
+import { activityActor,recordStaffActivity } from './staffActivity.js';
 import { createCatalogManagementRouter } from './catalogManagement.js';
 import { staffRoleName, validStaffName } from '../lib/staffAccess.js';
 import { resolveOrderInitial } from './decorativeInitial.js';
@@ -272,6 +276,7 @@ async function enforceDistributedRateLimit(
 }
 
 const app = express();
+app.use(workRequestContext);
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -288,7 +293,7 @@ app.use((req, res, next) => {
 		res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 		res.setHeader(
 			'Content-Security-Policy',
-			"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://firebasestorage.googleapis.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.google.com/recaptcha/; frame-src https://accounts.google.com https://*.firebaseapp.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; upgrade-insecure-requests",
+			"default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://firebasestorage.googleapis.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.google.com/recaptcha/; frame-src blob: https://accounts.google.com https://*.firebaseapp.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; upgrade-insecure-requests",
 		);
 	}
 	next();
@@ -330,7 +335,7 @@ app.use(cors({
 		callback(new HttpError(403, 'Origem não autorizada.', 'ORIGIN_NOT_ALLOWED'));
 	},
 	methods: ['GET', 'POST', 'OPTIONS'],
-	allowedHeaders: ['Content-Type', 'Authorization', 'X-Authenticity-Token', 'X-Firebase-AppCheck', 'X-Request-Id'],
+	allowedHeaders: ['Content-Type', 'X-Work-Task', 'Authorization', 'X-Authenticity-Token', 'X-Firebase-AppCheck', 'X-Request-Id'],
 	exposedHeaders: ['X-Request-Id'],
 }));
 
@@ -2180,6 +2185,7 @@ app.post('/api/admin/ai/suggestions', requireAppCheck, async (req, res) => {
 async function performOrderOperation(req: express.Request, res: express.Response, label = false) {
   const firebaseUser = await requirePermissionUser(req, 'orders.fulfillment');
   const { db } = getAdminServices();
+  const operationActor=await activityActor(db,firebaseUser);
   enforceRateLimit(`admin-order:${firebaseUser.uid}`, 20, 60_000);
   await enforceDistributedRateLimit(db, `admin-order:${firebaseUser.uid}`, 60, 60_000);
   const orderId = textValue(req.params.orderId, 64), body = isPlainRecord(req.body) ? req.body : {};
@@ -2229,6 +2235,11 @@ async function performOrderOperation(req: express.Request, res: express.Response
       throw new HttpError(409, 'A entrega deste envio é confirmada pelo rastreamento dos Correios. Use Consultar rastreio.');
     }
     if (!label && target === 'enviado' && current !== 'enviado' && order.shipping && !trackingCode) throw new HttpError(422, 'Informe o código de rastreio dos Correios antes de enviar.');
+    if (existingLabel?.exists) {
+      if (existingLabel.data()?.fingerprint !== fingerprint) throw new HttpError(409, 'Este identificador já foi usado para outra versão da etiqueta.');
+      return;
+    }
+    const audit = label || target !== current || updateTracking ? await prepareWorkActivity(db,operationActor,label?'order.label_generated':target!==current?'order.fulfillment_updated':'order.tracking_updated',orderId,transaction) : null;
     const timestamp = new Date().toISOString();
     if (updateTracking) {
       transaction.set(orderRef, { tracking: { provider: 'correios', code: trackingCode, status: 'Aguardando consulta', updatedAt: timestamp } }, { merge: true });
@@ -2236,16 +2247,13 @@ async function performOrderOperation(req: express.Request, res: express.Response
       transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'shipment_tracking_changed', code: trackingCode, actorUid: firebaseUser.uid, createdAt: timestamp });
     }
     appliedStatus = target;
-    if (existingLabel?.exists) {
-      if (existingLabel.data()?.fingerprint !== fingerprint) throw new HttpError(409, 'Este identificador já foi usado para outra versão da etiqueta.');
-      return;
-    }
     if (target !== current) {
       transaction.set(orderRef, { fulfillmentStatus: target, status: legacyStatusForFulfillment(target), fulfillmentUpdatedAt: timestamp }, { merge: true });
       transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'fulfillment_status_changed', from: current, to: target, actorUid: firebaseUser.uid, createdAt: timestamp });
     }
     if (target !== current || updateTracking) queueOrderStatusEmail(transaction, db, orderId, order, { fulfillmentStatus: target, ...(updateTracking ? { tracking: { code: trackingCode } } : {}) });
     if (labelRef) transaction.create(labelRef, { schemaVersion: 1, requestId, fingerprint, actorUid: firebaseUser.uid, createdAt: timestamp });
+    audit?.write(transaction);
   });
   await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
   if (pdf) {
@@ -2282,6 +2290,7 @@ app.get('/api/orders/:orderId/label', requireAppCheck, async (req, res) => {
     if (order.userId !== actor.uid && !(await userHasPermission(actor, db, 'orders.read'))) throw new HttpError(403, 'Acesso negado.');
     const data = (await db.collection('_orderDocuments').doc(id).get()).data();
     if (!data?.pdf) throw new HttpError(404, 'Este pedido antigo não possui uma ficha inicial.');
+    if (await userHasPermission(actor,db,'orders.read')) await recordStaffActivity(db,actor,'order.document_downloaded',id);
     res.setHeader('Cache-Control', 'private, no-store'); res.type('application/pdf').send(Buffer.from(data.pdf));
   } catch (error) { sendError(res, error); }
 });
@@ -2315,6 +2324,7 @@ app.post('/api/admin/orders/:orderId/tracking/refresh', requireAppCheck, async (
     enforceRateLimit(`tracking:${actor.uid}`, 6, 60_000);
     await enforceDistributedRateLimit(db, `tracking-order:${orderId}`, 1, 60_000);
     const tracking = await syncCorreiosTracking(db, orderId, (id, order) => verifyOperationalPayment(db, id, order, res));
+    await recordStaffActivity(db,actor,'order.tracking_consulted',orderId);
     await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
     res.json({ tracking });
   } catch (error) { sendError(res, error instanceof CorreiosError ? new HttpError(error.status, error.message, error.code) : error); }
@@ -2325,10 +2335,10 @@ app.get('/api/internal/maintenance', async (req, res) => {
     if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
-    const [expiredPromotions, tracking, customerEmails] = await Promise.all([
-      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),
+    const [expiredPromotions, tracking, customerEmails,staffDocuments] = await Promise.all([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),cleanupStaffDocuments(getAdminServices()),
     ]);
-    res.json({ expiredPromotions, tracking, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
+    res.json({ expiredPromotions, tracking, staffDocuments, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 
@@ -2644,6 +2654,17 @@ app.get('/api/internal/email-dispatch', async (req, res) => {
   catch (error) { sendError(res, error); }
 });
 
+async function requireWorkActor(req:express.Request):Promise<WorkActor> {
+ const user=await requireFirebaseUser(req),{db}=getAdminServices(),admin=await userIsAdmin(user,db),permissions=admin?[]:await userStaffPermissions(user);
+ if(!admin&&!permissions.length)throw new HttpError(403,'Sua conta não possui acesso à equipe.');
+ return {...user,admin,permissions};
+}
+const staffDocumentRouters=createStaffDocumentRouters({services:getAdminServices,authorize:requireWorkActor,origin:req=>getPublicAppUrl(req),limit:enforceRateLimit});
+app.use('/api/admin/documents',requireAppCheck,staffDocumentRouters.admin);
+// Explicitly shared documents use a short-lived, revocable bearer link, including outside signed-in sessions.
+app.use('/api/documents/shared',staffDocumentRouters.shared);
+app.use('/api/admin/work',requireAppCheck,createWorkRouter({db:()=>getAdminServices().db,authorize:requireWorkActor,limit:enforceRateLimit}));
+
 app.use('/api/admin/catalog', requireAppCheck, createCatalogManagementRouter({ services: getAdminServices, authorize: async req => {
   const user = await requireFirebaseUser(req), { db } = getAdminServices(), admin = await userIsAdmin(user, db);
   enforceRateLimit(`catalog:${user.uid}`, 120, 60_000);
@@ -2678,7 +2699,7 @@ app.post('/api/admin/activity/orders', requireAppCheck, async (req, res) => {
   } catch (error) { sendError(res, error); }
 });
 
-app.use('/api/admin/operations', requireAppCheck, createOperationsRouter({ authorize: req => requirePermissionUser(req, 'operations.manage'), services: getAdminServices }));
+app.use('/api/admin/operations', requireAppCheck, createOperationsRouter({ authorize: async req => { const actor = await requireWorkActor(req); if (!actor.admin && !actor.permissions?.some(p => ['operations.manage', 'operations.self'].includes(p))) throw new HttpError(403, 'Sua função não permite consultar produtividade.'); return actor; }, services: getAdminServices }));
 
 app.use('/api', (_req, res) => {
 	sendError(res, new HttpError(404, 'Rota da API não encontrada.', 'API_ROUTE_NOT_FOUND'));

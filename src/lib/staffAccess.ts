@@ -4,9 +4,11 @@ export const STAFF_EPOCH_CLAIM = 'gbStaffEpoch';
 export const STAFF_ROLE_CLAIM = 'staffRole';
 
 export const STAFF_PERMISSIONS = [
+  { id:'documents.generate',label:'Gerar, baixar e compartilhar PDFs internos' },
+  { id:'operations.self',label:'Consultar meu expediente e minha produtividade' },
   { id: 'bundles.manage', label: 'Criar, editar e excluir pacotes de produtos' },
   { id: 'emails.manage', label: 'Gerenciar campanhas e fila de e-mails' },
-  { id: 'operations.manage', label: 'Gerenciar produção e relatórios operacionais' },
+  { id: 'operations.manage', label: 'Consultar minha produção e relatórios operacionais' },
   { id: 'products.manage', label: 'Criar, editar e excluir produtos' },
   { id: 'products.images', label: 'Alterar imagens dos produtos' },
   { id: 'products.personalization', label: 'Alterar opções de personalização dos produtos' },

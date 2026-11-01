@@ -34,17 +34,14 @@ test('checkout aponta campos ausentes, foca o primeiro e não chama pagamento', 
   await expect(cart.getByLabel('Nome completo')).toBeFocused(); await expect(cart.getByLabel('Nome completo')).toHaveAttribute('aria-invalid', 'true'); expect(checkouts).toBe(0);
 });
 
-test('operações têm páginas, lançamento corrigível, histórico e cancelamento sem apagar dados', async ({ page }) => {
-  await page.goto('/admin/operations'); await page.getByRole('navigation', { name: 'Páginas de operações' }).getByRole('link', { name: 'Produção', exact: true }).click(); await page.getByRole('link', { name: 'Novo lançamento', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Funcionário', exact: true }).selectOption('e2e-user'); await page.getByLabel('Serviço', { exact: true }).fill('Cadernos do teste');
-  await page.getByLabel('Concluídas', { exact: true }).fill('30'); await page.getByLabel('Com retrabalho', { exact: true }).fill('2'); await page.getByLabel('Motivo', { exact: true }).fill('Ajuste da impressão');
-  await page.getByRole('button', { name: 'Salvar lançamento' }).click(); await expect(page).toHaveURL(/\/production\/[a-f0-9-]{36}$/);
-  await page.getByRole('link', { name: 'Corrigir lançamento' }).click(); await page.getByLabel('Concluídas', { exact: true }).fill('35'); await page.getByRole('button', { name: 'Salvar lançamento' }).click();
-  await expect(page.getByText(/Versão 2/)).toBeVisible(); await page.getByLabel('Motivo do cancelamento').fill('Lote registrado em duplicidade'); await page.getByRole('button', { name: 'Cancelar lançamento', exact: true }).click();
-  await expect(page.getByText(/Versão 3/)).toBeVisible(); await expect(page.getByRole('link', { name: 'Corrigir lançamento' })).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Páginas de operações' }).getByRole('link', { name: 'Produção', exact: true }).click();
-  await page.getByLabel('Mostrar cancelados').click(); await expect(page).toHaveURL(/cancelled=true/); await expect(page.getByLabel('Mostrar cancelados')).toBeChecked();
-  await expect(page.getByRole('table')).toContainText('Cadernos do teste'); const download = page.waitForEvent('download'); await page.getByRole('button', { name: 'Exportar CSV' }).click(); expect((await download).suggestedFilename()).toBe('relatorio.csv');
+test('produção automática registra o expediente e permite consultar e exportar atividades sem formulário manual', async ({page})=>{
+ await page.goto('/admin/operations/production');
+ await expect(page.getByText('Atividades concluídas',{exact:true})).toBeVisible();
+ await expect(page.getByRole('link',{name:'Novo lançamento',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'Iniciar intervalo',exact:true}).click();await expect(page.getByText('Meu expediente · Em intervalo',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Retornar do intervalo',exact:true}).click();await page.getByRole('button',{name:'Encerrar expediente',exact:true}).click();await expect(page.getByRole('button',{name:'Retomar expediente',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Retomar expediente',exact:true}).click();
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Exportar CSV',exact:true}).click();expect((await download).suggestedFilename()).toBe('atividades-producao.csv');
 });
 
 test('PDF de catálogo mantém duas páginas, abre a prévia interna e preserva vetor na exportação de produção', async ({ page }) => {

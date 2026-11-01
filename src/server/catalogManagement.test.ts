@@ -13,7 +13,7 @@ async function scenario(run: (context: { call: (collection: string, id: string, 
   const actor: CatalogActor = { uid: 'employee', permissions: ['products.images'] };
   const services = { db: memory.db } as any;
   const app = express(); app.use(express.json()); app.use('/catalog', createCatalogManagementRouter({ services: () => services, authorize: async () => actor }));
-  app.use('/ops', createOperationsRouter({ services: () => services, authorize: async req => { if (req.get('authorization') !== 'Bearer operations') throw new OperationsError('Acesso negado.', 403); return { uid: 'observer' }; } }));
+  app.use('/ops', createOperationsRouter({ services: () => services, authorize: async req => { if (req.get('authorization') !== 'Bearer operations') throw new OperationsError('Acesso negado.', 403); return { uid: 'observer', admin: true }; } }));
   const server = createServer(app); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as any, base = `http://127.0.0.1:${address.port}`;
   try { await run({ docs: memory.docs, actor, services, activity: () => [...memory.docs].filter(([key]) => key.startsWith('_operationsActivity/')).map(([, value]) => value), report: () => fetch(`${base}/ops/activity`, { headers: { Authorization: 'Bearer operations' } }), call: (collection, id, mode, value, removed) => fetch(`${base}/catalog/${collection}/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode, value, removed, actor: 'forged-admin', action: 'forged-action' }) }) }); }
@@ -25,7 +25,7 @@ test('catalog changes and canonical employee activity commit together and feed o
   assert.equal(result.status, 200, JSON.stringify(await result.clone().json()));
   assert.equal(context.docs.get('anuncios/product').imagem, 'https://example.test/new.png');
   assert.equal(context.activity().length, 1);
-  assert.deepEqual(Object.fromEntries(Object.entries(context.activity()[0]).filter(([key]) => key !== 'at')), { actor: 'employee', actorName: 'Ana Designer', actorRole: 'Arte e Design', action: 'product.images', entityId: 'product' });
+  const event = context.activity()[0]; assert.equal(event.actor, 'employee'); assert.equal(event.actorName, 'Ana Designer'); assert.equal(event.actorRole, 'Arte e Design'); assert.equal(event.action, 'product.images'); assert.equal(event.entityId, 'product'); assert.equal(event.source, 'automatic'); assert.equal(event.timing, 'request'); assert.ok(event.durationMs >= 0); assert.equal(event.completedAt, event.at);
   const report = await (await context.report()).json(); assert.equal(report.summary.total, 1); assert.equal(report.summary.employees[0].name, 'Ana Designer');
   assert.equal((await context.call('anuncios', 'product', 'patch', { imagem: 'https://example.test/new.png' })).status, 200); assert.equal(context.activity().length, 1, 'no-op requests do not inflate activity');
 }));

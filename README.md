@@ -6,6 +6,8 @@ Funcionários, etiquetas de produção, rastreio e promoções relâmpago: consu
 
 Promoções múltiplas, tema escuro, modelos PDF, fichas de pedido e operações nativas: consulte [Improvements — Part 2](docs/improvements-pt2.md).
 
+PDFs internos da equipe, expediente, produção automática e upload de alfabetos: consulte [Improvements — Part 5](docs/staff-pdf-workflows.md).
+
 ## Rodar localmente
 
 A integração de frete real com os Correios usa credenciais apenas no servidor e perfis de peso/embalagem no catálogo. Consulte [Correios: configuração e testes](docs/correios-integration.md) antes de habilitar entregas. Diagnóstico local: `npm run shipping:check`.

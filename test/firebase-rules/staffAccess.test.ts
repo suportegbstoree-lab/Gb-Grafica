@@ -175,3 +175,21 @@ test('email preferences, consent history, campaigns and delivery queues cannot b
     await assertFails(db.doc(name).get());
   }
 });
+
+test('staff document uploads require the live permission, an owned canonical PDF path and immutable private metadata',async()=>{
+ const context=designer(),storage=context.storage(),id=randomUUID().replaceAll('-',''),name=`staff-documents/designer/${id}/upload.pdf`,meta={contentType:'application/pdf',customMetadata:{ownerId:'designer',documentId:id,kind:'staff-document'}};
+ const bytes=new Uint8Array([37,80,68,70,45]);
+ await assertFails(storage.ref(name).put(bytes,meta));
+ await seed([['_staffRoles/designer',{...policy,permissions:['documents.generate','operations.self']}]]);
+ await assertFails(storage.ref(name).put(bytes,{...meta,customMetadata:{...meta.customMetadata,unapprovedField:'forged'}}));
+ await assertSucceeds(storage.ref(name).put(bytes,meta));
+ await assertFails(storage.ref(name).getMetadata());await assertFails(storage.ref(name).getDownloadURL());await assertFails(storage.ref(name).delete());await assertFails(storage.ref(name).put(bytes,meta));
+ await assertFails(storage.ref(`staff-documents/designer/${id}/document.pdf`).put(bytes,meta));
+ await assertFails(storage.ref(`staff-documents/other/${randomUUID().replaceAll('-','')}/upload.pdf`).put(bytes,meta));
+ const second=randomUUID().replaceAll('-','');await assertFails(storage.ref(`staff-documents/designer/${second}/upload.pdf`).put(bytes,{...meta,customMetadata:{...meta.customMetadata,ownerId:'other',documentId:second}}));
+ await seed([['_staffRoles/designer',{...policy,permissions:['operations.self']}]]);
+ await assertFails(storage.ref(`staff-documents/designer/${second}/upload.pdf`).put(bytes,{...meta,customMetadata:{...meta.customMetadata,documentId:second}}));
+});
+test('workdays, tasks, document records, email jobs and share capabilities are inaccessible directly even to staff',async()=>{
+ const db=designer().firestore();for(const name of ['_workdays/own','_workTasks/own','_staffDocuments/own','_staffDocumentShares/token','_staffDocumentMails/job']){await assertFails(db.doc(name).get());await assertFails(db.doc(name).set({uid:'designer',ownerId:'designer',status:'ready'}));}
+});

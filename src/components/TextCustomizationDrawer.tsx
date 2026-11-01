@@ -32,6 +32,7 @@ import {
 export interface BackCoverDraft { mode: 'none' | 'automatic' | 'custom'; file?: File; }
 
 interface TextCustomizationDrawerProps {
+  lockAutomaticBack?: boolean;
   productName: string;
   template?: ProductPdfTemplate;
   printProfile?: PrintProfile;
@@ -52,7 +53,7 @@ function clampPosition(value: number): number {
 }
 
 export default function TextCustomizationDrawer({
-  productName,
+  productName, lockAutomaticBack=false,
   template,
   printProfile,
   previewImage,
@@ -87,7 +88,7 @@ export default function TextCustomizationDrawer({
   const initializedRef = useRef(false);
   const positionTouchedRef = useRef(false);
   const [isArranging, setIsArranging] = useState(false);
-  const [backDraft, setBackDraft] = useState<BackCoverDraft>(initialBack);
+  const [backDraft, setBackDraft] = useState<BackCoverDraft>(lockAutomaticBack?{mode:'automatic'}:initialBack);
   const [backPreview, setBackPreview] = useState('');
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -275,10 +276,10 @@ export default function TextCustomizationDrawer({
             {template?.alphabet && <p role="status" className="rounded-xl bg-pink-50 p-3 text-xs text-pink-800">{selectedLetter ? `Inicial ${selectedLetter.letter} aplicada somente na capa.` : draft.texto.trim() ? `A pasta não possui uma imagem para ${firstInitial(draft.texto) || 'o primeiro caractere'}. O modelo será gerado sem inicial.` : 'A primeira letra do texto seleciona a inicial da capa.'}</p>}
             <fieldset className="space-y-3 rounded-2xl border border-gray-200 p-4">
               <legend className="px-1 text-sm font-bold text-gray-900">Contracapa</legend>
-              <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={backDraft.mode !== 'none'} onChange={event => { setError(''); setPreviewFace('front'); setBackDraft(current => ({ ...current, mode: event.target.checked ? 'automatic' : 'none' })); }} />Incluir contracapa</label>
+              <label className="flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" disabled={lockAutomaticBack} checked={backDraft.mode !== 'none'} onChange={event => { setError(''); setPreviewFace('front'); setBackDraft(current => ({ ...current, mode: event.target.checked ? 'automatic' : 'none' })); }} />Incluir contracapa</label>
               {backDraft.mode !== 'none' && <>
-                <label className="flex items-start gap-2 text-xs leading-relaxed text-gray-600"><input className="mt-0.5" type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'automatic'} onChange={() => setBackDraft(current => ({ ...current, mode: 'automatic' }))} />{automaticBack ? 'Automática: segunda página do PDF, sem texto personalizado' : 'Automática: mesma arte da capa, sem o texto personalizado'}</label>
-                <label className="flex items-center gap-2 text-xs text-gray-600"><input type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'custom'} onChange={() => setBackDraft(current => ({ ...current, mode: 'custom' }))} />Escolher outra imagem</label>
+                <label className="flex items-start gap-2 text-xs leading-relaxed text-gray-600"><input className="mt-0.5" type="radio" disabled={lockAutomaticBack} name={`${titleId}-back`} checked={backDraft.mode === 'automatic'} onChange={() => setBackDraft(current => ({ ...current, mode: 'automatic' }))} />{automaticBack ? 'Automática: segunda página do PDF, sem texto personalizado' : 'Automática: mesma arte da capa, sem o texto personalizado'}</label>
+                {!lockAutomaticBack && <label className="flex items-center gap-2 text-xs text-gray-600"><input type="radio" name={`${titleId}-back`} checked={backDraft.mode === 'custom'} onChange={() => setBackDraft(current => ({ ...current, mode: 'custom' }))} />Escolher outra imagem</label>}
                 {backDraft.mode === 'custom' && <div className="min-w-0 space-y-2">
                   <div className="text-xs font-bold text-gray-700">Imagem da contracapa</div>
                   <button type="button" onClick={() => backInputRef.current?.click()} className="flex w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-dashed border-pink-300 bg-pink-50 px-4 py-3 text-sm font-bold text-pink-700 transition-colors hover:border-pink-500 hover:bg-pink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-400 focus-visible:ring-offset-2 disabled:opacity-40">

@@ -1,3 +1,8 @@
+import StaffDocuments from '../components/StaffDocuments';
+import WorkdayBar from '../components/WorkdayBar';
+import { beginWorkTask,workApi,type WorkApi } from '../services/workService';
+import type { StaffDocumentApi } from '../services/staffDocumentService';
+import { normalizeSearch } from '../lib/catalog';
 import BundleManagement from '../components/BundleManagement';
 import { orderItems } from '../lib/bundles';
 import EmailManagement from '../components/EmailManagement';
@@ -32,7 +37,7 @@ import { loadOrderPersonalizationDocument } from '../services/personalizationDoc
 import React, { useState } from 'react';
 import ProductShippingEditor from '../components/ProductShippingEditor';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type, FileText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
@@ -105,6 +110,8 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  workClient?:WorkApi;
+  documentApi?:StaffDocumentApi;
   emailApi?: EmailApi;
   activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
@@ -183,7 +190,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
 }
 
 export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
-  fullAdmin = false,
+  fullAdmin = false, workClient=workApi, documentApi,
   permissions = [],
   staffApi = staffAdministrationApi,
   products,
@@ -203,6 +210,8 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const [modelDocument, setModelDocument] = useState<PersonalizationDocument | null>(null);
   const modelRequest = React.useRef(0);
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
+  const [productSearch,setProductSearch]=useState(''), [productCategory,setProductCategory]=useState('');
+  const filteredAdminProducts=products.filter(p=>!p.pacote && (!productCategory || p.categoria===productCategory) && normalizeSearch(productSearch).split(/\s+/).every(term=>normalizeSearch(p.nome).includes(term)));
   const [savingHighlight, setSavingHighlight] = useState<string | null>(null);
   const adminLocation = useLocation();
   const navigate = useNavigate();
@@ -215,6 +224,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const allowedSectionsRef = React.useRef(allowedSections); allowedSectionsRef.current = allowedSections;
   const navItems = [
     { id: 'operations' as const, label: 'Operações', icon: Layout },
+    { id:'documents' as const,label:'Gerar PDF',icon:FileText },
     { id: 'products' as const, label: 'Produtos', icon: Layout },
     { id: 'bundles' as const, label: 'Pacotes', icon: Package },
     { id: 'categories' as const, label: 'Categorias', icon: List },
@@ -263,6 +273,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const [productStorageId, setProductStorageId] = useState<string | null>(null);
   const [sessionCatalogUploads, setSessionCatalogUploads] = useState<UploadedCatalogImage[]>([]);
   const [isUploadingCatalogImages, setIsUploadingCatalogImages] = useState(false);
+  const workReference = editingProduct ? `product:${editingProduct.id||productStorageId||''}` : editingPromotion ? `promotion:${editingPromotion.id||''}` : activeTab==='categories'&&categoryDraft.nome ? `category:${editingCategoryId||''}` : ['config','branding','fonts'].includes(activeTab)&&configDirty ? 'settings:main' : '';
+  React.useEffect(()=>{if(workReference){const separator=workReference.indexOf(':');return beginWorkTask(workReference.slice(0,separator) as import('../lib/work').WorkKind,workReference.slice(separator+1),workClient);}},[workReference,workClient]);
+
   const originalProductImagesRef = React.useRef<{ productId: string; urls: string[] } | null>(null);
   const missingCommercialFields = missingLegalBusinessFields(configDraft);
 
@@ -1338,8 +1351,10 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
             </motion.div>
           )}
         </AnimatePresence>
+        <WorkdayBar api={workClient} />
+        {activeTab === 'documents' && tabAllowed('documents') && <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} />}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
-        {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} />}
+        {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} workClient={workClient} fullAdmin={fullAdmin} />}
         {activeTab === 'products' && tabAllowed('products') && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -1373,8 +1388,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
               </button>}
             </div>
 
+            <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-[#151515] p-4"><label className="min-w-0 flex-1 text-sm">Buscar produto por nome<input aria-label="Buscar produto por nome" value={productSearch} onChange={e=>setProductSearch(e.target.value.slice(0,100))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black p-3" /></label><label className="text-sm">Categoria<select aria-label="Filtrar produtos por categoria" value={productCategory} onChange={e=>setProductCategory(e.target.value)} className="mt-2 block rounded-lg border border-gray-700 bg-black p-3"><option value="">Todas as categorias</option>{categories.map(c=><option key={c.id} value={c.nome}>{c.nome}</option>)}</select></label><button onClick={()=>{setProductSearch('');setProductCategory('');}} className="rounded-lg border border-gray-700 p-3 text-sm">Limpar filtros</button><p aria-live="polite" className="w-full text-xs text-gray-400">{filteredAdminProducts.length} produto(s) encontrado(s)</p></div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {products.filter(p=>!p.pacote).map(p => (
+              {filteredAdminProducts.map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   {can('products.manage') && <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>}
                   <div className="aspect-video bg-gray-900 relative">
@@ -1661,6 +1677,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                 <Plus size={18} /> Nova Promoção
               </button>
             </div>
+
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {promotions.map(promo => (

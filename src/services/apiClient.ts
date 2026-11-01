@@ -1,3 +1,4 @@
+import { currentWorkTask } from './workContext';
 export const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
 
 type FetchImplementation = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -26,6 +27,7 @@ export function createApiFetch(
 		if (!trusted) return fetchImplementation(input, init);
 
 		const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+		if(trusted){const path=new URL(target,origin??'http://relative-api.invalid').pathname;if(path.startsWith('/api/admin/') && !path.startsWith('/api/admin/work/') ){const taskId=await currentWorkTask();if(taskId)headers.set('X-Work-Task',taskId);}}
 		const token = await appCheckTokenProvider(false);
 		if (token) headers.set(APP_CHECK_HEADER, token);
 		const send = () => fetchImplementation(input instanceof Request ? input.clone() : input, {

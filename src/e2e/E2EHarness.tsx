@@ -1,3 +1,5 @@
+import { fixtureWorkApi,fixtureDocumentApi } from './workClient';
+import { currentWorkTask } from '../services/workContext';
 import { EMPTY_PROFILE } from '../lib/customerProfile';
 import type { CustomerApi } from '../services/customerService';
 import { fixtureEmailApi } from './emailClient';
@@ -235,6 +237,8 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const activityApi = React.useMemo<import('../services/staffActivityService').AdminActivityApi>(() => ({ orders: async orderId => { await fetch('/api/admin/activity/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) }); }, exportArtwork: async (orderId, itemId, format) => { await fetch('/api/admin/activity/artwork', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId, itemId, format }) }); } }), []);
   const [selectedRole] = React.useState(() => new URLSearchParams(window.location.search).get('role'));
   const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
+  const workClient = React.useMemo(()=>fixtureWorkApi(permissionOverride===undefined?fixtureRole:'employee'),[fixtureRole,permissionOverride]);
+  const documentApi = React.useMemo(()=>fixtureDocumentApi(permissionOverride===undefined?fixtureRole:'employee'),[fixtureRole,permissionOverride]);
   const fixturePermissions = permissionOverride ?? (fixtureRole === 'administrator' ? [] : DEFAULT_ROLE_PERMISSIONS[fixtureRole]);
   const rolePolicies = React.useRef(new Map<StaffRoleId, StaffRoleView>((['designer', 'product-manager'] as const).map(id => [id, { id, schemaVersion: 1, configured: true, enabled: true, revision: (id === 'designer' ? 'a' : 'b').repeat(32), permissions: [...DEFAULT_ROLE_PERMISSIONS[id]], updatedAt: '', updatedBy: '' }])));
   const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', name: 'Administrador Teste', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
@@ -270,7 +274,8 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
 
   const catalogState = React.useRef({ products, categories, promotions, config }); catalogState.current = { products, categories, promotions, config };
   const saveCatalogFixture = async (collection: string, id: string, mode: string, value?: unknown) => {
-    const response = await fetch(`/__e2e/catalog/${collection}/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-E2E-Role': fixtureRole }, body: JSON.stringify({ mode, value, seed: catalogState.current }) });
+    const task = await currentWorkTask();
+    const response = await fetch(`/__e2e/catalog/${collection}/${id}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-E2E-Role': fixtureRole, ...(task?{'X-Work-Task':task}:{}) }, body: JSON.stringify({ mode, value, seed: catalogState.current }) });
     const data = await response.json(); if (!response.ok) throw new Error(data.error);
   };
   const persistence = React.useMemo<AdminPersistence>(() => ({
@@ -344,6 +349,8 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   return (
     <div data-testid="e2e-admin">
       <Admin
+        workClient={workClient}
+        documentApi={documentApi}
         emailApi={fixtureEmailApi}
         activityApi={activityApi}
         operationsClient={operationsFixtureClient}

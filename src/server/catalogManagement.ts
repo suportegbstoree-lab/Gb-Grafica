@@ -1,3 +1,4 @@
+import { prepareWorkActivity } from './workTracking.js';
 import { parseBundle } from '../lib/bundles.js';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
@@ -30,7 +31,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
     if (categoriesSnapshot.size > 10000 || productsSnapshot.size > 10000) fail('O catálogo excede o limite de validação. Entre em contato com a administração.');
     const categories = categoriesSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Category));
     const products = productsSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Anuncio));
-    const who = await activityActor(db, actor), target = db.collection(collection).doc(id), at = new Date().toISOString();
+    const who = await activityActor(db, actor), target = db.collection(collection).doc(id);
     await db.runTransaction(async tx => {
       let permissions = actor.permissions, admin = actor.admin === true;
       if (actor.claims) {
@@ -57,6 +58,13 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         if (!admin && (!allowed.length || !old || !next || keys.some(key => !allowed.includes(key as any)))) fail('Sua função não permite alterar estas configurações.', 403);
       } else if (!can(required[collection])) fail('Sua função não permite esta alteração.', 403);
       if (!keys.length) return;
+      let action = `${collection === 'anuncios' ? 'product' : collection === 'categories' ? 'category' : collection === 'promocoes' ? 'promotion' : 'settings'}.${!old ? 'created' : !next ? 'deleted' : 'updated'}`;
+      if (collection === 'anuncios' && old && next) {
+        if (keys.every(key => PRODUCT_IMAGE_FIELDS.includes(key as any))) action = 'product.images';
+        else if (keys.every(key => PRODUCT_PERSONALIZATION_FIELDS.includes(key as any))) action = 'product.personalization';
+      }
+      if (collection === 'config') action = keys.every(key => FONTS_FIELDS.includes(key as any)) ? 'fonts.updated' : keys.every(key => BRANDING_FIELDS.includes(key as any)) ? 'branding.updated' : 'settings.updated';
+      const audit=await prepareWorkActivity(db,who,action,id,tx);
       if (next) {
         if (next.id !== undefined && next.id !== id) fail('Identificador inconsistente.');
         const result = collection === 'anuncios' ? validateProductDraft({ ...next, id } as Anuncio, categories, products)
@@ -75,13 +83,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         // Keep fields outside this patch intact; validators check the resulting document.
         tx.set(target, collection === 'config' ? next : { ...next, id });
       } else tx.delete(target);
-      let action = `${collection === 'anuncios' ? 'product' : collection === 'categories' ? 'category' : collection === 'promocoes' ? 'promotion' : 'settings'}.${!old ? 'created' : !next ? 'deleted' : 'updated'}`;
-      if (collection === 'anuncios' && old && next) {
-        if (keys.every(key => PRODUCT_IMAGE_FIELDS.includes(key as any))) action = 'product.images';
-        else if (keys.every(key => PRODUCT_PERSONALIZATION_FIELDS.includes(key as any))) action = 'product.personalization';
-      }
-      if (collection === 'config') action = keys.every(key => FONTS_FIELDS.includes(key as any)) ? 'fonts.updated' : keys.every(key => BRANDING_FIELDS.includes(key as any)) ? 'branding.updated' : 'settings.updated';
-      tx.create(db.collection('_operationsActivity').doc(randomUUID()), { ...who, action, entityId: id, at });
+      audit.write(tx);
     });
     res.json({ saved: true });
   })().catch(next); });

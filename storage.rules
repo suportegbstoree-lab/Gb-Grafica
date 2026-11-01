@@ -71,6 +71,15 @@ service firebase.storage {
       return ownerId.matches('^[A-Za-z0-9_-]{1,100}$');
     }
 
+    match /staff-documents/{userId}/{documentId}/{fileName} {
+      allow create: if request.auth != null && request.auth.uid == userId && can('documents.generate') &&
+        documentId.matches('^[a-f0-9]{32}$') && fileName == 'upload.pdf' && resource == null &&
+        request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 &&
+        request.resource.contentType == 'application/pdf' && request.resource.metadata.keys().hasOnly(['ownerId','documentId','kind']) && request.resource.metadata.ownerId == userId &&
+        request.resource.metadata.documentId == documentId && request.resource.metadata.kind == 'staff-document';
+      allow read, update, delete: if false;
+    }
+
     match /artworks/{userId}/pending/{fileName} {
       allow read: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null &&

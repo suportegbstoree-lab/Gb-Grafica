@@ -1,4 +1,3 @@
-import { activityActor } from './staffActivity.js';
 import { activitySummary, ACTIVITY_LABELS, type StaffActivity } from '../lib/staffActivity.js';
 import { staffRoleName } from '../lib/staffAccess.js';
 import express from "express";
@@ -10,16 +9,13 @@ import {
 } from "../lib/staffAccess.js";
 import { adminAccessRecordAllows } from "../lib/adminAccess.js";
 import {
-  boundedText,
   csvRows,
   localToday,
   OperationsError,
   productionTotals,
-  validateProduction,
   validDay,
   type ProductionEntry,
 } from "../lib/operations.js";
-import { saveProduction } from "./productionEntries.js";
 type Services = ReturnType<typeof getAdminServices>;
 type Dependencies = {
   authorize: (req: express.Request) => Promise<{ uid: string; name?: unknown; email?: unknown; admin?: unknown }>;
@@ -111,6 +107,9 @@ export function createOperationsRouter(deps: Dependencies) {
       .then((actor) => {
         res.locals.actor = actor.uid;
         res.locals.user = actor;
+        // Retired manual production API remains read-only for full administrators.
+        if (req.method !== 'GET') throw new OperationsError('Os lançamentos manuais foram substituídos pelas atividades automáticas.', 410);
+        if (actor.admin !== true) throw new OperationsError('O histórico manual da equipe é exclusivo do administrador.', 403);
         next();
       })
       .catch(next);
@@ -241,56 +240,6 @@ export function createOperationsRouter(deps: Dependencies) {
       history: history.docs.map((doc) => doc.data()),
       historyTruncated: history.size === 100,
     });
-  });
-  route("post", "/production", async (req, res, services) => {
-    const entry = validateProduction(
-      req.body,
-      (await people(services)).map((person) => person.id),
-    );
-    res.json(
-      await saveProduction(
-        services.db,
-        String(req.body.requestId),
-        entry,
-        res.locals.actor,
-        undefined, undefined, await activityActor(services.db, res.locals.user),
-      ),
-    );
-  });
-  route("post", "/production/:id", async (req, res, services) => {
-    if (!idPattern.test(req.params.id))
-      throw new OperationsError("Lançamento inválido.");
-    const old = (
-      await services.db
-        .collection("_productionEntries")
-        .doc(req.params.id)
-        .get()
-    ).data();
-    if (!old) throw new OperationsError("Lançamento não encontrado.", 404);
-    if (!Number.isSafeInteger(req.body.version))
-      throw new OperationsError("Versão inválida.");
-    const cancellation =
-      req.body.cancel === true
-        ? boundedText(req.body.reason, "Motivo do cancelamento", 500, true)
-        : undefined;
-    const entry = cancellation
-      ? (old as ProductionEntry)
-      : validateProduction(
-          req.body,
-          (await people(services)).map((person) => person.id),
-          String(old.employeeId),
-        );
-    res.json(
-      await saveProduction(
-        services.db,
-        req.params.id,
-        entry,
-        res.locals.actor,
-        req.body.version,
-        cancellation,
-        await activityActor(services.db, res.locals.user),
-      ),
-    );
   });
   for (const kind of ["activity"] as const)
     route("get", `/${kind}`, async (req, res, { db }) => {
