@@ -4,6 +4,13 @@ import { createServer } from 'node:net';
 
 const publicRoutes = [
   '/',
+  '/destaques',
+  '/promocoes',
+  '/lancamentos',
+  '/pacotes',
+  '/categoria/personalizados',
+  '/produto/produto-exemplo',
+  '/minha-conta',
   '/sobre-nos',
   '/politica-de-privacidade',
   '/termos-de-uso',

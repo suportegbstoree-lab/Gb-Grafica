@@ -12,7 +12,7 @@ async function imageFile(page: Page, name: string, width: number, height: number
 }
 
 async function notebook(page: Page, width = 4096, height = 3072) {
-  await page.goto('/__e2e/store');
+  await page.goto('/produto/caderno');
   const card = page.locator('#produtos article').filter({ has: page.getByRole('heading', { name: 'Caderno Personalizado', exact: true }) });
   await card.locator('input[type=file]').setInputFiles(await imageFile(page, 'capa.png', width, height, '#16a34a'));
   await card.getByRole('button', { name: 'Personalizar capa e contracapa' }).click();

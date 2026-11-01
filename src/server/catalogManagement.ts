@@ -1,3 +1,4 @@
+import { parseBundle } from '../lib/bundles.js';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -21,7 +22,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
     const actor = await deps.authorize(req), services = deps.services(), db = services.db;
     const { collection, id } = req.params, mode = req.body?.mode;
     if (!Object.hasOwn(required, collection) || !/^[A-Za-z0-9_-]{1,100}$/.test(id) || (collection === 'config' && id !== 'main') || !['set', 'patch', 'delete'].includes(mode)) fail('Cadastro inválido.');
-    const available = collection === 'anuncios' ? ['products.manage', 'products.images', 'products.personalization'] : collection === 'config' ? ['branding.manage', 'fonts.manage', 'settings.manage'] : [required[collection]];
+    const available = collection === 'anuncios' ? ['products.manage', 'products.images', 'products.personalization', 'bundles.manage'] : collection === 'config' ? ['branding.manage', 'fonts.manage', 'settings.manage'] : [required[collection]];
     if (!actor.admin && !available.some(permission => actor.permissions.includes(permission as StaffPermission))) fail('Sua função não permite esta alteração.', 403);
     const value = req.body?.value || {}, removed: unknown = req.body?.removed || [];
     if (!own(value) || !Array.isArray(removed) || removed.some(key => typeof key !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) || Object.keys(value).some(key => !/^[A-Za-z][A-Za-z0-9_]*$/.test(key))) fail('Campos inválidos.');
@@ -47,8 +48,10 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
       const keys = [...new Set([...Object.keys(old || {}), ...Object.keys(next || {})])].filter(key => !isDeepStrictEqual(old?.[key], next?.[key]));
       const can = (permission: StaffPermission) => admin || permissions.includes(permission);
       if (collection === 'anuncios') {
+        if(old && next && Boolean(old.pacote) !== Boolean(next.pacote)) fail('Crie um novo cadastro para trocar entre produto e pacote.');
         const allowed = [...(can('products.images') ? PRODUCT_IMAGE_FIELDS : []), ...(can('products.personalization') ? PRODUCT_PERSONALIZATION_FIELDS : [])];
-        if (!can('products.manage') && (!allowed.length || !old || !next || keys.some(key => !allowed.includes(key as any)))) fail('Sua função não permite alterar estes campos do produto.', 403);
+        if ((old?.pacote || next?.pacote) && !can('bundles.manage') && (!old || !next || keys.some(key => !allowed.includes(key as any)))) fail('Sua função não permite gerenciar pacotes.', 403);
+        if (!can('products.manage') && !((old?.pacote || next?.pacote) && can('bundles.manage')) && (!allowed.length || !old || !next || keys.some(key => !allowed.includes(key as any)))) fail('Sua função não permite alterar estes campos do produto.', 403);
       } else if (collection === 'config') {
         const allowed = [...(can('branding.manage') ? BRANDING_FIELDS : []), ...(can('fonts.manage') ? FONTS_FIELDS : []), ...(can('settings.manage') ? SETTINGS_FIELDS : [])];
         if (!admin && (!allowed.length || !old || !next || keys.some(key => !allowed.includes(key as any)))) fail('Sua função não permite alterar estas configurações.', 403);
@@ -60,6 +63,15 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
           : collection === 'categories' ? validateCategoryDraft(next as Category, categories, id)
           : collection === 'promocoes' ? validatePromotionDraft(next as Promocao, products, categories) : validateSiteConfig(next as any);
         if (!result.ok) fail((result as { message: string }).message);
+        if (collection === 'anuncios') {
+          if (next.pacote) {
+            const parsed = parseBundle(next.pacote)!; const previous = parseBundle(old?.pacote);
+            const same = previous && isDeepStrictEqual({ ...parsed, revision: '' }, { ...previous, revision: '' });
+            next.pacote = { ...parsed, revision: same ? previous.revision : randomUUID().replaceAll('-', '') };
+            next.preco_base = (result as any).value.preco_base;
+          }
+          if (next.tags) next.tags = (result as any).value.tags;
+        }
         // Keep fields outside this patch intact; validators check the resulting document.
         tx.set(target, collection === 'config' ? next : { ...next, id });
       } else tx.delete(target);

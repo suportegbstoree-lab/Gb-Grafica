@@ -49,7 +49,8 @@ for (const width of [320, 390, 768, 1024, 1280, 1600]) {
     await productEditor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
     await expect(productEditor).toHaveCount(0);
     await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
-    const card = page.locator('#produto-livro-receitas');
+    if(!page.url().includes('/produto/')) await page.locator('#produto-livro-receitas').getByRole('link', {name:'Ver e configurar produto'}).click();
+  const card = page.locator('#produto-livro-receitas');
     await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
     const editor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
     await editor.getByLabel('Nome para personalização').fill('TextoSemEspacos'.repeat(8));
@@ -76,6 +77,7 @@ for (const width of [320, 390, 768, 1024, 1280, 1600]) {
 test('seletor da contracapa tem botão em português e permite escolher, cancelar e trocar a imagem', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/__e2e/store');
+  await page.locator('#produto-livro-receitas').getByRole('link',{name:'Ver e configurar produto'}).click();
   await page.locator('#produto-livro-receitas').getByRole('button', { name: 'Personalizar texto', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
   await editor.getByLabel('Incluir contracapa', { exact: true }).check();

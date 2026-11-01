@@ -1,3 +1,5 @@
+import { EMPTY_PROFILE } from '../lib/customerProfile';
+import type { CustomerApi } from '../services/customerService';
 import { fixtureEmailApi } from './emailClient';
 import { operationsFixtureClient } from './operationsClient';
 import { StoreThemeProvider } from '../components/StoreTheme';
@@ -86,6 +88,25 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
 ];
 
 FIXTURE_PRODUCTS.push({ id: 'caderno', nome: 'Caderno Personalizado', desc: 'Caderno com capa e contracapa.', categoria: 'Personalizados', imagem: FIXTURE_IMAGE, preco_base: '20.00', atributos: [], combinacoes: {}, tipoInput: 'arte' });
+
+const CATALOG4 = new URLSearchParams(window.location.search).get('catalog') === '4';
+if(CATALOG4) {
+  Object.assign(FIXTURE_PRODUCTS[0],{tags:['presente','escritório'],destaque:true,lancamento:true});
+  FIXTURE_PRODUCTS.push({id:'cards',nome:'Cartões de visita',desc:'Impressão em papel especial',categoria:'Personalizados',imagem:FIXTURE_IMAGE,preco_base:'45.00',tags:['negócio','presente'],atributos:[{nome:'Quantidade impressa',opcoes:['100','500']},{nome:'Material',opcoes:['A','B']}],combinacoes:{'100|A':'45.00','100|B':'55.00','500|A':'120.00','500|B':'150.00'},tipoInput:'nenhum'});
+  FIXTURE_PRODUCTS.push({id:'kit',nome:'Kit escritório',desc:'Carimbo e cartões',categoria:'Personalizados',imagem:FIXTURE_IMAGE,preco_base:'52.56',atributos:[],combinacoes:{},tipoInput:'nenhum',pacote:{components:[{productId:'1yi50l93z',quantity:1,allowQuantity:false,configurable:false,selections:{}},{productId:'cards',quantity:1,allowQuantity:true,configurable:true,selections:{}}],allowQuantity:true,discountType:'percent',discountValue:10,revision:'a'.repeat(32)}});
+}
+if(CATALOG4) FIXTURE_PRODUCTS.push({id:'kit-fixo',nome:'Kit fixo',desc:'Opções fechadas pela loja',categoria:'Personalizados',imagem:FIXTURE_IMAGE,preco_base:'55.00',atributos:[],combinacoes:{},tipoInput:'nenhum',pacote:{components:[{productId:'cards',quantity:1,allowQuantity:false,configurable:false,selections:{'Quantidade impressa':'100',Material:'B'}}],allowQuantity:false,discountType:'none',discountValue:0,revision:'a'.repeat(32)}});
+if(CATALOG4 && new URLSearchParams(window.location.search).has('bundleText')) FIXTURE_PRODUCTS.push({id:'kit-texto',nome:'Kit com texto',desc:'Livro personalizado incluído',categoria:'Livros de Receita',imagem:FIXTURE_IMAGE,preco_base:'39.90',atributos:[],combinacoes:{},tipoInput:'nenhum',pacote:{components:[{productId:'livro-receitas',quantity:1,allowQuantity:false,configurable:false,selections:{}}],allowQuantity:false,discountType:'none',discountValue:0,revision:'a'.repeat(32)}});
+let fixtureProfile={...EMPTY_PROFILE};
+const fixtureReviews: Record<string,any[]> = {};
+const fixtureRatings: Record<string,any> = CATALOG4 ? {'1yi50l93z':{count:2,sum:9,average:4.5}} : {};
+const fixtureCustomerApi: CustomerApi = {
+  profile:async()=>({...fixtureProfile}),
+  saveProfile:async profile=>{fixtureProfile={...profile,revision:crypto.randomUUID()};return {...fixtureProfile};},
+  orders:async()=>structuredClone(FIXTURE_ORDERS),ratings:async()=>structuredClone(fixtureRatings),
+  reviews:async id=>({reviews:structuredClone(fixtureReviews[id] || []),rating:fixtureRatings[id] || {count:0,sum:0,average:0}}),
+  review:async(id,input)=>{fixtureReviews[id]=[{id:'review',rating:input.rating,comment:input.comment,authorName:'Cliente',verifiedPurchase:true,updatedAt:new Date().toISOString()}];fixtureRatings[id]={count:1,sum:input.rating,average:input.rating};},
+};
 
 const FLASH_FIXTURE = new URLSearchParams(window.location.search).has('flash');
 const FIXTURE_PROMOTIONS: Promocao[] = [
@@ -186,6 +207,7 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
       <output hidden data-testid="e2e-cart">{JSON.stringify(cart)}</output>
       <Home
         emailApi={fixtureEmailApi}
+        customerApi={fixtureCustomerApi}
         products={products}
         config={config}
         categories={FIXTURE_CATEGORIES}
@@ -367,6 +389,12 @@ export default function E2EHarness() {
         <Route path="/admin/*" element={entry.active ? teamPanel : <AdminFixture />} />
         <Route path="/" element={entry.active ? teamStore : <StoreFixture />} />
         <Route path="/categoria/:categoryId" element={<StoreFixture />} />
+        <Route path="/produto/:productId" element={<StoreFixture />} />
+        <Route path="/pacotes" element={<StoreFixture />} />
+        <Route path="/destaques" element={<StoreFixture />} />
+        <Route path="/promocoes" element={<StoreFixture />} />
+        <Route path="/lancamentos" element={<StoreFixture />} />
+        <Route path="/minha-conta" element={<StoreFixture />} />
         <Route path="*" element={<Navigate to="/__e2e/store" replace />} />
       </Routes></StoreThemeProvider>
     </BrowserRouter>

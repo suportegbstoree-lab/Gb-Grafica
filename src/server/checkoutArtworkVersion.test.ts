@@ -31,6 +31,7 @@ let replaceAtCopy = false;
 let replaceAtDelete = false;
 let replaceAtDownload = false;
 let providerCalls = 0;
+let providerPayload: any;
 let copiedGeneration: number | undefined;
 let copiedMetadata: Record<string, unknown> | undefined;
 let copiedPath = '';
@@ -124,7 +125,8 @@ before(async () => {
     };
   }) as unknown as typeof db.batch);
   mock.method(storage, 'bucket', (() => fakeBucket) as unknown as typeof storage.bucket);
-  mock.method(axios, 'post', async () => {
+  mock.method(axios, 'post', async (_url, payload) => {
+    providerPayload=payload;
     providerCalls += 1;
     return { status: 201, data: { id: 'CHEC_TEST123456', status: 'ACTIVE', links: [{ rel: 'PAY', href: 'https://pagamento.sandbox.pagbank.com.br/pagamento?code=test' }] } };
   });
@@ -426,3 +428,18 @@ test('download da inicial é exclusivo de orders.artwork, inclusive quando o cli
   docs.set(`orders/${orderId}`, { ...order, itens: [{ id: itemId, inicialPath: path.replace('/item123/', '/otheritem/') }] });
   assert.equal((await request()).status, 404);
 });
+
+function bundleSetup() {
+  docs.set('anuncios/bundle', {nome:'Kit com arte',desc:'Composição fixa',categoria:'teste',tipoInput:'nenhum',atributos:[],combinacoes:{},pacote:{components:[{productId:'produto',quantity:2,allowQuantity:false,configurable:false,selections:{}}],allowQuantity:true,discountType:'percent',discountValue:10,revision:'a'.repeat(32)}});
+  return {productId:'bundle',quantidade:2,selecoes:{},bundleRevision:'a'.repeat(32),expectedUnitAmountCents:1800,bundleItems:[{productId:'produto',quantidade:2,selecoes:{},arquivoPath:sourcePath,arquivoNome:'arte.png',aprovarArte:true,expectedUnitAmountCents:1000}]};
+}
+test('bundle checkout charges server prices and preserves private component artwork in the order',async()=>{
+  const response=await checkout(bundleSetup());assert.equal(response.status,201,JSON.stringify(await response.clone().json()));assert.equal(providerCalls,1);const order=[...docs].find(([p])=>p.startsWith('orders/'))![1] as any;assert.equal(order.totalCents,3600);assert.equal(providerPayload.items.length,1);assert.equal(providerPayload.items[0].unit_amount,1800);assert.equal(providerPayload.items[0].quantity,2);assert.equal(order.itens.length,1);assert.equal(order.itens[0].preco,'18.00');assert.equal(order.itens[0].quantidade,2);assert.equal(order.itens[0].bundleItems[0].quantidade,2);assert.match(order.itens[0].bundleItems[0].arquivoPath,/\/orders\//);assert.equal(copiedGeneration,17);
+});
+for(const [name,change,status] of [
+  ['forged bundle total',(value:any)=>({...value,expectedUnitAmountCents:1}),409],
+  ['changed bundle revision',(value:any)=>({...value,bundleRevision:'b'.repeat(32)}),409],
+  ['replaced composition',(value:any)=>({...value,bundleItems:[{...value.bundleItems[0],productId:'forged'}]}),422],
+  ['changed fixed quantity',(value:any)=>({...value,bundleItems:[{...value.bundleItems[0],quantidade:1}]}),422],
+  ['another customer artwork',(value:any)=>({...value,bundleItems:[{...value.bundleItems[0],arquivoPath:'artworks/victim/pending/00000000000000000000000000000000.png'}]}),422],
+] as const) test(`bundle checkout rejects ${name} before contacting payment provider`,async()=>{const response=await checkout(change(bundleSetup()));assert.equal(response.status,status,JSON.stringify(await response.clone().json()));assert.equal(providerCalls,0);});

@@ -1,3 +1,5 @@
+import BundleManagement from '../components/BundleManagement';
+import { orderItems } from '../lib/bundles';
 import EmailManagement from '../components/EmailManagement';
 import type { EmailApi } from '../services/emailService';
 import { ADMIN_ACTIVITY_API, type AdminActivityApi } from '../services/staffActivityService';
@@ -214,6 +216,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const navItems = [
     { id: 'operations' as const, label: 'Operações', icon: Layout },
     { id: 'products' as const, label: 'Produtos', icon: Layout },
+    { id: 'bundles' as const, label: 'Pacotes', icon: Package },
     { id: 'categories' as const, label: 'Categorias', icon: List },
     { id: 'orders' as const, label: 'Pedidos', icon: Package },
     { id: 'promotions' as const, label: 'Promoções', icon: Tag },
@@ -1132,7 +1135,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const handleOpenModel = async (orderId: string, itemId: string) => {
     if (!can('orders.artwork')) return;
     try {
-      const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
+      const item = orderItems(orders.find(order => order.id === orderId)?.itens || []).find(item => item.id === itemId);
       if (!item) throw new Error('Item do pedido não encontrado.');
       const request = ++modelRequest.current;
       const document = await orderModelLoader(orderId, item, true);
@@ -1335,6 +1338,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
             </motion.div>
           )}
         </AnimatePresence>
+        {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
         {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} />}
         {activeTab === 'products' && tabAllowed('products') && (
           <div className="space-y-8">
@@ -1370,7 +1374,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {products.map(p => (
+              {products.filter(p=>!p.pacote).map(p => (
                 <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   {can('products.manage') && <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>}
                   <div className="aspect-video bg-gray-900 relative">
@@ -1817,6 +1821,8 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                       className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79] resize-none"
                     />
                   </div>
+                  <label className="block space-y-2 text-sm">Tags (separadas por vírgula)<input aria-label="Tags do produto" value={(editingProduct.tags || []).join(',')} onChange={e=>setEditingProduct({...editingProduct,tags:e.target.value.split(',')})} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3" /></label>
+                  <label className="flex gap-2 text-sm"><input type="checkbox" checked={editingProduct.lancamento===true} onChange={e=>setEditingProduct({...editingProduct,lancamento:e.target.checked})}/>Marcar como lançamento</label>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label htmlFor="product-category" className="text-xs font-bold text-gray-500 uppercase">Categoria</label>
@@ -2655,7 +2661,7 @@ function OrderCard({
       <div>
         <div className="space-y-3">
           <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Itens do Pedido</div>
-          {order.itens.map((item) => (
+          {orderItems(order.itens).map((item) => (
             <div key={item.id} className="flex gap-3 items-start bg-black/40 p-3 rounded-lg border border-gray-800/50">
               <img src={item.imagem || DEFAULT_LOGO_URL} alt={item.nome} className="w-10 h-10 object-cover rounded" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
               <div className="min-w-0 flex-grow break-words">

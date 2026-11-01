@@ -2,7 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
 
 async function openEditor(page: Page) {
-  await page.goto('/__e2e/store');
+  await page.goto('/produto/livro-receitas');
+  if(!page.url().includes('/produto/')) await page.locator('#produto-livro-receitas').getByRole('link', {name:'Ver e configurar produto'}).click();
   const card = page.locator('#produtos article').filter({ has: page.getByRole('heading', { name: 'Livro de Receitas Personalizado' }) });
   await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
@@ -87,6 +88,7 @@ test('fontes TTF e OTF são validadas, publicadas e usadas no canvas do cliente'
   await expect(trigger).toBeFocused();
   await page.getByRole('button', { name: 'Salvar fontes' }).click();
   await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
+  if(!page.url().includes('/produto/')) await page.locator('#produto-livro-receitas').getByRole('link', {name:'Ver e configurar produto'}).click();
   const card = page.locator('#produtos article').filter({ has: page.getByRole('heading', { name: 'Livro de Receitas Personalizado' }) });
   await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });

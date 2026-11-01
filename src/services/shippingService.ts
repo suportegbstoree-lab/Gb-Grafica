@@ -4,13 +4,13 @@ import { apiFetch } from './apiClient';
 
 export async function requestShippingQuote(
   cep: string,
-  items: Array<{ productId: string; quantidade: number; selecoes: Record<string, string> }>,
+  items: Array<{ productId: string; quantidade: number; selecoes: Record<string, string>; bundleItems?: Array<{ productId: string; quantidade: number; selecoes: Record<string,string> }> }>,
   signal?: AbortSignal,
   fetchImplementation: typeof fetch = apiFetch,
 ): Promise<ShippingQuoteResponse> {
   const response = await fetchImplementation('/api/shipping-quote', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-    body: JSON.stringify({ cep, items: items.map(({ productId, quantidade, selecoes }) => ({ productId, quantidade, selecoes })) }),
+    body: JSON.stringify({ cep, items: items.map(({ productId, quantidade, selecoes, bundleItems }) => ({ productId, quantidade, selecoes, ...(bundleItems?{bundleItems:bundleItems.map(({productId,quantidade,selecoes})=>({productId,quantidade,selecoes}))}:{}) })) }),
   });
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new Error(apiErrorMessage((data || {}) as ApiErrorPayload, 'Não foi possível calcular o frete.'));

@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 async function editorFor(page: Page, text = 'LINHA1\nLINHA2\nLINHA3') {
-  await page.goto('/__e2e/store');
+  await page.goto('/produto/livro-receitas');
   const card = page.locator('#produto-livro-receitas');
   await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });

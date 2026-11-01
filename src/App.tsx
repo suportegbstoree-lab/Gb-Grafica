@@ -257,53 +257,40 @@ export default function App() {
     link.href = faviconUrl;
   }, [config.logo_url]);
 
+  const storefront = isAuthReady ? (
+    <Home
+      products={products}
+      config={config}
+      categories={categories}
+      promotions={promotions}
+      cart={cart}
+      setCart={setCart}
+      orders={orders.filter((order) => order.userId === user?.uid)}
+      user={user}
+      canAccessPanel={canAccessPanel}
+      panelAccessNeedsCheck={staffAccessState.assigned && Boolean(staffAccessState.issue)}
+      productsReady={productsReady}
+      productsError={productsError}
+      ordersReady={ordersReady}
+      ordersError={ordersError}
+    />
+  ) : (
+    <LoadingScreen />
+  );
+
   return (
     <Router>
       <StoreThemeProvider>
       <PersonalizationFontLoader fonts={config.fontes_personalizacao || []} />
       <Routes>
-        <Route
-          path="/"
-          element={
-            isAuthReady ? <Home
-              products={products}
-              config={config}
-              categories={categories}
-              promotions={promotions}
-              cart={cart}
-              setCart={setCart}
-              orders={orders.filter(order => order.userId === user?.uid)}
-              user={user}
-              canAccessPanel={canAccessPanel}
-              panelAccessNeedsCheck={staffAccessState.assigned && Boolean(staffAccessState.issue)}
-              productsReady={productsReady}
-              productsError={productsError}
-              ordersReady={ordersReady}
-              ordersError={ordersError}
-            /> : <LoadingScreen />
-          }
-        />
-        <Route
-          path="/categoria/:categoryId"
-          element={
-            isAuthReady ? <Home
-              products={products}
-              config={config}
-              categories={categories}
-              promotions={promotions}
-              cart={cart}
-              setCart={setCart}
-              orders={orders.filter(order => order.userId === user?.uid)}
-              user={user}
-              canAccessPanel={canAccessPanel}
-              panelAccessNeedsCheck={staffAccessState.assigned && Boolean(staffAccessState.issue)}
-              productsReady={productsReady}
-              productsError={productsError}
-              ordersReady={ordersReady}
-              ordersError={ordersError}
-            /> : <LoadingScreen />
-          }
-        />
+        <Route path="/" element={storefront} />
+        <Route path="/categoria/:categoryId" element={storefront} />
+        <Route path="/destaques" element={storefront} />
+        <Route path="/promocoes" element={storefront} />
+        <Route path="/lancamentos" element={storefront} />
+        <Route path="/pacotes" element={storefront} />
+        <Route path="/produto/:productId" element={storefront} />
+        <Route path="/minha-conta" element={storefront} />
         <Route
           path="/admin/*"
           element={

@@ -12,6 +12,7 @@ test('tema acompanha o sistema, alterna por botão e chega aos modais; categoria
   await expect(page.getByRole('region', { name: 'Produtos em promoção' })).toContainText('Carimbo');
   await page.getByRole('navigation', { name: 'Categorias de produtos' }).getByRole('button', { name: /Livros de Receita/ }).click();
   await expect(page).toHaveURL(/\/categoria\//); await expect(page.locator('#produtos article')).toHaveCount(1);
+  await page.locator('#produto-livro-receitas').getByRole('link',{name:'Ver e configurar produto'}).click();
   await page.getByRole('button', { name: 'Personalizar texto', exact: true }).click(); const modal = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
   await expect(modal).toBeVisible(); expect(await modal.locator('textarea').first().evaluate(node => getComputedStyle(node).color)).toBe('rgb(245, 245, 247)');
   await page.keyboard.press('Escape'); await page.goto('/categoria/nao-existe'); await expect(page.locator('#produtos article')).toHaveCount(0);
@@ -51,6 +52,7 @@ test('PDF de catálogo mantém duas páginas, abre a prévia interna e preserva 
   const editor = page.getByRole('dialog', { name: 'Editar Produto' }); await editor.getByLabel('Selecionar imagem principal do computador').setInputFiles('e2e/fixtures/editor-template.pdf');
   await expect(editor.getByText(/PDF: editor-template.pdf/)).toBeVisible(); await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click(); await expect(editor).toHaveCount(0);
   await page.getByRole('link', { name: 'Visualizar como cliente', exact: true }).click(); await expect(page.getByRole('link', { name: 'Área Admin', exact: true })).toHaveCount(0);
+  if(!page.url().includes('/produto/')) await page.locator('#produto-livro-receitas').getByRole('link', {name:'Ver e configurar produto'}).click();
   const card = page.locator('#produto-livro-receitas'); await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click(); const textEditor = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });
   await textEditor.getByLabel('Nome para personalização').fill('Nome do cliente'); await textEditor.getByLabel('Incluir contracapa').check(); await textEditor.getByRole('button', { name: 'Contracapa', exact: true }).click();
   await expect(textEditor.getByRole('img', { name: 'Prévia do item personalizado', exact: true })).toHaveAttribute('aria-busy', 'false'); await textEditor.getByRole('button', { name: 'Aplicar e gerar modelo' }).click();
@@ -75,6 +77,7 @@ test('galeria recebe lote e a combinação troca imagem e preço no produto e no
   await editor.getByLabel('Preço da combinação Azul', { exact: true }).fill('25.00'); await editor.getByLabel('Preço da combinação Vermelho', { exact: true }).fill('10.00');
   await editor.getByLabel('Imagem da combinação Azul').selectOption({ label: 'Imagem 1 da galeria' }); const selectedImage = await editor.getByLabel('Imagem da combinação Azul').inputValue();
   await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click(); await expect(editor).toHaveCount(0); await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
+  await page.locator('#produto-1yi50l93z').getByRole('link',{name:'Ver e configurar produto'}).click();
   const card = page.locator('#produto-1yi50l93z'); await card.getByRole('button', { name: 'Azul', exact: true }).click(); await expect(card.getByAltText('Carimbo', { exact: true })).toHaveAttribute('src', selectedImage);
   await card.getByRole('button', { name: 'Adicionar ao Carrinho' }).click(); await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click(); const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await expect(cart.getByAltText('Carimbo', { exact: true })).toHaveAttribute('src', selectedImage); await expect(cart).toContainText('22,50');

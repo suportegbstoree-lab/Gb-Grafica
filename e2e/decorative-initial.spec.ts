@@ -15,6 +15,7 @@ test('pasta do PDF seleciona a primeira letra na prévia, sem inicial na contrac
   await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
   await expect(editor).toHaveCount(0);
   await page.getByRole('link', { name: 'Visualizar como cliente', exact: true }).click();
+  if(!page.url().includes('/produto/')) await page.locator('#produto-livro-receitas').getByRole('link', {name:'Ver e configurar produto'}).click();
   const card = page.locator('#produto-livro-receitas');
   await card.getByRole('button', { name: 'Personalizar texto', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Personalizar texto', exact: true });

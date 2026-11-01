@@ -1,4 +1,28 @@
-## 2026-10-31 — Improvements Part 2
+# Changelog
+
+## Ultima Atualização: 2026-11-01T
+
+**Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de publicação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
+**Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
+
+Além disso, as funções que faltam como a Homologação do PagBank, a integração com os Correios, e a integração com o App Check do Firebase, já foram pagas, mas ainda não foram implementadas por questão de ter que esperar a liberação de APIs ou mesmo o Contrato com o Correio. Além disso, grande parte das implementações de segurança estão em [CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md](CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md). Porém assim que ocorrer as liberações para a integração com o PagBank, Correios e App Check, essas funcionalidades serão implementadas e testadas como acordado.
+
+## TABELA DE IMPLEMENTAÇÕES AINDA NÃO COBRADAS
+
+| Data da Implementação | Funcionalidade                                                     | Status   |
+| --------------------- | ------------------------------------------------------------------ | -------- |
+| 2026-10-31            | Ajustes de QoL e melhorias pontuais                                | COMPLETO |
+| 2026-10-31            | Inicio da integração de e-mails, Dashboard e criação de cadernetas | INICIADO |
+| 2026-10-31            | Ajustes em equipe e isolamento das seções                          | COMPLETO |
+| 2026-10-30            | Funcionários, pedidos e promoções relâmpago                        | COMPLETO |
+| 2026-10-30            | Impressão e produção de pedidos                                    | COMPLETO |
+| 2026-10-30            | Ajustes na personalização de texto e arte obrigatória              | COMPLETO |
+| 2026-10-30            | Cards, contracapa e carrinho                                       | COMPLETO |
+| 2026-10-30            | Melhorias de personalização                                        | COMPLETO |
+| 2026-10-30            | Destaques, contatos e acesso temporário                            | COMPLETO |
+| 2026-10-29            | Capa, contracapa e exportação dos modelos                          | COMPLETO |
+
+## 2026-10-31 — Ajustes de QoL e melhorias pontuais
 
 - Promoções para vários produtos ou categorias e vitrine única de descontos.
 - Imagem opcional por combinação, páginas de categoria, banner com slide e tema escuro configurável.
@@ -8,6 +32,14 @@
 - Contas Admin protegidas contra rebaixamento pelo painel e navegação administrativa por rotas/permissões.
 - Checkout indica e foca campos obrigatórios ausentes.
 - Preservados os TODOs de arte por inicial e migração do provedor de IA.
+
+## 2026-10-30 — Inicio da integração de e-mails, Dashboard e criação de cadernetas
+
+- Adicionado painel de e-mails com rascunhos, confirmação de envio, cancelamento, processamento da fila e contagens de aceitos/ignorados/revisão.
+- Integração com [resend.com](https://resend.com) para envio de e-mails, com suporte a boas-vindas, confirmação de pedido, avisos de status e descadastro. A finalizar.
+- Adicionado Dashboard.
+- Adicionada a opção de upload em batch, suporte a arquivos de até 50 MB, e PDFs.
+- Ao Adicionar um arquivo de caderneta, o sistema pode receber uma pasta com as imagens [NOTA: A pasta deve ter o mesmo nome que o PDF, os nomes dos PNGs devem ser as letras de A-Z e não poder ter acentos. EX: `Alfabeto Ana Liz.pdf` só suporta a pasta `Alfabeto Ana Liz` com os arquivos `A.png`, `B.png`, `C.png`...] gerando assim o PDF da caderneta, com a primeira letra da primeira linha centralizada na capa.
 
 ## 2026-10-30 — Entrada da equipe e isolamento das seções
 
@@ -37,7 +69,7 @@
 - Ficha de produção nos pedidos administrativos, usando os dados salvos na compra e a fila existente.
 - PDF administrativo com tamanho físico, TrimBox e BleedBox; guias ficam fora dos arquivos e exportações seguem restritas ao painel.
 
-## 2026-10-30 — Controle independente das linhas
+## 2026-10-30 — Ajustes na personalização de texto e arte obrigatória
 
 - Cada linha de texto tem posição, tamanho, cor e fonte próprios, com seleção na lista ou na prévia.
 - Fonte e cor podem ser compartilhadas, mantendo tamanho e posição individuais; arraste por mouse/toque, setas e campos numéricos.
@@ -58,8 +90,6 @@
 - Prévia e exportação compartilham composição; Enter e linhas vazias são preservados.
 - Fontes TTF e OTF, além de WOFF2: validação de conteúdo no navegador, caminhos, MIME, relay e regras do Storage.
 - Gerenciamento de fontes em modal, mantendo a gravação das configurações e os pedidos antigos.
-
-# Changelog
 
 ## 2026-10-30 — Destaques, contatos e acesso temporário
 
@@ -340,7 +370,7 @@
 - CI no GitHub com testes, TypeScript e build de produção.
 - Suíte ampliada para checkout, webhook, status e arquivos.
 
-## 2026-08-31 — Bateria 1: estabilidade e interface
+## 2026-08-31 — Estabilidade e interface
 
 - Corrigidas busca, categorias, banners e ações sem comportamento.
 - Carrinho protegido contra dados locais inválidos e colisões entre personalizações.

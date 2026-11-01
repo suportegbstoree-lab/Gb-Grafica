@@ -195,10 +195,10 @@ service cloud.firestore {
 
     match /anuncios/{anuncioId} {
       allow read: if true;
-      allow create: if can('products.manage') && isValidAnuncio(request.resource.data);
-      allow update: if isValidAnuncio(request.resource.data) &&
+      allow create: if !('pacote' in request.resource.data) && can('products.manage') && isValidAnuncio(request.resource.data);
+      allow update: if !('pacote' in resource.data) && !('pacote' in request.resource.data) && isValidAnuncio(request.resource.data) &&
         (can('products.manage') || (validStaffToken() && (staffCan('products.images') || staffCan('products.personalization')) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedProductFields())));
-      allow delete: if can('products.manage');
+      allow delete: if !('pacote' in resource.data) && can('products.manage');
     }
 
     match /categories/{categoryId} {
@@ -218,6 +218,17 @@ service cloud.firestore {
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || (validStaffToken() && (staffCan('branding.manage') || staffCan('fonts.manage') || staffCan('settings.manage')) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedConfigFields()));
     }
+
+    match /anuncios/{productId}/reviews/{reviewId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /productRatings/{productId} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /_customerProfiles/{userId} { allow read, write: if false; }
+    match /_reviewOwners/{reviewId} { allow read, write: if false; }
 
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || can('orders.read'));

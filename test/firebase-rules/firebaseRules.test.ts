@@ -741,3 +741,36 @@ test('Removed operations packages stay private even for administrators', async (
   await assertFails(reference.getMetadata()); await assertFails(reference.delete());
   await assertUploadFails(reference.put(new Uint8Array([80,75,3,4]), catalogImageMetadata('admin-claim', 'application/zip')));
 });
+
+test('reviews and aggregates are public reads with server-only writes, including for administrators', async () => {
+  await seedDocuments([
+    ['anuncios/product/reviews/review', { rating: 5, comment: 'Aprovado', authorName: 'Ana', verifiedPurchase: true }],
+    ['productRatings/product', { count: 1, sum: 5, average: 5 }],
+    ['_adminAccess/review-admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }],
+  ]);
+  for (const context of [environment().unauthenticatedContext(), authenticatedContext('buyer'), authenticatedContext('review-admin', { admin: true })]) {
+    for (const path of ['anuncios/product/reviews/review', 'productRatings/product']) {
+      await assertSucceeds(context.firestore().doc(path).get());
+      await assertFails(context.firestore().doc(path).set({ rating: 1, count: 100, sum: 500, average: 5 }));
+      await assertFails(context.firestore().doc(path).delete());
+    }
+  }
+});
+test('profiles and review ownership proofs cannot be read or written directly by any client', async () => {
+  await seedDocuments([['_customerProfiles/buyer', { cpf: '52998224725' }], ['_reviewOwners/proof', { uid: 'buyer', orderId: 'private' }], ['_adminAccess/profile-admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }]]);
+  for (const context of [environment().unauthenticatedContext(), authenticatedContext('buyer'), authenticatedContext('profile-admin', { admin: true })]) {
+    for (const path of ['_customerProfiles/buyer','_reviewOwners/proof']) {
+      await assertFails(context.firestore().doc(path).get());
+      await assertFails(context.firestore().doc(path).set({ role: 'admin' }));
+    }
+  }
+});
+test('bundle catalog writes must pass through the server even for an administrator', async () => {
+  await seedDocuments([['_adminAccess/bundle-admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }], ['anuncios/plain', validProduct()], ['anuncios/bundle', validProduct({ pacote: { components: [] } })]]);
+  const db = authenticatedContext('bundle-admin', { admin: true }).firestore();
+  await assertSucceeds(db.doc('anuncios/plain').update({ nome: 'Produto comum' }));
+  await assertFails(db.doc('anuncios/plain').update({ pacote: { components: [] } }));
+  await assertFails(db.doc('anuncios/new-bundle').set(validProduct({ pacote: { components: [] } })));
+  await assertFails(db.doc('anuncios/bundle').update({ nome: 'Alteração direta' }));
+  await assertFails(db.doc('anuncios/bundle').delete());
+});

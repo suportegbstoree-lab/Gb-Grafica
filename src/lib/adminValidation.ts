@@ -1,3 +1,4 @@
+import { parseBundle, bundleMinimum } from './bundles.js';
 import { validPdfTemplates } from './pdfTemplate.js';
 import { validPromotionWindow } from './promotions.js';
 import { parsePrintProfile } from './printProfile.js';
@@ -108,7 +109,12 @@ export function validateProductDraft(
   const desc = normalizedText(draft.desc);
   const categoria = normalizedSpaces(draft.categoria);
   const imagem = normalizedText(draft.imagem);
-  const precoBase = normalizedText(draft.preco_base);
+  let precoBase = normalizedText(draft.preco_base);
+  const bundle = draft.pacote === undefined ? undefined : parseBundle(draft.pacote);
+  if (draft.pacote !== undefined && !bundle) return { ok: false, message: 'Revise a composição do pacote.' };
+  if (bundle) { try { precoBase = (bundleMinimum(bundle, products, draft.id) / 100).toFixed(2); } catch (error) { return { ok: false, message: (error as Error).message }; } if (draft.atributos?.length || (draft.tipoInput && draft.tipoInput !== 'nenhum')) return { ok: false, message: 'A personalização do pacote é feita em cada componente.' }; }
+  if (draft.tags !== undefined && (!Array.isArray(draft.tags) || draft.tags.length > 20 || draft.tags.some(tag => typeof tag !== 'string' || tag.trim().length > 50))) return { ok: false, message: 'Use até 20 tags de até 50 caracteres.' };
+  if (draft.lancamento !== undefined && typeof draft.lancamento !== 'boolean') return { ok: false, message: 'Informe se o produto é um lançamento.' };
   if (draft.tipoInput !== undefined && !isProductCustomizationType(draft.tipoInput)) {
     return { ok: false, message: 'Selecione um tipo de personalização válido.' };
   }
@@ -200,6 +206,9 @@ export function validateProductDraft(
   return {
     ok: true,
     value: {
+      ...(bundle ? { pacote: bundle } : {}),
+      ...(draft.tags !== undefined ? { tags: [...new Set(draft.tags.map(tag => tag.trim()).filter(Boolean))] } : {}),
+      ...(draft.lancamento !== undefined ? { lancamento: draft.lancamento } : {}),
       ...(draft.destaque !== undefined ? { destaque: draft.destaque === true } : {}),
       ...(Number.isSafeInteger(draft.destaqueOrdem) && draft.destaqueOrdem! >= 0 ? { destaqueOrdem: draft.destaqueOrdem } : {}),
       nome,
@@ -251,6 +260,7 @@ export function validatePromotionDraft(
   const options = draft.alvoTipo === 'produto' ? products : categories;
   const targets = ids.map(id => options.find(option => option.id === id));
   if (targets.some(target => !target)) return { ok: false, message: 'Selecione produtos ou categorias cadastrados.' };
+  if (draft.alvoTipo === 'produto' && targets.some(target => (target as Anuncio).pacote)) return {ok:false,message:'Defina o desconto dos pacotes na seção Pacotes. Ele não acumula promoções dos componentes.'};
   const target = targets[0]!;
   const names = targets.map(target => target!.nome);
 

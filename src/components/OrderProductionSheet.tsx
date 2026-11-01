@@ -1,3 +1,4 @@
+import { orderItems } from '../lib/bundles';
 import type { Order } from '../types';
 import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus';
 import { printProfileLabel } from '../lib/printProfile';
@@ -15,7 +16,7 @@ export default function OrderProductionSheet({ order, onClose, onOpenModel, canO
         <div><dt className="text-xs text-gray-400">Entrega</dt><dd>{order.metodoEntrega === 'retirada' ? 'Retirada na loja' : order.metodoEntrega === 'entrega' ? 'Envio ao cliente' : 'Não informada'}</dd></div>
         {order.enderecoEntrega && <div><dt className="text-xs text-gray-400">Destino</dt><dd>{order.enderecoEntrega.rua}, {order.enderecoEntrega.numero} {order.enderecoEntrega.complemento || ''} · {order.enderecoEntrega.bairro} · {order.enderecoEntrega.cidade}/{order.enderecoEntrega.estado} · {order.enderecoEntrega.cep}</dd></div>}
       </dl>
-      {order.itens.map(item => <section key={item.id} className="space-y-3 rounded-xl border border-gray-800 p-4">
+      {orderItems(order.itens).filter(item=>!order.itens.some(root=>root.bundleItems && root.id===item.id)).map(item => <section key={item.id} className="space-y-3 rounded-xl border border-gray-800 p-4">
         <h3 className="font-bold">{item.quantidade} × {item.nome}</h3>
         <p className="break-words text-xs text-gray-300">{Object.entries(item.selecoes).map(([key, value]) => `${key}: ${value}`).join(' · ') || 'Sem variações selecionadas'}</p>
         <p>{item.printProfile ? printProfileLabel(item.printProfile) : 'Formato não cadastrado na compra — conferir com a gráfica.'}</p>

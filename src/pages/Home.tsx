@@ -1,3 +1,12 @@
+import CatalogProductCard from '../components/CatalogProductCard';
+import BundleConfigurator from '../components/BundleConfigurator';
+import CustomerProfile from '../components/CustomerProfile';
+import ProductReviews from '../components/ProductReviews';
+import ShareLinks from '../components/ShareLinks';
+import { customerApi as defaultCustomerApi, type CustomerApi } from '../services/customerService';
+import { type CustomerProfile as Profile } from '../lib/customerProfile';
+import { filterCatalog, type CatalogSection, type ProductRating } from '../lib/catalog';
+import { cartShippingItems, orderItems } from '../lib/bundles';
 import EmailPreferences from '../components/EmailPreferences';
 import type { EmailApi } from '../services/emailService';
 import { initialReference } from '../lib/decorativeInitial';
@@ -141,6 +150,7 @@ const FIREBASE_PERSONALIZATION_MODEL_STORAGE: PersonalizationModelStorage = {
 
 interface HomeProps {
   emailApi?: EmailApi;
+  customerApi?: CustomerApi;
   products: Anuncio[];
   config: SiteConfig;
   categories: Category[];
@@ -160,7 +170,7 @@ interface HomeProps {
   orderModelLoader?: typeof loadOrderPersonalizationDocument;
 }
 
-export default function Home({ emailApi,
+export default function Home({ emailApi, customerApi = defaultCustomerApi,
   products,
   config,
   categories,
@@ -199,6 +209,7 @@ export default function Home({ emailApi,
   const [customerName, setCustomerName] = useState('');
   const [cpf, setCpf] = useState('');
   const [phone, setPhone] = useState('');
+  const checkoutDraftEdited = useRef(false);
   const [orderNotes, setOrderNotes] = useState('');
   const [addressStreet, setAddressStreet] = useState('');
   const [addressNeighborhood, setAddressNeighborhood] = useState('');
@@ -208,10 +219,23 @@ export default function Home({ emailApi,
   const [isCarouselPaused, setIsCarouselPaused] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const navigate = useNavigate();
-  const { categoryId } = useParams();
+  const { categoryId, productId } = useParams();
   const location = useLocation();
   const customerPreview = new URLSearchParams(location.search).get('preview') === 'customer';
-  const routeCategory = categories.find(category => category.id === categoryId);
+  const query = new URLSearchParams(location.search);
+  const section = (['destaques','promocoes','lancamentos','pacotes'].includes(location.pathname.slice(1)) ? location.pathname.slice(1) : 'todos') as CatalogSection;
+  const sectionTitles = { todos: 'Todos os produtos', destaques: 'Produtos em destaque', promocoes: 'Produtos em promoção', lancamentos: 'Lançamentos', pacotes: 'Pacotes de produtos' };
+  const isProfile = location.pathname === '/minha-conta';
+  const focusedPage = !!productId || isProfile;
+  const detailProduct = products.find(p => p.id === productId);
+  const routeCategory = categories.find(category => category.id === (categoryId || query.get('categoria')));
+  const [ratings, setRatings] = useState<Record<string,ProductRating>>({});
+  const [ratingsError, setRatingsError] = useState('');
+  React.useEffect(()=>{ let active=true; void customerApi.ratings().then(rows=>{if(active) {setRatings(rows);setRatingsError('');}}).catch(()=>{if(active) setRatingsError('As avaliações estão indisponíveis no momento.');});return()=>{active=false;};},[customerApi]);
+  React.useEffect(()=>{setSearchTerm(new URLSearchParams(location.search).get('q') || '');},[location.search]);
+  const applyFilters = (changes: Record<string,string>) => { const next=new URLSearchParams(location.search); Object.entries(changes).forEach(([key,value])=>value?next.set(key,value):next.delete(key)); navigate(`${focusedPage ? '/' : location.pathname}${next.size ? '?'+next.toString() : ''}`); };
+  const fillProfile = (profile: Profile) => { setCustomerName(profile.fullName || user?.displayName || ''); setPhone(profile.phone);setCpf(profile.cpf);setCep(profile.cep);setAddressStreet(profile.street);setAddressNumber(profile.number);setAddressComplement(profile.complement);setAddressNeighborhood(profile.neighborhood); };
+  React.useEffect(()=>{ let active=true; checkoutDraftEdited.current=false; setCustomerName(user?.displayName || '');setPhone('');setCpf('');setCep('');setAddressStreet('');setAddressNumber('');setAddressComplement('');setAddressNeighborhood(''); if(user) void customerApi.profile().then(profile=>{if(active && !checkoutDraftEdited.current) fillProfile(profile);}).catch(()=>undefined);return()=>{active=false;}; },[user?.uid,customerApi]);
   const activeCategory = routeCategory?.nome || null;
   const [shippingError, setShippingError] = useState<string | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -224,7 +248,7 @@ export default function Home({ emailApi,
   const shippingAbort = useRef<AbortController | null>(null);
   const shippingSequence = useRef(0);
   const shippingContext = JSON.stringify([deliveryMethod, cep, cart.map(item => [
-    item.productId, item.quantidade, Object.entries(item.selecoes).sort(([a], [b]) => a.localeCompare(b)),
+    item.productId, item.quantidade, item.bundleRevision, item.bundleItems?.map(c=>[c.productId,c.quantidade,c.selecoes]), Object.entries(item.selecoes).sort(([a], [b]) => a.localeCompare(b)),
   ])]);
   const currentShippingContext = useRef(shippingContext);
   currentShippingContext.current = shippingContext;
@@ -244,10 +268,11 @@ export default function Home({ emailApi,
   const primaryContact = contacts.find(contact => contact.type === 'whatsapp') || contacts[0];
   const storeStructuredData = useMemo(() => buildStoreStructuredData(config), [config]);
   usePageMetadata({
-    title: routeCategory ? `${routeCategory.nome} | GB Gráfica` : 'GB Gráfica | Loja Online Oficial',
+    title: `${detailProduct?.nome || (isProfile ? 'Minha conta' : routeCategory?.nome || sectionTitles[section])} | GB Gráfica`,
     description: config.banner_subtitulo || 'Produtos gráficos e personalizados da GB Gráfica, com pagamento seguro pelo PagBank.',
-    path: categoryId ? `/categoria/${encodeURIComponent(categoryId)}` : '/',
-    image: config.banner_principal || config.logo_url,
+    path: location.pathname,
+    noIndex: isProfile,
+    image: detailProduct?.imagem || config.banner_principal || config.logo_url,
   });
   useStructuredData('gb-store-structured-data', storeStructuredData);
 
@@ -269,20 +294,13 @@ export default function Home({ emailApi,
       : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
   }, [config.banner_principal, config.banner_titulo, promotions, products, promotionNow]);
 
-  const visibleProducts = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLocaleLowerCase('pt-BR');
-    return products.filter(product => {
-      const matchesCategory = categoryId ? Boolean(routeCategory && product.categoria === routeCategory.nome) : !activeCategory || product.categoria === activeCategory;
-      const haystack = `${product.nome} ${product.desc} ${product.categoria}`.toLocaleLowerCase('pt-BR');
-      return matchesCategory && (!normalizedSearch || haystack.includes(normalizedSearch));
-    });
-  }, [activeCategory, categoryId, routeCategory, products, searchTerm]);
+  const visibleProducts = useMemo(() => ((categoryId || query.get('categoria')) && !routeCategory) ? [] : filterCatalog(products, promotions, ratings, { section, category: routeCategory?.nome, query: searchTerm, min: query.get('min') ? parseMoneyToCents(query.get('min')) ?? undefined : undefined, max: query.get('max') ? parseMoneyToCents(query.get('max')) ?? undefined : undefined, rating: Number(query.get('avaliacao')) || undefined }, promotionNow), [products,promotions,ratings,section,routeCategory,categoryId,searchTerm,location.search,promotionNow]);
 
   const subtotalCents = useMemo(() => cart.reduce((total, item) => {
     const unitAmount = parseMoneyToCents(item.preco);
     return unitAmount === null ? total : total + unitAmount * item.quantidade;
   }, 0), [cart]);
-  const hasInvalidCartPrice = cart.some(item => parseMoneyToCents(item.preco) === null);
+  const hasInvalidCartPrice = cart.some(item => parseMoneyToCents(item.preco) === null || (item.bundleItems && products.find(p=>p.id===item.productId)?.pacote?.revision !== item.bundleRevision));
   const totalCents = subtotalCents + (deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : 0);
 
   React.useEffect(() => {
@@ -359,7 +377,7 @@ export default function Home({ emailApi,
     setCart(prev => {
       const existing = prev.find(i => i.id === item.id);
       if (existing) {
-        return prev.map(i => i.id === item.id ? { ...i, quantidade: i.quantidade + 1 } : i);
+        return prev.map(i => i.id === item.id ? { ...i, quantidade: i.bundleItems ? Math.min(i.bundleQuantityAllowed ? 20 : 1, i.quantidade + 1) : Math.min(99,i.quantidade + 1) } : i);
       }
       return [...prev, item];
     });
@@ -369,7 +387,8 @@ export default function Home({ emailApi,
   const updateQuantity = (id: string, delta: number) => {
     setCart(prev => prev.map(item => {
       if (item.id === id) {
-        const newQty = Math.min(999, Math.max(1, item.quantidade + delta));
+        const limit = item.bundleItems ? (item.bundleQuantityAllowed ? Math.min(20,...item.bundleItems.map(c=>Math.floor(99/c.quantidade))) : 1) : 99;
+        const newQty = Math.min(limit, Math.max(1, item.quantidade + delta));
         return { ...item, quantidade: newQty };
       }
       return item;
@@ -379,9 +398,9 @@ export default function Home({ emailApi,
   const removeFromCart = (id: string) => {
     const item = cart.find(candidate => candidate.id === id);
     setCart(prev => prev.filter(i => i.id !== id));
-    const pendingPaths = [item?.arquivoPath, item?.modeloPath, item?.contracapaPath, item?.contracapaOriginalPath]
+    const pendingPaths = (item ? cartShippingItems([item]) : []).flatMap(c => [c.arquivoPath,c.modeloPath,c.contracapaPath,c.contracapaOriginalPath])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
-    void Promise.allSettled(pendingPaths.map(path => removePendingArtwork(path))).then(results => {
+    void Promise.allSettled(pendingPaths.map(path => personalizationModelStorage.deleteModel(path))).then(results => {
       if (results.some(result => result.status === 'rejected')) {
         console.error('Não foi possível remover todos os arquivos temporários do item.');
       }
@@ -390,7 +409,7 @@ export default function Home({ emailApi,
 
   const openOrderModel = async (orderId: string, itemId: string) => {
     try {
-      const item = orders.find(order => order.id === orderId)?.itens.find(item => item.id === itemId);
+      const item = orderItems(orders.find(order => order.id === orderId)?.itens || []).find(item => item.id === itemId);
       if (!item) throw new Error('Item do pedido não encontrado.');
       const request = ++viewerRequest.current;
       const model = await orderModelLoader(orderId, item);
@@ -421,18 +440,19 @@ export default function Home({ emailApi,
 
   const selectCategory = (category: string | null) => {
     const target = categories.find(item => item.nome === category);
-    navigate(target ? `/categoria/${encodeURIComponent(target.id)}${customerPreview ? '?preview=customer' : ''}` : `/${customerPreview ? '?preview=customer' : ''}`);
+    const next = new URLSearchParams(location.search); next.delete('categoria'); if(target && section !== 'todos') next.set('categoria',target.id); navigate(`${section === 'todos' ? target ? `/categoria/${encodeURIComponent(target.id)}` : '/' : '/'+section}${next.size?'?'+next.toString():''}`);
     window.requestAnimationFrame(scrollToProducts);
   };
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
+    applyFilters({ q: searchTerm });
     scrollToProducts();
   };
 
   const checkout = async () => {
     if (checkoutLock.current || isCheckingOut || cart.length === 0) return;
-    if (cart.some(item => item.modeloPath && item.aprovarArte !== true)) {
+    if (cartShippingItems(cart).some(item => item.modeloPath && item.aprovarArte !== true)) {
       setNotice({ type: 'error', message: 'Confira e aprove a arte de cada item personalizado antes de continuar.' });
       return;
     }
@@ -468,7 +488,8 @@ export default function Home({ emailApi,
     try {
       const idToken = await user.getIdToken();
       const checkoutResult = await createHostedCheckout({
-        items: cart.map(item => ({
+        items: cart.map(function serializeItem(item): any { return ({
+          ...(item.bundleItems ? { bundleItems: item.bundleItems.map(serializeItem), bundleRevision: item.bundleRevision } : {}),
           productId: item.productId,
           ...(item.templateId ? { templateId: item.templateId } : {}),
           expectedUnitAmountCents: parseMoneyToCents(item.preco),
@@ -487,7 +508,7 @@ export default function Home({ emailApi,
           inicialReferencia: item.inicialReferencia,
           ...(item.printProfile ? { printProfile: item.printProfile } : {}),
           ...(item.modeloPath ? { aprovarArte: item.aprovarArte === true } : {}),
-        })),
+        }); }),
         requestId: crypto.randomUUID(),
         customerName: formResult.customerName,
         observacoes: orderNotes,
@@ -638,10 +659,10 @@ export default function Home({ emailApi,
   };
 
   const handleLogout = async () => {
-    const pendingArtworks = cart
+    const pendingArtworks = cartShippingItems(cart)
       .flatMap(item => [item.arquivoPath, item.modeloPath, item.contracapaPath, item.contracapaOriginalPath])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
-    await Promise.allSettled(pendingArtworks.map(removePendingArtwork));
+    await Promise.allSettled(pendingArtworks.map(path=>personalizationModelStorage.deleteModel(path)));
     setCart([]);
     localStorage.removeItem('gb_pending_order');
     await logout();
@@ -650,8 +671,7 @@ export default function Home({ emailApi,
   const activeSlide = slides[currentSlide] || slides[0];
   const handleBannerAction = () => {
     if (activeSlide.productId) {
-      setSearchTerm(''); selectCategory(null);
-      window.requestAnimationFrame(() => document.getElementById(`produto-${activeSlide.productId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+      navigate(`/produto/${encodeURIComponent(activeSlide.productId)}`);
       return;
     }
     if (activeSlide.link && isHttpUrl(activeSlide.link)) {
@@ -754,8 +774,8 @@ export default function Home({ emailApi,
       </div>
 
       {/* Header */}
-      <header className="store-header bg-[#fffdd6] px-4 md:px-12 py-12 flex flex-col md:flex-row justify-between items-center gap-8 relative overflow-hidden z-20">
-        <div className="flex items-center group">
+      <header className="store-header bg-[#fffdd6] px-4 md:px-12 py-10 grid grid-cols-1 lg:grid-cols-[1fr_2fr_1fr] items-center justify-items-center gap-6 relative z-20">
+        <div className="flex items-center group lg:justify-self-start">
           {config.logo_url && config.logo_url.trim() !== "" && !logoError ? (
             <img
               src={resolvePublicImage(config.logo_url)}
@@ -782,7 +802,7 @@ export default function Home({ emailApi,
           )}
         </div>
 
-        <form onSubmit={submitSearch} role="search" className="flex w-full md:w-1/2 max-w-xl relative group">
+        <form onSubmit={submitSearch} role="search" className="flex w-full max-w-2xl relative group">
           <label htmlFor="store-search" className="sr-only">Buscar produtos</label>
           <input
             id="store-search"
@@ -797,19 +817,20 @@ export default function Home({ emailApi,
           </button>
         </form>
 
-        <div className="flex gap-12 items-center">
+        <div className="flex gap-4 items-center lg:justify-self-end">
+          {user && <Link to="/minha-conta" className="text-xs font-bold text-pink-600">Minha conta</Link>}
           <button type="button" onClick={openOrders} className="flex items-center gap-3 group">
-            <div className="w-16 h-16 rounded-full border-2 border-[#d14d8c]/30 flex items-center justify-center bg-white group-hover:border-[#d14d8c] transition-all shadow-sm">
+            <div className="w-12 h-12 rounded-full border-2 border-[#d14d8c]/30 flex items-center justify-center bg-white group-hover:border-[#d14d8c] transition-all shadow-sm">
               <Package size={28} className="text-[#d14d8c]" />
             </div>
-            <span className="text-[11px] font-black uppercase tracking-widest text-[#d14d8c]">Meus Pedidos</span>
+            <span className="sr-only">Meus Pedidos</span>
           </button>
 
           <button type="button" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrinho" aria-haspopup="dialog" aria-expanded={isCartOpen} className="flex items-center gap-3 group relative">
-            <div className="w-16 h-16 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
+            <div className="w-12 h-12 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
               <ShoppingCart size={28} className="text-[#5dc1c1]" />
             </div>
-            <div className="flex flex-col items-start">
+            <div className="sr-only">
               <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1]">Meu</span>
               <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1] mt-[-4px]">Carrinho</span>
             </div>
@@ -824,6 +845,7 @@ export default function Home({ emailApi,
 
       {customerPreview && canAccessPanel && <div className="bg-gray-900 px-4 py-3 text-center text-sm text-white">Visualização como cliente · <Link to="/admin" className="underline">Voltar ao painel</Link></div>}
       {categoryId && <div className="mx-auto max-w-7xl p-4"><Link to="/">Loja</Link> / {routeCategory?.nome || 'Categoria não encontrada'}</div>}
+      <nav aria-label="Seções da loja" className="flex flex-wrap justify-center gap-2 bg-white px-4 py-4">{Object.entries(sectionTitles).map(([key,title])=><Link key={key} to={key==='todos'?'/':'/'+key} aria-current={!focusedPage && section===key?'page':undefined} className={`rounded-full px-4 py-2 text-sm font-bold ${!focusedPage && section===key?'bg-pink-500 text-white':'text-gray-600 hover:bg-pink-50'}`}>{title}</Link>)}</nav>
       {/* Navigation */}
       <nav aria-label="Categorias de produtos" className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
         {categories.map((cat) => (
@@ -878,7 +900,7 @@ export default function Home({ emailApi,
       </div>
 
       {/* Banner Carousel */}
-      <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
+      {!focusedPage && <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
         <AnimatePresence initial={false}>
           <motion.div
             key={currentSlide}
@@ -986,91 +1008,183 @@ export default function Home({ emailApi,
         </div>
       </section>
 
+      }
       {/* Benefits */}
-      {benefits.length > 0 && <section aria-label="Benefícios da loja" className="relative z-10 flex flex-wrap justify-center gap-12 border-b border-gray-100 bg-white/40 px-4 py-12 backdrop-blur-sm md:gap-24 md:px-12">
+      {!focusedPage && benefits.length > 0 && <section aria-label="Benefícios da loja" className="relative z-10 flex flex-wrap justify-center gap-12 border-b border-gray-100 bg-white/40 px-4 py-12 backdrop-blur-sm md:gap-24 md:px-12">
         {benefits.map(benefit => <BenefitItem key={benefit.id} icon={<Sparkles size={28} />} title={benefit.title} desc={benefit.description} />)}
       </section>}
 
-      {/* Main Content */}
-      <FlashOffers products={products} promotions={promotions} now={promotionNow} />
-      <main id="produtos" className="max-w-7xl mx-auto px-4 md:px-12 py-16 flex flex-col md:flex-row gap-12">
-        {/* Sidebar */}
-        <aside className="w-full md:w-72 flex-shrink-0">
-          <div className="bg-white/60 backdrop-blur-sm rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
-            <div className="p-6 border-b border-gray-100 bg-gray-50/30">
-              <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Categorias</h3>
+      {!focusedPage && <FlashOffers products={products} promotions={promotions} now={promotionNow} />}
+      <main id="produtos" className="mx-auto max-w-[1920px] px-4 py-12 md:px-8 xl:px-12">
+        {isProfile ? (
+          <CustomerProfile uid={user?.uid} email={user?.email} api={customerApi} onSaved={fillProfile} />
+        ) : productId ? (
+          <div className="mx-auto max-w-6xl space-y-8">
+            <Link to="/" className="text-sm font-bold text-pink-600">
+              Voltar ao catálogo
+            </Link>
+            {!productsReady ? (
+              <p>Carregando produto...</p>
+            ) : !detailProduct ? (
+              <p role="alert">Produto não encontrado.</p>
+            ) : (
+              <>
+                {detailProduct.pacote ? (
+                  <BundleConfigurator
+                    key={detailProduct.pacote.revision}
+                    product={detailProduct}
+                    products={products}
+                    onAdd={addToCart}
+                    notify={(message, error) => setNotice({ type: error ? 'error' : 'success', message })}
+                    renderProduct={({ onConfirm, ...props }) => (
+                      <ProductCard
+                        {...props}
+                        onAddToCart={onConfirm}
+                        user={user}
+                        onRequireLogin={handleLogin}
+                        onNotify={setNotice}
+                        promotions={[]}
+                        fonts={config.fontes_personalizacao || []}
+                        personalizationModelStorage={personalizationModelStorage}
+                        onOpenModel={setModelDocument}
+                      />
+                    )}
+                  />
+                ) : (
+                  <ProductCard
+                    key={detailProduct.id}
+                    product={detailProduct}
+                    user={user}
+                    onRequireLogin={handleLogin}
+                    onAddToCart={addToCart}
+                    onNotify={setNotice}
+                    promotions={promotions}
+                    fonts={config.fontes_personalizacao || []}
+                    personalizationModelStorage={personalizationModelStorage}
+                    onOpenModel={setModelDocument}
+                  />
+                )}
+                <ProductReviews
+                  key={detailProduct.id}
+                  productId={detailProduct.id}
+                  uid={user?.uid}
+                  orders={orders}
+                  api={customerApi}
+                  onChange={() =>
+                    void customerApi
+                      .ratings()
+                      .then(setRatings)
+                      .catch(() => undefined)
+                  }
+                />
+              </>
+            )}
+          </div>
+        ) : (
+          <section aria-labelledby="products-heading" className="min-w-0">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+              <h1 id="products-heading" className="text-3xl font-black text-gray-900">
+                {categoryId && !routeCategory ? 'Categoria não encontrada' : sectionTitles[section]}
+                {activeCategory && <span className="text-pink-500"> · {activeCategory}</span>}
+              </h1>
+              <ShareLinks
+                name={sectionTitles[section]}
+                notify={(message, error) => setNotice({ type: error ? 'error' : 'success', message })}
+              />
             </div>
-            <div className="flex flex-col">
-              {categories.map((cat) => (
-                <button
-                  type="button"
-                  key={cat.id}
-                  onClick={() => selectCategory(cat.nome)}
-                  className={cn(
-                    'p-5 text-[13px] font-bold uppercase tracking-wider text-gray-500 border-l-4 border-transparent hover:border-pink-400 hover:bg-pink-50/20 hover:text-pink-600 transition-all flex justify-between items-center group',
-                    activeCategory === cat.nome && 'border-pink-400 bg-pink-50/30 text-pink-600',
-                  )}
+            <form
+              aria-label="Filtros do catálogo"
+              className="mb-8 flex flex-wrap items-end gap-4 rounded-2xl border border-gray-100 bg-white p-4"
+              onSubmit={(e) => e.preventDefault()}
+            >
+              <label className="text-sm">
+                Categoria
+                <select
+                  aria-label="Filtrar por categoria"
+                  value={routeCategory?.nome || ''}
+                  onChange={(e) => selectCategory(e.target.value || null)}
+                  className="mt-1 block rounded-lg border p-2"
                 >
-                  {cat.nome} <ChevronRight size={16} className="text-pink-400 opacity-0 group-hover:opacity-100 transition-all translate-x-[-10px] group-hover:translate-x-0" />
-                </button>
+                  <option value="">Todas as categorias</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.nome}>
+                      {c.nome}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {['min', 'max'].map((key) => (
+                <label key={key} className="text-sm">
+                  {key === 'min' ? 'Preço mínimo (R$)' : 'Preço máximo (R$)'}
+                  <input
+                    aria-label={key === 'min' ? 'Preço mínimo' : 'Preço máximo'}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={query.get(key) || ''}
+                    onChange={(e) => applyFilters({ [key]: e.target.value })}
+                    className="mt-1 block w-36 rounded-lg border p-2"
+                  />
+                </label>
               ))}
-            </div>
-          </div>
-        </aside>
-
-        {/* Content */}
-        <section className="flex-grow" aria-labelledby="products-heading">
-          <div className="flex items-center gap-4 mb-10">
-            <h2 id="products-heading" className="text-3xl font-black uppercase tracking-tighter text-gray-900">
-              {activeCategory ? (
-                <>Categoria <span className="text-pink-500">{activeCategory}</span></>
-              ) : searchTerm.trim() ? (
-                <>Produtos <span className="text-pink-500">encontrados</span></>
-              ) : (
-                <>Mais <span className="text-pink-500">Vendidos</span></>
-              )}
-            </h2>
-            <div className="h-px flex-grow bg-gradient-to-r from-gray-100 to-transparent"></div>
-          </div>
-
-          {productsError ? (
-            <div role="alert" className="rounded-3xl border border-red-100 bg-red-50 p-8 text-center text-sm font-semibold text-red-700">
-              <p>{productsError}</p>
-              <button type="button" onClick={() => window.location.reload()} className="mt-4 rounded-full bg-red-700 px-5 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-red-800">
-                Tentar novamente
-              </button>
-            </div>
-          ) : !productsReady ? (
-            <div role="status" className="rounded-3xl border border-gray-100 bg-white p-12 text-center text-gray-500">
-              <Loader2 className="mx-auto mb-3 animate-spin text-pink-500" /> Carregando produtos...
-            </div>
-          ) : visibleProducts.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-gray-200 bg-white/70 p-12 text-center">
-              <Search className="mx-auto mb-4 text-gray-300" size={36} />
-              <p className="font-bold text-gray-700">Nenhum produto encontrado.</p>
-              <button type="button" onClick={() => { setSearchTerm(''); selectCategory(null); }} className="mt-4 text-sm font-bold text-pink-500 hover:underline">
+              <label className="text-sm">
+                Avaliação mínima
+                <select
+                  aria-label="Filtrar por avaliação"
+                  value={query.get('avaliacao') || ''}
+                  onChange={(e) => applyFilters({ avaliacao: e.target.value })}
+                  className="mt-1 block rounded-lg border p-2"
+                >
+                  <option value="">Todas</option>
+                  {[5, 4, 3, 2, 1].map((n) => (
+                    <option key={n} value={n}>
+                      {n} estrelas ou mais
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="p-2 text-sm font-bold text-pink-600"
+                onClick={() => {
+                  setSearchTerm('');
+                  navigate(section === 'todos' ? '/' : '/' + section);
+                }}
+              >
                 Limpar filtros
               </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-10">
-              {visibleProducts.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  user={user}
-                  onRequireLogin={handleLogin}
-                  onAddToCart={addToCart}
-                  onNotify={setNotice}
-                  promotions={promotions}
-                  fonts={config.fontes_personalizacao || []}
-                  personalizationModelStorage={personalizationModelStorage}
-                  onOpenModel={setModelDocument}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+            </form>
+            {ratingsError && (
+              <p role="status" className="mb-4 text-sm text-gray-500">
+                {ratingsError}
+              </p>
+            )}
+            {productsError ? (
+              <p role="alert">{productsError}</p>
+            ) : !productsReady ? (
+              <p role="status">Carregando produtos...</p>
+            ) : !visibleProducts.length ? (
+              <p className="rounded-3xl bg-white p-12 text-center">Nenhum produto encontrado.</p>
+            ) : (
+              <div
+                data-testid="catalog-grid"
+                className="grid auto-rows-fr grid-cols-1 items-stretch gap-6 md:grid-cols-2 2xl:grid-cols-3"
+              >
+                {visibleProducts.map((product) => (
+                  <CatalogProductCard
+                    key={product.id}
+                    product={product}
+                    products={products}
+                    promotions={promotions}
+                    rating={ratings[product.id]}
+                    onAdd={addToCart}
+                    notify={(message, error) => setNotice({ type: error ? 'error' : 'success', message })}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </main>
 
       {/* Footer */}
@@ -1133,7 +1247,7 @@ export default function Home({ emailApi,
             {cart.length === 0 ? (
               <div className="py-12 text-center text-gray-500">Seu carrinho está vazio.</div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-6" onChangeCapture={()=>{checkoutDraftEdited.current=true;}}>
                 <div className="space-y-4 pr-2">
                   {cart.map((item) => (
                     <div key={item.id} className="flex gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
@@ -1162,6 +1276,7 @@ export default function Home({ emailApi,
                         <div className="text-[10px] text-gray-400 mt-1">
                           {Object.entries(item.selecoes).map(([k, v]) => `${k}: ${v}`).join(' | ')}
                         </div>
+                        {item.bundleItems && <div className="mt-3 space-y-3 rounded-xl border border-purple-100 p-3">{item.bundleItems.map((child,index)=><div key={index} className="space-y-2 text-xs"><p className="font-bold">{child.quantidade * item.quantidade} × {child.nome}</p><p>{Object.entries(child.selecoes).map(([k,v])=>`${k}: ${v}`).join(' · ')}</p>{child.textoPersonalizado && <p className="whitespace-pre-wrap">{child.textoPersonalizado}</p>}{child.arquivoNome && <p>Arte: {child.arquivoNome}</p>}{child.modeloPath && <><button onClick={()=>void openCartModel(child)} className="font-bold text-purple-600">Visualizar modelo de {child.nome}</button><label className="flex gap-2"><input type="checkbox" aria-label={`Aprovar arte de ${child.nome} no pacote`} checked={child.aprovarArte===true} onChange={e=>{const approved=e.target.checked;setCart(current=>current.map(root=>root.id===item.id?{...root,bundleItems:root.bundleItems!.map((c,i)=>i===index?{...c,aprovarArte:approved}:c)}:root));}} />Conferi e aprovo a arte deste componente para produção.</label></>}</div>)}</div>}
                         {item.personalizacaoTexto ? (
                           <div className="mt-2 rounded-lg border border-pink-100 bg-pink-50/70 px-3 py-2 text-[10px] text-gray-600">
                             <div className="whitespace-pre-wrap break-words font-bold text-pink-600">Texto: {item.personalizacaoTexto.texto}</div>
@@ -1184,6 +1299,7 @@ export default function Home({ emailApi,
                             <button
                               type="button"
                               aria-label={`Diminuir quantidade de ${item.nome}`}
+                              disabled={Boolean(item.bundleItems && !item.bundleQuantityAllowed)}
                               onClick={() => updateQuantity(item.id, -1)}
                               className="w-6 h-6 flex items-center justify-center hover:bg-gray-200 rounded transition-colors"
                             >
@@ -1193,6 +1309,7 @@ export default function Home({ emailApi,
                             <button
                               type="button"
                               aria-label={`Aumentar quantidade de ${item.nome}`}
+                              disabled={Boolean(item.bundleItems && !item.bundleQuantityAllowed)}
                               onClick={() => updateQuantity(item.id, 1)}
                               className="w-6 h-6 flex items-center justify-center hover:bg-gray-200 rounded transition-colors"
                             >
@@ -1526,11 +1643,11 @@ export default function Home({ emailApi,
                       )}
                     </div>
                     <div className="space-y-2">
-                      {order.itens.map((item) => (
+                      {orderItems(order.itens).map((item) => (
                         <div key={item.id} className="text-xs space-y-1">
                           <div className="flex justify-between">
                             <span className="text-gray-600 font-medium">{item.quantidade}x {item.nome}</span>
-                            <span className="text-gray-900 font-bold">{formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}</span>
+                            <span className="text-gray-900 font-bold">{item.bundleParentName ? 'Incluído no pacote' : formatMoney(((parseMoneyToCents(item.preco) || 0) * item.quantidade) / 100)}</span>
                           </div>
                           {item.personalizacaoTexto ? (
                             <div className="whitespace-pre-wrap break-words text-[9px] text-pink-500 font-black uppercase tracking-wider">
@@ -1758,8 +1875,9 @@ function ProductCard({
   promotions,
   fonts,
   personalizationModelStorage,
-  onOpenModel,
+  onOpenModel, initialSelections = {}, lockSelections = false, confirmLabel = 'Adicionar ao Carrinho', onDraftChange,
 }: {
+  initialSelections?: Record<string,string>; lockSelections?: boolean; confirmLabel?: string; onDraftChange?: () => void;
   product: Anuncio;
   user: FirebaseUser | null;
   onRequireLogin: () => Promise<boolean>;
@@ -1771,7 +1889,7 @@ function ProductCard({
   onOpenModel: (model: PersonalizationDocument) => void;
   key?: string;
 }) {
-  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [selections, setSelections] = useState<Record<string, string>>(initialSelections);
   const [uploadedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
   const [artworkSourceFile, setArtworkSourceFile] = useState<File | null>(null);
   const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
@@ -1803,8 +1921,9 @@ function ProductCard({
   React.useEffect(() => { setActiveImage(variantImage(product, selections)); }, [product.imagensPorCombinacao, product.imagem, JSON.stringify(selections)]);
 
   React.useEffect(() => {
-    setSelections({});
-  }, [product.id, attributeSignature]);
+    setSelections(initialSelections);
+  }, [product.id, attributeSignature, JSON.stringify(initialSelections)]);
+  React.useEffect(()=>{onDraftChange?.();},[JSON.stringify(selections),uploadedArtwork?.path,uploadedModel?.path,uploadedBack?.path,JSON.stringify(textCustomization)]);
 
   React.useEffect(() => () => {
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
@@ -1815,6 +1934,7 @@ function ProductCard({
   React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
   const handleSelect = (attrName: string, option: string) => {
+    if(lockSelections) return;
     const attributeIndex = product.atributos.findIndex(attribute => attribute.nome === attrName);
     setSelections(previous => {
       const nextSelections: Record<string, string> = {};
@@ -1979,6 +2099,9 @@ function ProductCard({
       ...(template?.alphabet && !uploadedArtwork ? { inicialReferencia: initialReference(template, textCustomization?.texto || '') } : {}),
     });
 
+    // Package components keep their draft until the complete package is added.
+    if(onDraftChange) return;
+
     // Reset after adding
     setUploadedBackOriginal(null);
     setUploadedBack(null);
@@ -2047,7 +2170,7 @@ function ProductCard({
       <div className="min-w-0 flex-1 flex flex-col">
         <div className="flex min-w-0 justify-between items-start gap-3 mb-4">
           <h3 className="min-w-0 text-2xl font-black text-gray-900 tracking-tight">{product.nome}</h3>
-          <div className="shrink-0 bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Novo</div>
+          {product.lancamento && <div className="shrink-0 bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Novo</div>}
         </div>
         <p className="text-sm text-gray-500 mb-8 leading-relaxed max-w-2xl font-medium">{product.desc}</p>
 
@@ -2063,6 +2186,7 @@ function ProductCard({
                     <button
                       type="button"
                       key={option}
+                      disabled={lockSelections}
                       onClick={() => handleSelect(attr.nome, option)}
                       aria-pressed={selections[attr.nome] === option}
                       className={cn(
@@ -2185,63 +2309,7 @@ function ProductCard({
               </div>
             </div>
 
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 bg-gray-50/50 p-1.5 rounded-2xl border border-gray-100">
-              <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest px-2">Compartilhar</span>
-              <button
-                type="button"
-                onClick={() => {
-                  const text = `Confira esse produto: ${product.nome} - ${window.location.origin}`;
-                  openExternal(`https://wa.me/?text=${encodeURIComponent(text)}`);
-                }}
-                className="p-2 text-green-500 hover:scale-110 transition-transform"
-                title="WhatsApp"
-                aria-label={`Compartilhar ${product.nome} no WhatsApp`}
-              >
-                <MessageCircle size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const url = window.location.href;
-                  openExternal(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`);
-                }}
-                className="p-2 text-blue-600 hover:scale-110 transition-transform"
-                title="Facebook"
-                aria-label={`Compartilhar ${product.nome} no Facebook`}
-              >
-                <Facebook size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const url = window.location.href;
-                  const text = `Confira esse produto: ${product.nome}`;
-                  openExternal(`https://twitter.com/intent/tweet?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`);
-                }}
-                className="p-2 text-sky-500 hover:scale-110 transition-transform"
-                title="Twitter"
-                aria-label={`Compartilhar ${product.nome} no Twitter`}
-              >
-                <Twitter size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  const url = window.location.href;
-                  try {
-                    await navigator.clipboard.writeText(url);
-                    onNotify({ type: 'success', message: 'Link do produto copiado.' });
-                  } catch {
-                    onNotify({ type: 'error', message: 'Não foi possível copiar o link neste navegador.' });
-                  }
-                }}
-                className="p-2 text-gray-400 hover:text-pink-500 transition-all"
-                title="Copiar Link"
-                aria-label={`Copiar link de ${product.nome}`}
-              >
-                <Share2 size={16} />
-              </button>
-            </div>
+            <ShareLinks productId={product.id} name={product.nome} notify={(message,error)=>onNotify({type:error?'error':'success',message})} />
           </div>
 
           <button
@@ -2256,7 +2324,7 @@ function ProductCard({
             )}
           >
             <ShoppingCart size={18} className="shrink-0" />
-            <span className="min-w-0">Adicionar ao Carrinho</span>
+            <span className="min-w-0">{confirmLabel}</span>
           </button>
         </div>
       </div>

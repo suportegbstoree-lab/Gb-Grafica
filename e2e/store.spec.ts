@@ -125,6 +125,7 @@ test('resposta atrasada de outro CEP não restaura uma cotação antiga', async 
 });
 
 test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checkout', async ({ page }) => {
+  await page.locator('#produto-livro-receitas').getByRole('link',{name:'Ver e configurar produto'}).click();
   const products = page.locator('#produtos');
   const productCard = products.locator('article').filter({
     has: page.getByRole('heading', { name: 'Livro de Receitas Personalizado' }),

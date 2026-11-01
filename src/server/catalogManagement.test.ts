@@ -56,3 +56,12 @@ test('product managers generate separate category/product/promotion events with 
   assert.deepEqual(context.activity().map(event => event.action), ['category.created', 'product.created', 'promotion.created']);
   assert.ok(context.activity().every(event => event.actor === 'employee'));
 }));
+
+test('bundle permission manages packages without granting ordinary product management or trusting client prices/revisions',async()=>scenario(async c=>{
+ c.actor.permissions=['bundles.manage'];const pacote={components:[{productId:'product',quantity:2,allowQuantity:false,configurable:false,selections:{}}],allowQuantity:false,discountType:'percent',discountValue:10,revision:'forged'};
+ const value={...product,id:'kit',nome:'Kit novo',preco_base:'0.01',pacote,tags:[' papel ','presente']};
+ const response=await c.call('anuncios','kit','set',value);assert.equal(response.status,200,JSON.stringify(await response.clone().json()));const saved=c.docs.get('anuncios/kit');assert.equal(saved.preco_base,'36.00');assert.notEqual(saved.pacote.revision,'forged');assert.match(saved.pacote.revision,/^[a-f0-9]{32}$/);assert.deepEqual(saved.tags,['papel','presente']);
+ assert.equal((await c.call('anuncios','product','patch',{nome:'Proibido'})).status,403);assert.equal((await c.call('anuncios','product','delete')).status,403);assert.equal((await c.call('anuncios','product','patch',{pacote})).status,422);
+ const revision=saved.pacote.revision;assert.equal((await c.call('anuncios','kit','patch',{desc:'Nova descrição'})).status,200);assert.equal(c.docs.get('anuncios/kit').pacote.revision,revision);assert.equal((await c.call('anuncios','kit','patch',{pacote:{...pacote,discountValue:20}})).status,200);assert.notEqual(c.docs.get('anuncios/kit').pacote.revision,revision);
+ c.actor.permissions=['products.manage'];assert.equal((await c.call('anuncios','kit','patch',{preco_base:'1.00'})).status,403);assert.equal((await c.call('anuncios','kit','delete')).status,403);c.actor.permissions=['bundles.manage'];assert.equal((await c.call('anuncios','kit','delete')).status,200);
+}));

@@ -16,7 +16,8 @@ test('produtos podem entrar e sair dos destaques e o banner acompanha a seleçã
   await banner.getByRole('button', { name: 'Mostrar Livro de Receitas Personalizado', exact: true }).click();
   await expect(banner.getByRole('heading', { name: 'Livro de Receitas Personalizado', exact: true })).toBeVisible();
   await banner.getByRole('button', { name: 'Ver produto', exact: true }).click();
-  await expect(page.locator('#produto-livro-receitas')).toBeInViewport();
+  await expect(page).toHaveURL(/\/produto\/livro-receitas/);
+  await expect(page.locator('#produto-livro-receitas')).toBeVisible();
   await page.getByRole('link', { name: 'Área Admin' }).click();
   await page.getByRole('button', { name: 'Remover de destaque', exact: true }).first().click();
   await expect(page.getByRole('button', { name: 'Remover de destaque', exact: true })).toHaveCount(1);
@@ -43,7 +44,7 @@ test('atendimento aceita somente email e benefícios podem ser removidos, adicio
   await expect(page.getByText('Configurações salvas com sucesso!', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
   await expect(page.locator('a[href="mailto:cliente@example.com"]')).toHaveCount(2);
-  await expect(page.locator('a[href^="https://wa.me/"]')).toHaveCount(0);
+  await expect(page.locator('header a[href^="https://wa.me/"], footer a[href^="https://wa.me/"]')).toHaveCount(0);
   const publicBenefits = page.getByRole('region', { name: 'Benefícios da loja', exact: true });
   await expect(publicBenefits.getByText('Entrega local', { exact: true })).toBeVisible();
   await expect(publicBenefits.getByText('PAGAMENTO SEGURO', { exact: true })).toHaveCount(0);
@@ -64,6 +65,6 @@ test('remover todos os contatos e benefícios mantém a configuração vazia no 
   await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
   await expect(page.getByRole('region', { name: 'Benefícios da loja', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Falar com a GB Gráfica:/ })).toHaveCount(0);
-  await expect(page.locator('a[href^="https://wa.me/"]')).toHaveCount(0);
+  await expect(page.locator('header a[href^="https://wa.me/"], footer a[href^="https://wa.me/"]')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
 });

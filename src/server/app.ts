@@ -1,3 +1,6 @@
+import { createCustomerAccountRouters } from './customerAccount.js';
+import { expandBundleShipping } from './bundleShipping.js';
+import { parseBundle, validateBundleItems, discountBundle, orderItems } from '../lib/bundles.js';
 import { createEmailRouters } from './emailRouter.js';
 import { queueOrderStatusEmail, sendLatestOrderEmail } from './customerEmails.js';
 import { dispatchCustomerEmails } from './emailCampaigns.js';
@@ -139,6 +142,7 @@ interface ShippingQuote {
 }
 
 interface NormalizedCartItem {
+  components?: NormalizedCartItem[];
   initialVersion?: ArtworkObjectVersion;
 	artworkVersion?: ArtworkObjectVersion;
 	modelVersion?: ArtworkObjectVersion;
@@ -147,6 +151,9 @@ interface NormalizedCartItem {
 	cartItem: {
 		id: string;
 		productId: string;
+    bundleItems?: import('../types.js').CartItem[];
+    bundleRevision?: string;
+    bundleQuantityAllowed?: boolean;
 		templateId?: string;
     inicialPath?: string;
     inicialLetra?: string;
@@ -618,11 +625,11 @@ async function getShippingQuote(
 	if (cep.length !== 8) throw new HttpError(422, 'Informe um CEP válido.');
 	const client = getCorreiosClient();
 	const { db } = getAdminServices();
-	const parcels = await shippingParcelsForCart(itemsValue, async id => {
-		if (catalog) return catalog.get(id);
-		const snapshot = await db.collection('anuncios').doc(id).get();
-		return snapshot.exists ? snapshot.data() : undefined;
-	});
+  const loaded = new Map<string, PlainRecord | undefined>();
+  const loadProduct = async (id: string) => { if (loaded.has(id)) return loaded.get(id); const value = catalog?.get(id) || (await db.collection('anuncios').doc(id).get()).data(); loaded.set(id, value); return value; };
+  let shippingItems: unknown;
+  try { shippingItems = await expandBundleShipping(itemsValue, loadProduct); } catch (error) { throw new HttpError(422, (error as Error).message); }
+  const parcels = await shippingParcelsForCart(shippingItems, loadProduct);
 
 	try {
 		const response = await axios.get<{
@@ -666,6 +673,7 @@ async function normalizeCart(
 	itemsValue: unknown,
 	services: ReturnType<typeof getAdminServices>,
 	userId: string,
+  componentMode = false,
 ): Promise<{
 	items: NormalizedCartItem[];
 	subtotalCents: number;
@@ -677,6 +685,7 @@ async function normalizeCart(
 		throw new HttpError(422, 'O carrinho está vazio ou possui itens demais.');
 	}
 
+	if (!componentMode && itemsValue.reduce((count, item) => count + (Array.isArray(item?.bundleItems) ? item.bundleItems.length : 1), 0) > 50) throw new HttpError(422, 'O carrinho excede o limite de 50 componentes.');
 	const itemInputs = itemsValue.filter(isPlainRecord);
 	if (itemInputs.length !== itemsValue.length) {
 		throw new HttpError(422, 'Há um item inválido no carrinho.');
@@ -709,6 +718,73 @@ async function normalizeCart(
 
 		const product = snapshot.data() as PlainRecord;
 		shippingProducts.set(productId, product);
+    if (product.pacote || item.bundleItems) {
+      if (componentMode || !product.pacote) throw new HttpError(422, 'Composição de pacote inválida.');
+      const definition = parseBundle(product.pacote);
+      if (!definition || !definition.revision || item.bundleRevision !== definition.revision)
+        throw new HttpError(409, 'O pacote mudou. Configure-o novamente.', 'BUNDLE_CHANGED');
+      let inputs: import('../types.js').CartItem[];
+      try {
+        inputs = validateBundleItems(
+          { ...product, id: productId } as unknown as Anuncio,
+          item.bundleItems,
+          item.quantidade as number,
+        );
+      } catch (error) {
+        throw new HttpError(422, (error as Error).message);
+      }
+      const children = await normalizeCart(inputs, services, userId, true);
+      // Scope component identifiers to this cart row so separate packages never collide when copying artwork.
+      children.items.forEach((child) => {
+        child.cartItem.id = createHash('sha256')
+          .update(`${index}:${productId}:${child.cartItem.id}`)
+          .digest('hex')
+          .slice(0, 32);
+      });
+      let unitAmount: number;
+      try {
+        unitAmount = discountBundle(children.subtotalCents, definition);
+      } catch (error) {
+        throw new HttpError(422, (error as Error).message);
+      }
+      if (item.expectedUnitAmountCents !== undefined && item.expectedUnitAmountCents !== unitAmount)
+        throw new HttpError(409, 'O preço do pacote mudou. Revise o carrinho.', 'PRICE_CHANGED');
+      const quantity = item.quantidade as number,
+        amount = unitAmount * quantity;
+      subtotalCents += amount;
+      if (subtotalCents > 8999999100) throw new HttpError(422, 'O valor do pedido excede o limite permitido.');
+      const name = textValue(product.nome, 100),
+        id = createHash('sha256')
+          .update(`${productId}:${definition.revision}:${children.items.map((child) => child.cartItem.id).join(':')}`)
+          .digest('hex')
+          .slice(0, 32);
+      for (const [id, value] of children.shippingProducts) shippingProducts.set(id, value);
+      normalizedItems.push({
+        components: children.items,
+        cartItem: {
+          id,
+          productId,
+          nome: name,
+          imagem: httpUrl(product.imagem) || '',
+          preco: (unitAmount / 100).toFixed(2),
+          selecoes: {},
+          quantidade: quantity,
+          bundleItems: children.items.map((child) => child.cartItem),
+          bundleRevision: definition.revision,
+          bundleQuantityAllowed: definition.allowQuantity,
+        },
+        checkoutItem: {
+          reference_id: productId.slice(0, 64),
+          name,
+          description: textValue(product.desc, 255) || name,
+          quantity,
+          unit_amount: unitAmount,
+        },
+        amountCents: amount,
+      });
+      continue;
+    }
+
 		const productName = textValue(product.nome, 100);
 		if (!productName) throw new HttpError(422, 'Um dos produtos está configurado incorretamente.');
 
@@ -767,7 +843,7 @@ async function normalizeCart(
 		}
 
 		const productCategory = textValue(product.categoria, 100);
-		const appliedPromotion = promotionalPrice(
+		const appliedPromotion = componentMode ? null : promotionalPrice(
 			originalUnitAmount,
 			{ id: productId, categoria: productCategory } as Pick<Anuncio, 'id' | 'categoria'>,
 			promotions,
@@ -1019,7 +1095,7 @@ async function copyArtworksToOrder(
 	const orderPaths: string[] = [];
 
 	try {
-		for (const item of items) {
+		for (const item of items.flatMap(item => item.components || [item])) {
 			const assets = [
 				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
 				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
@@ -2277,7 +2353,7 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 			throw new HttpError(403, 'Você não pode acessar esta arte.');
 		}
 
-		const items = Array.isArray(order.itens) ? order.itens.filter(isPlainRecord) : [];
+		const items = Array.isArray(order.itens) ? orderItems(order.itens).filter(isPlainRecord) : [];
 		const item = items.find(candidate => candidate.id === itemId);
 		const artworkPath = item?.arquivoPath;
 		if (!isOrderArtworkPath(artworkPath, String(order.userId || ''), orderId)) {
@@ -2307,7 +2383,7 @@ app.get('/api/admin/orders/:orderId/initial/:itemId', requireAppCheck, async (re
     await enforceDistributedRateLimit(db, `initial:${user.uid}`, 60, 60000);
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId)) throw new HttpError(422, 'Pedido inválido.');
     const order = (await db.collection('orders').doc(orderId).get()).data();
-    const item = order?.itens?.find((candidate: any) => candidate.id === itemId), path = item?.inicialPath;
+    const item = orderItems(order?.itens || []).find((candidate: any) => candidate.id === itemId), path = item?.inicialPath;
     if (!order || !isOrderArtworkPath(path, order.userId, orderId) || !path.startsWith(`artworks/${order.userId}/orders/${orderId}/${itemId}/`) || !path.endsWith('.png')) throw new HttpError(404, 'Inicial não encontrada.');
     const [url] = await bucket.file(path).getSignedUrl({ action: 'read', expires: Date.now() + 300000, responseDisposition: 'attachment' }); res.json({ url });
   } catch (error) { sendError(res, error); }
@@ -2319,7 +2395,7 @@ app.get('/api/admin/orders/:orderId/back-pdf/:itemId', requireAppCheck, async (r
     const { db, bucket } = getAdminServices(), { orderId, itemId } = req.params;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId)) throw new HttpError(422, 'Pedido inválido.');
     const order = (await db.collection('orders').doc(orderId).get()).data();
-    const item = order?.itens?.find((candidate: any) => candidate.id === itemId), path = item?.contracapaOriginalPath;
+    const item = orderItems(order?.itens || []).find((candidate: any) => candidate.id === itemId), path = item?.contracapaOriginalPath;
     if (!order || !isOrderArtworkPath(path, order.userId, orderId) || !path.endsWith('.pdf')) throw new HttpError(404, 'PDF não encontrado.');
     const [url] = await bucket.file(path).getSignedUrl({ action: 'read', expires: Date.now() + 300000, responseDisposition: 'attachment' }); res.json({ url });
   } catch (error) { sendError(res, error); }
@@ -2346,7 +2422,7 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 			throw new HttpError(403, 'Você não pode acessar este modelo personalizado.');
 		}
 
-		const items = Array.isArray(order.itens) ? order.itens.filter(isPlainRecord) : [];
+		const items = Array.isArray(order.itens) ? orderItems(order.itens).filter(isPlainRecord) : [];
 		const item = items.find(candidate => candidate.id === itemId);
 		const face = req.query.face ?? 'front';
 		if (face !== 'front' && face !== 'back') throw new HttpError(400, 'Face do modelo inválida.');
@@ -2556,6 +2632,10 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 	}
 });
 
+const customerRouters = createCustomerAccountRouters({ db: () => getAdminServices().db, user: requireFirebaseUser, limit: enforceRateLimit });
+app.use('/api/account', requireAppCheck, customerRouters.account);
+app.use('/api/products', requireAppCheck, customerRouters.products);
+
 const emailRouters = createEmailRouters({ services: getAdminServices, user: requireFirebaseUser, manage: req => requirePermissionUser(req, 'emails.manage'), appCheck: requireAppCheck, limit: enforceRateLimit });
 app.use('/api/email', emailRouters.customer);
 app.use('/api/admin/email', emailRouters.admin);
@@ -2578,7 +2658,7 @@ app.post('/api/admin/activity/artwork', requireAppCheck, async (req, res) => {
     const { orderId, itemId, format } = req.body || {};
     if (typeof orderId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof itemId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/.test(itemId) || !['jpg', 'pdf'].includes(format)) throw new HttpError(422, 'Exportação inválida.');
     const order = (await db.collection('orders').doc(orderId).get()).data();
-    if (!order?.itens?.some((item: any) => item.id === itemId && isOrderPersonalizationModelPath(item.modeloPath, order.userId, orderId))) throw new HttpError(404, 'Arte não encontrada.');
+    if (!orderItems(order?.itens || []).some((item: any) => item.id === itemId && isOrderPersonalizationModelPath(item.modeloPath, order.userId, orderId))) throw new HttpError(404, 'Arte não encontrada.');
     await recordStaffActivity(db, user, 'artwork.exported', orderId);
     res.json({ recorded: true });
   } catch (error) { sendError(res, error); }

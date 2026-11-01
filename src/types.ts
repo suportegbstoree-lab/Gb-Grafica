@@ -11,6 +11,9 @@ export interface ProductAttribute {
 }
 
 export interface Anuncio {
+  pacote?: import('./lib/bundles').BundleDefinition;
+  tags?: string[];
+  lancamento?: boolean;
   id: string;
   nome: string;
   desc: string;
@@ -32,6 +35,11 @@ export interface Anuncio {
 }
 
 export interface CartItem {
+  bundleItems?: CartItem[];
+  /** Present only on flattened order views; component prices are included in the package total. */
+  bundleParentName?: string;
+  bundleRevision?: string;
+  bundleQuantityAllowed?: boolean;
   inicialReferencia?: string;
   inicialPath?: string;
   inicialLetra?: string;

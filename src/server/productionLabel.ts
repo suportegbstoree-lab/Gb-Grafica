@@ -1,3 +1,4 @@
+import { orderItems } from '../lib/bundles.js';
 import bwipjs from 'bwip-js/node';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { createHash } from 'node:crypto';
@@ -44,7 +45,7 @@ export async function createOrderLabel(orderId: string, order: Order, production
   line(`Pagamento: ${order.metodoPagamento === 'pagbank' ? 'PagBank (modalidade escolhida no checkout)' : order.metodoPagamento || 'Não informado'}`);
   line(`Status: ${order.status} / ${order.paymentStatus || 'pendente'}`);
   y -= 6;
-  for (const item of order.itens) {
+  for (const item of orderItems(order.itens).filter(item=>!order.itens.some(root=>root.bundleItems && root.id===item.id))) {
     line(`${item.quantidade} x ${item.nome} - R$ ${item.preco} / unidade`, true, 11);
     for (const [key, value] of Object.entries(item.selecoes || {})) line(`${key}: ${value}`);
     line(item.printProfile ? printProfileLabel(item.printProfile) : 'Formato: conferir antes de produzir');
