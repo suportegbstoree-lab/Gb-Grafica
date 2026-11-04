@@ -44,6 +44,7 @@
     "dotenv": "^17.2.3",
     "esbuild": "^0.25.12",
     "express": "^4.22.3",
+    "fflate": "0.8.3",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.3.0",
     "lucide-react": "^0.546.0",

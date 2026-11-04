@@ -4,6 +4,7 @@ export const STAFF_EPOCH_CLAIM = 'gbStaffEpoch';
 export const STAFF_ROLE_CLAIM = 'staffRole';
 
 export const STAFF_PERMISSIONS = [
+  { id:'documents.templates.manage',label:'Cadastrar PDFs internos e criar, editar e excluir moldes JSON' },
   { id:'documents.generate',label:'Gerar, baixar e compartilhar PDFs internos' },
   { id:'operations.self',label:'Consultar meu expediente e minha produtividade' },
   { id: 'bundles.manage', label: 'Criar, editar e excluir pacotes de produtos' },

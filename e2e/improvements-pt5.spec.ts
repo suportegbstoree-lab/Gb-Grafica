@@ -61,6 +61,7 @@ test("staff generator shares the text editor, locks the automatic back, saves, r
     .click();
   await expect(product).toHaveCount(0);
   await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+  await page.getByText('Edição simples de modelos de produtos',{exact:true}).click();
   await page
     .getByRole("button", {
       name: "Personalizar PDF editor-template.pdf",
@@ -170,7 +171,7 @@ test("document-only employee cannot open orders, products or team productivity p
 }) => {
   await page.goto("/__e2e/team/admin?permissions=documents.generate");
   await expect(
-    page.getByRole("heading", { name: "Gerar PDF interno", exact: true }),
+    page.getByRole("heading", { name: "PDFs internos da equipe", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Pedidos", exact: true }),

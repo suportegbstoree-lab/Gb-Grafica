@@ -2,6 +2,7 @@ import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
 import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
+import { createStaffPdfLibraryRouter } from './staffPdfLibrary.js';
 import { workRequestContext } from './workTracking.js';
 import { createWorkRouter,type WorkActor } from './workRouter.js';
 import { createCustomerAccountRouters } from './customerAccount.js';
@@ -2685,6 +2686,7 @@ async function requireWorkActor(req:express.Request):Promise<WorkActor> {
 }
 const staffDocumentRouters=createStaffDocumentRouters({services:getAdminServices,authorize:requireWorkActor,origin:req=>getPublicAppUrl(req),limit:enforceRateLimit});
 app.use('/api/admin/documents',requireAppCheck,staffDocumentRouters.admin);
+app.use('/api/admin/pdf-library',requireAppCheck,createStaffPdfLibraryRouter({services:getAdminServices,authorize:requireWorkActor,origin:req=>getPublicAppUrl(req),limit:enforceRateLimit}));
 // Explicitly shared documents use a short-lived, revocable bearer link, including outside signed-in sessions.
 app.use('/api/documents/shared',staffDocumentRouters.shared);
 app.use('/api/admin/work',requireAppCheck,createWorkRouter({db:()=>getAdminServices().db,authorize:requireWorkActor,limit:enforceRateLimit}));

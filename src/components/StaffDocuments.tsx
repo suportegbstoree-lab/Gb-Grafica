@@ -1,4 +1,6 @@
 import React from "react";
+import StaffPdfWorkspace from './StaffPdfWorkspace';
+import type { StaffPdfApi } from '../services/staffPdfService';
 import type { Anuncio, PersonalizationFont } from "../types";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { selectedInitial } from "../lib/decorativeInitial";
@@ -21,11 +23,17 @@ export default function StaffDocuments({
   fonts,
   api = staffDocumentApi,
   timingApi = workApi,
+  canGenerate = true,
+  canManageTemplates = false,
+  libraryApi,
 }: {
   products: Anuncio[];
   fonts: PersonalizationFont[];
   api?: StaffDocumentApi;
   timingApi?: WorkApi;
+  canGenerate?: boolean;
+  canManageTemplates?: boolean;
+  libraryApi?: StaffPdfApi;
 }) {
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
     [truncated, setTruncated] = React.useState(false),
@@ -54,13 +62,14 @@ export default function StaffDocuments({
   const alive = React.useRef(true),
     request = React.useRef(0);
   const load = React.useCallback(async () => {
+    if (!canGenerate) return;
     const revision = ++request.current;
     const result = await api.list();
     if (alive.current && revision === request.current) {
       setRows(result.documents);
       setTruncated(result.truncated);
     }
-  }, [api]);
+  }, [api, canGenerate]);
   React.useEffect(() => {
     alive.current = true;
     void load().catch((e) => {
@@ -145,12 +154,13 @@ export default function StaffDocuments({
   return (
     <section className="space-y-6">
       <header>
-        <h2 className="text-2xl font-bold">Gerar PDF interno</h2>
+        <h2 className="text-2xl font-bold">PDFs internos da equipe</h2>
         <p className="mt-2 text-sm text-gray-400">
-          Escolha um modelo e personalize o texto. Capa e contracapa ficam
-          disponíveis por sete dias, sem checkout ou pagamento.
+          Biblioteca, edição e documentos da equipe. Os PDFs gerados ficam
+          disponíveis por sete dias.
         </p>
       </header>
+      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} onGenerated={load} timingApi={timingApi} api={libraryApi}/>
       {error && (
         <p role="alert" className="rounded-xl bg-red-950 p-4 text-red-200">
           {error}
@@ -161,7 +171,8 @@ export default function StaffDocuments({
           {message}
         </p>
       )}
-      <label className="block text-sm">
+      {canGenerate && <details className="rounded-2xl border border-gray-800 p-4"><summary className="cursor-pointer font-bold">Edição simples de modelos de produtos</summary>
+      <label className="mt-4 block text-sm">
         Buscar modelo PDF
         <input
           value={query}
@@ -197,7 +208,8 @@ export default function StaffDocuments({
           Nenhum modelo PDF encontrado no catálogo.
         </p>
       )}
-      <div className="flex flex-wrap justify-between gap-3">
+      </details>}
+      {canGenerate && <><div className="flex flex-wrap justify-between gap-3">
         <h3 className="text-lg font-bold">Documentos salvos</h3>
         <button
           disabled={busy}
@@ -481,6 +493,7 @@ export default function StaffDocuments({
           </form>
         </EditorModal>
       )}
+      </>}
     </section>
   );
 }

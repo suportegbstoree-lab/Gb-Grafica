@@ -71,6 +71,23 @@ service firebase.storage {
       return ownerId.matches('^[A-Za-z0-9_-]{1,100}$');
     }
 
+    match /staff-pdf-bases/{baseId}/{fileName} {
+      allow create: if can('documents.templates.manage') && baseId.matches('^[a-f0-9]{32}$') &&
+        fileName == 'upload.pdf' && resource == null && request.resource.size > 0 &&
+        request.resource.size <= 50 * 1024 * 1024 && request.resource.contentType == 'application/pdf' &&
+        request.resource.metadata.keys().hasOnly(['uploadedBy']) &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+    match /staff-pdf-bases/{baseId}/letters/{fileName} {
+      allow create: if can('documents.templates.manage') && baseId.matches('^[a-f0-9]{32}$') &&
+        fileName.matches('^[a-f0-9]{32}[.]png$') && resource == null &&
+        request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 &&
+        request.resource.contentType == 'image/png' && request.resource.metadata.keys().hasOnly(['uploadedBy']) &&
+        request.resource.metadata.uploadedBy == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+
     match /staff-documents/{userId}/{documentId}/{fileName} {
       allow create: if request.auth != null && request.auth.uid == userId && can('documents.generate') &&
         documentId.matches('^[a-f0-9]{32}$') && fileName == 'upload.pdf' && resource == null &&

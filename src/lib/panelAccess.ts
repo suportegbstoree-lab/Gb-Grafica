@@ -3,7 +3,7 @@ import type { StaffPermission } from './staffAccess';
 export type PanelSection = 'products' | 'categories' | 'orders' | 'promotions' | 'branding' | 'fonts' | 'config' | 'staff' | 'operations' | 'email' | 'bundles' | 'documents';
 const SECTION_PERMISSIONS: Record<PanelSection, readonly StaffPermission[]> = {
   operations: ['operations.manage','operations.self'],
-  documents:['documents.generate'],
+  documents:['documents.generate','documents.templates.manage'],
   email: ['emails.manage'],
   bundles: ['bundles.manage'],
   products: ['products.manage', 'products.images', 'products.personalization'],

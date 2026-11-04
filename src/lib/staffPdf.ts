@@ -1,0 +1,307 @@
+import type { PersonalizationFont } from "./textCustomization.js";
+
+export const STAFF_PDF_MAX_PAGES = 16;
+export const STAFF_PDF_DPI = 300;
+export const STAFF_PDF_MAX_LINES = 30;
+export const STAFF_PDF_LAYOUT_PERMISSION = "documents.templates.manage";
+export type PdfTextLayout = "portrait" | "landscape";
+export interface PdfTextBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/** Desktop templates use top-left pixels at 300 DPI, including landscape coordinates. */
+export interface StaffPdfLayout {
+  pos_x: number;
+  pos_y: number;
+  max_width_pixels: number;
+  max_height_pixels: number;
+  pos_x_landscape: number;
+  pos_y_landscape: number;
+  max_width_pixels_landscape: number;
+  max_height_pixels_landscape: number;
+  font_size: number;
+  font_name: string;
+  color: string;
+  align: "left" | "center" | "right";
+  imagem_full_page: boolean;
+  text_rotation: number;
+  fit_margin: number;
+}
+export interface StaffPdfBase {
+  id: string;
+  name: string;
+  pageCount: number;
+  revision: string;
+  pages: Array<{ width: number; height: number }>;
+  source?: "internal" | "catalog";
+  productId?: string;
+  templateId?: string;
+}
+export interface StaffPdfLayoutView {
+  id: string;
+  name: string;
+  revision: string;
+  layout: StaffPdfLayout;
+}
+export interface StaffPdfLine {
+  id: string;
+  text: string;
+  fontId: string;
+  fontSize: number;
+  color: string;
+  align: "left" | "center" | "right";
+  rotation: number;
+  portrait: PdfTextBox;
+  landscape: PdfTextBox;
+}
+export interface StaffPdfJob {
+  schemaVersion: 1;
+  baseId: string;
+  baseRevision: string;
+  layoutId: string;
+  layoutRevision: string;
+  lines: StaffPdfLine[];
+}
+export function staffPdfName(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length > 180 ||
+    /[\x00-\x1f\x7f/\\]/.test(value)
+  )
+    throw new Error("Nome do PDF ou molde inválido.");
+  const name = value.normalize("NFC").trim();
+  if (!name || ["__proto__", "prototype", "constructor"].includes(name))
+    throw new Error("Nome inválido.");
+  return name;
+}
+export function defaultPdfLayout(): StaffPdfLayout {
+  return {
+    pos_x: 200,
+    pos_y: 1000,
+    max_width_pixels: 2000,
+    max_height_pixels: 400,
+    pos_x_landscape: 200,
+    pos_y_landscape: 800,
+    max_width_pixels_landscape: 2500,
+    max_height_pixels_landscape: 400,
+    font_size: 150,
+    font_name: "",
+    color: "#000000",
+    align: "center",
+    imagem_full_page: false,
+    text_rotation: 0,
+    fit_margin: 0.2,
+  };
+}
+const object = (v: unknown): v is Record<string, any> =>
+  Boolean(v && typeof v === "object" && !Array.isArray(v));
+const number = (v: unknown, min: number, max: number): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= min && v <= max;
+export function normalizePdfLayout(value: unknown): StaffPdfLayout {
+  if (!object(value)) throw new Error("Molde inválido.");
+  const fallback = defaultPdfLayout(),
+    output = { ...fallback };
+  for (const key of [
+    "pos_x",
+    "pos_y",
+    "max_width_pixels",
+    "max_height_pixels",
+    "pos_x_landscape",
+    "pos_y_landscape",
+    "max_width_pixels_landscape",
+    "max_height_pixels_landscape",
+  ] as const) {
+    const portrait = key.replace("_landscape", "") as keyof StaffPdfLayout;
+    const v = value[key] ?? value[portrait] ?? fallback[key];
+    if (!number(v, key.includes("max_") ? 1 : 0, 60000))
+      throw new Error(`Geometria inválida: ${key}.`);
+    output[key] = v;
+  }
+  for (const [key, min, max] of [
+    ["font_size", 1, 4000],
+    ["text_rotation", -180, 180],
+    ["fit_margin", 0, 0.5],
+  ] as const) {
+    const v = value[key] ?? fallback[key];
+    if (!number(v, min, max)) throw new Error(`Valor inválido: ${key}.`);
+    output[key] = v;
+  }
+  if (
+    value.font_name !== undefined &&
+    (typeof value.font_name !== "string" ||
+      value.font_name.length > 180 ||
+      /[\x00-\x1f\x7f/\\]/.test(value.font_name))
+  )
+    throw new Error("Nome da fonte inválido.");
+  output.font_name = value.font_name ?? "";
+  let color = value.color ?? fallback.color;
+  if (typeof color === "string" && /^#[a-fA-F0-9]{3}$/.test(color))
+    color = "#" + [...color.slice(1)].map((c) => c + c).join("");
+  if (typeof color !== "string" || !/^#[a-fA-F0-9]{6}$/.test(color))
+    throw new Error("Cor inválida.");
+  output.color = color.toLowerCase();
+  if (!["left", "center", "right"].includes(value.align ?? fallback.align))
+    throw new Error("Alinhamento inválido.");
+  output.align = value.align ?? fallback.align;
+  if (
+    value.imagem_full_page !== undefined &&
+    typeof value.imagem_full_page !== "boolean"
+  )
+    throw new Error("Opção de imagem inválida.");
+  output.imagem_full_page = value.imagem_full_page ?? false;
+  return output;
+}
+export function parsePdfLayoutMap(
+  value: unknown,
+): Array<{ name: string; layout: StaffPdfLayout }> {
+  if (!object(value) || Object.keys(value).length > 1000)
+    throw new Error("O JSON deve conter até 1.000 moldes.");
+  return Object.entries(value).map(([name, layout]) => ({
+    name: staffPdfName(name),
+    layout: normalizePdfLayout(layout),
+  }));
+}
+export function matchPdfLayout(
+  name: string,
+  pageCount: number,
+  layouts: StaffPdfLayoutView[],
+) {
+  const stem = name.replace(/\.pdf$/i, "").normalize("NFC");
+  const candidates = [
+    stem,
+    `${stem}_template__${pageCount}p`,
+    `${stem}_template`,
+  ];
+  return candidates
+    .map((key) => layouts.find((t) => t.name === key))
+    .find(Boolean);
+}
+export function layoutBox(
+  layout: StaffPdfLayout,
+  orientation: PdfTextLayout,
+): PdfTextBox {
+  return orientation === "portrait"
+    ? {
+        x: layout.pos_x,
+        y: layout.pos_y,
+        width: layout.max_width_pixels,
+        height: layout.max_height_pixels,
+      }
+    : {
+        x: layout.pos_x_landscape,
+        y: layout.pos_y_landscape,
+        width: layout.max_width_pixels_landscape,
+        height: layout.max_height_pixels_landscape,
+      };
+}
+export function layoutFont(
+  layout: StaffPdfLayout,
+  fonts: PersonalizationFont[],
+) {
+  const expected = layout.font_name
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/\.(ttf|otf|woff2)$/i, "");
+  return fonts.find(
+    (f) =>
+      f.ativo &&
+      (f.nome.normalize("NFC").toLowerCase() === expected ||
+        f.id === layout.font_name),
+  );
+}
+export function newPdfLine(
+  layout: StaffPdfLayout,
+  fonts: PersonalizationFont[],
+  index = 0,
+): StaffPdfLine {
+  const portrait = layoutBox(layout, "portrait"),
+    landscape = layoutBox(layout, "landscape");
+  portrait.y += index * Math.min(layout.font_size * 1.2, portrait.height);
+  landscape.y += index * Math.min(layout.font_size * 1.2, landscape.height);
+  return {
+    id: crypto.randomUUID(),
+    text: "",
+    fontId: layoutFont(layout, fonts)?.id || "",
+    fontSize: layout.font_size,
+    color: layout.color,
+    align: layout.align,
+    rotation: layout.text_rotation,
+    portrait,
+    landscape,
+  };
+}
+export function normalizeStaffPdfJob(
+  value: unknown,
+  fonts: PersonalizationFont[],
+): StaffPdfJob {
+  if (
+    !object(value) ||
+    value.schemaVersion !== 1 ||
+    typeof value.baseId !== "string" ||
+    !/^[A-Za-z0-9_-]{1,160}$/.test(value.baseId) ||
+    !/^[a-f0-9]{32}$/.test(value.baseRevision) ||
+    !/^[a-f0-9]{32}$/.test(value.layoutId) ||
+    !/^[a-f0-9]{32}$/.test(value.layoutRevision) ||
+    !Array.isArray(value.lines) ||
+    value.lines.length < 1 ||
+    value.lines.length > STAFF_PDF_MAX_LINES
+  )
+    throw new Error("Edição do PDF inválida.");
+  const lines = value.lines.map((line: any): StaffPdfLine => {
+    if (
+      !object(line) ||
+      typeof line.id !== "string" ||
+      !/^[a-f0-9-]{36}$/.test(line.id) ||
+      typeof line.text !== "string" ||
+      line.text.length > 500 ||
+      /[\x00-\x08\x0b-\x1f\x7f\r\n]/.test(line.text) ||
+      !fonts.some((f) => f.ativo && f.id === line.fontId) ||
+      !number(line.fontSize, 1, 4000) ||
+      !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
+      !["left", "center", "right"].includes(line.align) ||
+      !number(line.rotation, -180, 180)
+    )
+      throw new Error("Revise as linhas, as fontes, as cores e os tamanhos.");
+    const box = (v: any): PdfTextBox => {
+      if (
+        !object(v) ||
+        !number(v.x, 0, 60000) ||
+        !number(v.y, 0, 60000) ||
+        !number(v.width, 1, 60000) ||
+        !number(v.height, 1, 60000)
+      )
+        throw new Error("Posição de texto inválida.");
+      return { x: v.x, y: v.y, width: v.width, height: v.height };
+    };
+    return {
+      id: line.id,
+      text: line.text,
+      fontId: line.fontId,
+      fontSize: line.fontSize,
+      color: line.color.toLowerCase(),
+      align: line.align,
+      rotation: line.rotation,
+      portrait: box(line.portrait),
+      landscape: box(line.landscape),
+    };
+  });
+  if (
+    !lines.some((l) => l.text.trim()) ||
+    new Set(lines.map((l) => l.id)).size !== lines.length
+  )
+    throw new Error("Adicione texto e use linhas distintas.");
+  return {
+    schemaVersion: 1,
+    baseId: value.baseId,
+    baseRevision: value.baseRevision,
+    layoutId: value.layoutId,
+    layoutRevision: value.layoutRevision,
+    lines,
+  };
+}
+export function staffPdfStoragePath(id: string): string {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("PDF interno inválido.");
+  return `staff-pdf-bases/${id}/original.pdf`;
+}

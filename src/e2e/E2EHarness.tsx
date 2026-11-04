@@ -1,4 +1,5 @@
-import { fixtureWorkApi,fixtureDocumentApi } from './workClient';
+import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
+import StaffPdfFixture from './StaffPdfFixture';
 import { currentWorkTask } from '../services/workContext';
 import { EMPTY_PROFILE } from '../lib/customerProfile';
 import type { CustomerApi } from '../services/customerService';
@@ -351,6 +352,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
       <Admin
         workClient={workClient}
         documentApi={documentApi}
+        pdfLibraryApi={emptyPdfLibrary}
         emailApi={fixtureEmailApi}
         activityApi={activityApi}
         operationsClient={operationsFixtureClient}
@@ -389,6 +391,7 @@ export default function E2EHarness() {
     <FixtureCatalog.Provider value={{ products, setProducts, config, setConfig }}>
     <BrowserRouter>
       <StoreThemeProvider><Routes>
+        <Route path="/__e2e/staff-pdf" element={<StaffPdfFixture />} />
         <Route path="/__e2e/store" element={<StoreFixture />} />
         <Route path="/__e2e/admin" element={<AdminFixtureRedirect />} />
         <Route path="/__e2e/team" element={teamStore} />

@@ -193,3 +193,18 @@ test('staff document uploads require the live permission, an owned canonical PDF
 test('workdays, tasks, document records, email jobs and share capabilities are inaccessible directly even to staff',async()=>{
  const db=designer().firestore();for(const name of ['_workdays/own','_workTasks/own','_staffDocuments/own','_staffDocumentShares/token','_staffDocumentMails/job']){await assertFails(db.doc(name).get());await assertFails(db.doc(name).set({uid:'designer',ownerId:'designer',status:'ready'}));}
 });
+
+test('internal PDF bases and PNG letters require the independent live template permission and remain private',async()=>{
+ const storage=designer().storage(),id=randomUUID().replaceAll('-',''),name=`staff-pdf-bases/${id}/upload.pdf`,meta={contentType:'application/pdf',customMetadata:{uploadedBy:'designer'}},bytes=new Uint8Array([37,80,68,70,45]);
+ await assertFails(storage.ref(name).put(bytes,meta));
+ await seed([['_staffRoles/designer',{...policy,permissions:['documents.templates.manage']}]]);
+ await assertFails(storage.ref(name).put(bytes,{...meta,customMetadata:{uploadedBy:'other'}}));
+ await assertSucceeds(storage.ref(name).put(bytes,meta));
+ await assertFails(storage.ref(name).getDownloadURL());await assertFails(storage.ref(name).getMetadata());await assertFails(storage.ref(name).put(bytes,meta));await assertFails(storage.ref(name).delete());
+ await assertFails(storage.ref(`staff-pdf-bases/${id}/original.pdf`).put(bytes,meta));
+ await assertSucceeds(storage.ref(`staff-pdf-bases/${id}/letters/${randomUUID().replaceAll('-','')}.png`).put(new Uint8Array([1]),{contentType:'image/png',customMetadata:{uploadedBy:'designer'}}));
+ await assertFails(storage.ref(`staff-pdf-bases/${id}/letters/a.jpg`).put(new Uint8Array([1]),{contentType:'image/jpeg',customMetadata:{uploadedBy:'designer'}}));
+ await seed([['_staffRoles/designer',{...policy,permissions:['documents.generate']}]]);
+ await assertFails(storage.ref(`staff-pdf-bases/${randomUUID().replaceAll('-','')}/upload.pdf`).put(bytes,meta));
+ for(const collection of ['_staffPdfBases','_staffPdfLayouts','_staffPdfBaseNames']){await assertFails(designer().firestore().doc(`${collection}/private`).get());await assertFails(designer().firestore().doc(`${collection}/private`).set({enabled:true}));}
+});

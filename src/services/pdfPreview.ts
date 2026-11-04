@@ -15,8 +15,14 @@ export function pdfPreviewPages(blob: Blob, maxPages = 2): Promise<File[]> {
   return pending;
 }
 
+/** Staff previews only render the selected page; customer limits remain unchanged. */
+export async function staffPdfPreviewPage(blob: Blob, pageNumber = 1): Promise<File> {
+  const pages = await renderPdfPages(blob, 16, pageNumber);
+  return pages[0];
+}
+
 /** Raster previews are local. The original PDF remains a separate production asset. */
-async function renderPdfPages(blob: Blob, maxPages = 2): Promise<File[]> {
+async function renderPdfPages(blob: Blob, maxPages = 2, selectedPage?: number): Promise<File[]> {
   if (
     blob.type !== "application/pdf" ||
     blob.size <= 0 ||
@@ -42,7 +48,8 @@ async function renderPdfPages(blob: Blob, maxPages = 2): Promise<File[]> {
         `Use um PDF de até ${maxPages} páginas para capa e contracapa.`,
       );
     const results: File[] = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
+    if (selectedPage !== undefined && (!Number.isInteger(selectedPage) || selectedPage < 1 || selectedPage > pdf.numPages)) throw new Error('Página inválida.');
+    for (let i = selectedPage || 1; i <= (selectedPage || pdf.numPages); i++) {
       const page = await pdf.getPage(i),
         viewport = page.getViewport({ scale: 300 / 72 });
       if (

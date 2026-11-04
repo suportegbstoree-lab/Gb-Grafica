@@ -1,4 +1,5 @@
 import StaffDocuments from '../components/StaffDocuments';
+import type { StaffPdfApi } from '../services/staffPdfService';
 import WorkdayBar from '../components/WorkdayBar';
 import { beginWorkTask,workApi,type WorkApi } from '../services/workService';
 import type { StaffDocumentApi } from '../services/staffDocumentService';
@@ -112,6 +113,7 @@ export interface AdminAssetStorage {
 export interface AdminProps {
   workClient?:WorkApi;
   documentApi?:StaffDocumentApi;
+  pdfLibraryApi?:StaffPdfApi;
   emailApi?: EmailApi;
   activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
@@ -190,7 +192,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
 }
 
 export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
-  fullAdmin = false, workClient=workApi, documentApi,
+  fullAdmin = false, workClient=workApi, documentApi, pdfLibraryApi,
   permissions = [],
   staffApi = staffAdministrationApi,
   products,
@@ -1352,7 +1354,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
           )}
         </AnimatePresence>
         <WorkdayBar api={workClient} />
-        {activeTab === 'documents' && tabAllowed('documents') && <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} />}
+        {activeTab === 'documents' && tabAllowed('documents') && <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} />}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
         {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} workClient={workClient} fullAdmin={fullAdmin} />}
         {activeTab === 'products' && tabAllowed('products') && (

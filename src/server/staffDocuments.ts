@@ -4,6 +4,8 @@ import express from "express";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import { FieldValue } from "firebase-admin/firestore";
 import { isTemplatePath } from "../lib/pdfTemplate.js";
+import { normalizeStaffPdfJob, STAFF_PDF_MAX_PAGES } from '../lib/staffPdf.js';
+import { resolveStaffPdfBase } from './staffPdfLibrary.js';
 import {
   normalizeTextCustomization,
   activePersonalizationFonts,
@@ -35,6 +37,7 @@ export async function sanitizeStaffPdf(
   bytes: Uint8Array,
   title: string,
   createdAt: string,
+  expectedPageCount = 2,
 ) {
   if (
     bytes.length < 8 ||
@@ -48,8 +51,8 @@ export async function sanitizeStaffPdf(
   } catch {
     throw new OperationsError("O PDF não pôde ser validado.");
   }
-  if (source.getPageCount() !== 2)
-    throw new OperationsError("Gere a capa e a contracapa automática.");
+  if (!Number.isInteger(expectedPageCount) || expectedPageCount < 1 || expectedPageCount > STAFF_PDF_MAX_PAGES || source.getPageCount() !== expectedPageCount)
+    throw new OperationsError(expectedPageCount === 2 ? 'Gere a capa e a contracapa automática. A quantidade de páginas não corresponde à base selecionada.' : 'A quantidade de páginas não corresponde à base selecionada.');
   const result = await PDFDocument.create();
   result.setTitle(title);
   result.setAuthor("GB Gráfica");
@@ -66,14 +69,11 @@ export async function sanitizeStaffPdf(
       page.getRotation().angle % 360 !== 0
     )
       throw new OperationsError("Formato do PDF inválido.");
-    const embedded = await result.embedPage(page, {
-      left: x,
-      bottom: y,
-      right: x + width,
-      top: y + height,
-    });
     const sheet = result.addPage([width, height]);
-    sheet.drawPage(embedded, { x: 0, y: 0, width, height });
+    if (page.node.Contents()) {
+      const embedded = await result.embedPage(page, { left: x, bottom: y, right: x + width, top: y + height });
+      sheet.drawPage(embedded, { x: 0, y: 0, width, height });
+    }
     for (const key of ["TrimBox", "BleedBox"] as const) {
       const box = key === "TrimBox" ? page.getTrimBox() : page.getBleedBox();
       if (key === "TrimBox")
@@ -277,18 +277,34 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
     action(async (req, res) => {
       const user = res.locals.user as WorkActor;
       deps.limit?.(`staff-document-generate:${user.uid}`, 20, 60000);
-      const { productId, templateId, customization, requestId } =
+      let { productId, templateId, customization, requestId, staffJob } =
         req.body || {};
       if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/.test(requestId))
         throw new OperationsError("Identificador da geração inválido.");
-      const t = await template(productId, templateId),
-        config = (
+      const config = (
           await services().db.collection("config").doc("main").get()
-        ).data(),
+        ).data();
+      let t: any, text: any, expectedPageCount = 2, canonicalJob: any;
+      if (staffJob !== undefined) {
+        try { canonicalJob = normalizeStaffPdfJob(staffJob, activePersonalizationFonts(config?.fontes_personalizacao)); }
+        catch (error) { throw new OperationsError((error as Error).message); }
+        const base = await resolveStaffPdfBase(services(), canonicalJob.baseId);
+        const mold = (await services().db.collection('_staffPdfLayouts').doc(canonicalJob.layoutId).get()).data();
+        if (base.revision !== canonicalJob.baseRevision || !mold?.enabled || mold.revision !== canonicalJob.layoutRevision) throw new OperationsError('A base ou o molde mudou. Abra a edição novamente.',409);
+        const file = services().bucket.file(base.path,base.generation?{generation:base.generation}:undefined), [meta] = await file.getMetadata();
+        if (meta.contentType !== 'application/pdf' || Number(meta.size) > STAFF_DOCUMENT_MAX_BYTES) throw new OperationsError('Base inválida.');
+        const [bytes] = await file.download();
+        const source = await PDFDocument.load(bytes,{updateMetadata:false});
+        expectedPageCount = source.getPageCount();
+        if (expectedPageCount < 1 || expectedPageCount > STAFF_PDF_MAX_PAGES) throw new OperationsError('Quantidade de páginas inválida.');
+        t = {name:base.name,path:base.path};productId=base.productId || '';templateId=base.templateId || base.id;text=canonicalJob;
+      } else {
+        t = await template(productId, templateId);
         text = normalizeTextCustomization(
           customization,
           activePersonalizationFonts(config?.fontes_personalizacao),
         );
+      }
       if (!text)
         throw new OperationsError(
           "Revise o texto, as fontes, as cores e as posições.",
@@ -306,6 +322,8 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
           templateName: t.name,
           templatePath: t.path,
           customization: text,
+          expectedPageCount,
+          ...(canonicalJob ? {staffJob:true,layoutId:canonicalJob.layoutId} : {}),
           requestId,
           status: "uploading",
           createdAt: at,
@@ -396,6 +414,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
             bytes,
             data.templateName,
             data.createdAt,
+            data.expectedPageCount || 2,
           ),
           digest = createHash("sha256").update(output).digest("hex"),
           file = services().bucket.file(staffDocumentPath(data.ownerId, id));

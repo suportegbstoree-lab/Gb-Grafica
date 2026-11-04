@@ -1,8 +1,6 @@
 # Changelog
 
-**Última atualização:**
-
-**2026-11-01T05:27:59-03:00**
+## **Última atualização: 2026-11-01T05:27:59-03:00**
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
