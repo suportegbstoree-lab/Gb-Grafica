@@ -2,8 +2,11 @@
 	"crons": [
 		{
 			"path": "/api/internal/maintenance",
-			"schedule": "0 9 * * *",
-			"text"
+			"schedule": "0 9 * * *"
+		},
+		{
+			"path": "/api/internal/email-dispatch",
+			"schedule": "0 9 * * *"
 		}
 	],
 	"functions": {
