@@ -1,6 +1,6 @@
 # Changelog
 
-## **Última atualização: 2026-11-01T05:27:59-03:00**
+## Última atualização: 2026-11-04
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -43,6 +43,30 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-04 — Oficina de PDFs da equipe e adaptação do programa Python
+
+- Biblioteca de PDFs internos independente de produtos, com upload privado, validação estática no servidor e suporte de uma a 16 páginas.
+- Moldes JSON compatíveis com as versões beta e reconstruída, importação/exportação, edição, exclusão e permissão independente `documents.templates.manage`.
+- Editor de texto da equipe em modal, com linhas adicionadas por botão, fonte/tamanho/cor/alinhamento/rotação e geometria individual em retrato/paisagem.
+- Fila principal com revisão, atualização, confirmação de remoção, processamento sequencial e retomada de itens com falha, reutilizando histórico, retenção e compartilhamento existentes.
+- PDFs de quatro páginas editam a primeira e a terceira conforme o molde e preservam os versos reais; páginas permanecem na orientação original e a arte PDF continua vetorial. O fluxo simples anterior e o editor do cliente foram preservados.
+- Inicial PNG associada por pasta com o nome do PDF, centralizada apenas na primeira página, com uploads privados para bases internas.
+- Conversão XLSX para CSV no navegador, escolha de aba e colunas, separador e primeira linha, zeros à esquerda, datas comuns e proteção contra fórmulas exportadas.
+- Validados os mapas JSON dos anexos (212 e 347 moldes) e a geração com os exemplos de duas/quatro páginas. Testes das novas regras incluídos; execução local pendente de Java 21.
+- Ativação depende de publicação das regras do Storage e redeploy; nenhum arquivo foi importado automaticamente para produção. Valores financeiros anteriores foram preservados.
+
+## 2026-11-04 — PagBank: endpoint, chaves e diagnóstico de produção
+
+- Confirmado o endpoint próprio `POST /api/webhook/pagbank`, informado automaticamente nos dois campos de notificação do Checkout Hospedado. Adicionado GET público e mínimo para conferir a publicação da rota sem simular uma compra.
+- Adicionado suporte a `x-payload-signature` com ECDSA/SHA-256 sobre o corpo original, consulta somente de leitura da chave pública de webhook, cache, rotação e isolamento por ambiente/token.
+- Mantido o modo automático compatível com a integração anterior. Uma nova assinatura inválida não recorre ao método legado; o modo opcional `ecdsa` exige o novo header.
+- Preservadas as validações financeiras e a idempotência. Evidências de homologação passaram a distinguir ECDSA do método anterior, sem registrar assinaturas ou inventar headers.
+- Adicionado `pagbank:check`, com validação local e consultas GET opcionais, sem gerar chaves, checkouts, cobranças ou e-mails.
+- Documentada a diferença entre a chave RSA de cartão do Checkout Transparente e a chave EC de webhook. O Checkout Hospedado atual não exige gerar a chave de cartão.
+- Configuração de ambiente/URL passou a recusar valores inválidos, credenciais embutidas e URLs públicas inseguras. Ativação deste ajuste depende de redeploy; homologação e liberação do novo serviço de assinaturas continuam sujeitas à confirmação do PagBank.
+- Configurações de e-mail e valores de cobrança foram preservados.
+
 
 ## 2026-11-01 — Gerador interno de PDFs para funcionários
 

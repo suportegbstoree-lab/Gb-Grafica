@@ -405,7 +405,6 @@ O editor oferece [controle independente das linhas](docs/text-lines.md), com fon
 
 O [formato de impressão e a ficha de produção](docs/print-production.md) permitem cadastrar medidas e sangria por produto, conferir a qualidade e registrar a aprovação da arte. O PDF administrativo usa as medidas salvas no pedido; produtos antigos continuam compatíveis.
 
-
 ### Oficina de PDFs da equipe
 
 Biblioteca interna, moldes compatíveis com o programa Python, edição por linhas, fila em lote e XLSX para CSV. Consulte [o guia de ativação e uso](docs/staff-pdf-workshop.md). As permissões `documents.generate` e `documents.templates.manage` são independentes.
