@@ -3,10 +3,6 @@
 		{
 			"path": "/api/internal/maintenance",
 			"schedule": "0 9 * * *"
-		},
-		{
-			"path": "/api/internal/maintenance",
-			"schedule": "*/5 * * * *"
 		}
 	],
 	"functions": {
