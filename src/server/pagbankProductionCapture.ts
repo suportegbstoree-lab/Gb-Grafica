@@ -35,7 +35,7 @@ const ENUMS: Record<string, RegExp> = {
   service_type: /^(PAC|SEDEX)$/,
   currency: /^BRL$/,
   option: /^(INSTALLMENTS_LIMIT|INTEREST_FREE_INSTALLMENTS)$/,
-  verified_by: /^provider_lookup$/,
+  verified_by: /^(provider_lookup|ecdsa)$/,
 };
 const CALLBACKS = new Set(['redirect_url', 'return_url', 'notification_urls', 'payment_notification_urls']);
 

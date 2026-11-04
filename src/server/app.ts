@@ -1,3 +1,5 @@
+import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
+import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
 import { workRequestContext } from './workTracking.js';
@@ -127,7 +129,7 @@ import { CorreiosError, correiosConfig, getCorreiosClient } from './correios.js'
 import { shippingParcelsForCart } from './shippingCart.js';
 import type { ShippingOption, ShippingParcel } from '../lib/shipping.js';
 
-type RawBodyRequest = express.Request & { rawBody?: string };
+type RawBodyRequest = express.Request & { rawBody?: string; rawBodyBytes?: Buffer };
 type PlainRecord = Record<string, unknown>;
 
 interface ShippingQuote {
@@ -374,6 +376,7 @@ app.use(express.json({
 	limit: '256kb',
 	verify: (request, _response, buffer) => {
 		(request as RawBodyRequest).rawBody = buffer.toString('utf8');
+    (request as RawBodyRequest).rawBodyBytes = Buffer.from(buffer);
 	},
 }));
 
@@ -436,17 +439,9 @@ app.get('/api/app-check/status', requireAppCheck, (_req, res) => {
 });
 
 function getPagBankConfig() {
-	const environment = process.env.PAGBANK_ENV?.trim().toLowerCase() === 'production'
-		? 'production'
-		: 'sandbox';
-
-	return {
-		token: process.env.PAGBANK_TOKEN?.trim() || '',
-		environment,
-		baseUrl: environment === 'sandbox'
-			? 'https://sandbox.api.pagseguro.com'
-			: 'https://api.pagseguro.com',
-	} as const;
+  const environment = pagBankEnvironment(process.env.PAGBANK_ENV);
+  if (!environment) throw new HttpError(503, 'PAGBANK_ENV deve ser sandbox ou production.', 'PAGBANK_CONFIGURATION');
+  return { token: process.env.PAGBANK_TOKEN?.trim() || '', environment, baseUrl: pagBankBaseUrl(environment) };
 }
 
 function getPublicAppUrl(req: express.Request): string {
@@ -454,12 +449,7 @@ function getPublicAppUrl(req: express.Request): string {
 
 	if (configuredUrl) {
 		try {
-			const parsed = new URL(configuredUrl);
-			if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Protocolo inválido');
-			if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') {
-				throw new Error('HTTPS obrigatório');
-			}
-			return parsed.origin + parsed.pathname.replace(/\/+$/, '');
+			return pagBankPublicUrl(configuredUrl, process.env.NODE_ENV === 'production');
 		} catch {
 			throw new HttpError(500, 'APP_URL está inválida no servidor.');
 		}
@@ -1755,7 +1745,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		const pendingArtworkPaths = copiedArtworks.pendingPaths;
 		copiedOrderPaths = copiedArtworks.orderPaths;
 		const publicAppUrl = getPublicAppUrl(req);
-		const webhookUrl = `${publicAppUrl}/api/webhook/pagbank`;
+		const webhookUrl = pagBankWebhookUrl(publicAppUrl);
 		const returnUrl = `${publicAppUrl}/?pagbank=return&orderId=${encodeURIComponent(orderId)}`;
 		const checkoutExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
@@ -2456,6 +2446,12 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 	}
 });
 
+const pagBankWebhookKeys = new PagBankWebhookKeys();
+app.get(PAGBANK_WEBHOOK_PATH, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(PAGBANK_WEBHOOK_HEALTH);
+});
+
 app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Response) => {
 	try {
 		enforceRateLimit(`webhook:${req.ip || 'unknown'}`, 120, 60_000);
@@ -2463,7 +2459,8 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 		sendError(res, error);
 		return;
 	}
-	const pagbank = getPagBankConfig();
+	let pagbank: ReturnType<typeof getPagBankConfig>;
+	try { pagbank = getPagBankConfig(); } catch (error) { sendError(res, error); return; }
 	if (!pagbank.token) {
 		sendError(res, new HttpError(503, 'Webhook PagBank não configurado.', 'PAGBANK_NOT_CONFIGURED'));
 		return;
@@ -2472,11 +2469,37 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 	const webhookRequestReceivedAt = new Date().toISOString();
 	const rawBody = (req as RawBodyRequest).rawBody;
 	const authenticityToken = req.get('x-authenticity-token')?.trim();
-	const authenticityFailure = pagBankAuthenticityFailureReason(
-		pagbank.token,
-		rawBody,
-		authenticityToken,
-	);
+  const signatureMode = pagBankSignatureMode(process.env.PAGBANK_WEBHOOK_SIGNATURE_MODE);
+  if (!signatureMode) {
+    sendError(res, new HttpError(503, 'Modo de assinatura PagBank inválido.', 'PAGBANK_CONFIGURATION'));
+    return;
+  }
+  const payloadSignature = req.headers['x-payload-signature'];
+  let ecdsaVerified = false;
+  if (payloadSignature !== undefined || signatureMode === 'ecdsa') {
+    const verification = await pagBankWebhookKeys.verify({
+      rawBody: (req as RawBodyRequest).rawBodyBytes || (typeof rawBody === 'string' ? rawBody : ''),
+      header: payloadSignature,
+      environment: pagbank.environment,
+      token: pagbank.token,
+      publicKey: process.env.PAGBANK_WEBHOOK_PUBLIC_KEY,
+    });
+    if (verification !== 'valid') {
+      logEvent('warn', 'pagbank_webhook_ecdsa_rejected', {
+        request_id: responseRequestId(res), reason: verification,
+      });
+      sendError(res, new HttpError(
+        verification === 'unavailable' ? 503 : 401,
+        'Não foi possível validar a assinatura da notificação.',
+        verification === 'unavailable' ? 'WEBHOOK_KEY_UNAVAILABLE' : 'WEBHOOK_SIGNATURE_INVALID',
+      ));
+      return;
+    }
+    ecdsaVerified = true;
+  }
+  const authenticityFailure = ecdsaVerified
+    ? null
+    : pagBankAuthenticityFailureReason(pagbank.token, rawBody, authenticityToken);
 
 	if (authenticityFailure) {
 		logEvent('warn', 'pagbank_webhook_authentication_failed', {
@@ -2605,8 +2628,9 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 				responseStatus: 200,
 				responseBody: webhookResponseBody,
 				responseSentAt: new Date().toISOString(),
-				verification: 'signature',
-				authenticityHeaderPresent: true,
+				verification: ecdsaVerified ? 'ecdsa' : 'signature',
+				authenticityHeaderPresent: Boolean(authenticityToken),
+        payloadSignaturePresent: ecdsaVerified,
 			});
 			if (captured) {
 				logEvent('info', 'pagbank_homologation_webhook_captured', {

@@ -7,7 +7,7 @@ type CaptureEnvironment = 'sandbox' | 'production';
 const COLLECTION = '_pagbankHomologation';
 const MAX_WEBHOOKS_PER_CHECKOUT = 25;
 const RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
-const SECRET_KEY_PATTERN = /(?:authorization|authenticity[_-]?token|token|secret|password|private[_-]?key)/i;
+const SECRET_KEY_PATTERN = /(?:authorization|authenticity[_-]?token|payload[_-]?signature|token|secret|password|private[_-]?key)/i;
 
 export const PAGBANK_HOMOLOGATION_COLLECTION = COLLECTION;
 
@@ -34,7 +34,8 @@ export interface WebhookEvidenceInput {
   responseStatus: number;
   responseBody: unknown;
   responseSentAt: string;
-  verification?: 'signature' | 'provider_lookup';
+  verification?: 'signature' | 'ecdsa' | 'provider_lookup';
+  payloadSignaturePresent?: boolean;
   authenticityHeaderPresent?: boolean;
 }
 
@@ -106,7 +107,8 @@ export function buildPagBankWebhookEvidence(
       url: input.requestUrl,
       headers: {
         'Content-Type': input.contentType || 'application/json',
-        'x-authenticity-token': input.authenticityHeaderPresent === false
+        ...(input.payloadSignaturePresent ? { 'x-payload-signature': '[REDACTED]' } : {}),
+        'x-authenticity-token': input.authenticityHeaderPresent === false || input.verification === 'ecdsa' && !input.authenticityHeaderPresent
           ? '[NOT PROVIDED]'
           : '[REDACTED]',
       },
@@ -277,6 +279,7 @@ export function formatPagBankHomologationReport(
 }
 
 function webhookVerificationLabel(value: unknown): string {
+  if (value === 'ecdsa') return 'assinatura ECDSA com SHA-256 válida';
   return value === 'provider_lookup'
     ? 'consulta autenticada à API PagBank'
     : 'assinatura SHA-256 válida';

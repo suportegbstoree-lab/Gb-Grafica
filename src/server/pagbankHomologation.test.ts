@@ -255,3 +255,10 @@ function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
 }
+
+test('evidência ECDSA identifica o método real e não inventa assinatura legada nem exporta headers sensíveis',()=>{
+ const webhook=buildPagBankWebhookEvidence({orderId,eventHash:'a'.repeat(64),requestUrl:'https://loja.example.test/api/webhook/pagbank',contentType:'application/json',requestBody:{reference_id:orderId},requestReceivedAt:'2026-11-04T12:00:00Z',responseStatus:200,responseBody:{received:true},responseSentAt:'2026-11-04T12:00:01Z',verification:'ecdsa',payloadSignaturePresent:true,authenticityHeaderPresent:false});
+ assert.equal((webhook.request as any).headers['x-authenticity-token'],'[NOT PROVIDED]');assert.equal((webhook.request as any).headers['x-payload-signature'],'[REDACTED]');
+ const checkout=buildPagBankCheckoutEvidence({orderId,requestId:'test',requestUrl:checkoutUrl,requestBody:{},requestSentAt:'2026-11-04T11:00:00Z',responseStatus:201,responseBody:{id:checkoutId},responseReceivedAt:'2026-11-04T11:00:01Z'});
+ const report=formatPagBankHomologationReport([{...checkout,webhooks:{one:webhook}}]);assert.match(report,/ECDSA com SHA-256 válida/);assert.match(report,/x-payload-signature: \[REDACTED\]/);
+});

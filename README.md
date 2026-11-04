@@ -270,6 +270,8 @@ O limite padrão é 50000 objetos. Quando a listagem é interrompida pelo limite
 - A confirmação de pedidos pagos é novamente consultada no PagBank antes de avançar sua etapa operacional. Se a cobrança não puder ser identificada ou o PagBank estiver indisponível, a mudança é adiada; pedidos legados sem identificação suficiente precisam de conciliação manual. Notificações antigas não reduzem o valor estornado já registrado.
 - Essa verificação ocorre nas notificações e nas consultas ou mudanças operacionais; não há varredura periódica automática de todos os pedidos. Um estorno parcial é apresentado pelo estado existente “Pagamento em análise”, sem uma nova tela de reembolso.
 
+Configuração de produção, endpoint próprio, diferença entre chave de cartão e de webhook e diagnóstico sem cobrança: consulte [PagBank — configuração](docs/pagbank-production-setup.md).
+
 ## Evidências para homologação PagBank
 
 O modo de homologação registra a comunicação real do servidor com o Checkout PagBank e os webhooks validados por assinatura ou por consulta autenticada à API PagBank. Ele não registra o token do PagBank nem a assinatura do webhook e só funciona em Sandbox.

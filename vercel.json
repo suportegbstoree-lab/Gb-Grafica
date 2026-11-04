@@ -1,61 +1,98 @@
 {
-  "crons": [{ "path": "/api/internal/maintenance", "schedule": "0 9 * * *" }],
-  "functions": {
-    "api/admin-ai.ts": { "maxDuration": 60 },
-    "api/index.ts": { "maxDuration": 60 }
-  },
-  "headers": [
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
-      ]
-    },
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-Permitted-Cross-Domain-Policies", "value": "none" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
-        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains" },
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://firebasestorage.googleapis.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.google.com/recaptcha/; frame-src blob: https://accounts.google.com https://*.firebaseapp.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; upgrade-insecure-requests" }
-      ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/api/admin/ai/suggestions",
-      "destination": "/api/admin-ai.ts"
-    },
-    {
-      "source": "/api/checkout",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/api/health",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/api/payment-status/:id",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/api/webhook/pagbank",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/ping",
-      "destination": "/api/index.ts"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
-  ]
+	"crons": [
+		{
+			"path": "/api/internal/maintenance",
+			"schedule": "0 9 * * *"
+		},
+		{
+			"path": "/api/internal/maintenance",
+			"schedule": "*/5 * * * *"
+		}
+	],
+	"functions": {
+		"api/admin-ai.ts": {
+			"maxDuration": 60
+		},
+		"api/index.ts": {
+			"maxDuration": 60
+		}
+	},
+	"headers": [
+		{
+			"source": "/assets/(.*)",
+			"headers": [
+				{
+					"key": "Cache-Control",
+					"value": "public, max-age=31536000, immutable"
+				}
+			]
+		},
+		{
+			"source": "/(.*)",
+			"headers": [
+				{
+					"key": "X-Content-Type-Options",
+					"value": "nosniff"
+				},
+				{
+					"key": "X-Frame-Options",
+					"value": "DENY"
+				},
+				{
+					"key": "X-Permitted-Cross-Domain-Policies",
+					"value": "none"
+				},
+				{
+					"key": "Referrer-Policy",
+					"value": "strict-origin-when-cross-origin"
+				},
+				{
+					"key": "Permissions-Policy",
+					"value": "camera=(), microphone=(), geolocation=()"
+				},
+				{
+					"key": "Strict-Transport-Security",
+					"value": "max-age=31536000; includeSubDomains"
+				},
+				{
+					"key": "Content-Security-Policy",
+					"value": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' https://apis.google.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https://firebasestorage.googleapis.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.google.com/recaptcha/; frame-src blob: https://accounts.google.com https://*.firebaseapp.com https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; upgrade-insecure-requests"
+				}
+			]
+		}
+	],
+	"rewrites": [
+		{
+			"source": "/api/admin/ai/suggestions",
+			"destination": "/api/admin-ai.ts"
+		},
+		{
+			"source": "/api/checkout",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/api/health",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/api/payment-status/:id",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/api/webhook/pagbank",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/api/(.*)",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/ping",
+			"destination": "/api/index.ts"
+		},
+		{
+			"source": "/(.*)",
+			"destination": "/index.html"
+		}
+	]
 }

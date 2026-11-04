@@ -1,26 +1,139 @@
 # Changelog
 
-## Ultima Atualização: 2026-11-01T
+**Última atualização:**
 
-**Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de publicação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
+**2026-11-01T05:27:59-03:00**
+
+**Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
 
-Além disso, as funções que faltam como a Homologação do PagBank, a integração com os Correios, e a integração com o App Check do Firebase, já foram pagas, mas ainda não foram implementadas por questão de ter que esperar a liberação de APIs ou mesmo o Contrato com o Correio. Além disso, grande parte das implementações de segurança estão em [CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md](CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md). Porém assim que ocorrer as liberações para a integração com o PagBank, Correios e App Check, essas funcionalidades serão implementadas e testadas como acordado.
+As integrações com PagBank, Correios e Firebase App Check, já previstas e pagas, possuem implementação no projeto. A homologação do PagBank, a liberação do contrato e dos serviços dos Correios e a ativação das proteções em produção dependem das credenciais, permissões e configurações dos respectivos ambientes. Essas etapas externas não devem ser confundidas com código ainda não implementado. Grande parte do histórico de segurança está em [CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md](CHANGELOG-SEGURANCA-E-FUNCIONALIDADES.md).
 
 ## TABELA DE IMPLEMENTAÇÕES AINDA NÃO COBRADAS
 
-| Data da Implementação | Funcionalidade                                                     | Status   |
-| --------------------- | ------------------------------------------------------------------ | -------- |
-| 2026-10-31            | Ajustes de QoL e melhorias pontuais                                | COMPLETO |
-| 2026-10-31            | Inicio da integração de e-mails, Dashboard e criação de cadernetas | INICIADO |
-| 2026-10-31            | Ajustes em equipe e isolamento das seções                          | COMPLETO |
-| 2026-10-30            | Funcionários, pedidos e promoções relâmpago                        | COMPLETO |
-| 2026-10-30            | Impressão e produção de pedidos                                    | COMPLETO |
-| 2026-10-30            | Ajustes na personalização de texto e arte obrigatória              | COMPLETO |
-| 2026-10-30            | Cards, contracapa e carrinho                                       | COMPLETO |
-| 2026-10-30            | Melhorias de personalização                                        | COMPLETO |
-| 2026-10-30            | Destaques, contatos e acesso temporário                            | COMPLETO |
-| 2026-10-29            | Capa, contracapa e exportação dos modelos                          | COMPLETO |
+| Data da implementação | Funcionalidade                                                         | Status                               |
+| --------------------- | ---------------------------------------------------------------------- | ------------------------------------ |
+| 2026-11-01            | Gerador interno de PDF, retenção e compartilhamento para funcionários  | CÓDIGO COMPLETO; PUBLICAÇÃO PENDENTE |
+| 2026-11-01            | Produção automática, expediente e relatórios de produtividade privados | CÓDIGO COMPLETO; PUBLICAÇÃO PENDENTE |
+| 2026-11-01            | Filtros de produtos no Admin e upload paralelo do alfabeto             | COMPLETO                             |
+| 2026-11-01            | Páginas do catálogo, vitrine padronizada e compartilhamento            | COMPLETO                             |
+| 2026-11-01            | Pacotes de produtos com composição e desconto próprios                 | COMPLETO                             |
+| 2026-11-01            | Perfil do cliente, histórico e preenchimento do checkout               | COMPLETO                             |
+| 2026-11-01            | Busca por tags, filtros e avaliações de compras verificadas            | COMPLETO                             |
+| 2026-10-31            | Integração de e-mails, preferências e campanhas                        | CÓDIGO COMPLETO; ATIVAÇÃO PENDENTE   |
+| 2026-10-31            | Cargos personalizados, exclusão segura e revogação de acessos          | COMPLETO                             |
+| 2026-10-31            | Atividades da equipe e simplificação da aparência                      | COMPLETO                             |
+| 2026-10-31            | Inicial decorativa de cadernetas e correções de PDF/API                | COMPLETO                             |
+| 2026-10-31            | Ajustes de QoL e melhorias pontuais                                    | COMPLETO                             |
+| 2026-10-31            | Ajustes em equipe e isolamento das seções                              | COMPLETO                             |
+| 2026-10-30            | Funcionários, pedidos e promoções relâmpago                            | COMPLETO                             |
+| 2026-10-30            | Impressão e produção de pedidos                                        | COMPLETO                             |
+| 2026-10-30            | Ajustes na personalização de texto e arte obrigatória                  | COMPLETO                             |
+| 2026-10-30            | Cards, contracapa e carrinho                                           | COMPLETO                             |
+| 2026-10-30            | Melhorias de personalização                                            | COMPLETO                             |
+| 2026-10-30            | Destaques, contatos e acesso temporário                                | COMPLETO                             |
+| 2026-10-29            | Capa, contracapa e exportação dos modelos                              | COMPLETO                             |
+
+Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
+
+**Valor Estimado: R$ 1.300,00 (Mil e Trezentos Reais)** - Valor referente a implementação das funcionalidades acima descritas, que ainda não foram cobradas. Incluindo as que foram iniciadas, mas ainda não finalizadas.
+
+### **Valor Restante:**
+
+R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a Segurança que ainda não fora quitado.
+
+R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
+
+Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-01 — Gerador interno de PDFs para funcionários
+
+- Adicionada a seção **Gerar PDF** ao painel, com permissão independente `documents.generate` e modelos PDF cadastrados no catálogo.
+- Reutilizado o editor do cliente: texto em várias linhas, fontes, cores, tamanhos e posições individuais, além da inicial decorativa vinculada ao modelo.
+- Fluxo interno sem checkout, pagamento, atributos comerciais ou upload de imagens avulsas.
+- Contracapa obrigatória e automática, repetindo a primeira página do modelo sem texto personalizado nem inicial, mesmo quando o PDF original possui uma segunda página diferente. O gerador do cliente mantém seu funcionamento anterior.
+- PDFs vinculados ao funcionário que iniciou a geração, com referência, horários, tamanho e SHA-256; retenção de sete dias após a conclusão. Envios interrompidos expiram em 24 horas.
+- Adicionados histórico, visualização, download do PDF, abertura para impressão, envio manual por e-mail e link para compartilhar pelo WhatsApp.
+- Links compartilhados podem ser revogados e expiram junto com o documento. O compartilhamento pelo WhatsApp depende da confirmação do funcionário no aplicativo.
+- E-mails usam a integração Resend existente, com anexo ou link, tentativas idempotentes e distinção entre aceitação pelo provedor e entrega ao destinatário.
+- API verifica permissão atual, propriedade e expiração; validação estática preserva os vetores e as dimensões do PDF sem importar scripts e ações ativas. Limpeza integrada à manutenção existente.
+- Ativação depende da publicação das regras do Storage, construção dos índices e redeploy da aplicação; não foi realizado envio real de e-mail ou publicação em produção nesta entrega.
+
+## 2026-11-01 — Produção automática, expediente e produtividade
+
+- Produção passa a ser alimentada pelas ações confirmadas no servidor: alterações reais do catálogo e configurações, consultas e exportações de pedidos, etiquetas, etapas/rastreio e geração ou uso de PDFs internos.
+- Cada conclusão registra funcionário, serviço, origem do pedido/lote ou documento, início, término e duração disponível. Gravações sem mudança e repetição da mesma geração não duplicam conclusões.
+- Primeiro acesso ao painel inicia o expediente do dia. Adicionados controles explícitos de intervalo, retorno, encerramento e retomada; fechar a aba não encerra o expediente automaticamente.
+- Tempos de edição descontam intervalos e períodos de expediente encerrado. Ações rápidas usam a duração da requisição e recebem essa identificação no relatório; dias anteriores não encerrados não recebem horas estimadas.
+- Adicionados relatórios diários, dos últimos sete dias e dos últimos 30 dias, gráficos de barras, médias por funcionário, detalhes e exportação CSV, sem gráficos de pizza.
+- Funcionários consultam somente os próprios dados, inclusive pela API. Apenas administradores completos podem consultar a equipe. A permissão `operations.self` libera a consulta própria; `operations.manage` também respeita esse isolamento para funcionários.
+- Removido o formulário manual de unidades, retrabalho, perdas, motivos e notas. Dados antigos foram preservados para consulta administrativa, e a API legada passou a recusar novas escritas.
+- O contador mede atividades concluídas no sistema, sem presumir quantidades físicas impressas. Permissões novas não são concedidas automaticamente aos cargos existentes.
+
+## 2026-11-01 — Filtros administrativos e upload do alfabeto
+
+- Adicionada busca por nome de produto combinada com filtro por categoria e opção de limpar filtros, sem distinguir acentos ou maiúsculas.
+- Pasta do alfabeto validada integralmente antes de iniciar os uploads, com envio de até três PNGs simultaneamente e progresso visível.
+- Em caso de falha, o lote aguarda os envios em andamento e tenta remover os arquivos já concluídos, sem publicar um alfabeto parcial.
+- Preservados os bytes, a resolução e a transparência originais dos PNGs, sem redimensionamento, recompressão ou conversão para WebP.
+
+## 2026-11-01 — Páginas do catálogo, vitrine e compartilhamento
+
+- Adicionadas páginas de destaques, promoções, lançamentos e pacotes, além das páginas de categoria e produto, com filtros dentro de cada seção.
+- Removida a lista lateral duplicada de categorias; mantida a navegação acima do banner.
+- Vitrine com cards uniformes e grade responsiva. Atributos, imagens e personalização ficam concentrados na página do produto; itens simples continuam permitindo inclusão direta no carrinho.
+- Centralizada a busca no cabeçalho de telas largas.
+- Compartilhamento usa o link do produto ou da página atual, preserva filtros públicos e exclui parâmetros de sessão, prévia administrativa e pedido.
+- Mantidos WhatsApp e copiar link, adicionada opção de copiar o link para compartilhar no Instagram e removidas as ações de Facebook e Twitter.
+
+## 2026-11-01 — Pacotes de produtos
+
+- Adicionada a seção **Pacotes** ao painel, com criação, edição, exclusão e permissão independente `bundles.manage`.
+- Composição, quantidades e opções de cada componente podem ficar fixas ou disponíveis ao cliente, conforme autorização no cadastro.
+- Preço calculado pelo catálogo atual com desconto percentual ou fixo próprio do pacote, sem acumular promoções dos componentes.
+- Servidor revalida composição, variantes, quantidades, desconto e preço antes do pagamento; mudanças na definição exigem reconfiguração do carrinho.
+- Frete considera os componentes físicos e suas quantidades; itens, personalizações e formatos são preservados no pedido e na produção.
+- Texto, artes, modelos, capa e contracapa mantidos por componente, com conferência e aprovação individual no carrinho. Downloads de produção continuam restritos ao painel autorizado.
+
+## 2026-11-01 — Perfil do cliente, busca e avaliações verificadas
+
+- Adicionada a página **Minha conta**, com pedidos próprios, histórico, status e detalhes das compras.
+- Cliente pode editar nome, telefone, CPF, CEP e endereço; os dados salvos preenchem o próximo checkout sem substituir a validação e a cotação do servidor.
+- Perfil acessível somente pela API autenticada da própria conta, com controle de revisão; o formulário não altera UID, e-mail de login, cargos ou permissões.
+- Busca ampliada para palavras independentes no nome, descrição, categoria e tags, com filtros de categoria, preço e avaliação preservados na URL.
+- Produtos e pacotes podem receber tags e marcação explícita de lançamento.
+- Avaliações de uma a cinco estrelas e comentário opcional exigem compra confirmada da própria conta, inclusive de componentes de pacotes. Pedidos pendentes, de terceiros ou com estorno registrado não autorizam nova avaliação.
+- Cada conta mantém uma avaliação por produto; atualizações não duplicam a contagem, e os agregados são recalculados em transação.
+- Comentários são exibidos como texto, sem publicar e-mail, UID ou número do pedido. Regras bloqueiam alterações diretas de avaliações, médias, perfis e comprovações de compra.
+
+## 2026-10-31 — Integração de e-mails, preferências e campanhas
+
+- Concluída no código a integração com Resend para boas-vindas, confirmação de criação de pedido e avisos após mudanças confirmadas de pagamento, estorno, produção, retirada, envio e entrega.
+- Boas-vindas limitadas a contas novas com e-mail verificado, sem envio retroativo para contas antigas. Confirmação de pedido criado permanece separada de pagamento confirmado.
+- Preferências de promoções e informativos separadas e desmarcadas por padrão; criar conta não inscreve automaticamente o cliente em marketing.
+- Campanhas com rascunhos, confirmação explícita, cancelamento, processamento em lotes e permissão independente `emails.manage`.
+- Preferências, endereço e situação da conta são novamente conferidos antes do envio. Adicionados descadastro por link e mecanismo de um clique dos clientes de e-mail.
+- Filas persistidas, bloqueios de concorrência e idempotência protegem retentativas; tentativas ambíguas antigas exigem revisão no provedor.
+- Atualizadas a política de privacidade, a versão de aceite e a documentação. Ativação depende de domínio/remetente validados, credenciais e agendamento; nenhum envio real foi realizado na implementação.
+
+## 2026-10-31 — Cargos personalizados, exclusão e atividades da equipe
+
+- Adicionadas criação e renomeação de cargos personalizados, permissões selecionadas pelo administrador e nome editável dos funcionários.
+- Cada cargo libera apenas as seções e ações autorizadas; alterações do catálogo passam pela API com verificação da política atual.
+- Exclusão de cargo exige confirmação, bloqueia os acessos administrativos vinculados e preserva contas de clientes, pedidos e histórico. Registros bloqueados nos espelhos impedem que sessões antigas restaurem o acesso removido.
+- Falhas parciais mantêm o cargo fechado e permitem concluir a exclusão por nova tentativa.
+- Dashboard passou a registrar ações reais com funcionário, cargo, serviço e horário; catálogo e atividade são confirmados juntos no servidor.
+- Removidos os módulos de Erros, Equipamentos e Versões da navegação e da API; arquivos legados de versões continuam bloqueados para os clientes.
+- Controle de aparência simplificado para botão de tema claro/escuro com paleta fixa e preferência persistida, substituindo o painel de escolha de cor.
+
+## 2026-10-31 — Inicial decorativa, PDFs e compatibilidade da API
+
+- Concluída a inicial decorativa por pasta com o mesmo nome do PDF e PNGs de A a Z, escolhida pela primeira letra do texto informado.
+- Inicial centralizada somente na primeira página, preservando transparência. Modelos sem pasta correspondente ou sem a letra disponível continuam sem essa sobreposição.
+- Prévia interna acompanha a composição, e o PDF de produção preserva os vetores e a transparência da inicial.
+- Corrigidos os caminhos e as autorizações de upload dos modelos PDF e alfabetos, mantendo os originais privados e as permissões administrativas.
+- Corrigidos imports relativos transitivos para execução nativa ESM na Vercel, incluindo `decorativeInitial` e `pdfTemplate`, eliminando a falha de inicialização que retornava HTTP 500 no status do App Check e no checkout.
+- Migração de Gemini para OpenAI continua como TODO; o provedor não foi trocado nestas entregas.
 
 ## 2026-10-31 — Ajustes de QoL e melhorias pontuais
 
@@ -28,15 +141,15 @@ Além disso, as funções que faltam como a Homologação do PagBank, a integra�
 - Imagem opcional por combinação, páginas de categoria, banner com slide e tema escuro configurável.
 - Lotes, arrastar e soltar, 50 MB para arquivos e 16 MB para fontes; modelos PDF privados com capa, contracapa e exportação de produção.
 - Ficha inicial com Code128, observações e fila de e-mail independente do pagamento/produção.
-- Páginas operacionais nativas com produção manual, gráficos, histórico, CSV, inventário e versões privadas com SHA-256.
+- Na entrega inicial, adicionadas páginas operacionais com produção manual, gráficos, histórico, CSV, inventário e versões privadas com SHA-256. A retirada dos módulos e a automatização posteriores estão registradas nas atualizações acima.
 - Contas Admin protegidas contra rebaixamento pelo painel e navegação administrativa por rotas/permissões.
 - Checkout indica e foca campos obrigatórios ausentes.
-- Preservados os TODOs de arte por inicial e migração do provedor de IA.
+- Na entrega inicial, preservados os TODOs de arte por inicial e migração do provedor de IA; a inicial foi concluída posteriormente, e a migração de IA continua pendente.
 
-## 2026-10-30 — Inicio da integração de e-mails, Dashboard e criação de cadernetas
+## 2026-10-30 — Início da integração de e-mails, Dashboard e criação de cadernetas
 
 - Adicionado painel de e-mails com rascunhos, confirmação de envio, cancelamento, processamento da fila e contagens de aceitos/ignorados/revisão.
-- Integração com [resend.com](https://resend.com) para envio de e-mails, com suporte a boas-vindas, confirmação de pedido, avisos de status e descadastro. A finalizar.
+- Primeira etapa da integração com [resend.com](https://resend.com) para boas-vindas, confirmação de pedido, avisos de status e descadastro. O código foi concluído na atualização de 2026-10-31; a ativação depende da configuração externa.
 - Adicionado Dashboard.
 - Adicionada a opção de upload em batch, suporte a arquivos de até 50 MB, e PDFs.
 - Ao Adicionar um arquivo de caderneta, o sistema pode receber uma pasta com as imagens [NOTA: A pasta deve ter o mesmo nome que o PDF, os nomes dos PNGs devem ser as letras de A-Z e não poder ter acentos. EX: `Alfabeto Ana Liz.pdf` só suporta a pasta `Alfabeto Ana Liz` com os arquivos `A.png`, `B.png`, `C.png`...] gerando assim o PDF da caderneta, com a primeira letra da primeira linha centralizada na capa.
