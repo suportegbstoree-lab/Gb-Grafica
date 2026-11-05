@@ -9,16 +9,18 @@ test('staff email queue truthfully reports missing configuration without externa
   finally { old === undefined ? delete process.env.RESEND_API_KEY : process.env.RESEND_API_KEY = old; }
 });
 test('staff email retries use server recipient and a stable idempotency key, accepted messages are not sent twice', async () => {
-  const oldKey = process.env.RESEND_API_KEY, oldFrom = process.env.STAFF_EMAIL_FROM;
-  process.env.RESEND_API_KEY = 'test-key'; process.env.STAFF_EMAIL_FROM = 'loja@example.test';
+  const oldKey = process.env.RESEND_API_KEY, oldFrom = process.env.STAFF_EMAIL_FROM, oldReply = process.env.EMAIL_REPLY_TO;
+  process.env.RESEND_API_KEY = 'test-key'; process.env.STAFF_EMAIL_FROM = 'loja@example.test'; process.env.EMAIL_REPLY_TO = 'suporte@example.test';
   try {
     const fake = memoryFirestore([['_staffNotifications/notice', { schemaVersion: 1, email: 'employee@example.test', role: 'designer', createdAt: new Date().toISOString(), status: 'pending', attempts: 0 }]]);
-    let count = 0;
-    const fetcher = async (input: unknown, init?: RequestInit) => { count++; assert.equal(input, 'https://api.resend.com/emails'); assert.equal(new Headers(init?.headers).get('idempotency-key'), 'staff-role-notice'); assert.deepEqual(JSON.parse(String(init?.body)).to, ['employee@example.test']); return count === 1 ? Response.json({}, { status: 503 }) : Response.json({ id: 'provider-message' }); };
+    let count = 0; const bodies: string[] = [];
+    const fetcher = async (input: unknown, init?: RequestInit) => { count++; bodies.push(String(init?.body)); assert.equal(input, 'https://api.resend.com/emails'); assert.equal(new Headers(init?.headers).get('idempotency-key'), 'staff-role-notice'); const body = JSON.parse(String(init?.body)); assert.deepEqual(body.to, ['employee@example.test']); assert.equal(body.reply_to, 'suporte@example.test'); return count === 1 ? Response.json({}, { status: 503 }) : Response.json({ id: 'provider-message' }); };
     assert.equal(await sendStaffEmail(fake.db, 'notice', fetcher as typeof fetch), 'pending');
+    process.env.STAFF_EMAIL_FROM = 'changed@example.test'; process.env.EMAIL_REPLY_TO = 'changed-support@example.test';
     assert.equal(await sendStaffEmail(fake.db, 'notice', fetcher as typeof fetch), 'accepted');
+    assert.equal(bodies[0], bodies[1]);
     assert.equal(await sendStaffEmail(fake.db, 'notice', fetcher as typeof fetch), 'accepted'); assert.equal(count, 2);
     fake.docs.set('_staffNotifications/old', { ...fake.docs.get('_staffNotifications/notice'), createdAt: '2020-01-01T00:00:00Z', status: 'pending' });
     assert.equal(await sendStaffEmail(fake.db, 'old', fetcher as typeof fetch), 'pending'); assert.equal(count, 2);
-  } finally { for (const [key, value] of [['RESEND_API_KEY', oldKey], ['STAFF_EMAIL_FROM', oldFrom]]) value === undefined ? delete process.env[key!] : process.env[key!] = value; }
+  } finally { for (const [key, value] of [['RESEND_API_KEY', oldKey], ['STAFF_EMAIL_FROM', oldFrom], ['EMAIL_REPLY_TO', oldReply]]) value === undefined ? delete process.env[key!] : process.env[key!] = value; }
 });

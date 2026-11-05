@@ -2,11 +2,11 @@ import test, { beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { UserRecord } from 'firebase-admin/auth';
 import { memoryFirestore } from '../../test/helpers/memoryFirestore';
-import { readEmailPreferences, saveEmailPreferences, unsubscribeEmail, unsubscribeToken } from './emailPreferences';
+import { emailConfiguration, readEmailPreferences, saveEmailPreferences, unsubscribeEmail, unsubscribeToken } from './emailPreferences';
 import { EMAIL_CONSENT_VERSION } from '../lib/email';
 import { prepareWelcomeEmail, queueOrderStatusEmail, sendCustomerEmail } from './customerEmails';
 import { createEmailCampaign, changeEmailCampaign, expandEmailCampaign, dispatchCustomerEmails } from './emailCampaigns';
-const env = { RESEND_API_KEY: 'test-key', EMAIL_FROM: 'store@example.test', APP_URL: 'https://store.example.test', EMAIL_UNSUBSCRIBE_SECRET: 'test-only-secret-'.repeat(4) };
+const env = { RESEND_API_KEY: 'test-key', EMAIL_FROM: 'store@example.test', EMAIL_MARKETING_FROM: '', EMAIL_REPLY_TO: '', APP_URL: 'https://store.example.test', EMAIL_UNSUBSCRIBE_SECRET: 'test-only-secret-'.repeat(4) };
 const old = new Map(Object.keys(env).map(key => [key, process.env[key]]));
 beforeEach(() => Object.assign(process.env, env));
 after(() => { for (const [key, value] of old) value === undefined ? delete process.env[key] : process.env[key] = value; });
@@ -14,6 +14,21 @@ const account = (uid = 'alice'): UserRecord => ({ uid, email: `${uid}@example.te
 const auth = { getUser: async (uid: string) => account(uid) };
 const consent = (promotions = true, news = false, revision: string | null = null) => ({ promotions, news, expectedRevision: revision, consentVersion: EMAIL_CONSENT_VERSION });
 const accepted = (bodies: any[] = []) => (async (_url: any, options: any) => { bodies.push(JSON.parse(options.body)); return new Response(JSON.stringify({ id: 'provider-id' }), { status: 200 }); }) as typeof fetch;
+
+test('campaigns use their own sender and support reply address while transactional emails keep the default', async () => {
+  process.env.EMAIL_MARKETING_FROM = 'promo@example.test'; process.env.EMAIL_REPLY_TO = 'suporte@example.test';
+  const { db, docs } = memoryFirestore(), bodies: any[] = [];
+  await saveEmailPreferences(db, account(), consent());
+  const campaign = await createEmailCampaign(db, 'admin', { channel: 'promotions', subject: 'Oferta', text: 'Conteúdo' });
+  await changeEmailCampaign(db, campaign.id, 'admin', 'queue'); await expandEmailCampaign(db, campaign.id);
+  const id = [...docs.keys()].find(path => path.startsWith('_emailOutbox/'))!.split('/')[1];
+  await sendCustomerEmail(db, auth, id, accepted(bodies));
+  assert.equal(bodies[0].from, 'promo@example.test'); assert.equal(bodies[0].reply_to, 'suporte@example.test');
+  await sendCustomerEmail(db, auth, (await prepareWelcomeEmail(db, account()))!, accepted(bodies));
+  assert.equal(bodies[1].from, 'store@example.test'); assert.equal(bodies[1].reply_to, 'suporte@example.test');
+  process.env.EMAIL_MARKETING_FROM = 'invalid';
+  assert.equal(emailConfiguration().configured, true); assert.equal(emailConfiguration().marketingConfigured, false);
+});
 
 test('optional email is off by default, explicit verified consent is versioned, and stale writes cannot undo opt-out', async () => {
   const { db } = memoryFirestore(); assert.deepEqual(await readEmailPreferences(db, account()), { promotions: false, news: false, revision: null, emailVerified: true });
@@ -66,12 +81,15 @@ test('an opt-out or campaign cancellation before dispatch suppresses queued mess
   }
 });
 test('retries retain the exact payload and idempotency key, back off, and stop after the provider window', async () => {
+  process.env.EMAIL_REPLY_TO = 'suporte@example.test';
   const { db, docs } = memoryFirestore(), id = (await prepareWelcomeEmail(db, account()))!, calls: any[] = [], start = Date.now();
   const fail = (async (_url: any, options: any) => { calls.push(options); throw new Error('timeout'); }) as typeof fetch;
   assert.equal(await sendCustomerEmail(db, auth, id, fail, start), 'pending');
   assert.equal(await sendCustomerEmail(db, auth, id, fail, start + 1000), 'pending'); assert.equal(calls.length, 1);
   process.env.EMAIL_FROM = 'changed@example.test';
+  process.env.EMAIL_REPLY_TO = 'changed-support@example.test';
   assert.equal(await sendCustomerEmail(db, auth, id, fail, start + 16 * 60000), 'pending'); assert.equal(calls[0].body, calls[1].body); assert.equal(calls[0].headers['Idempotency-Key'], calls[1].headers['Idempotency-Key']);
+  assert.equal(JSON.parse(calls[0].body).reply_to, 'suporte@example.test');
   assert.equal(await sendCustomerEmail(db, auth, id, fail, start + 24 * 60 * 60000), 'needs_review'); assert.equal(calls.length, 2); assert.equal(docs.get(`_emailOutbox/${id}`)?.nextAttemptAt, undefined);
 });
 test('changed or disabled account email never inherits optional consent', async () => {

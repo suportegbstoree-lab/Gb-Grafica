@@ -79,6 +79,7 @@ export async function sendOrderEmail(
       (data.kind === "merchant" && !data.firstAttemptAt
         ? email(process.env.ORDER_NOTIFICATION_EMAIL)
         : "");
+    const replyTo = data.firstAttemptAt ? email(data.replyTo) : email(process.env.EMAIL_REPLY_TO);
     if (!recipient || !from || !process.env.RESEND_API_KEY?.trim()) {
       transaction.update(ref, {
         status: "not_configured",
@@ -96,6 +97,7 @@ export async function sendOrderEmail(
     transaction.update(ref, {
       from,
       recipient,
+      replyTo,
       lockNonce: nonce,
       lockUntil: now + 60_000,
       firstAttemptAt: data.firstAttemptAt || now,
@@ -104,6 +106,7 @@ export async function sendOrderEmail(
     return {
       data: {
         from,
+        replyTo,
         orderId: String(data.orderId),
         recipient,
         kind: String(data.kind),
@@ -129,6 +132,7 @@ export async function sendOrderEmail(
       },
       body: JSON.stringify({
         from: data.from,
+        ...(data.replyTo ? { reply_to: data.replyTo } : {}),
         to: [data.recipient],
         subject: `Pedido ${data.orderId} · GB Gráfica`,
         text: `${data.kind === "merchant" ? "Um pedido foi criado" : "Seu pedido foi criado"} na GB Gráfica.\nA ficha inicial está em anexo. Ela não confirma pagamento nem inicia a produção. Confira o andamento na loja.`,
