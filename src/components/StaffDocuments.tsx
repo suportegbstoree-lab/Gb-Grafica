@@ -232,7 +232,7 @@ export default function StaffDocuments({
           >
             <div className="flex flex-wrap justify-between gap-3">
               <h4 className="break-words font-bold [overflow-wrap:anywhere]">
-                {doc.reference} · {doc.templateName}
+                {doc.reference} · {doc.outputName ? `${doc.outputName}.pdf` : doc.templateName}
               </h4>
               <span className="text-xs text-gray-400">{doc.ownerName}</span>
             </div>

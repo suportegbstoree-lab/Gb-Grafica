@@ -6,7 +6,11 @@ import {
   type StaffWorkbook,
 } from "../lib/spreadsheetCsv";
 import { downloadPersonalization } from "../services/personalizationExport";
-export default function StaffSpreadsheetCsv() {
+export default function StaffSpreadsheetCsv({
+  onUseCsv,
+}: {
+  onUseCsv: (csv: string, name: string, separator: string) => void;
+}) {
   const [book, setBook] = React.useState<StaffWorkbook | null>(null),
     [sheet, setSheet] = React.useState(0),
     [columns, setColumns] = React.useState<number[]>([]),
@@ -35,6 +39,29 @@ export default function StaffSpreadsheetCsv() {
       setBusy(false);
     }
   };
+  function convert(useInQueue: boolean) {
+    if (!current) return;
+    try {
+      if (start < 1 || start > current.rows.length)
+        throw new Error("Linha inicial inválida.");
+      const filename = `${name}-${current.name}.csv`;
+      const csv = selectedColumnsCsv(
+        current.rows,
+        columns,
+        separator,
+        start - 1,
+      );
+      if (useInQueue) onUseCsv(csv, filename, separator);
+      else
+        downloadPersonalization(
+          new Blob([csv], { type: "text/csv;charset=utf-8" }),
+          filename,
+        );
+      setError("");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
   return (
     <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
       <h3 className="text-lg font-bold">Converter XLSX para CSV</h3>
@@ -153,35 +180,22 @@ export default function StaffSpreadsheetCsv() {
               </label>
             ))}
           </div>
-          <button
-            disabled={!columns.length}
-            className="rounded-xl bg-pink-500 px-5 py-3 font-bold disabled:opacity-40"
-            onClick={() => {
-              try {
-                if (start < 1 || start > current.rows.length)
-                  throw new Error("Linha inicial inválida.");
-                downloadPersonalization(
-                  new Blob(
-                    [
-                      selectedColumnsCsv(
-                        current.rows,
-                        columns,
-                        separator,
-                        start - 1,
-                      ),
-                    ],
-                    { type: "text/csv;charset=utf-8" },
-                  ),
-                  `${name}-${current.name}.csv`,
-                );
-                setError("");
-              } catch (e) {
-                setError((e as Error).message);
-              }
-            }}
-          >
-            Baixar CSV selecionado
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button
+              disabled={!columns.length}
+              className="rounded-xl bg-pink-500 px-5 py-3 font-bold disabled:opacity-40"
+              onClick={() => convert(true)}
+            >
+              Converter e revisar pedidos
+            </button>
+            <button
+              disabled={!columns.length}
+              className="rounded-xl border border-gray-700 px-5 py-3 disabled:opacity-40"
+              onClick={() => convert(false)}
+            >
+              Baixar CSV selecionado
+            </button>
+          </div>
         </>
       )}
     </section>

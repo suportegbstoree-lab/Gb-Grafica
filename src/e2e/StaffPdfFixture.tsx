@@ -144,6 +144,7 @@ export default function StaffPdfFixture() {
           ownerId: "test",
           ownerName: "Pessoa de teste",
           templateName: bases.find((b) => b.id === job.baseId)!.name,
+          outputName: job.outputName,
           productId: "",
           templateId: job.baseId,
           createdAt: new Date().toISOString(),
@@ -187,7 +188,10 @@ export default function StaffPdfFixture() {
               key={doc.id}
               className="mr-3 rounded-lg bg-green-800 p-3"
               onClick={() =>
-                downloadPersonalization(blob, `${doc.reference}.pdf`)
+                downloadPersonalization(
+                  blob,
+                  `${doc.outputName || doc.reference}.pdf`,
+                )
               }
             >
               Baixar {doc.reference}

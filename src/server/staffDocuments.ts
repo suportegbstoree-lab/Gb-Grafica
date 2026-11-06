@@ -321,6 +321,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
           productId,
           templateId,
           templateName: t.name,
+          ...(canonicalJob?.outputName ? { outputName: canonicalJob.outputName } : {}),
           templatePath: t.path,
           customization: text,
           expectedPageCount,
@@ -547,12 +548,15 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
             : req.query.mode === "view"
               ? "view"
               : "download";
+      const filename = `${data.outputName || data.reference}.pdf`;
       const [url] = await services()
         .bucket.file(staffDocumentPath(data.ownerId, req.params.id))
         .getSignedUrl({
           action: "read",
           expires: Math.min(now() + 300000, Date.parse(data.expiresAt)),
-          responseDisposition: mode === "download" ? "attachment" : "inline",
+          responseDisposition: mode === "download"
+            ? `attachment; filename="${data.reference}.pdf"; filename*=UTF-8''${encodeURIComponent(filename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)}`
+            : "inline",
         });
       await recordStaffActivity(
         services().db,
@@ -564,7 +568,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
             : "document.downloaded",
         req.params.id,
       );
-      res.json({ url, filename: `${data.reference}.pdf` });
+      res.json({ url, filename });
     }),
   );
   admin.post(

@@ -6,6 +6,12 @@ import {
   newPdfLine,
   normalizeStaffPdfJob,
   layoutFont,
+  staffPdfOutputName,
+  STAFF_PDF_MAX_LINES,
+  STAFF_PDF_DPI,
+  STAFF_PDF_MAX_PAGES,
+  type PdfTextLayout,
+  type StaffPdfLayoutView,
   type StaffPdfJob,
   type StaffPdfLine,
   type StaffPdfBase,
@@ -16,13 +22,15 @@ import {
   type StaffPdfLibrary,
 } from "../services/staffPdfService";
 import { exportStaffPdf } from "../services/staffPdfRender";
+import { downloadPersonalization } from "../services/personalizationExport";
 import StaffPdfTextEditor from "./StaffPdfTextEditor";
 import StaffPdfPreview from "./StaffPdfPreview";
 import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
-import StaffSpreadsheetCsv from "./StaffSpreadsheetCsv";
+import StaffPdfCsvImport, { type StaffPdfCsvOrder } from "./StaffPdfCsvImport";
 import ConfirmDialog from "./ConfirmDialog";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import { beginWorkTask, workApi, type WorkApi } from "../services/workService";
+const QUEUE_LIMIT = 50;
 interface QueueItem {
   id: string;
   requestId: string;
@@ -60,7 +68,9 @@ export default function StaffPdfWorkspace({
     [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
-    [query, setQuery] = React.useState("");
+    [query, setQuery] = React.useState(""),
+    [templateQuery, setTemplateQuery] = React.useState(""),
+    [autoTemplate, setAutoTemplate] = React.useState(true);
   const [baseId, setBaseId] = React.useState(""),
     [layoutId, setLayoutId] = React.useState(""),
     [loaded, setLoaded] = React.useState<{
@@ -69,11 +79,19 @@ export default function StaffPdfWorkspace({
     } | null>(null),
     [lines, setLines] = React.useState<StaffPdfLine[]>([]),
     [editor, setEditor] = React.useState(false),
+    [selected, setSelected] = React.useState<string>(),
+    [outputName, setOutputName] = React.useState(""),
+    [processing, setProcessing] = React.useState(false),
+    [stopRequested, setStopRequested] = React.useState(false),
+    [csvOpened, setCsvOpened] = React.useState(false),
     [queue, setQueue] = React.useState<QueueItem[]>([]),
     [editingId, setEditingId] = React.useState<string | null>(null),
     [removeId, setRemoveId] = React.useState<string | null>(null);
   const alive = React.useRef(true),
     running = React.useRef(false),
+    stop = React.useRef(false),
+    wakeProcessing = React.useRef<() => void>(),
+    attempts = React.useRef<number[]>([]),
     revision = React.useRef(0);
   React.useEffect(() => {
     if (loaded) return beginWorkTask("document", "", timingApi);
@@ -90,6 +108,7 @@ export default function StaffPdfWorkspace({
     return () => {
       alive.current = false;
       revision.current++;
+      wakeProcessing.current?.();
     };
   }, [reload]);
   React.useEffect(() => {
@@ -108,12 +127,198 @@ export default function StaffPdfWorkspace({
     lines.map((l) => l.text).join(" "),
     mold?.layout.imagem_full_page,
   );
-  async function choose(id: string) {
+  function loadLines(next: StaffPdfLine[]) {
+    setLines(next);
+    setSelected(next[0]?.id);
+  }
+  async function readBase(base: StaffPdfBase) {
+    const original = await api.baseFile(base.id);
+    const pdf = await PDFDocument.load(await original.arrayBuffer(), {
+      updateMetadata: false,
+    });
+    const pages = pdf.getPages().map((page) => {
+      const crop = page.getCropBox();
+      return Math.abs(page.getRotation().angle) % 180 === 90
+        ? { width: crop.height, height: crop.width }
+        : { width: crop.width, height: crop.height };
+    });
+    if (!pages.length || pages.length > STAFF_PDF_MAX_PAGES)
+      throw new Error("Quantidade de páginas não suportada.");
+    return {
+      base: { ...base, pageCount: pages.length, pages },
+      original,
+    };
+  }
+  function queueItem(
+    source: NonNullable<typeof loaded>,
+    layout: StaffPdfLayoutView,
+    textLines: StaffPdfLine[],
+    name: string,
+    id = crypto.randomUUID(),
+  ): QueueItem {
+    const filename = staffPdfOutputName(name);
+    const job = normalizeStaffPdfJob(
+      {
+        schemaVersion: 1,
+        baseId: source.base.id,
+        baseRevision: source.base.revision,
+        layoutId: layout.id,
+        layoutRevision: layout.revision,
+        lines: textLines.filter((line) => line.text.trim()),
+        ...(filename ? { outputName: filename } : {}),
+      },
+      fonts,
+    );
+    return {
+      id,
+      requestId: crypto.randomUUID(),
+      job,
+      base: source.base,
+      original: source.original,
+      fitMargin: layout.layout.fit_margin,
+      status: "queued",
+    };
+  }
+  async function importOrders(orders: StaffPdfCsvOrder[]) {
+    if (running.current || orders.length > QUEUE_LIMIT - queue.length)
+      throw new Error("Confira as vagas na fila antes de importar.");
+    running.current = true;
+    setBusy(true);
+    try {
+      const library = await api.list();
+      if (alive.current) setData(library);
+      const sources = new Map<string, NonNullable<typeof loaded>>();
+      const items: QueueItem[] = [];
+      for (const order of orders) {
+        if (!alive.current) return;
+        const base = library.bases.find((b) => b.id === order.baseId);
+        const layout = library.layouts.find((t) => t.id === order.layoutId);
+        if (!base || !layout)
+          throw new Error(
+            "Uma base ou um molde foi removido. Revise a importação.",
+          );
+
+        let source = sources.get(base.id);
+        if (!source) {
+          source =
+            loaded?.base.id === base.id &&
+            loaded.base.revision === base.revision
+              ? loaded
+              : await readBase(base);
+          sources.set(base.id, source);
+        }
+        const line = newPdfLine(layout.layout, fonts);
+        line.text = order.text;
+        line.fontId ||= order.fallbackFontId;
+        items.push(queueItem(source, layout, [line], order.outputName));
+      }
+      if (alive.current) {
+        setQueue((old) => [...old, ...items]);
+        setMessage(
+          `${items.length} pedido(s) importado(s). Revise antes de processar.`,
+        );
+        setError("");
+      }
+    } finally {
+      running.current = false;
+      if (alive.current) setBusy(false);
+    }
+  }
+  function saveQueue() {
+    const items = queue
+      .filter((item) => item.status !== "ready")
+      .map(({ requestId, job }) => ({ requestId, job }));
+    downloadPersonalization(
+      new Blob([JSON.stringify({ schemaVersion: 1, items }, null, 2)], {
+        type: "application/json",
+      }),
+      "fila-pdfs.json",
+    );
+  }
+  async function loadQueue(file: File) {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      if (file.size > 5 * 1024 * 1024)
+        throw new Error("Envie um JSON de fila de até 5 MB.");
+      const value = JSON.parse(await file.text());
+      if (
+        value?.schemaVersion !== 1 ||
+        !Array.isArray(value.items) ||
+        value.items.length > QUEUE_LIMIT
+      )
+        throw new Error("Selecione um JSON de fila salvo na oficina.");
+      const seen = new Set(queue.map((item) => item.requestId));
+      const incoming = [];
+      for (const item of value.items) {
+        const id = item?.requestId;
+        if (typeof id !== "string" || !/^[a-f0-9-]{36}$/.test(id))
+          throw new Error("Identificador de pedido inválido no JSON.");
+        if (seen.has(id)) continue;
+        seen.add(id);
+        incoming.push({
+          requestId: id,
+          job: normalizeStaffPdfJob(item.job, fonts),
+        });
+      }
+      if (incoming.length > QUEUE_LIMIT - queue.length)
+        throw new Error("O JSON possui mais pedidos do que vagas na fila.");
+      const library = await api.list();
+      if (alive.current) setData(library);
+      const sources = new Map<string, NonNullable<typeof loaded>>();
+      const items: QueueItem[] = [];
+      for (const { requestId, job } of incoming) {
+        if (!alive.current) return;
+        const base = library.bases.find((b) => b.id === job.baseId);
+        const layout = library.layouts.find((t) => t.id === job.layoutId);
+        if (!base || !layout)
+          throw new Error(
+            "Um pedido do JSON aponta para uma base ou um molde que foi excluído.",
+          );
+        let source = sources.get(base.id);
+        if (!source) {
+          source = await readBase(base);
+          sources.set(base.id, source);
+        }
+        const stale =
+          base.revision !== job.baseRevision ||
+          layout.revision !== job.layoutRevision;
+        items.push({
+          id: crypto.randomUUID(),
+          requestId,
+          job,
+          base: source.base,
+          original: source.original,
+          fitMargin: layout.layout.fit_margin,
+          status: stale ? "error" : "queued",
+          ...(stale
+            ? {
+                error:
+                  "A base ou o molde mudou. Abra este item e revise a edição.",
+              }
+            : {}),
+        });
+      }
+      if (alive.current) {
+        setQueue((old) => [...old, ...items]);
+        setMessage(`${items.length} pedido(s) recuperado(s) do JSON da fila.`);
+      }
+    } catch (e) {
+      if (alive.current) setError((e as Error).message);
+    } finally {
+      running.current = false;
+      if (alive.current) setBusy(false);
+    }
+  }
+  async function choose(id: string, item?: QueueItem) {
     const version = ++revision.current;
     setBaseId(id);
     setLoaded(null);
-    setLines([]);
+    loadLines([]);
     setEditingId(null);
+    setOutputName("");
     setError("");
     setMessage("");
     setBusy(true);
@@ -121,16 +326,40 @@ export default function StaffPdfWorkspace({
       if (!id) return;
       const b = data.bases.find((b) => b.id === id);
       if (!b) throw new Error("Base não encontrada.");
-      const original = await api.baseFile(id),
-        pdf = await PDFDocument.load(await original.arrayBuffer(), {
-          updateMetadata: false,
-        }),
-        base = { ...b, pageCount: pdf.getPageCount() },
-        layout = matchPdfLayout(base.name, base.pageCount, data.layouts);
+      const previousLayout =
+        item && data.layouts.find((t) => t.id === item.job.layoutId);
+      const source =
+        item && b.revision === item.base.revision
+          ? { base: item.base, original: item.original }
+          : await readBase(b);
+      const layout =
+        previousLayout ||
+        (autoTemplate
+          ? matchPdfLayout(
+              source.base.name,
+              source.base.pageCount,
+              data.layouts,
+            )
+          : undefined);
       if (alive.current && version === revision.current) {
-        setLoaded({ base, original });
+        setLoaded(source);
         setLayoutId(layout?.id || "");
-        setLines(layout ? [newPdfLine(layout.layout, fonts)] : []);
+        loadLines(
+          item
+            ? structuredClone(item.job.lines)
+            : layout
+              ? [newPdfLine(layout.layout, fonts)]
+              : [],
+        );
+        if (item) {
+          setEditingId(item.id);
+          setOutputName(item.job.outputName || "");
+          setMessage(
+            previousLayout
+              ? "Revise a edição e clique em Atualizar item da fila."
+              : "O molde anterior foi excluído. Confira o molde antes de atualizar este pedido.",
+          );
+        }
       }
     } catch (e) {
       if (version === revision.current) setError((e as Error).message);
@@ -141,6 +370,9 @@ export default function StaffPdfWorkspace({
   async function process() {
     if (running.current) return;
     running.current = true;
+    stop.current = false;
+    setStopRequested(false);
+    setProcessing(true);
     setBusy(true);
     setError("");
     let successes = 0;
@@ -150,7 +382,27 @@ export default function StaffPdfWorkspace({
       for (const item of queue.filter(
         (q) => q.status === "queued" || q.status === "error",
       )) {
-        if (!alive.current) break;
+        if (!alive.current || stop.current) break;
+        attempts.current = attempts.current.filter(
+          (time) => Date.now() - time < 61000,
+        );
+        if (attempts.current.length >= 20) {
+          setMessage("Aguardando o limite de geração para continuar a fila.");
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(
+              resolve,
+              61000 - (Date.now() - attempts.current[0]),
+            );
+            wakeProcessing.current = () => {
+              window.clearTimeout(timer);
+              resolve();
+            };
+          });
+          wakeProcessing.current = undefined;
+          if (!alive.current || stop.current) break;
+          attempts.current.shift();
+          setMessage("");
+        }
         setQueue((old) =>
           old.map((q) =>
             q.id === item.id
@@ -176,13 +428,14 @@ export default function StaffPdfWorkspace({
           );
           if (initial && t.layout.imagem_full_page) initial.sizePercent = 100;
           const blob = await exportStaffPdf(
-              item.original,
-              item.job,
-              fonts,
-              item.fitMargin,
-              initial,
-            ),
-            doc = await api.generate(item.job, blob, item.requestId);
+            item.original,
+            item.job,
+            fonts,
+            item.fitMargin,
+            initial,
+          );
+          attempts.current.push(Date.now());
+          const doc = await api.generate(item.job, blob, item.requestId);
           successes++;
           if (alive.current)
             setQueue((old) =>
@@ -206,56 +459,98 @@ export default function StaffPdfWorkspace({
       if (alive.current) {
         await onGenerated();
         setMessage(
-          `${successes} documento(s) concluído(s). Os arquivos estão em Documentos salvos.`,
+          `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Documentos salvos.`,
         );
       }
     } catch (e) {
       if (alive.current) setError((e as Error).message);
     } finally {
       running.current = false;
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        setBusy(false);
+        setProcessing(false);
+      }
     }
   }
   function add() {
     try {
       if (!loaded || !mold) throw new Error("Escolha uma base e um molde.");
-      const job = normalizeStaffPdfJob(
-        {
-          schemaVersion: 1,
-          baseId: loaded.base.id,
-          baseRevision: loaded.base.revision,
-          layoutId: mold.id,
-          layoutRevision: mold.revision,
-          lines,
-        },
-        fonts,
-      );
-      if (!editingId && queue.length >= 50)
+      if (!editingId && queue.length >= QUEUE_LIMIT)
         throw new Error(
-          "Processe ou remova itens antes de adicionar mais de 50.",
+          "Remova itens da fila antes de adicionar novos pedidos.",
         );
-      const item: QueueItem = {
-        id: editingId || crypto.randomUUID(),
-        requestId: crypto.randomUUID(),
-        job: structuredClone(job),
-        base: { ...loaded.base },
-        original: loaded.original,
-        fitMargin: mold.layout.fit_margin,
-        status: "queued",
-      };
+      const item = queueItem(
+        loaded,
+        mold,
+        lines,
+        outputName,
+        editingId ?? undefined,
+      );
       setQueue((old) =>
         editingId
           ? old.map((q) => (q.id === editingId ? item : q))
           : [...old, item],
       );
-      setLines([newPdfLine(mold.layout, fonts)]);
+      loadLines([newPdfLine(mold.layout, fonts)]);
+      setOutputName("");
       setEditingId(null);
-      setMessage("Arquivo adicionado à fila para revisão.");
+      setMessage(
+        editingId
+          ? "Pedido atualizado na fila."
+          : "Arquivo adicionado à fila para revisão.",
+      );
       setError("");
     } catch (e) {
       setError((e as Error).message);
     }
   }
+  const move = React.useCallback(
+    (id: string, x: number, y: number, orientation: PdfTextLayout) =>
+      setLines((old) =>
+        old.map((line) =>
+          line.id === id
+            ? { ...line, [orientation]: { ...line[orientation], x, y } }
+            : line,
+        ),
+      ),
+    [],
+  );
+  function updateMain(patch: Partial<StaffPdfLine>) {
+    setLines(([main, ...extras]) =>
+      main ? [{ ...main, ...patch }, ...extras] : [],
+    );
+  }
+  function addLine() {
+    if (!mold || !loaded) return;
+    const line = newPdfLine(mold.layout, fonts, lines.length);
+    line.text = `Texto ${lines.length + 1}`;
+    const dimensions = loaded.base.pages;
+    for (const [orientation, index] of [
+      ["portrait", 0],
+      ["landscape", 2],
+    ] as const) {
+      const page = dimensions[index];
+      if (!page) continue;
+      const width = Math.ceil(
+        ((orientation === "portrait" ? page.width : page.height) *
+          STAFF_PDF_DPI) /
+          72,
+      );
+      const height = Math.ceil(
+        ((orientation === "portrait" ? page.height : page.width) *
+          STAFF_PDF_DPI) /
+          72,
+      );
+      const box = line[orientation];
+      box.width = Math.min(box.width, width);
+      box.height = Math.min(box.height, height);
+      box.x = Math.round((width - box.width) / 2);
+      box.y = Math.round((height - box.height) / 2);
+    }
+    setLines((old) => [...old, line]);
+    setSelected(line.id);
+  }
+  const main = lines[0];
   return (
     <section className="space-y-5 rounded-2xl border border-gray-800 p-4 sm:p-6">
       <div>
@@ -292,11 +587,14 @@ export default function StaffPdfWorkspace({
         {canGenerate && (
           <button
             disabled={busy}
-            onClick={() => setTab("csv")}
+            onClick={() => {
+              setCsvOpened(true);
+              setTab("csv");
+            }}
             aria-pressed={tab === "csv"}
             className="rounded-lg border border-gray-700 px-4 py-2"
           >
-            XLSX para CSV
+            Planilha e CSV
           </button>
         )}
         <button
@@ -331,226 +629,474 @@ export default function StaffPdfWorkspace({
           reload={reload}
         />
       )}
-      {tab === "csv" && canGenerate && <StaffSpreadsheetCsv />}
+      {csvOpened && canGenerate && (
+        <div hidden={tab !== "csv"}>
+          <StaffPdfCsvImport
+            data={data}
+            fonts={fonts}
+            busy={busy}
+            available={QUEUE_LIMIT - queue.length}
+            fallback={{ baseId: loaded?.base.id || "", layoutId }}
+            onAdd={importOrders}
+            onReviewQueue={() => setTab("edit")}
+          />
+        </div>
+      )}
       {tab === "edit" && canGenerate && (
         <>
-          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
-            <label className="sm:col-span-2">
-              Buscar base
-              <input
-                aria-label="Buscar base PDF"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className={input}
-              />
-            </label>
-            <label>
-              Base PDF
-              <select
-                aria-label="Base PDF da equipe"
-                disabled={busy}
-                value={baseId}
-                onChange={(e) => void choose(e.target.value)}
-                className={input}
-              >
-                <option value="">Selecione o PDF</option>
-                {data.bases
-                  .filter(
-                    (b) =>
-                      b.name
-                        .toLocaleLowerCase()
-                        .includes(query.toLocaleLowerCase()) || b.id === baseId,
-                  )
-                  .map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ·{" "}
-                      {b.source === "internal" ? "Interno" : "Produto"}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              Template de edição
-              <select
-                aria-label="Template de edição da equipe"
-                disabled={busy || !loaded}
-                value={layoutId}
-                onChange={(e) => {
-                  const id = e.target.value,
-                    t = data.layouts.find((t) => t.id === id);
-                  setLayoutId(id);
-                  setLines(t ? [newPdfLine(t.layout, fonts)] : []);
-                  setEditingId(null);
-                }}
-                className={input}
-              >
-                <option value="">Selecione o molde</option>
-                {data.layouts.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          {busy && <p role="status">Processando...</p>}
-          {loaded && !mold && (
-            <p
-              role="alert"
-              className="rounded-lg bg-amber-950 p-3 text-sm text-amber-200"
-            >
-              Este PDF não possui um molde associado. Escolha um template
-              existente ou peça a alguém com permissão de moldes para criar um
-              antes de prosseguir.
-            </p>
-          )}
-          {mold && mold.layout.font_name && !layoutFont(mold.layout, fonts) && (
-            <p role="status" className="text-sm text-amber-200">
-              A fonte “{mold.layout.font_name}” não está cadastrada ou ativa.
-              Escolha uma fonte no editor, ou peça seu cadastro antes de gerar.
-            </p>
-          )}
-          {loaded && mold && (
-            <>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-gray-400">
-                  {loaded.base.pageCount} páginas · Molde: {mold.name}
-                </p>
-                <button
+          <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(17rem,1fr)_minmax(0,2fr)]">
+            <div className="min-w-0 space-y-4 rounded-xl border border-gray-800 p-4 lg:max-h-[75vh] lg:overflow-y-auto">
+              <h4 className="text-base font-bold">Configuração do pedido</h4>
+              <label className="block text-sm">
+                Nome do arquivo final (opcional)
+                <input
                   disabled={busy}
-                  onClick={() => setEditor(true)}
-                  className="rounded-xl bg-purple-600 px-5 py-3"
-                >
-                  Editar texto e geometria
-                </button>
+                  className={input}
+                  maxLength={124}
+                  value={outputName}
+                  placeholder={loaded?.base.name}
+                  onChange={(e) => setOutputName(e.target.value)}
+                />
+              </label>
+              <div className="grid min-w-0 gap-3 text-sm">
+                <label className="block">
+                  Buscar base
+                  <input
+                    aria-label="Buscar base PDF"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    className={input}
+                  />
+                </label>
+                <label>
+                  Base PDF
+                  <select
+                    aria-label="Base PDF da equipe"
+                    disabled={busy}
+                    value={baseId}
+                    onChange={(e) => void choose(e.target.value)}
+                    className={input}
+                  >
+                    <option value="">Selecione o PDF</option>
+                    {data.bases
+                      .filter(
+                        (b) =>
+                          b.name
+                            .toLocaleLowerCase()
+                            .includes(query.toLocaleLowerCase()) ||
+                          b.id === baseId,
+                      )
+                      .map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name} ·{" "}
+                          {b.source === "internal" ? "Interno" : "Produto"}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={autoTemplate}
+                    disabled={busy}
+                    onChange={(e) => setAutoTemplate(e.target.checked)}
+                  />
+                  Selecionar molde pelo nome da base
+                </label>
+                <label>
+                  Buscar molde
+                  <input
+                    value={templateQuery}
+                    onChange={(e) => setTemplateQuery(e.target.value)}
+                    className={input}
+                  />
+                </label>
+                <label>
+                  Template de edição
+                  <select
+                    aria-label="Template de edição da equipe"
+                    disabled={busy || !loaded}
+                    value={layoutId}
+                    onChange={(e) => {
+                      const id = e.target.value,
+                        t = data.layouts.find((t) => t.id === id);
+                      setLayoutId(id);
+                      const next = t && newPdfLine(t.layout, fonts);
+                      loadLines(
+                        next ? [{ ...next, text: lines[0]?.text || "" }] : [],
+                      );
+                    }}
+                    className={input}
+                  >
+                    <option value="">Selecione o molde</option>
+                    {data.layouts
+                      .filter(
+                        (t) =>
+                          t.id === layoutId ||
+                          t.name
+                            .toLowerCase()
+                            .includes(templateQuery.toLowerCase()),
+                      )
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
               </div>
-              <ul className="space-y-1 text-sm">
-                {lines.map((l, i) => (
-                  <li key={l.id} className="break-words">
-                    Linha {i + 1}: {l.text || "Ainda sem texto"}
-                  </li>
+              {loaded && !mold && (
+                <p
+                  role="alert"
+                  className="rounded-lg bg-amber-950 p-3 text-sm text-amber-200"
+                >
+                  Este PDF não possui um molde associado. Escolha um template
+                  existente ou peça a alguém com permissão de moldes para criar
+                  um antes de prosseguir.
+                </p>
+              )}
+              {mold &&
+                mold.layout.font_name &&
+                !layoutFont(mold.layout, fonts) && (
+                  <p role="status" className="text-sm text-amber-200">
+                    A fonte “{mold.layout.font_name}” não está cadastrada ou
+                    ativa. Escolha uma fonte no editor, ou peça seu cadastro
+                    antes de gerar.
+                  </p>
+                )}
+              {main && mold && (
+                <div className="space-y-3 text-sm">
+                  <label className="block">
+                    Texto principal
+                    <textarea
+                      disabled={busy}
+                      value={main.text}
+                      maxLength={500}
+                      rows={2}
+                      onChange={(e) => updateMain({ text: e.target.value })}
+                      className={input}
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="col-span-2">
+                      Fonte do texto principal
+                      <select
+                        disabled={busy}
+                        value={
+                          main.fontId === layoutFont(mold.layout, fonts)?.id
+                            ? ""
+                            : main.fontId
+                        }
+                        className={input}
+                        onChange={(e) =>
+                          updateMain({
+                            fontId:
+                              e.target.value ||
+                              layoutFont(mold.layout, fonts)?.id ||
+                              "",
+                          })
+                        }
+                      >
+                        <option value="">Fonte do molde</option>
+                        {fonts
+                          .filter((font) => font.ativo)
+                          .map((font) => (
+                            <option key={font.id} value={font.id}>
+                              {font.nome}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label>
+                      Tamanho (px)
+                      <input
+                        disabled={busy}
+                        type="number"
+                        min={1}
+                        max={4000}
+                        value={
+                          main.fontSize === mold.layout.font_size
+                            ? ""
+                            : main.fontSize
+                        }
+                        placeholder={String(mold.layout.font_size)}
+                        className={input}
+                        onChange={(e) =>
+                          updateMain({
+                            fontSize:
+                              Number(e.target.value) || mold.layout.font_size,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Cor
+                      <input
+                        disabled={busy}
+                        type="color"
+                        className={`${input} h-12`}
+                        value={main.color}
+                        onChange={(e) => updateMain({ color: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                  <button
+                    disabled={busy || lines.length >= STAFF_PDF_MAX_LINES}
+                    type="button"
+                    className="rounded-lg bg-purple-600 px-3 py-2 disabled:opacity-40"
+                    onClick={addLine}
+                  >
+                    Adicionar linha de texto
+                  </button>
+                  {lines.length > 1 && (
+                    <ul className="space-y-1">
+                      {lines.slice(1).map((line, index) => (
+                        <li key={line.id} className="flex min-w-0 gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="min-w-0 flex-1 truncate rounded border border-gray-700 p-2 text-left"
+                            onClick={() => {
+                              setSelected(line.id);
+                              setEditor(true);
+                            }}
+                          >
+                            {line.text || `Linha ${index + 2}`}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="px-2 text-red-300"
+                            aria-label={`Remover linha ${index + 2}`}
+                            onClick={() => {
+                              setLines((old) =>
+                                old.filter((l) => l.id !== line.id),
+                              );
+                              if (selected === line.id) setSelected(main.id);
+                            }}
+                          >
+                            Remover
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={busy}
+                className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
+                onClick={() => {
+                  setCsvOpened(true);
+                  setTab("csv");
+                }}
+              >
+                Importar CSV ou XLSX
+              </button>
+              <section className="space-y-3 border-t border-gray-800 pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h4 className="text-lg font-bold">
+                    Fila principal · {queue.length}
+                  </h4>
+                  {queue.some((q) => q.status === "ready") && (
+                    <button
+                      type="button"
+                      className="text-xs text-gray-300"
+                      disabled={busy}
+                      onClick={() =>
+                        setQueue((old) =>
+                          old.filter((q) => q.status !== "ready"),
+                        )
+                      }
+                    >
+                      Limpar concluídos
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">
+                  A fila fica nesta sessão. Revise antes de processar. Fechar ou
+                  recarregar a página descarta os itens ainda não gerados.
+                </p>
+                {!queue.length && (
+                  <p className="text-sm text-gray-400">
+                    Nenhum arquivo na fila.
+                  </p>
+                )}
+                {queue.map((item) => (
+                  <article
+                    key={item.id}
+                    className="space-y-2 rounded-xl border border-gray-800 p-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <h5 className="break-words font-bold">
+                        {item.job.outputName || item.base.name}
+                      </h5>
+                      <span className="text-xs text-gray-400">
+                        {
+                          {
+                            queued: "Na fila",
+                            processing: "Processando",
+                            ready: "Concluído",
+                            error: "Precisa de ajuste",
+                          }[item.status]
+                        }
+                      </span>
+                    </div>
+                    <p className="break-words text-sm">
+                      {item.job.lines.map((l) => l.text).join(" / ")}
+                    </p>
+                    {item.error && (
+                      <p role="alert" className="text-sm text-red-300">
+                        {item.error}
+                      </p>
+                    )}
+                    {item.reference && (
+                      <p className="text-sm text-green-300">{item.reference}</p>
+                    )}
+                    <div className="flex gap-4">
+                      <button
+                        disabled={busy || item.status === "ready"}
+                        onClick={() => void choose(item.job.baseId, item)}
+                        className="text-sm disabled:opacity-40"
+                      >
+                        Editar item da fila
+                      </button>
+                      <button
+                        disabled={busy}
+                        onClick={() => setRemoveId(item.id)}
+                        className="text-sm text-red-300 disabled:opacity-40"
+                      >
+                        Excluir da fila
+                      </button>
+                    </div>
+                  </article>
                 ))}
-              </ul>
-              <StaffPdfPreview
-                original={loaded.original}
-                pageCount={loaded.base.pageCount}
-                lines={lines}
-                fonts={fonts}
-                fitMargin={mold.layout.fit_margin}
-                initial={initial}
-              />
+              </section>
+            </div>
+            <div className="min-w-0 space-y-3 rounded-xl border border-gray-800 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-base font-bold">Prévia do PDF</h4>
+                {loaded && mold && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setEditor(true)}
+                    className="rounded-lg bg-purple-600 px-3 py-2 text-sm"
+                  >
+                    Editar texto e geometria
+                  </button>
+                )}
+              </div>
+              {loaded ? (
+                <StaffPdfPreview
+                  original={loaded.original}
+                  pageCount={loaded.base.pageCount}
+                  lines={lines}
+                  fonts={fonts}
+                  selected={selected}
+                  onSelect={busy ? undefined : setSelected}
+                  onMove={busy ? undefined : move}
+                  onEdit={
+                    busy || !mold
+                      ? undefined
+                      : (id) => {
+                          setSelected(id);
+                          setEditor(true);
+                        }
+                  }
+                  fitMargin={mold?.layout.fit_margin}
+                  initial={initial}
+                />
+              ) : (
+                <p className="grid min-h-56 place-items-center text-sm text-gray-400">
+                  Escolha uma base para abrir a prévia.
+                </p>
+              )}
               {initialError && (
                 <p role="alert" className="text-red-300">
                   {initialError}
                 </p>
               )}
-              <button
-                disabled={busy || !lines.some((l) => l.text.trim())}
-                className="w-full rounded-xl bg-pink-500 px-5 py-3 font-bold disabled:opacity-40"
-                onClick={add}
-              >
-                {editingId ? "Atualizar item da fila" : "Adicionar à fila"}
-              </button>
-            </>
-          )}
-          <section className="space-y-3 border-t border-gray-800 pt-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h4 className="text-lg font-bold">
-                Fila principal · {queue.length}
-              </h4>
-              <button
-                disabled={
-                  busy ||
-                  !queue.some(
-                    (q) => q.status === "queued" || q.status === "error",
-                  )
-                }
-                onClick={() => void process()}
-                className="rounded-xl bg-pink-500 px-5 py-3 font-bold disabled:opacity-40"
-              >
-                Processar fila
-              </button>
             </div>
-            <p className="text-xs text-gray-400">
-              A fila fica nesta sessão. Revise antes de processar. Fechar ou
-              recarregar a página descarta os itens ainda não gerados.
-            </p>
-            {!queue.length && (
-              <p className="text-sm text-gray-400">Nenhum arquivo na fila.</p>
-            )}
-            {queue.map((item) => (
-              <article
-                key={item.id}
-                className="space-y-2 rounded-xl border border-gray-800 p-4"
+          </div>
+          <div className="flex flex-wrap items-center gap-3 border-t border-gray-800 pt-3">
+            <button
+              type="button"
+              disabled={busy || !queue.some((item) => item.status !== "ready")}
+              className="rounded-xl border border-gray-700 px-4 py-2 disabled:opacity-40"
+              onClick={saveQueue}
+            >
+              Salvar fila em JSON
+            </button>
+            <label className="cursor-pointer rounded-xl border border-gray-700 px-4 py-2 focus-within:ring-2 focus-within:ring-pink-400">
+              Carregar fila JSON
+              <input
+                type="file"
+                accept=".json,application/json"
+                disabled={busy}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void loadQueue(file);
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={
+                busy || !mold || !lines.some((line) => line.text.trim())
+              }
+              className="rounded-xl bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"
+              onClick={add}
+            >
+              {editingId ? "Atualizar item da fila" : "Adicionar à fila"}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                disabled={busy}
+                className="rounded-xl border border-gray-700 px-4 py-2"
+                onClick={() => {
+                  setEditingId(null);
+                  setOutputName("");
+                  loadLines(mold ? [newPdfLine(mold.layout, fonts)] : []);
+                }}
               >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h5 className="break-words font-bold">{item.base.name}</h5>
-                  <span className="text-xs text-gray-400">
-                    {
-                      {
-                        queued: "Na fila",
-                        processing: "Processando",
-                        ready: "Concluído",
-                        error: "Precisa de ajuste",
-                      }[item.status]
-                    }
-                  </span>
-                </div>
-                <p className="break-words text-sm">
-                  {item.job.lines.map((l) => l.text).join(" / ")}
-                </p>
-                {item.error && (
-                  <p role="alert" className="text-sm text-red-300">
-                    {item.error}
-                  </p>
-                )}
-                {item.reference && (
-                  <p className="text-sm text-green-300">{item.reference}</p>
-                )}
-                <div className="flex gap-4">
-                  <button
-                    disabled={busy || item.status === "ready"}
-                    onClick={() => {
-                      const current = data.bases.find(
-                          (b) => b.id === item.job.baseId,
-                        ),
-                        layout = data.layouts.find(
-                          (t) => t.id === item.job.layoutId,
-                        );
-                      if (!current || !layout) {
-                        setError(
-                          "A base ou o molde foi excluído. Remova este item e escolha outra base.",
-                        );
-                        return;
-                      }
-                      setBaseId(current.id);
-                      setLayoutId(layout.id);
-                      setLoaded({
-                        base: { ...current, pageCount: item.base.pageCount },
-                        original: item.original,
-                      });
-                      setLines(structuredClone(item.job.lines));
-                      setEditingId(item.id);
-                      setMessage(
-                        "Revise a edição e clique em Atualizar item da fila.",
-                      );
-                      setError("");
-                    }}
-                    className="text-sm disabled:opacity-40"
-                  >
-                    Editar item da fila
-                  </button>
-                  <button
-                    disabled={busy}
-                    onClick={() => setRemoveId(item.id)}
-                    className="text-sm text-red-300 disabled:opacity-40"
-                  >
-                    Excluir da fila
-                  </button>
-                </div>
-              </article>
-            ))}
-          </section>
+                Cancelar revisão
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={
+                busy ||
+                !queue.some(
+                  (item) => item.status === "queued" || item.status === "error",
+                )
+              }
+              className="rounded-xl bg-purple-600 px-4 py-2 font-bold disabled:opacity-40"
+              onClick={() => void process()}
+            >
+              Processar fila
+            </button>
+            {processing && (
+              <button
+                type="button"
+                disabled={stopRequested}
+                className="rounded-xl border border-gray-700 px-4 py-2"
+                onClick={() => {
+                  stop.current = true;
+                  wakeProcessing.current?.();
+                  setStopRequested(true);
+                }}
+              >
+                {stopRequested
+                  ? "Parando após o pedido atual…"
+                  : "Parar após este pedido"}
+              </button>
+            )}
+          </div>
         </>
       )}
       {editor && loaded && mold && (
@@ -562,9 +1108,12 @@ export default function StaffPdfWorkspace({
           layout={mold.layout}
           fonts={fonts}
           initialLines={lines}
+          initialSelected={selected}
           onClose={() => setEditor(false)}
           onSave={(value) => {
             setLines(value);
+            if (!value.some((line) => line.id === selected))
+              setSelected(value[0]?.id);
             setEditor(false);
           }}
         />

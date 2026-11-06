@@ -53,9 +53,68 @@ export interface StaffPdfLine {
   color: string;
   align: "left" | "center" | "right";
   rotation: number;
+  effects?: StaffPdfTextEffects;
   portrait: PdfTextBox;
   landscape: PdfTextBox;
 }
+export interface StaffPdfTextEffects {
+  bold: boolean;
+  opacity: number;
+  outline: boolean;
+  outlineColor: string;
+  outlineWidth: number;
+  curve: number;
+  letterSpacing: number;
+  lineSpacing: number;
+}
+export const DEFAULT_PDF_TEXT_EFFECTS: StaffPdfTextEffects = {
+  bold: false,
+  opacity: 100,
+  outline: false,
+  outlineColor: "#000000",
+  outlineWidth: 7,
+  curve: 0,
+  letterSpacing: 0,
+  lineSpacing: 1.15,
+};
+
+function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
+  if (!object(value)) throw new Error("Efeitos do texto inválidos.");
+  const effects = { ...DEFAULT_PDF_TEXT_EFFECTS, ...value };
+  const {
+    bold,
+    opacity,
+    outline,
+    outlineColor,
+    outlineWidth,
+    curve,
+    letterSpacing,
+    lineSpacing,
+  } = effects;
+  if (
+    typeof bold !== "boolean" ||
+    typeof outline !== "boolean" ||
+    typeof outlineColor !== "string" ||
+    !/^#[a-f0-9]{6}$/i.test(outlineColor) ||
+    !number(opacity, 0, 100) ||
+    !number(outlineWidth, 1, 30) ||
+    !number(curve, -100, 100) ||
+    !number(letterSpacing, -50, 100) ||
+    !number(lineSpacing, 0.5, 3)
+  )
+    throw new Error("Revise os efeitos e o espaçamento do texto.");
+  return {
+    bold,
+    opacity,
+    outline,
+    outlineColor,
+    outlineWidth,
+    curve,
+    letterSpacing,
+    lineSpacing,
+  };
+}
+
 export interface StaffPdfJob {
   schemaVersion: 1;
   baseId: string;
@@ -63,6 +122,18 @@ export interface StaffPdfJob {
   layoutId: string;
   layoutRevision: string;
   lines: StaffPdfLine[];
+  outputName?: string;
+}
+export function staffPdfOutputName(value: string): string {
+  return value
+    .trim()
+    .replace(/(?:\.pdf)+$/i, "")
+    .normalize("NFC")
+    .replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, "_")
+    .trim()
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, 120)
+    .replace(/[. ]+$/g, "");
 }
 export function staffPdfName(value: unknown): string {
   if (
@@ -174,9 +245,20 @@ export function matchPdfLayout(
     `${stem}_template__${pageCount}p`,
     `${stem}_template`,
   ];
-  return candidates
-    .map((key) => layouts.find((t) => t.name === key))
-    .find(Boolean);
+  const normalized = (value: string) => value.normalize("NFC").toLowerCase();
+  return (
+    candidates
+      .map((key) => layouts.find((t) => t.name === key))
+      .find(Boolean) ??
+    candidates
+      .map((key) => {
+        const matches = layouts.filter(
+          (t) => normalized(t.name) === normalized(key),
+        );
+        return matches.length === 1 ? matches[0] : undefined;
+      })
+      .find(Boolean)
+  );
 }
 export function layoutBox(
   layout: StaffPdfLayout,
@@ -256,7 +338,7 @@ export function normalizeStaffPdfJob(
       !/^[a-f0-9-]{36}$/.test(line.id) ||
       typeof line.text !== "string" ||
       line.text.length > 500 ||
-      /[\x00-\x08\x0b-\x1f\x7f\r\n]/.test(line.text) ||
+      /[\x00-\x08\x0b-\x1f\x7f]/.test(line.text) ||
       !fonts.some((f) => f.ativo && f.id === line.fontId) ||
       !number(line.fontSize, 1, 4000) ||
       !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
@@ -283,6 +365,9 @@ export function normalizeStaffPdfJob(
       color: line.color.toLowerCase(),
       align: line.align,
       rotation: line.rotation,
+      ...(line.effects === undefined
+        ? {}
+        : { effects: normalizePdfTextEffects(line.effects) }),
       portrait: box(line.portrait),
       landscape: box(line.landscape),
     };
@@ -292,7 +377,15 @@ export function normalizeStaffPdfJob(
     new Set(lines.map((l) => l.id)).size !== lines.length
   )
     throw new Error("Adicione texto e use linhas distintas.");
+  if (
+    value.outputName !== undefined &&
+    (typeof value.outputName !== "string" ||
+      !value.outputName ||
+      staffPdfOutputName(value.outputName) !== value.outputName)
+  )
+    throw new Error("Nome do arquivo final inválido.");
   return {
+    ...(value.outputName ? { outputName: value.outputName } : {}),
     schemaVersion: 1,
     baseId: value.baseId,
     baseRevision: value.baseRevision,

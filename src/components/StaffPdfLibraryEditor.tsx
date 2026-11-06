@@ -302,6 +302,7 @@ export default function StaffPdfLibraryEditor({
       )}
       {editing && (
         <EditorModal
+          wide
           title="Editor de molde PDF"
           busy={busy}
           onClose={() => setEditing(null)}
@@ -309,229 +310,273 @@ export default function StaffPdfLibraryEditor({
           doneLabel="Voltar"
           footerText="Salvar altera o molde para novas edições. Itens já na fila precisam ser abertos novamente."
         >
-          <div className="space-y-4">
-            <label className="block">
-              Nome do molde
-              <input
-                aria-label="Nome do molde"
-                disabled={Boolean(editing.id)}
-                value={editing.name}
-                onChange={(e) =>
-                  setEditing((old) => ({ ...old!, name: e.target.value }))
-                }
-                className={input}
-              />
-            </label>
-            <p className="text-xs text-gray-400">
-              Use o nome do PDF sem .pdf, ou o padrão legado Nome_template e
-              Nome_template__4p. Nomes diferentes podem ser associados
-              manualmente na edição.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label>
-                Fonte padrão
-                <select
-                  aria-label="Fonte padrão do molde"
-                  value={editing.layout.font_name}
-                  onChange={(e) => patch({ font_name: e.target.value })}
-                  className={input}
-                >
-                  <option value="">Definir durante a edição</option>
-                  {editing.layout.font_name &&
-                    !fonts.some((f) => f.nome === editing.layout.font_name) && (
-                      <option value={editing.layout.font_name}>
-                        {editing.layout.font_name} · conferir cadastro
-                      </option>
-                    )}
-                  {fonts
-                    .filter((f) => f.ativo)
-                    .map((f) => (
-                      <option key={f.id} value={f.nome}>
-                        {f.nome}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                Tamanho padrão (px)
+          <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+            <div className="min-w-0 space-y-4 lg:max-h-[67vh] lg:overflow-y-auto lg:pr-2">
+              <label className="block">
+                Nome do molde
                 <input
-                  type="number"
-                  min={1}
-                  max={4000}
-                  value={editing.layout.font_size}
-                  onChange={(e) => patch({ font_size: Number(e.target.value) })}
-                  className={input}
-                />
-              </label>
-              <label>
-                Cor padrão
-                <input
-                  type="color"
-                  value={editing.layout.color}
-                  onChange={(e) => patch({ color: e.target.value })}
-                  className={`${input} h-10`}
-                />
-              </label>
-              <label>
-                Alinhamento
-                <select
-                  value={editing.layout.align}
+                  aria-label="Nome do molde"
+                  disabled={Boolean(editing.id)}
+                  value={editing.name}
                   onChange={(e) =>
-                    patch({ align: e.target.value as StaffPdfLayout["align"] })
-                  }
-                  className={input}
-                >
-                  <option value="left">Esquerda</option>
-                  <option value="center">Centro</option>
-                  <option value="right">Direita</option>
-                </select>
-              </label>
-              <label>
-                Rotação do texto
-                <input
-                  type="number"
-                  min={-180}
-                  max={180}
-                  value={editing.layout.text_rotation}
-                  onChange={(e) =>
-                    patch({ text_rotation: Number(e.target.value) })
+                    setEditing((old) => ({ ...old!, name: e.target.value }))
                   }
                   className={input}
                 />
               </label>
-              <label>
-                Margem de ajuste (0 a 0,5)
-                <input
-                  type="number"
-                  min={0}
-                  max={0.5}
-                  step={0.01}
-                  value={editing.layout.fit_margin}
-                  onChange={(e) =>
-                    patch({ fit_margin: Number(e.target.value) })
-                  }
-                  className={input}
-                />
-              </label>
-            </div>
-            {(["portrait", "landscape"] as const).map((o) => (
-              <fieldset
-                key={o}
-                className="rounded-xl border border-gray-700 p-3"
-              >
-                <legend>
-                  {o === "portrait"
-                    ? "Retrato · página 1"
-                    : "Paisagem · página 3 em PDFs de quatro páginas"}
-                </legend>
-                <div className="grid grid-cols-2 gap-3">
-                  {(
-                    [
-                      "pos_x",
-                      "pos_y",
-                      "max_width_pixels",
-                      "max_height_pixels",
-                    ] as const
-                  ).map((k) => {
-                    const key = (
-                      o === "portrait" ? k : `${k}_landscape`
-                    ) as keyof StaffPdfLayout;
-                    return (
-                      <label key={key}>
-                        {
-                          {
-                            pos_x: "X",
-                            pos_y: "Y",
-                            max_width_pixels: "Largura",
-                            max_height_pixels: "Altura",
-                          }[k]
-                        }
-                        <input
-                          aria-label={`Molde ${key}`}
-                          type="number"
-                          min={k.startsWith("max_") ? 1 : 0}
-                          max={60000}
-                          value={Number(editing.layout[key])}
-                          onChange={(e) =>
-                            patch({ [key]: Number(e.target.value) })
-                          }
-                          className={input}
-                        />
-                      </label>
-                    );
-                  })}
-                </div>
-              </fieldset>
-            ))}
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={editing.layout.imagem_full_page}
-                onChange={(e) => patch({ imagem_full_page: e.target.checked })}
-              />
-              Inicial em página inteira (compatibilidade do molde)
-            </label>
-            <label className="block">
-              PDF para testar o molde
-              <select
-                aria-label="PDF para testar molde"
-                value={baseId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setBaseId(id);
-                  setOriginal(null);
-                  if (id)
-                    void run(async () => {
-                      setOriginal(await api.baseFile(id));
-                    });
-                }}
-                className={input}
-              >
-                <option value="">Selecione uma base</option>
-                {data.bases.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              Texto de exemplo
-              <input
-                value={sample}
-                onChange={(e) => setSample(e.target.value)}
-                className={input}
-              />
-            </label>
-            {original && base && (
-              <StaffPdfPreview
-                original={original}
-                pageCount={base.pageCount}
-                lines={[{ ...newPdfLine(editing.layout, fonts), text: sample }]}
-                fonts={fonts}
-                fitMargin={editing.layout.fit_margin}
-              />
-            )}
-            {error && (
-              <p role="alert" className="text-red-300">
-                {error}
+              <p className="text-xs text-gray-400">
+                Use o nome do PDF sem .pdf, ou o padrão legado Nome_template e
+                Nome_template__4p. Nomes diferentes podem ser associados
+                manualmente na edição.
               </p>
-            )}
-            <button
-              disabled={busy}
-              className="w-full rounded-xl bg-pink-500 p-3 font-bold disabled:opacity-40"
-              onClick={() =>
-                void run(async () => {
-                  const layout = normalizePdfLayout(editing.layout);
-                  await api.saveLayout(editing.name, layout, editing.revision);
-                  await reload();
-                  setEditing(null);
-                  setMessage("Molde salvo.");
-                })
-              }
-            >
-              Salvar molde
-            </button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label>
+                  Fonte padrão
+                  <select
+                    aria-label="Fonte padrão do molde"
+                    value={editing.layout.font_name}
+                    onChange={(e) => patch({ font_name: e.target.value })}
+                    className={input}
+                  >
+                    <option value="">Definir durante a edição</option>
+                    {editing.layout.font_name &&
+                      !fonts.some(
+                        (f) => f.nome === editing.layout.font_name,
+                      ) && (
+                        <option value={editing.layout.font_name}>
+                          {editing.layout.font_name} · conferir cadastro
+                        </option>
+                      )}
+                    {fonts
+                      .filter((f) => f.ativo)
+                      .map((f) => (
+                        <option key={f.id} value={f.nome}>
+                          {f.nome}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Tamanho padrão (px)
+                  <input
+                    type="number"
+                    min={1}
+                    max={4000}
+                    value={editing.layout.font_size}
+                    onChange={(e) =>
+                      patch({ font_size: Number(e.target.value) })
+                    }
+                    className={input}
+                  />
+                </label>
+                <label>
+                  Cor padrão
+                  <input
+                    type="color"
+                    value={editing.layout.color}
+                    onChange={(e) => patch({ color: e.target.value })}
+                    className={`${input} h-10`}
+                  />
+                </label>
+                <label>
+                  Alinhamento
+                  <select
+                    value={editing.layout.align}
+                    onChange={(e) =>
+                      patch({
+                        align: e.target.value as StaffPdfLayout["align"],
+                      })
+                    }
+                    className={input}
+                  >
+                    <option value="left">Esquerda</option>
+                    <option value="center">Centro</option>
+                    <option value="right">Direita</option>
+                  </select>
+                </label>
+                <label>
+                  Rotação do texto
+                  <input
+                    type="number"
+                    min={-180}
+                    max={180}
+                    value={editing.layout.text_rotation}
+                    onChange={(e) =>
+                      patch({ text_rotation: Number(e.target.value) })
+                    }
+                    className={input}
+                  />
+                </label>
+                <label>
+                  Margem de ajuste (0 a 0,5)
+                  <input
+                    type="number"
+                    min={0}
+                    max={0.5}
+                    step={0.01}
+                    value={editing.layout.fit_margin}
+                    onChange={(e) =>
+                      patch({ fit_margin: Number(e.target.value) })
+                    }
+                    className={input}
+                  />
+                </label>
+              </div>
+              {(["portrait", "landscape"] as const).map((o) => (
+                <fieldset
+                  key={o}
+                  className="rounded-xl border border-gray-700 p-3"
+                >
+                  <legend>
+                    {o === "portrait"
+                      ? "Retrato · página 1"
+                      : "Paisagem · página 3 em PDFs de quatro páginas"}
+                  </legend>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(
+                      [
+                        "pos_x",
+                        "pos_y",
+                        "max_width_pixels",
+                        "max_height_pixels",
+                      ] as const
+                    ).map((k) => {
+                      const key = (
+                        o === "portrait" ? k : `${k}_landscape`
+                      ) as keyof StaffPdfLayout;
+                      return (
+                        <label key={key}>
+                          {
+                            {
+                              pos_x: "X",
+                              pos_y: "Y",
+                              max_width_pixels: "Largura",
+                              max_height_pixels: "Altura",
+                            }[k]
+                          }
+                          <input
+                            aria-label={`Molde ${key}`}
+                            type="number"
+                            min={k.startsWith("max_") ? 1 : 0}
+                            max={60000}
+                            value={Number(editing.layout[key])}
+                            onChange={(e) =>
+                              patch({ [key]: Number(e.target.value) })
+                            }
+                            className={input}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ))}
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={editing.layout.imagem_full_page}
+                  onChange={(e) =>
+                    patch({ imagem_full_page: e.target.checked })
+                  }
+                />
+                Inicial em página inteira (compatibilidade do molde)
+              </label>
+              <label className="block">
+                PDF para testar o molde
+                <select
+                  aria-label="PDF para testar molde"
+                  value={baseId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setBaseId(id);
+                    setOriginal(null);
+                    if (id)
+                      void run(async () => {
+                        setOriginal(await api.baseFile(id));
+                      });
+                  }}
+                  className={input}
+                >
+                  <option value="">Selecione uma base</option>
+                  {data.bases.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                Texto de exemplo
+                <input
+                  value={sample}
+                  onChange={(e) => setSample(e.target.value)}
+                  className={input}
+                />
+              </label>
+              {error && (
+                <p role="alert" className="text-red-300">
+                  {error}
+                </p>
+              )}
+              <button
+                disabled={busy}
+                className="w-full rounded-xl bg-pink-500 p-3 font-bold disabled:opacity-40"
+                onClick={() =>
+                  void run(async () => {
+                    const layout = normalizePdfLayout(editing.layout);
+                    await api.saveLayout(
+                      editing.name,
+                      layout,
+                      editing.revision,
+                    );
+                    await reload();
+                    setEditing(null);
+                    setMessage("Molde salvo.");
+                  })
+                }
+              >
+                Salvar molde
+              </button>
+            </div>
+            <div className="min-w-0">
+              {original && base ? (
+                <StaffPdfPreview
+                  original={original}
+                  pageCount={base.pageCount}
+                  lines={[
+                    {
+                      ...newPdfLine(editing.layout, fonts),
+                      id: "sample",
+                      text: sample,
+                    },
+                  ]}
+                  fonts={fonts}
+                  selected="sample"
+                  fitMargin={editing.layout.fit_margin}
+                  onMove={(_, x, y, orientation) =>
+                    patch(
+                      orientation === "portrait"
+                        ? { pos_x: x, pos_y: y }
+                        : { pos_x_landscape: x, pos_y_landscape: y },
+                    )
+                  }
+                  onResize={(_, width, height, orientation) =>
+                    patch(
+                      orientation === "portrait"
+                        ? { max_width_pixels: width, max_height_pixels: height }
+                        : {
+                            max_width_pixels_landscape: width,
+                            max_height_pixels_landscape: height,
+                          },
+                    )
+                  }
+                />
+              ) : (
+                <p className="grid min-h-56 place-items-center rounded-xl bg-gray-950 p-3 text-sm text-gray-400">
+                  Selecione um PDF para ajustar o molde sobre a página.
+                </p>
+              )}
+            </div>
           </div>
         </EditorModal>
       )}

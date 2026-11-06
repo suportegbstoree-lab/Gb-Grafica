@@ -11,6 +11,7 @@ export interface StaffDocumentView {
   ownerId: string;
   ownerName: string;
   templateName: string;
+  outputName?: string;
   productId: string;
   templateId: string;
   createdAt: string;

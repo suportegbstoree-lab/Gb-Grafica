@@ -21,6 +21,7 @@ export function staffDocumentView(id: string, data: any) {
     ownerId: data.ownerId,
     ownerName: data.ownerName,
     templateName: data.templateName,
+    ...(typeof data.outputName === "string" ? { outputName: data.outputName } : {}),
     productId: data.productId,
     templateId: data.templateId,
     createdAt: data.createdAt,

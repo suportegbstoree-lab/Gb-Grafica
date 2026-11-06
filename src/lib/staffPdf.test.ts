@@ -7,6 +7,8 @@ import {
   matchPdfLayout,
   normalizeStaffPdfJob,
   newPdfLine,
+  DEFAULT_PDF_TEXT_EFFECTS,
+  staffPdfOutputName,
   layoutFont,
 } from "./staffPdf";
 import { selectedColumnsCsv, safeCsvCell, excelColumn } from "./spreadsheetCsv";
@@ -92,12 +94,42 @@ test("each staff line has its own geometry and frozen recipe accepts only active
       fonts,
     ),
   );
+  const effects = {
+    ...DEFAULT_PDF_TEXT_EFFECTS,
+    bold: true,
+    opacity: 65,
+    outline: true,
+    curve: -30,
+    letterSpacing: 20,
+  };
+  const formatted = normalizeStaffPdfJob(
+    {
+      ...job,
+      outputName: "Pedido 00123",
+      lines: [{ ...line, text: "one\ntwo", effects }],
+    },
+    fonts,
+  );
+  assert.equal(formatted.lines[0].text, "one\ntwo");
+  assert.deepEqual(formatted.lines[0].effects, effects);
+  assert.equal(formatted.outputName, "Pedido 00123");
+  assert.equal(staffPdfOutputName("  Nº 123/456.pdf  "), "Nº 123_456");
+  assert.throws(() =>
+    normalizeStaffPdfJob({ ...job, outputName: "../Outro" }, fonts),
+  );
   assert.throws(() =>
     normalizeStaffPdfJob(
-      { ...job, lines: [{ ...line, text: "one\ntwo" }] },
+      { ...job, lines: [{ ...line, effects: { opacity: 150 } }] },
       fonts,
     ),
   );
+  assert.throws(() =>
+    normalizeStaffPdfJob(
+      { ...job, lines: [{ ...line, text: "one\r\ntwo" }] },
+      fonts,
+    ),
+  );
+
   assert.throws(() =>
     normalizeStaffPdfJob({ ...job, lines: [line, line] }, fonts),
   );

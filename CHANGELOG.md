@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-05
+## Última atualização: 2026-11-06
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -43,6 +43,13 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-06 — Fluxo de pedidos na oficina de PDFs
+
+- A oficina da equipe reúne configuração do pedido, edição direta sobre a prévia, navegação por página, zoom e fila principal. O editor de texto aplica negrito, opacidade, contorno, curvatura e espaçamentos na prévia e no PDF gerado. O editor de moldes permite arrastar e redimensionar a caixa de texto.
+- A conversão XLSX usa as colunas escolhidas para produzir o CSV que alimenta os pedidos. A oficina também importa CSV pronto, associa bases e moldes pelo modelo informado e permite corrigir as associações antes de adicionar à fila.
+- Pedidos manuais e importados passam pela mesma fila para revisão, edição e geração. A fila pode ser salva e recuperada em JSON, pausada após o pedido atual e limpa dos itens já concluídos. Os arquivos internos podem receber nome próprio.
+- PDFs de quatro páginas preservam a arte original e os versos. A edição de texto acontece nas páginas 1 e 3, com as coordenadas do molde de retrato e paisagem.
 
 ## 2026-11-05 — Modelos de e-mail publicados pela API do Resend
 

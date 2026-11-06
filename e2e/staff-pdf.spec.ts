@@ -18,6 +18,9 @@ test("staff queue snapshots independent lines, supports revision and exports fou
     exact: true,
   });
   await modal.getByLabel("Texto da linha interna", { exact: true }).fill("ANA");
+  await modal.getByLabel("Negrito", { exact: true }).check();
+  await modal.getByLabel("Contorno", { exact: true }).check();
+  await modal.getByLabel("Curvatura", { exact: true }).fill("20");
   await modal
     .getByRole("button", { name: "Adicionar linha de texto", exact: true })
     .click();
@@ -102,7 +105,7 @@ test("template and generation tools are independently hidden", async ({
     page.getByRole("button", { name: "Edição e fila", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "XLSX para CSV", exact: true }),
+    page.getByRole("button", { name: "Planilha e CSV", exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Criar molde", exact: true }),
@@ -125,16 +128,14 @@ test("XLSX conversion exports only checked columns and preserves literal codes",
   });
   await page.goto("/__e2e/staff-pdf");
   await page
-    .getByRole("button", { name: "XLSX para CSV", exact: true })
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
     .click();
-  await page
-    .getByLabel("Arquivo XLSX", { exact: true })
-    .setInputFiles({
-      name: "dados.xlsx",
-      mimeType:
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      buffer: Buffer.from(bytes),
-    });
+  await page.getByLabel("Arquivo XLSX", { exact: true }).setInputFiles({
+    name: "dados.xlsx",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    buffer: Buffer.from(bytes),
+  });
   await page.getByLabel("C · Ignorar", { exact: true }).uncheck();
   const downloading = page.waitForEvent("download");
   await page
@@ -146,4 +147,79 @@ test("XLSX conversion exports only checked columns and preserves literal codes",
   expect(csv).toContain("Código");
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
+
+  await page
+    .getByRole("button", { name: "Converter e revisar pedidos" })
+    .click();
+  const record = page.getByRole("row").filter({ hasText: "00123" });
+  await expect(record).toContainText("Ana");
+  await record
+    .getByLabel("Base do registro 2")
+    .selectOption({ label: "Kit de teste.pdf" });
+  await expect(record.getByLabel("Molde do registro 2")).toHaveValue(
+    "b".repeat(32),
+  );
+  await page
+    .getByRole("button", {
+      name: "Adicionar 1 pedido(s) da página à fila",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("article")).toContainText("Kit de teste_00123");
+  await page.getByRole("button", { name: "Editar item da fila" }).click();
+  await expect(page.getByLabel("Texto principal", { exact: true })).toHaveValue(
+    "Ana",
+  );
+  await page
+    .getByLabel("Texto principal", { exact: true })
+    .fill("ANA REVISADA");
+  await page.getByRole("button", { name: "Atualizar item da fila" }).click();
+  const savingQueue = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Salvar fila em JSON" }).click();
+  const queueFile = await savingQueue;
+  await page.getByRole("button", { name: "Excluir da fila" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Excluir da fila" })
+    .click();
+  await page
+    .getByLabel("Carregar fila JSON")
+    .setInputFiles((await queueFile.path())!);
+  await expect(page.getByRole("article")).toContainText("ANA REVISADA");
+  await page.getByRole("button", { name: "Processar fila" }).click();
+  await expect(page.getByRole("article")).toContainText("Concluído");
+  const savingPdf = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar PDF-TEST-1" }).click();
+  expect((await savingPdf).suggestedFilename()).toBe("Kit de teste_00123.pdf");
+});
+
+test("desktop CSV matches its model and flags unknown records before processing", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page.getByRole("button", { name: "Importar CSV ou XLSX" }).click();
+  await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
+    name: "pedidos.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "pedido_plataforma,barcode,af_clean,nome,prazo_envio\r\n00123,,Kit de teste,ANA,\r\n00124,,Desconhecido,BIA,",
+    ),
+  });
+  const known = page.getByRole("row").filter({ hasText: "00123" });
+  const unknown = page.getByRole("row").filter({ hasText: "00124" });
+  await expect(known.getByLabel("Molde do registro 2")).toHaveValue(
+    "b".repeat(32),
+  );
+  await expect(unknown).toContainText("Confira a base e o molde.");
+  await page
+    .getByRole("button", {
+      name: "Adicionar 1 pedido(s) da página à fila",
+      exact: true,
+    })
+    .click();
+  await expect(unknown).toBeVisible();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(page.getByRole("article")).toContainText("ANA");
 });
