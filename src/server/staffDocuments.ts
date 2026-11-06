@@ -1,5 +1,6 @@
 import { randomUUID, createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
+import { resendEmailContent } from "./resendEmailTemplates.js";
 import express from "express";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import { FieldValue } from "firebase-admin/firestore";
@@ -638,6 +639,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
             ownerId: user.uid,
             to,
             from: config.from,
+            replyTo: config.replyTo,
             documentId: req.params.id,
             url,
             status: "pending",
@@ -677,15 +679,23 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
           job.status = "needs_review";
           return;
         }
+        const emailContent = job.emailContent ?? {
+          subject: `GB Gráfica · ${data.reference}`,
+          ...resendEmailContent("staff-document", {
+            text: `O PDF gerado pela GB Gráfica está disponível até ${new Date(data.expiresAt).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.\n\n${job.url}\n\n${data.size <= 8 * 1024 * 1024 ? "O documento também está anexado." : "Use o link para baixar o documento em qualidade integral."}`,
+          }, !job.attempts),
+        };
         tx.set(
           jobRef,
           {
             lockNonce: nonce,
             lockUntil: now() + 60000,
             attempts: Number(job.attempts || 0) + 1,
+            emailContent,
           },
           { merge: true },
         );
+        job = { ...job, emailContent };
       });
       if (["accepted", "needs_review"].includes(job.status)) {
         res.json({ status: job.status });
@@ -717,9 +727,9 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
             },
             body: JSON.stringify({
               from: job.from,
+              ...(job.replyTo ? { reply_to: job.replyTo } : {}),
               to: [to],
-              subject: `GB Gráfica · ${data.reference}`,
-              text: `O PDF gerado pela GB Gráfica está disponível até ${new Date(data.expiresAt).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.\n\n${job.url}\n\n${attachment.length ? "O documento também está anexado." : "Use o link para baixar o documento em qualidade integral."}`,
+              ...job.emailContent,
               attachments: attachment,
             }),
             redirect: "error",

@@ -31,7 +31,9 @@
     "pagbank:check": "node --import tsx scripts/check-pagbank.ts",
     "pagbank:homologation:export": "node --import tsx scripts/export-pagbank-homologation.ts",
     "admin:sync": "tsx scripts/sync-admin-access.ts",
-    "email:check": "node --import tsx scripts/check-email.ts"
+    "email:check": "node --import tsx scripts/check-email.ts",
+    "email:setup": "node --import tsx scripts/setup-resend.ts",
+    "email:templates": "node --import tsx scripts/setup-resend-templates.ts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

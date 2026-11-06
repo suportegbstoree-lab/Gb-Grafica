@@ -31,6 +31,25 @@ test('mail retries are locked and idempotent; old ambiguous attempts require rev
     assert.equal(docs.get(`orders/${order.id}`)?.status, 'Pendente');
   } finally { if (old.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = old.key; if (old.from === undefined) delete process.env.ORDER_EMAIL_FROM; else process.env.ORDER_EMAIL_FROM = old.from; }
 });
+test('hosted purchase receipt retains support, template and PDF attachment on retry', async () => {
+  const previous = { RESEND_API_KEY: process.env.RESEND_API_KEY, ORDER_EMAIL_FROM: process.env.ORDER_EMAIL_FROM, EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO, RESEND_USE_HOSTED_TEMPLATES: process.env.RESEND_USE_HOSTED_TEMPLATES };
+  Object.assign(process.env, { RESEND_API_KEY: 'test-only', ORDER_EMAIL_FROM: 'store@example.test', EMAIL_REPLY_TO: 'suporte@example.test', RESEND_USE_HOSTED_TEMPLATES: 'true' });
+  try {
+    const { db } = memoryFirestore(); await createOrderWithDocuments(db, order.id, order, 'merchant@example.test');
+    const bodies: string[] = [], fetcher: typeof fetch = async (_url, options) => { bodies.push(String(options?.body)); return bodies.length === 1 ? Response.json({}, { status: 503 }) : Response.json({ id: 'provider-id' }); };
+    const id = `${order.id}-customer`, now = Date.now();
+    assert.equal(await sendOrderEmail(db, id, fetcher, now), 'pending');
+    process.env.ORDER_EMAIL_FROM = 'changed@example.test'; process.env.EMAIL_REPLY_TO = 'changed-support@example.test';
+    process.env.RESEND_USE_HOSTED_TEMPLATES = 'false';
+    assert.equal(await sendOrderEmail(db, id, fetcher, now + 16 * 60000), 'accepted');
+    assert.equal(bodies[0], bodies[1]);
+    const body = JSON.parse(bodies[0]);
+    assert.equal(body.reply_to, 'suporte@example.test');
+    assert.match(body.template.id, /^gb-order-received-[a-f0-9]{12}$/);
+    assert.equal(body.text, undefined);
+    assert.match(Buffer.from(body.attachments[0].content, 'base64').toString('utf8', 0, 5), /^%PDF-/);
+  } finally { for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value; }
+});
 test('production corrections use compare-and-swap and cancellation retains quantities/history', async () => {
   const { db, docs } = memoryFirestore(), id = '12345678-1234-4234-8234-123456789012', entry = { employeeId: 'worker', date: '2026-10-01', service: 'Impressão', unit: 'pecas' as const, completed: 12, rework: 0, loss: 0, reason: '', reference: '', notes: '' };
   await saveProduction(db, id, entry, 'admin'); await saveProduction(db, id, entry, 'admin');

@@ -3,6 +3,7 @@ import { FieldValue, type Firestore, type Transaction } from 'firebase-admin/fir
 import type { Auth, UserRecord } from 'firebase-admin/auth';
 import { fulfillmentStatusLabel, legacyFulfillmentStatus } from '../lib/orderStatus.js';
 import { emailAddress, emailConfiguration, unsubscribeToken } from './emailPreferences.js';
+import { resendEmailContent } from './resendEmailTemplates.js';
 const terminal = ['accepted', 'skipped', 'needs_review'];
 export const userKey = (uid: string) => createHash('sha256').update(uid).digest('hex');
 export async function prepareWelcomeEmail(db: Firestore, account: UserRecord, now = Date.now()) {
@@ -43,7 +44,8 @@ function message(job: any, account: UserRecord, prefs: any) {
     subject = job.subject; text = `${job.text}\n\nVocê recebeu esta mensagem porque autorizou ${job.channel === 'promotions' ? 'promoções' : 'novidades'} da GB Gráfica.\nDescadastrar: ${url}\nGerencie suas preferências na loja: ${config.origin}`;
     headers = { 'List-Unsubscribe': `<${url}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
   }
-  return { from: config.from, to: [emailAddress(account.email)], subject, text, html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#202431"><h1 style="color:#d14d8c;font-size:24px">GB Gráfica</h1>${text.split('\n').map(line => `<p>${escape(line).replace(/https:\/\/[^\s<]+/g, url => `<a href="${url}">${url}</a>`) || '&nbsp;'}</p>`).join('')}</div>`, ...(headers ? { headers } : {}), ...(emailAddress(process.env.EMAIL_REPLY_TO) ? { reply_to: emailAddress(process.env.EMAIL_REPLY_TO) } : {}) };
+  const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#202431"><h1 style="color:#d14d8c;font-size:24px">GB Gráfica</h1>${text.split('\n').map(line => `<p>${escape(line).replace(/https:\/\/[^\s<]+/g, url => `<a href="${url}">${url}</a>`) || '&nbsp;'}</p>`).join('')}</div>`;
+  return { from: job.kind === 'campaign' ? config.marketingFrom : config.from, to: [emailAddress(account.email)], subject, ...resendEmailContent(job.kind, { text, html }, !job.firstAttemptAt), ...(headers ? { headers } : {}), ...(config.replyTo ? { reply_to: config.replyTo } : {}) };
 }
 export async function sendCustomerEmail(db: Firestore, auth: Pick<Auth, 'getUser'>, id: string, fetcher: typeof fetch = fetch, now = Date.now()) {
   const ref = db.collection('_emailOutbox').doc(id), initial = (await ref.get()).data();
