@@ -397,13 +397,11 @@ test("ambiguous document email retries preserve the body and sender and stop aft
   const previous = {
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM,
-    EMAIL_REPLY_TO: process.env.EMAIL_REPLY_TO,
     APP_URL: process.env.APP_URL,
   };
   Object.assign(process.env, {
     RESEND_API_KEY: "test-key",
     EMAIL_FROM: "orders@example.test",
-    EMAIL_REPLY_TO: "suporte@example.test",
     APP_URL: "https://store.example.test",
   });
   try {
@@ -421,12 +419,10 @@ test("ambiguous document email retries preserve the body and sender and stop aft
       assert.equal(first.status, 202);
       assert.equal((await first.json()).status, "pending");
       process.env.EMAIL_FROM = "changed@example.test";
-      process.env.EMAIL_REPLY_TO = "changed-support@example.test";
       s.providerMode("accepted");
       const next = await s.call(path, body);
       assert.equal(next.status, 200);
       assert.equal(s.providerCalls[0].body, s.providerCalls[1].body);
-      assert.equal(JSON.parse(s.providerCalls[0].body).reply_to, "suporte@example.test");
       assert.equal(
         s.providerCalls[0].headers["Idempotency-Key"],
         s.providerCalls[1].headers["Idempotency-Key"],

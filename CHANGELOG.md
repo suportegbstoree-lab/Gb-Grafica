@@ -44,19 +44,6 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
-## 2026-11-04 — Ativação do Resend por API e remetentes separados
-
-- Adicionado `email:setup`: plano de leitura, cadastro de domínio ausente e solicitação de verificação com `--apply`, exibindo os registros DNS reais do Resend. Reutiliza domínios existentes e não altera DNS, recebimento, caixas, chaves ou campanhas.
-- `email:check -- --remote` consulta os domínios dos remetentes sem enviar mensagens; ferramentas locais respeitam `.env.local`, `.env` e variáveis já exportadas. Chave administrativa separada da chave de envio do servidor.
-- `EMAIL_MARKETING_FROM` permite usar `promo@` nas campanhas, preservando o remetente dos avisos transacionais e o consentimento/descadastro existentes.
-- `EMAIL_REPLY_TO` passa a alcançar também fichas de pedidos, avisos de cargos e PDFs internos. Novas tentativas preservam os dados da primeira tentativa.
-- Documentados DNS, variáveis, caixa de suporte, redeploy e limites do cron atual. Ativação externa e testes de entrega real ainda dependem de credenciais e configuração; nenhum e-mail foi enviado nesta alteração.
-
-## 2026-11-04 — Isolamento dos cenários de teste do painel
-
-- Suíte Playwright configurada para executar com um worker também no ambiente local. O servidor E2E compartilha catálogo, documentos e atividades em memória; cenários simultâneos podiam substituir os modelos usados por outro teste e causar “Modelo não encontrado” na geração de PDF da equipe.
-- Mantidas as verificações de geração, download, e-mail e compartilhamento. Nenhuma regra de acesso ou comportamento de produção foi alterado.
-
 ## 2026-11-04 — Oficina de PDFs da equipe e adaptação do programa Python
 
 - Biblioteca de PDFs internos independente de produtos, com upload privado, validação estática no servidor e suporte de uma a 16 páginas.

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Firestore } from 'firebase-admin/firestore';
 import { STAFF_ROLE_LABELS, isStaffRoleId, type AssignedRole } from '../lib/staffAccess.js';
-import { emailAddress } from './emailPreferences.js';
 
 export const STAFF_EMAIL_COLLECTION = '_staffNotifications';
 export type StaffEmailStatus = 'accepted' | 'pending' | 'not_configured';
@@ -27,13 +26,8 @@ export async function sendStaffEmail(db: Firestore, id: string, fetcher: typeof 
     if (data.lockUntil > Date.now()) return null;
     // Provider idempotency is finite; do not automatically repeat old ambiguous attempts.
     if (data.attempts > 0 && Date.now() - Date.parse(data.createdAt) > 23 * 60 * 60_000) return null;
-    const roleName = typeof data.roleName === 'string' ? data.roleName.slice(0, 80) : STAFF_ROLE_LABELS[data.role] || data.role;
-    const replyTo = emailAddress(process.env.EMAIL_REPLY_TO?.trim());
-    const payload = data.payload || { from: (process.env.STAFF_EMAIL_FROM || process.env.EMAIL_FROM)!.trim(), to: [data.email],
-      ...(replyTo && !data.attempts ? { reply_to: replyTo } : {}), subject: 'Sua função na GB Gráfica foi atualizada',
-      text: `Sua função foi atualizada para: ${roleName}.\n\n${data.role === 'none' ? 'Seu acesso ao painel foi removido.' : 'Saia e entre novamente na loja para atualizar sua sessão. As áreas disponíveis dependem das permissões da sua função.'}\n\nSe você não esperava esta alteração, entre em contato com a administração da loja.` };
-    transaction.update(ref, { payload, lockNonce: nonce, lockUntil: Date.now() + 60_000, attempts: Number(data.attempts || 0) + 1 });
-    return { accepted: false, payload } as const;
+    transaction.update(ref, { lockNonce: nonce, lockUntil: Date.now() + 60_000, attempts: Number(data.attempts || 0) + 1 });
+    return { accepted: false, email: data.email, role: data.role as AssignedRole, roleName: typeof data.roleName === 'string' ? data.roleName.slice(0, 80) : STAFF_ROLE_LABELS[data.role] || data.role } as const;
   });
   if (!locked) return 'pending';
   if (locked.accepted) return 'accepted';
@@ -41,7 +35,10 @@ export async function sendStaffEmail(db: Firestore, id: string, fetcher: typeof 
   try {
     const response = await fetcher('https://api.resend.com/emails', {
       method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY!.trim()}`, 'Content-Type': 'application/json', 'Idempotency-Key': `staff-role-${id}` },
-      body: JSON.stringify(locked.payload), signal: AbortSignal.timeout(8_000), redirect: 'error',
+      body: JSON.stringify({ from: (process.env.STAFF_EMAIL_FROM || process.env.EMAIL_FROM)!.trim(), to: [locked.email],
+        subject: 'Sua função na GB Gráfica foi atualizada',
+        text: `Sua função foi atualizada para: ${locked.roleName}.\n\n${locked.role === 'none' ? 'Seu acesso ao painel foi removido.' : 'Saia e entre novamente na loja para atualizar sua sessão. As áreas disponíveis dependem das permissões da sua função.'}\n\nSe você não esperava esta alteração, entre em contato com a administração da loja.`,
+      }), signal: AbortSignal.timeout(8_000), redirect: 'error',
     });
     const data = await response.json().catch(() => null);
     accepted = response.ok && typeof data?.id === 'string';

@@ -8,9 +8,7 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
-  // The E2E server shares mutable catalog, document and activity fixtures.
-  // Run one scenario at a time so another test cannot replace its catalog.
-  workers: 1,
+  workers: process.env.CI || executablePath ? 1 : undefined,
   reporter: 'list',
   expect: { timeout: 15_000 },
   outputDir: 'test-results',

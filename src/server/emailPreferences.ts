@@ -8,9 +8,7 @@ export function emailConfiguration() {
   const from = emailAddress(process.env.EMAIL_FROM || process.env.ORDER_EMAIL_FROM || process.env.STAFF_EMAIL_FROM);
   let origin = ''; try { const url = new URL(process.env.APP_URL || ''); if (url.protocol === 'https:' || (process.env.NODE_ENV !== 'production' && url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) origin = url.origin; } catch {}
   const configured = Boolean(process.env.RESEND_API_KEY?.trim() && from && origin);
-  const marketingFrom = process.env.EMAIL_MARKETING_FROM?.trim() ? emailAddress(process.env.EMAIL_MARKETING_FROM.trim()) : from;
-  const replyTo = emailAddress(process.env.EMAIL_REPLY_TO?.trim());
-  return { from, marketingFrom, replyTo, origin, configured, marketingConfigured: configured && Boolean(marketingFrom) && (process.env.EMAIL_UNSUBSCRIBE_SECRET?.length || 0) >= 32 };
+  return { from, origin, configured, marketingConfigured: configured && (process.env.EMAIL_UNSUBSCRIBE_SECRET?.length || 0) >= 32 };
 }
 export async function readEmailPreferences(db: Firestore, account: UserRecord) {
   const value = (await db.collection('_emailPreferences').doc(account.uid).get()).data();
