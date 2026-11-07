@@ -7,6 +7,8 @@ import {
   matchPdfLayout,
   normalizeStaffPdfJob,
   newPdfLine,
+  fixedStaffPdfMain,
+  STAFF_PDF_SYSTEM_FONT,
   DEFAULT_PDF_TEXT_EFFECTS,
   staffPdfOutputName,
   layoutFont,
@@ -163,4 +165,27 @@ test("XLSX CSV export preserves selected column order, quotes, newlines, zeros a
   assert.equal(safeCsvCell("-12.5"), '"-12.5"');
   assert.throws(() => selectedColumnsCsv([], []));
   assert.throws(() => selectedColumnsCsv([], [-1]));
+});
+
+test("staff molds can use inactive fonts and fall back to the system font", () => {
+  const layout = { ...defaultPdfLayout(), font_name: "FreeMono.otf" };
+  assert.equal(
+    newPdfLine(layout, [{ ...fonts[0], ativo: false }]).fontId,
+    "mono",
+  );
+  assert.equal(newPdfLine(layout, []).fontId, STAFF_PDF_SYSTEM_FONT.id);
+  const line = newPdfLine(layout, fonts);
+  const restored = fixedStaffPdfMain(layout, {
+    ...line,
+    text: "ANA",
+    color: "#990000",
+    fontSize: 120,
+    effects: DEFAULT_PDF_TEXT_EFFECTS,
+    portrait: { ...line.portrait, x: 0 },
+  });
+  assert.equal(restored.text, "ANA");
+  assert.equal(restored.fontSize, 120);
+  assert.equal(restored.color, layout.color);
+  assert.equal(restored.portrait.x, layout.pos_x);
+  assert.equal(restored.effects, undefined);
 });

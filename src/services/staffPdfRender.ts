@@ -1,6 +1,7 @@
 import { PDFDocument, degrees } from "pdf-lib";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
+  staffPdfFont,
   STAFF_PDF_DPI,
   STAFF_PDF_MAX_PAGES,
   type StaffPdfLine,
@@ -21,8 +22,9 @@ export async function prepareStaffPdfFonts(
   const faces: FontFace[] = [];
   try {
     for (const id of new Set(lines.map((line) => line.fontId))) {
-      const font = fonts.find((f) => f.id === id && f.ativo);
-      if (!font) throw new Error("Escolha uma fonte ativa para cada linha.");
+      const font = staffPdfFont(id, fonts);
+      if (!font)
+        throw new Error("Escolha uma fonte cadastrada para cada linha.");
       if (font.arquivoUrl) {
         const face = await new FontFace(
           font.cssFamily,
@@ -44,9 +46,11 @@ export async function prepareStaffPdfFonts(
 function drawFormattedLine(
   context: CanvasRenderingContext2D,
   line: StaffPdfLine,
-  box: PdfTextBox,
+  anchor: PdfTextBox,
   family: string,
   fitMargin: number,
+  pageWidth: number,
+  pageHeight: number,
 ) {
   const effects = line.effects ?? DEFAULT_PDF_TEXT_EFFECTS;
   const size = line.fontSize;
@@ -65,7 +69,19 @@ function drawFormattedLine(
   const widthOf = (text: string) =>
     context.measureText(text).width +
     Math.max(0, glyphs(text).length - 1) * gap;
-  const maxWidth = box.width * (1 - fitMargin);
+  const dynamic = line.kind === "extra";
+  const blurMargin = Math.max(
+    effects.glow ? effects.glow.intensity * 2 : 0,
+    effects.shadow
+      ? Math.max(Math.abs(effects.shadow.x), Math.abs(effects.shadow.y)) +
+          effects.shadow.blur * 2
+      : 0,
+  );
+  const padding = blurMargin + (effects.outline ? effects.outlineWidth : 0);
+  const bend = (size * effects.curve) / 100;
+  const maxWidth = dynamic
+    ? Math.max(1, pageWidth - padding * 2 - (bend ? size : size * 0.15))
+    : anchor.width * (1 - fitMargin);
   const rows = line.text.split("\n").flatMap((paragraph) => {
     const result: string[] = [];
     let text = "";
@@ -75,6 +91,16 @@ function drawFormattedLine(
         result.push(text);
         text = word;
       } else text = candidate;
+      if (dynamic && widthOf(text) > maxWidth) {
+        let part = "";
+        for (const glyph of glyphs(text)) {
+          if (part && widthOf(part + glyph) > maxWidth) {
+            result.push(part);
+            part = glyph;
+          } else part += glyph;
+        }
+        text = part;
+      }
     }
     return [...result, text];
   });
@@ -82,8 +108,6 @@ function drawFormattedLine(
   const ascent = metrics.actualBoundingBoxAscent || size * 0.8;
   const descent = metrics.actualBoundingBoxDescent || size * 0.2;
   const pitch = size * effects.lineSpacing;
-  const bend = (size * effects.curve) / 100;
-  const padding = effects.outline ? effects.outlineWidth : 0;
   const widths = rows.map(widthOf);
   const textWidth = Math.max(1, ...widths);
   const height = ascent + descent + Math.abs(bend) + (rows.length - 1) * pitch;
@@ -96,10 +120,20 @@ function drawFormattedLine(
   const rotatedHeight = width * sin + outerHeight * cos;
   const scale = Math.min(
     1,
-    maxWidth / rotatedWidth,
-    (box.height * (1 - fitMargin)) / rotatedHeight,
+    (dynamic ? pageWidth : maxWidth) / rotatedWidth,
+    (dynamic ? pageHeight : anchor.height * (1 - fitMargin)) / rotatedHeight,
   );
   const inkWidth = rotatedWidth * scale;
+  const inkHeight = rotatedHeight * scale;
+  const box = dynamic
+    ? {
+        x: Math.max(0, Math.min(pageWidth - inkWidth, anchor.x)),
+        y: Math.max(0, Math.min(pageHeight - inkHeight, anchor.y)),
+        width: inkWidth,
+        height: inkHeight,
+      }
+    : anchor;
+  if (dynamic) context.translate(box.x, box.y);
   const centerX =
     line.align === "left"
       ? inkWidth / 2
@@ -110,7 +144,39 @@ function drawFormattedLine(
   context.rotate(radians);
   context.scale(scale, scale);
   function paint(text: string, x: number, y: number) {
-    if (effects.outline) context.strokeText(text, x, y);
+    for (const layer of [
+      effects.glow && {
+        x: 0,
+        y: 0,
+        blur: effects.glow.intensity,
+        color: effects.glow.color,
+      },
+      effects.shadow,
+    ]) {
+      if (!layer) continue;
+      const transform = context.getTransform();
+      context.save();
+      // Canvas shadow offsets are device-space. Shift the source outside the
+      // clip and bring only the shadow back, preserving fill opacity.
+      const distance = pageWidth + pageHeight + 1000;
+      context.shadowOffsetX =
+        transform.a * layer.x + transform.c * layer.y + distance;
+      context.shadowOffsetY = transform.b * layer.x + transform.d * layer.y;
+      context.shadowBlur = layer.blur * scale;
+      context.shadowColor = layer.color;
+      context.translate(
+        (-distance * transform.a) / (scale * scale),
+        (-distance * transform.c) / (scale * scale),
+      );
+      context.fillText(text, x, y);
+      context.restore();
+    }
+    if (effects.outline) {
+      context.save();
+      context.globalAlpha *= (effects.outlineOpacity ?? 100) / 100;
+      context.strokeText(text, x, y);
+      context.restore();
+    }
     context.fillText(text, x, y);
   }
   rows.forEach((text, index) => {
@@ -142,6 +208,7 @@ function drawFormattedLine(
       prefix += glyph;
     });
   });
+  return box;
 }
 
 /** One shared renderer drives previews and final 300-DPI transparent overlays. */
@@ -154,6 +221,7 @@ export function drawStaffPdfText(
   orientation: PdfTextLayout,
   fitMargin = 0.2,
 ) {
+  const boxes = new Map<string, PdfTextBox>();
   const landscape = orientation === "landscape";
   const canvasWidth = landscape ? height : width,
     canvasHeight = landscape ? width : height;
@@ -161,13 +229,14 @@ export function drawStaffPdfText(
     if (!line.text) continue;
     const box = line[orientation];
     if (
-      box.x + box.width > canvasWidth + 1 ||
-      box.y + box.height > canvasHeight + 1
+      line.kind !== "extra" &&
+      (box.x + box.width > canvasWidth + 1 ||
+        box.y + box.height > canvasHeight + 1)
     )
       throw new Error(
         "A caixa de texto está fora da página. Ajuste a geometria.",
       );
-    if (!fonts.some((font) => font.id === line.fontId && font.ativo))
+    if (!staffPdfFont(line.fontId, fonts))
       throw new Error("Fonte não encontrada.");
   }
   context.save();
@@ -181,14 +250,39 @@ export function drawStaffPdfText(
   for (const line of lines) {
     if (!line.text) continue;
     const box = line[orientation],
-      font = fonts.find((font) => font.id === line.fontId && font.ativo)!;
+      font = staffPdfFont(line.fontId, fonts)!;
     context.save();
+    if (line.kind === "extra") {
+      boxes.set(
+        line.id,
+        drawFormattedLine(
+          context,
+          line,
+          box,
+          font.cssFamily,
+          0,
+          canvasWidth,
+          canvasHeight,
+        ),
+      );
+      context.restore();
+      continue;
+    }
+    boxes.set(line.id, box);
     context.translate(box.x, box.y);
     context.beginPath();
     context.rect(0, 0, box.width, box.height);
     context.clip();
     if (line.effects || line.text.includes("\n")) {
-      drawFormattedLine(context, line, box, font.cssFamily, fitMargin);
+      drawFormattedLine(
+        context,
+        line,
+        box,
+        font.cssFamily,
+        fitMargin,
+        canvasWidth,
+        canvasHeight,
+      );
       context.restore();
       continue;
     }
@@ -231,6 +325,7 @@ export function drawStaffPdfText(
     context.restore();
   }
   context.restore();
+  return boxes;
 }
 export function editedStaffPdfPage(
   pageIndex: number,

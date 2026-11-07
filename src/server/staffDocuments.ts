@@ -5,11 +5,12 @@ import express from "express";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import { FieldValue } from "firebase-admin/firestore";
 import { isTemplatePath } from "../lib/pdfTemplate.js";
-import { normalizeStaffPdfJob, STAFF_PDF_MAX_PAGES } from '../lib/staffPdf.js';
+import { fixedStaffPdfMain, normalizeStaffPdfJob, STAFF_PDF_MAX_PAGES } from '../lib/staffPdf.js';
 import { resolveStaffPdfBase } from './staffPdfLibrary.js';
 import {
   normalizeTextCustomization,
   activePersonalizationFonts,
+  normalizePersonalizationFonts,
 } from "../lib/textCustomization.js";
 import {
   STAFF_DOCUMENT_TTL_MS,
@@ -287,11 +288,19 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
         ).data();
       let t: any, text: any, expectedPageCount = 2, canonicalJob: any;
       if (staffJob !== undefined) {
-        try { canonicalJob = normalizeStaffPdfJob(staffJob, activePersonalizationFonts(config?.fontes_personalizacao)); }
+        try { canonicalJob = normalizeStaffPdfJob(staffJob, normalizePersonalizationFonts(config?.fontes_personalizacao)); }
         catch (error) { throw new OperationsError((error as Error).message); }
         const base = await resolveStaffPdfBase(services(), canonicalJob.baseId);
         const mold = (await services().db.collection('_staffPdfLayouts').doc(canonicalJob.layoutId).get()).data();
         if (base.revision !== canonicalJob.baseRevision || !mold?.enabled || mold.revision !== canonicalJob.layoutRevision) throw new OperationsError('A base ou o molde mudou. Abra a edição novamente.',409);
+        if (canonicalJob.lines[0].kind === "main") {
+          const main = canonicalJob.lines[0];
+          const fixed = fixedStaffPdfMain(mold.layout, main);
+          if (main.effects || main.color !== fixed.color || main.align !== fixed.align ||
+              main.rotation !== fixed.rotation || JSON.stringify(main.portrait) !== JSON.stringify(fixed.portrait) ||
+              JSON.stringify(main.landscape) !== JSON.stringify(fixed.landscape))
+            throw new OperationsError("A área principal deve seguir a configuração do molde.");
+        }
         const file = services().bucket.file(base.path,base.generation?{generation:base.generation}:undefined), [meta] = await file.getMetadata();
         if (meta.contentType !== 'application/pdf' || Number(meta.size) > STAFF_DOCUMENT_MAX_BYTES) throw new OperationsError('Base inválida.');
         const [bytes] = await file.download();

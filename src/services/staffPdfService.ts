@@ -25,7 +25,11 @@ export interface StaffPdfLibrary {
 export interface StaffPdfApi {
   list(): Promise<StaffPdfLibrary>;
   baseFile(id: string): Promise<Blob>;
-  uploadBase(file: File, requestId: string): Promise<void>;
+  uploadBase(
+    file: File,
+    requestId: string,
+    replacement?: Pick<StaffPdfBase, "id" | "name" | "revision">,
+  ): Promise<void>;
   deleteBase(id: string): Promise<void>;
   saveLayout(
     name: string,
@@ -103,7 +107,7 @@ export const staffPdfApi: StaffPdfApi = {
     readStaffPdf(
       (await staffPdfRequest(`/bases/${encodeURIComponent(id)}/file`)).url,
     ),
-  uploadBase: async (file, requestId) => {
+  uploadBase: async (file, requestId, replacement) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
     if (
@@ -114,8 +118,13 @@ export const staffPdfApi: StaffPdfApi = {
     )
       throw new Error("Envie um PDF válido de até 50 MB.");
     const pending = await staffPdfRequest("/bases", {
-      name: file.name,
+      name: replacement?.name ?? file.name,
       requestId,
+      ...(replacement
+        ? {
+            replacement: { id: replacement.id, revision: replacement.revision },
+          }
+        : {}),
     });
     if (pending.ready) return;
     if (

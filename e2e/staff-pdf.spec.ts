@@ -8,37 +8,38 @@ test("staff queue snapshots independent lines, supports revision and exports fou
 }) => {
   await page.goto("/__e2e/staff-pdf");
   await page
-    .getByLabel("Base PDF da equipe", { exact: true })
-    .selectOption({ label: "Kit de teste.pdf · Interno" });
-  await page
-    .getByRole("button", { name: "Editar texto e geometria", exact: true })
+    .getByRole("button", { name: "Buscar base PDF", exact: true })
     .click();
-  const modal = page.getByRole("dialog", {
-    name: "Editar texto do PDF interno",
+  const picker = page.getByRole("dialog", {
+    name: "Buscar base PDF",
     exact: true,
   });
-  await modal.getByLabel("Texto da linha interna", { exact: true }).fill("ANA");
-  await modal.getByLabel("Negrito", { exact: true }).check();
-  await modal.getByLabel("Contorno", { exact: true }).check();
-  await modal.getByLabel("Curvatura", { exact: true }).fill("20");
-  await modal
+  await picker.getByLabel("Filtrar por nome").fill("Kit");
+  await picker
+    .getByRole("button", { name: "Kit de teste.pdf · Interno", exact: true })
+    .click();
+  await page.getByLabel("Texto principal", { exact: true }).fill("ANA");
+  await expect(
+    page.getByRole("group", { name: "Formatação do texto" }),
+  ).toHaveCount(0);
+  await page
     .getByRole("button", { name: "Adicionar linha de texto", exact: true })
     .click();
-  await modal
-    .getByLabel("Texto da linha interna", { exact: true })
-    .fill("SEGUNDA");
-  await modal
-    .getByLabel("Tamanho da linha interna", { exact: true })
-    .fill("90");
-  await modal
-    .getByLabel("Página da prévia interna", { exact: true })
-    .selectOption("3");
-  await expect(modal.getByRole("status")).toHaveCount(0);
-  await expect(modal.getByRole("alert")).toHaveCount(0);
-  await modal
-    .getByRole("button", { name: "Aplicar texto à edição", exact: true })
-    .click();
-  await expect(modal).toHaveCount(0);
+  const toolbar = page.getByRole("group", { name: "Formatação do texto" });
+  await toolbar.getByLabel("Texto da linha extra").fill("SEGUNDA");
+  await toolbar.getByLabel("Tamanho (px)", { exact: true }).fill("90");
+  await toolbar.getByRole("button", { name: "Negrito" }).click();
+  await toolbar.getByRole("button", { name: "Efeitos" }).click();
+  await toolbar.getByLabel("Contorno", { exact: true }).check();
+  await toolbar.getByLabel("Sombra", { exact: true }).check();
+  await toolbar.getByLabel("Brilho", { exact: true }).check();
+  await toolbar.getByLabel("Curvatura", { exact: true }).fill("20");
+  await page.getByLabel("Página da prévia interna").selectOption("3");
+  await toolbar
+    .getByLabel("Texto selecionado")
+    .selectOption({ label: "Texto principal" });
+  await expect(toolbar.getByRole("button", { name: "Efeitos" })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "Negrito" })).toHaveCount(0);
   await page
     .getByRole("button", { name: "Adicionar à fila", exact: true })
     .click();
@@ -46,20 +47,13 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   await page
     .getByRole("button", { name: "Editar item da fila", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Editar texto e geometria", exact: true })
-    .click();
-  await modal.getByRole("button", { name: "Linha 2", exact: true }).click();
-  await expect(
-    modal.getByLabel("Tamanho da linha interna", { exact: true }),
-  ).toHaveValue("90");
-  await modal
-    .getByLabel("Texto da linha interna", { exact: true })
-    .fill("REVISADA");
-  await modal
-    .getByRole("button", { name: "Aplicar texto à edição", exact: true })
-    .click();
-  await expect(modal).toHaveCount(0);
+  await toolbar
+    .getByLabel("Texto selecionado")
+    .selectOption({ label: "Linha extra 1" });
+  await expect(toolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue(
+    "90",
+  );
+  await toolbar.getByLabel("Texto da linha extra").fill("REVISADA");
   await page
     .getByRole("button", { name: "Atualizar item da fila", exact: true })
     .click();
@@ -111,7 +105,7 @@ test("template and generation tools are independently hidden", async ({
     page.getByRole("button", { name: "Criar molde", exact: true }),
   ).toBeVisible();
 });
-test("XLSX conversion exports only checked columns and preserves literal codes", async ({
+test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   page,
 }) => {
   const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -123,7 +117,7 @@ test("XLSX conversion exports only checked columns and preserves literal codes",
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Código</t></is></c><c r="C1" t="inlineStr"><is><t>Ignorar</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>Fora</t></is></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="D1" t="inlineStr"><is><t>Ignorar</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf");
@@ -136,7 +130,7 @@ test("XLSX conversion exports only checked columns and preserves literal codes",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(bytes),
   });
-  await page.getByLabel("C · Ignorar", { exact: true }).uncheck();
+  await page.getByLabel("SKU", { exact: true }).fill("C");
   const downloading = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Baixar CSV selecionado", exact: true })
@@ -144,7 +138,8 @@ test("XLSX conversion exports only checked columns and preserves literal codes",
   const file = await downloading;
   const csv = await readFile((await file.path())!, "utf8");
   expect(csv).toContain("00123");
-  expect(csv).toContain("Código");
+  expect(csv).toContain('"pedido_plataforma","barcode","af_clean","nome"');
+  expect(csv).toContain('"Kit de teste"');
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
 

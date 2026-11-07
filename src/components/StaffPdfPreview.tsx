@@ -5,7 +5,12 @@ import {
   editedStaffPdfPage,
   prepareStaffPdfFonts,
 } from "../services/staffPdfRender";
-import type { PdfTextBox, PdfTextLayout, StaffPdfLine } from "../lib/staffPdf";
+import {
+  staffPdfFont,
+  type PdfTextBox,
+  type PdfTextLayout,
+  type StaffPdfLine,
+} from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import {
   centeredInitialBox,
@@ -69,6 +74,7 @@ export default function StaffPdfPreview({
   const [fontError, setFontError] = React.useState("");
   const [readyFonts, setReadyFonts] = React.useState("");
   const canvas = React.useRef<HTMLCanvasElement>(null);
+  const boxes = React.useRef(new Map<string, PdfTextBox>());
   const viewport = React.useRef<HTMLDivElement>(null);
   const dragging = React.useRef<{
     id: string;
@@ -127,7 +133,7 @@ export default function StaffPdfPreview({
     setReadyFonts("");
     setFontError("");
     const used = (JSON.parse(fontIds) as string[]).filter((id) =>
-      fonts.some((font) => font.ativo && font.id === id),
+      Boolean(staffPdfFont(id, fonts)),
     );
     void prepareStaffPdfFonts(
       used.map((fontId) => ({ fontId })),
@@ -171,6 +177,7 @@ export default function StaffPdfPreview({
       ctx = c?.getContext("2d");
     if (!c || !ctx || !image) return;
     setDrawError("");
+    boxes.current.clear();
     c.width = image.width;
     c.height = image.height;
     ctx.drawImage(image, 0, 0);
@@ -186,10 +193,10 @@ export default function StaffPdfPreview({
     }
     if (!orientation || readyFonts !== fontIds) return;
     const valid = lines.filter((line) =>
-      fonts.some((font) => font.ativo && font.id === line.fontId),
+      Boolean(staffPdfFont(line.fontId, fonts)),
     );
     try {
-      drawStaffPdfText(
+      boxes.current = drawStaffPdfText(
         ctx,
         c.width,
         c.height,
@@ -209,7 +216,7 @@ export default function StaffPdfPreview({
         ctx.translate(c.width, 0);
         ctx.rotate(Math.PI / 2);
       }
-      const box = current[orientation];
+      const box = boxes.current.get(current.id) ?? current[orientation];
       ctx.strokeStyle = "#ec4899";
       ctx.lineWidth = Math.max(c.width / 400, 2);
       ctx.setLineDash([ctx.lineWidth * 3, ctx.lineWidth * 2]);
@@ -262,10 +269,14 @@ export default function StaffPdfPreview({
   const lineAt = (p: { x: number; y: number }, o: PdfTextLayout) =>
     [...lines]
       .reverse()
-      .find((line) => (line.text || line.id === selected) && hit(p, line[o]));
+      .find(
+        (line) =>
+          (line.text || line.id === selected) &&
+          hit(p, boxes.current.get(line.id) ?? line[o]),
+      );
   const move = (line: StaffPdfLine, x: number, y: number, o: PdfTextLayout) => {
-    if (!image) return;
-    const box = line[o];
+    if (!image || line.kind === "main") return;
+    const box = boxes.current.get(line.id) ?? line[o];
     const [width, height] =
       o === "portrait"
         ? [image.width, image.height]
@@ -413,7 +424,8 @@ export default function StaffPdfPreview({
             const line = resize ? current : lineAt(p, orientation);
             if (!line) return;
             onSelect?.(line.id);
-            const b = line[orientation];
+            if (line.kind === "main") return;
+            const b = boxes.current.get(line.id) ?? line[orientation];
             dragging.current = {
               id: line.id,
               x: p.x - b.x,
@@ -465,7 +477,7 @@ export default function StaffPdfPreview({
             if (!offset || !line) return;
             e.preventDefault();
             const step = e.shiftKey ? 50 : 5,
-              box = line[orientation];
+              box = boxes.current.get(line.id) ?? line[orientation];
             const [x, y] =
               orientation === "portrait" ? offset : [offset[1], -offset[0]];
             move(line, box.x + x * step, box.y + y * step, orientation);

@@ -44,6 +44,14 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-06 — Ajustes da oficina de PDFs após revisão do cliente
+
+- Lupas junto aos seletores abrem a busca por base e molde. A barra de formatação acima da prévia aparece ao adicionar texto extra. O bloco principal segue a geometria e o estilo do molde, com ajustes de fonte e tamanho.
+- Linhas extras têm caixa ajustada ao texto, quebra automática e arraste limitado à página. A prévia e a exportação usam os mesmos controles de sombra, contorno, brilho, curvatura, espaçamento e transparência.
+- A oficina consulta fontes cadastradas mesmo quando estão inativas para a loja. Fontes ausentes geram aviso e usam o padrão do sistema.
+- Bases PDF e moldes JSON aceitam arrastar e soltar. Uma base interna com o mesmo nome só é substituída após confirmação e validação do novo PDF. Vários moldes podem ser associados à mesma base.
+- A planilha mapeia SKU, notas do comprador, rastreio, prazo de envio e quantidade por letra ou cabeçalho. A conversão normaliza os nomes de molde no SKU e envia o CSV para revisão na fila.
+
 ## 2026-11-06 — Fluxo de pedidos na oficina de PDFs
 
 - A oficina da equipe reúne configuração do pedido, edição direta sobre a prévia, navegação por página, zoom e fila principal. O editor de texto aplica negrito, opacidade, contorno, curvatura e espaçamentos na prévia e no PDF gerado. O editor de moldes permite arrastar e redimensionar a caixa de texto.

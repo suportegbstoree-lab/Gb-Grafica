@@ -1,382 +1,393 @@
 import React from "react";
-import EditorModal from "./EditorModal";
-import StaffPdfPreview from "./StaffPdfPreview";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
-  newPdfLine,
-  STAFF_PDF_MAX_LINES,
-  type StaffPdfLayout,
+  STAFF_PDF_SYSTEM_FONT,
   type StaffPdfLine,
   type StaffPdfTextEffects,
-  type PdfTextLayout,
 } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
-import type { StaffPdfApi } from "../services/staffPdfService";
-import { useStaffPdfInitial } from "./useStaffPdfInitial";
-const input =
-  "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-2";
-export default function StaffPdfTextEditor({
-  original,
-  pageCount,
-  layout,
-  fonts,
-  initialLines,
-  initialSelected,
-  onSave,
-  onClose,
-  api,
-  baseId,
+
+const field = "rounded border border-gray-700 bg-black px-2 py-1 text-sm";
+const button =
+  "rounded border border-gray-700 px-2 py-1 text-sm hover:bg-gray-800";
+
+function Slider({
+  label,
+  min,
+  max,
+  step = 1,
+  value,
+  onChange,
 }: {
-  original: Blob;
-  pageCount: number;
-  layout: StaffPdfLayout;
-  fonts: PersonalizationFont[];
-  initialLines: StaffPdfLine[];
-  initialSelected?: string;
-  onSave: (lines: StaffPdfLine[]) => void;
-  onClose: () => void;
-  api: StaffPdfApi;
-  baseId: string;
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  onChange: (value: number) => void;
 }) {
-  const [lines, setLines] = React.useState(() => structuredClone(initialLines)),
-    [selected, setSelected] = React.useState(
-      initialSelected || initialLines[0]?.id,
-    ),
-    [orientation, setOrientation] = React.useState<PdfTextLayout>("portrait"),
-    [error, setError] = React.useState("");
-  const current = lines.find((l) => l.id === selected),
-    update = (patch: Partial<StaffPdfLine>) =>
-      setLines((old) =>
-        old.map((l) => (l.id === selected ? { ...l, ...patch } : l)),
-      );
-  const effects = current?.effects ?? DEFAULT_PDF_TEXT_EFFECTS;
-  const updateEffects = (patch: Partial<StaffPdfTextEffects>) =>
-    update({ effects: { ...effects, ...patch } });
-  const { initial, initialError } = useStaffPdfInitial(
-    api,
-    baseId,
-    lines.map((l) => l.text).join(" "),
-    layout.imagem_full_page,
-  );
-  const move = React.useCallback(
-    (id: string, x: number, y: number, o: PdfTextLayout) =>
-      setLines((old) =>
-        old.map((l) => (l.id === id ? { ...l, [o]: { ...l[o], x, y } } : l)),
-      ),
-    [],
-  );
+  function update(next: number) {
+    if (Number.isFinite(next)) onChange(Math.max(min, Math.min(max, next)));
+  }
   return (
-    <EditorModal
-      wide
-      title="Editar texto do PDF interno"
-      onClose={onClose}
-      closeLabel="Fechar edição do texto interno"
-      doneLabel="Voltar sem aplicar"
-      footerText="As alterações só entram na fila depois de aplicar e adicionar o arquivo."
+    <label className="grid gap-1 text-sm">
+      {label}
+      <div className="flex items-center gap-2">
+        <input
+          aria-label={`Controle de ${label.toLowerCase()}`}
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => update(e.target.valueAsNumber)}
+        />
+        <input
+          aria-label={label}
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          className={`${field} w-20`}
+          onChange={(e) => {
+            if (e.target.valueAsNumber >= min && e.target.valueAsNumber <= max)
+              update(e.target.valueAsNumber);
+          }}
+        />
+      </div>
+    </label>
+  );
+}
+
+export default function StaffPdfTextEditor({
+  lines,
+  selected,
+  fonts,
+  disabled,
+  onSelect,
+  onChange,
+}: {
+  lines: StaffPdfLine[];
+  selected?: string;
+  fonts: PersonalizationFont[];
+  disabled: boolean;
+  onSelect: (id: string) => void;
+  onChange: (id: string, patch: Partial<StaffPdfLine>) => void;
+}) {
+  const [panel, setPanel] = React.useState<"effects" | "spacing" | "opacity">();
+  const line = lines.find((item) => item.id === selected) ?? lines[0];
+  if (!line) return null;
+  const extra = line.kind === "extra";
+  const effects = { ...DEFAULT_PDF_TEXT_EFFECTS, ...line.effects };
+  const change = (patch: Partial<StaffPdfLine>) => onChange(line.id, patch);
+  const style = (patch: Partial<StaffPdfTextEffects>) =>
+    change({ effects: { ...effects, ...patch } });
+  const toggle = (next: typeof panel) =>
+    setPanel(panel === next ? undefined : next);
+  return (
+    <fieldset
+      disabled={disabled}
+      className="min-w-0 space-y-3 rounded-lg border border-gray-700 bg-[#17191f] p-2"
     >
-      <div className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {lines.map((line, i) => (
-            <button
-              key={line.id}
-              onClick={() => setSelected(line.id)}
-              aria-pressed={selected === line.id}
-              className={`rounded-lg border px-3 py-2 text-sm ${selected === line.id ? "border-pink-500 bg-pink-950" : "border-gray-700"}`}
+      <legend className="px-1 text-xs font-semibold text-gray-300">
+        Formatação do texto
+      </legend>
+      <div className="flex flex-wrap items-end gap-2">
+        {lines.length > 1 && (
+          <label className="grid text-xs">
+            Texto selecionado
+            <select
+              className={field}
+              value={line.id}
+              onChange={(e) => onSelect(e.target.value)}
             >
-              Linha {i + 1}
-            </button>
-          ))}
-          <button
-            disabled={lines.length >= STAFF_PDF_MAX_LINES}
-            className="rounded-lg bg-purple-600 px-3 py-2 text-sm disabled:opacity-40"
-            onClick={() => {
-              const line = newPdfLine(layout, fonts, lines.length);
-              setLines((old) => [...old, line]);
-              setSelected(line.id);
-            }}
+              {lines.map((item, i) => (
+                <option key={item.id} value={item.id}>
+                  {i ? `Linha extra ${i}` : "Texto principal"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="grid min-w-0 max-w-full text-xs">
+          Fonte
+          <select
+            value={line.fontId}
+            className={`${field} max-w-full`}
+            onChange={(e) => change({ fontId: e.target.value })}
           >
-            Adicionar linha de texto
-          </button>
-        </div>
-        <div className="grid min-w-0 items-start gap-4 lg:grid-cols-2">
-          {current && (
-            <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:max-h-[65vh] lg:overflow-y-auto lg:pr-2">
-              <label className="sm:col-span-2">
-                Texto da linha
-                <textarea
-                  rows={2}
-                  aria-label="Texto da linha interna"
-                  maxLength={500}
-                  value={current.text}
-                  onChange={(e) => update({ text: e.target.value })}
-                  className={input}
-                />
-              </label>
-              <label>
-                Fonte
-                <select
-                  aria-label="Fonte da linha interna"
-                  value={current.fontId}
-                  onChange={(e) => update({ fontId: e.target.value })}
-                  className={input}
-                >
-                  <option value="">Selecione a fonte</option>
-                  {fonts
-                    .filter((f) => f.ativo)
-                    .map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.nome}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                Tamanho da fonte (px a 300 DPI)
-                <input
-                  aria-label="Tamanho da linha interna"
-                  type="number"
-                  min={1}
-                  max={4000}
-                  value={current.fontSize}
-                  onChange={(e) => update({ fontSize: Number(e.target.value) })}
-                  className={input}
-                />
-              </label>
-              <label>
-                Cor do texto
-                <input
-                  aria-label="Cor da linha interna"
-                  type="color"
-                  value={current.color}
-                  onChange={(e) => update({ color: e.target.value })}
-                  className={`${input} h-10`}
-                />
-              </label>
-              <label>
-                Alinhamento
-                <select
-                  aria-label="Alinhamento da linha interna"
-                  value={current.align}
-                  onChange={(e) =>
-                    update({ align: e.target.value as StaffPdfLine["align"] })
-                  }
-                  className={input}
-                >
-                  <option value="left">Esquerda</option>
-                  <option value="center">Centralizado</option>
-                  <option value="right">Direita</option>
-                </select>
-              </label>
-              <label>
-                Rotação do texto (graus)
-                <input
-                  aria-label="Rotação da linha interna"
-                  type="number"
-                  min={-180}
-                  max={180}
-                  value={current.rotation}
-                  onChange={(e) => update({ rotation: Number(e.target.value) })}
-                  className={input}
-                />
-              </label>
-              <div className="flex flex-wrap items-end gap-2">
-                <button
-                  className="rounded-lg border border-gray-700 p-2 text-sm"
-                  onClick={() =>
-                    setLines((old) =>
-                      old.map((l) => ({
-                        ...l,
-                        fontId: current.fontId,
-                        color: current.color,
-                      })),
-                    )
-                  }
-                >
-                  Aplicar fonte e cor a todas
-                </button>
-                <button
-                  disabled={lines.length === 1}
-                  className="rounded-lg border border-red-900 p-2 text-sm text-red-300 disabled:opacity-40"
-                  onClick={() => {
-                    setLines((old) => old.filter((l) => l.id !== selected));
-                    setSelected(lines.find((l) => l.id !== selected)?.id);
-                  }}
-                >
-                  Remover linha
-                </button>
-              </div>
-              <fieldset className="space-y-3 rounded-xl border border-gray-700 p-3 sm:col-span-2">
-                <legend>Efeitos da linha</legend>
-                <div className="flex flex-wrap gap-4">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={effects.bold}
-                      onChange={(e) =>
-                        updateEffects({ bold: e.target.checked })
-                      }
-                    />
-                    Negrito
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={effects.outline}
-                      onChange={(e) =>
-                        updateEffects({ outline: e.target.checked })
-                      }
-                    />
-                    Contorno
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {(
-                    [
-                      ["opacity", "Opacidade (%)", 0, 100, 1],
-                      ["curve", "Curvatura", -100, 100, 1],
-                      [
-                        "letterSpacing",
-                        "Espaçamento entre letras",
-                        -50,
-                        100,
-                        1,
-                      ],
-                      ["lineSpacing", "Espaçamento entre linhas", 0.5, 3, 0.05],
-                      ...(effects.outline
-                        ? [
-                            [
-                              "outlineWidth",
-                              "Espessura do contorno",
-                              1,
-                              30,
-                              1,
-                            ] as const,
-                          ]
-                        : []),
-                    ] as const
-                  ).map(([key, label, min, max, step]) => (
-                    <label key={key} className="text-sm">
-                      {label}
-                      <input
-                        type="number"
-                        min={min}
-                        max={max}
-                        step={step}
-                        className={input}
-                        value={effects[key]}
-                        onChange={(e) => {
-                          if (Number.isFinite(e.target.valueAsNumber))
-                            updateEffects({ [key]: e.target.valueAsNumber });
-                        }}
-                      />
-                    </label>
-                  ))}
-                  {effects.outline && (
-                    <label className="text-sm">
-                      Cor do contorno
-                      <input
-                        type="color"
-                        className={`${input} h-10`}
-                        value={effects.outlineColor}
-                        onChange={(e) =>
-                          updateEffects({ outlineColor: e.target.value })
-                        }
-                      />
-                    </label>
-                  )}
-                </div>
-              </fieldset>
-              <fieldset className="space-y-3 rounded-xl border border-gray-700 p-3 sm:col-span-2">
-                <legend>Geometria da linha</legend>
-                <label>
-                  Orientação da área
-                  <select
-                    aria-label="Orientação da geometria"
-                    value={orientation}
-                    onChange={(e) =>
-                      setOrientation(e.target.value as PdfTextLayout)
-                    }
-                    className={input}
-                  >
-                    <option value="portrait">Retrato · página 1</option>
-                    {pageCount === 4 && (
-                      <option value="landscape">Paisagem · página 3</option>
-                    )}
-                  </select>
-                </label>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {(["x", "y", "width", "height"] as const).map((key) => (
-                    <label key={key}>
-                      {
-                        { x: "X", y: "Y", width: "Largura", height: "Altura" }[
-                          key
-                        ]
-                      }
-                      <input
-                        aria-label={`Linha ${key} ${orientation}`}
-                        type="number"
-                        min={key === "x" || key === "y" ? 0 : 1}
-                        max={60000}
-                        value={current[orientation][key]}
-                        onChange={(e) =>
-                          update({
-                            [orientation]: {
-                              ...current[orientation],
-                              [key]: Number(e.target.value),
-                            },
-                          })
-                        }
-                        className={input}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </div>
-          )}
-          <StaffPdfPreview
-            original={original}
-            pageCount={pageCount}
-            lines={lines}
-            fonts={fonts}
-            selected={selected}
-            onSelect={setSelected}
-            onMove={move}
-            fitMargin={layout.fit_margin}
-            initial={initial}
+            {[
+              STAFF_PDF_SYSTEM_FONT,
+              ...fonts.filter((font) => font.id !== STAFF_PDF_SYSTEM_FONT.id),
+            ].map((font) => (
+              <option key={font.id} value={font.id}>
+                {font.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid text-xs">
+          Tamanho (px)
+          <input
+            type="number"
+            min={1}
+            max={4000}
+            className={`${field} w-24`}
+            value={line.fontSize}
+            onChange={(e) => {
+              const n = e.target.valueAsNumber;
+              if (n >= 1 && n <= 4000) change({ fontSize: n });
+            }}
+          />
+        </label>
+        {extra && (
+          <>
+            <button
+              type="button"
+              className={button}
+              aria-pressed={effects.bold}
+              onClick={() => style({ bold: !effects.bold })}
+            >
+              Negrito
+            </button>
+            <label className="grid text-xs">
+              Alinhamento
+              <select
+                className={field}
+                value={line.align}
+                onChange={(e) =>
+                  change({ align: e.target.value as StaffPdfLine["align"] })
+                }
+              >
+                <option value="left">Esquerda</option>
+                <option value="center">Centro</option>
+                <option value="right">Direita</option>
+              </select>
+            </label>
+            <label className="grid text-xs">
+              Cor
+              <input
+                className={`${field} h-8 w-11`}
+                type="color"
+                value={line.color}
+                onChange={(e) => change({ color: e.target.value })}
+              />
+            </label>
+            <button
+              type="button"
+              className={button}
+              aria-expanded={panel === "effects"}
+              onClick={() => toggle("effects")}
+            >
+              Efeitos
+            </button>
+            <button
+              type="button"
+              className={button}
+              aria-expanded={panel === "spacing"}
+              onClick={() => toggle("spacing")}
+            >
+              Opções de letra
+            </button>
+            <button
+              type="button"
+              className={button}
+              aria-expanded={panel === "opacity"}
+              onClick={() => toggle("opacity")}
+            >
+              Transparência
+            </button>
+          </>
+        )}
+      </div>
+      {extra && (
+        <label className="grid text-xs">
+          Texto da linha extra
+          <textarea
+            rows={2}
+            maxLength={500}
+            className={field}
+            value={line.text}
+            onChange={(e) => change({ text: e.target.value })}
+          />
+        </label>
+      )}
+      {extra && panel === "opacity" && (
+        <Slider
+          label="Opacidade (%)"
+          min={0}
+          max={100}
+          value={effects.opacity}
+          onChange={(opacity) => style({ opacity })}
+        />
+      )}
+      {extra && panel === "spacing" && (
+        <div className="flex flex-wrap gap-4">
+          <Slider
+            label="Espaçamento entre letras"
+            min={-50}
+            max={100}
+            value={effects.letterSpacing}
+            onChange={(letterSpacing) => style({ letterSpacing })}
+          />
+          <Slider
+            label="Espaçamento entre linhas"
+            min={0.5}
+            max={3}
+            step={0.05}
+            value={effects.lineSpacing}
+            onChange={(lineSpacing) => style({ lineSpacing })}
           />
         </div>
-        {initialError && (
-          <p role="alert" className="text-red-300">
-            {initialError}
-          </p>
-        )}
-        {error && (
-          <p role="alert" className="text-red-300">
-            {error}
-          </p>
-        )}
-        <button
-          className="w-full rounded-xl bg-pink-500 px-5 py-3 font-bold"
-          onClick={() => {
-            if (!lines.some((l) => l.text.trim())) {
-              setError("Digite pelo menos uma linha.");
-              return;
-            }
-            if (
-              lines.some(
-                (l) => !fonts.some((f) => f.ativo && f.id === l.fontId),
-              )
-            ) {
-              setError("Escolha uma fonte ativa para cada linha.");
-              return;
-            }
-            onSave(lines);
-          }}
-        >
-          Aplicar texto à edição
-        </button>
-      </div>
-    </EditorModal>
+      )}
+      {extra && panel === "effects" && (
+        <div className="grid gap-3 border-t border-gray-700 pt-2">
+          <label>
+            <input
+              type="checkbox"
+              checked={Boolean(effects.shadow)}
+              onChange={(e) =>
+                style({
+                  shadow: e.target.checked
+                    ? { x: 8, y: 8, blur: 10, color: "#000000" }
+                    : undefined,
+                })
+              }
+            />{" "}
+            Sombra
+          </label>
+          {effects.shadow && (
+            <div className="flex flex-wrap gap-3">
+              {(["x", "y", "blur"] as const).map((key) => (
+                <div key={key}>
+                  <Slider
+                    label={
+                      { x: "Horizontal", y: "Vertical", blur: "Desfoque" }[key]
+                    }
+                    min={key === "blur" ? 0 : -200}
+                    max={key === "blur" ? 100 : 200}
+                    value={effects.shadow![key]}
+                    onChange={(n) =>
+                      style({ shadow: { ...effects.shadow!, [key]: n } })
+                    }
+                  />
+                </div>
+              ))}
+              <label>
+                Cor da sombra{" "}
+                <input
+                  type="color"
+                  value={effects.shadow.color}
+                  onChange={(e) =>
+                    style({
+                      shadow: { ...effects.shadow!, color: e.target.value },
+                    })
+                  }
+                />
+              </label>
+            </div>
+          )}
+          <label>
+            <input
+              type="checkbox"
+              checked={effects.outline}
+              onChange={(e) => style({ outline: e.target.checked })}
+            />{" "}
+            Contorno
+          </label>
+          {effects.outline && (
+            <div className="flex flex-wrap gap-3">
+              <Slider
+                label="Espessura do contorno"
+                min={1}
+                max={30}
+                value={effects.outlineWidth}
+                onChange={(outlineWidth) => style({ outlineWidth })}
+              />
+              <Slider
+                label="Opacidade do contorno (%)"
+                min={0}
+                max={100}
+                value={effects.outlineOpacity ?? 100}
+                onChange={(outlineOpacity) => style({ outlineOpacity })}
+              />
+              <label>
+                Cor do contorno{" "}
+                <input
+                  type="color"
+                  value={effects.outlineColor}
+                  onChange={(e) => style({ outlineColor: e.target.value })}
+                />
+              </label>
+            </div>
+          )}
+          <label>
+            <input
+              type="checkbox"
+              checked={Boolean(effects.glow)}
+              onChange={(e) =>
+                style({
+                  glow: e.target.checked
+                    ? { intensity: 20, color: "#ffffff" }
+                    : undefined,
+                })
+              }
+            />{" "}
+            Brilho
+          </label>
+          {effects.glow && (
+            <div className="flex flex-wrap gap-3">
+              <Slider
+                label="Intensidade do brilho"
+                min={1}
+                max={100}
+                value={effects.glow.intensity}
+                onChange={(intensity) =>
+                  style({ glow: { ...effects.glow!, intensity } })
+                }
+              />
+              <label>
+                Cor do brilho{" "}
+                <input
+                  type="color"
+                  value={effects.glow.color}
+                  onChange={(e) =>
+                    style({ glow: { ...effects.glow!, color: e.target.value } })
+                  }
+                />
+              </label>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-3">
+            <Slider
+              label="Curvatura"
+              min={0}
+              max={100}
+              value={Math.abs(effects.curve)}
+              onChange={(value) =>
+                style({ curve: effects.curve < 0 ? -value : value })
+              }
+            />
+            <label className="grid text-sm">
+              Direção da curva
+              <select
+                className={field}
+                disabled={!effects.curve}
+                value={effects.curve < 0 ? -1 : 1}
+                onChange={(e) =>
+                  style({
+                    curve: Math.abs(effects.curve) * Number(e.target.value),
+                  })
+                }
+              >
+                <option value={1}>Para cima</option>
+                <option value={-1}>Para baixo</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
+    </fieldset>
   );
 }

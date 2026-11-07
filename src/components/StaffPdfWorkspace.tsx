@@ -1,4 +1,5 @@
 import React from "react";
+import { Search } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import {
@@ -6,6 +7,9 @@ import {
   newPdfLine,
   normalizeStaffPdfJob,
   layoutFont,
+  fixedStaffPdfMain,
+  staffPdfFont,
+  STAFF_PDF_SYSTEM_FONT,
   staffPdfOutputName,
   STAFF_PDF_MAX_LINES,
   STAFF_PDF_DPI,
@@ -24,10 +28,12 @@ import {
 import { exportStaffPdf } from "../services/staffPdfRender";
 import { downloadPersonalization } from "../services/personalizationExport";
 import StaffPdfTextEditor from "./StaffPdfTextEditor";
+import StaffPdfPicker from "./StaffPdfPicker";
 import StaffPdfPreview from "./StaffPdfPreview";
 import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
 import StaffPdfCsvImport, { type StaffPdfCsvOrder } from "./StaffPdfCsvImport";
 import ConfirmDialog from "./ConfirmDialog";
+import EditorModal from "./EditorModal";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import { beginWorkTask, workApi, type WorkApi } from "../services/workService";
 const QUEUE_LIMIT = 50;
@@ -68,8 +74,7 @@ export default function StaffPdfWorkspace({
     [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
-    [query, setQuery] = React.useState(""),
-    [templateQuery, setTemplateQuery] = React.useState(""),
+    [picker, setPicker] = React.useState<"base" | "layout">(),
     [autoTemplate, setAutoTemplate] = React.useState(true);
   const [baseId, setBaseId] = React.useState(""),
     [layoutId, setLayoutId] = React.useState(""),
@@ -78,7 +83,7 @@ export default function StaffPdfWorkspace({
       original: Blob;
     } | null>(null),
     [lines, setLines] = React.useState<StaffPdfLine[]>([]),
-    [editor, setEditor] = React.useState(false),
+    [mainFormatting, setMainFormatting] = React.useState(false),
     [selected, setSelected] = React.useState<string>(),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
@@ -121,13 +126,33 @@ export default function StaffPdfWorkspace({
     return () => window.removeEventListener("beforeunload", warn);
   }, [queue]);
   const mold = data.layouts.find((t) => t.id === layoutId);
+  const baseName = loaded?.base.name;
+  const compatibleMolds = data.layouts.filter(
+    (item) =>
+      !item.layout.base_pdf_name ||
+      item.layout.base_pdf_name.toLowerCase() === baseName?.toLowerCase() ||
+      item.id === layoutId,
+  );
+  React.useEffect(() => {
+    if (mold)
+      setLines(([main, ...extras]) =>
+        main?.kind === "main"
+          ? [fixedStaffPdfMain(mold.layout, main), ...extras]
+          : main
+            ? [main, ...extras]
+            : [],
+      );
+  }, [mold?.revision]);
   const { initial, initialError } = useStaffPdfInitial(
     api,
     loaded?.base.id || "",
-    lines.map((l) => l.text).join(" "),
+    lines[0]?.text || "",
     mold?.layout.imagem_full_page,
   );
+  const mainFrom = (mold: StaffPdfLayoutView) =>
+    fixedStaffPdfMain(mold.layout, newPdfLine(mold.layout, fonts));
   function loadLines(next: StaffPdfLine[]) {
+    setMainFormatting(false);
     setLines(next);
     setSelected(next[0]?.id);
   }
@@ -164,7 +189,13 @@ export default function StaffPdfWorkspace({
         baseRevision: source.base.revision,
         layoutId: layout.id,
         layoutRevision: layout.revision,
-        lines: textLines.filter((line) => line.text.trim()),
+        lines: textLines
+          .filter((line) => line.kind === "main" || line.text.trim())
+          .map((line) =>
+            line.kind === "main"
+              ? fixedStaffPdfMain(layout.layout, line)
+              : line,
+          ),
         ...(filename ? { outputName: filename } : {}),
       },
       fonts,
@@ -207,9 +238,9 @@ export default function StaffPdfWorkspace({
               : await readBase(base);
           sources.set(base.id, source);
         }
-        const line = newPdfLine(layout.layout, fonts);
+        const line = mainFrom(layout);
         line.text = order.text;
-        line.fontId ||= order.fallbackFontId;
+
         items.push(queueItem(source, layout, [line], order.outputName));
       }
       if (alive.current) {
@@ -345,10 +376,19 @@ export default function StaffPdfWorkspace({
         setLoaded(source);
         setLayoutId(layout?.id || "");
         loadLines(
-          item
-            ? structuredClone(item.job.lines)
-            : layout
-              ? [newPdfLine(layout.layout, fonts)]
+          layout
+            ? item
+              ? item.job.lines.map((line, index) => {
+                  const restored = staffPdfFont(line.fontId, fonts)
+                    ? line
+                    : { ...line, fontId: STAFF_PDF_SYSTEM_FONT.id };
+                  return index
+                    ? { ...restored, kind: "extra" as const }
+                    : fixedStaffPdfMain(layout.layout, restored);
+                })
+              : [mainFrom(layout)]
+            : item
+              ? structuredClone(item.job.lines)
               : [],
         );
         if (item) {
@@ -424,7 +464,7 @@ export default function StaffPdfWorkspace({
             );
           const initial = await api.initial(
             item.job.baseId,
-            item.job.lines.map((l) => l.text).join(" "),
+            item.job.lines[0]?.text || "",
           );
           if (initial && t.layout.imagem_full_page) initial.sizePercent = 100;
           const blob = await exportStaffPdf(
@@ -491,7 +531,7 @@ export default function StaffPdfWorkspace({
           ? old.map((q) => (q.id === editingId ? item : q))
           : [...old, item],
       );
-      loadLines([newPdfLine(mold.layout, fonts)]);
+      loadLines([mainFrom(mold)]);
       setOutputName("");
       setEditingId(null);
       setMessage(
@@ -508,7 +548,7 @@ export default function StaffPdfWorkspace({
     (id: string, x: number, y: number, orientation: PdfTextLayout) =>
       setLines((old) =>
         old.map((line) =>
-          line.id === id
+          line.id === id && line.kind === "extra"
             ? { ...line, [orientation]: { ...line[orientation], x, y } }
             : line,
         ),
@@ -523,6 +563,7 @@ export default function StaffPdfWorkspace({
   function addLine() {
     if (!mold || !loaded) return;
     const line = newPdfLine(mold.layout, fonts, lines.length);
+    line.kind = "extra";
     line.text = `Texto ${lines.length + 1}`;
     const dimensions = loaded.base.pages;
     for (const [orientation, index] of [
@@ -549,6 +590,25 @@ export default function StaffPdfWorkspace({
     }
     setLines((old) => [...old, line]);
     setSelected(line.id);
+  }
+  function chooseLayout(id: string) {
+    const layout = data.layouts.find((item) => item.id === id);
+    setLayoutId(id);
+    if (layout)
+      loadLines([
+        { ...mainFrom(layout), text: lines[0]?.text || "" },
+        ...lines.slice(1),
+      ]);
+  }
+  function updateLine(id: string, patch: Partial<StaffPdfLine>) {
+    setLines((old) =>
+      old.map((line) => {
+        if (line.id !== id) return line;
+        return mold && line.kind === "main"
+          ? fixedStaffPdfMain(mold.layout, { ...line, ...patch })
+          : { ...line, ...patch };
+      }),
+    );
   }
   const main = lines[0];
   return (
@@ -659,41 +719,36 @@ export default function StaffPdfWorkspace({
                 />
               </label>
               <div className="grid min-w-0 gap-3 text-sm">
-                <label className="block">
-                  Buscar base
-                  <input
-                    aria-label="Buscar base PDF"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className={input}
-                  />
-                </label>
-                <label>
-                  Base PDF
-                  <select
-                    aria-label="Base PDF da equipe"
-                    disabled={busy}
-                    value={baseId}
-                    onChange={(e) => void choose(e.target.value)}
-                    className={input}
-                  >
-                    <option value="">Selecione o PDF</option>
-                    {data.bases
-                      .filter(
-                        (b) =>
-                          b.name
-                            .toLocaleLowerCase()
-                            .includes(query.toLocaleLowerCase()) ||
-                          b.id === baseId,
-                      )
-                      .map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name} ·{" "}
-                          {b.source === "internal" ? "Interno" : "Produto"}
+                <div className="flex items-end gap-2">
+                  <label className="min-w-0 flex-1">
+                    Base PDF
+                    <select
+                      aria-label="Base PDF da equipe"
+                      disabled={busy}
+                      value={baseId}
+                      onChange={(e) => void choose(e.target.value)}
+                      className={input}
+                    >
+                      <option value="">Selecione o PDF</option>
+                      {data.bases.map((base) => (
+                        <option key={base.id} value={base.id}>
+                          {base.name} ·{" "}
+                          {base.source === "internal" ? "Interno" : "Produto"}
                         </option>
                       ))}
-                  </select>
-                </label>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    aria-label="Buscar base PDF"
+                    title="Buscar base PDF"
+                    disabled={busy}
+                    className="rounded-lg border border-gray-700 p-3 disabled:opacity-40"
+                    onClick={() => setPicker("base")}
+                  >
+                    <Search aria-hidden="true" size={20} />
+                  </button>
+                </div>
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -703,47 +758,35 @@ export default function StaffPdfWorkspace({
                   />
                   Selecionar molde pelo nome da base
                 </label>
-                <label>
-                  Buscar molde
-                  <input
-                    value={templateQuery}
-                    onChange={(e) => setTemplateQuery(e.target.value)}
-                    className={input}
-                  />
-                </label>
-                <label>
-                  Template de edição
-                  <select
-                    aria-label="Template de edição da equipe"
-                    disabled={busy || !loaded}
-                    value={layoutId}
-                    onChange={(e) => {
-                      const id = e.target.value,
-                        t = data.layouts.find((t) => t.id === id);
-                      setLayoutId(id);
-                      const next = t && newPdfLine(t.layout, fonts);
-                      loadLines(
-                        next ? [{ ...next, text: lines[0]?.text || "" }] : [],
-                      );
-                    }}
-                    className={input}
-                  >
-                    <option value="">Selecione o molde</option>
-                    {data.layouts
-                      .filter(
-                        (t) =>
-                          t.id === layoutId ||
-                          t.name
-                            .toLowerCase()
-                            .includes(templateQuery.toLowerCase()),
-                      )
-                      .map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
+                <div className="flex items-end gap-2">
+                  <label className="min-w-0 flex-1">
+                    Molde PDF
+                    <select
+                      aria-label="Molde PDF da equipe"
+                      disabled={busy || !loaded}
+                      value={layoutId}
+                      onChange={(e) => chooseLayout(e.target.value)}
+                      className={input}
+                    >
+                      <option value="">Selecione o molde</option>
+                      {compatibleMolds.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
                         </option>
                       ))}
-                  </select>
-                </label>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    aria-label="Buscar molde PDF"
+                    title="Buscar molde PDF"
+                    disabled={busy || !loaded}
+                    className="rounded-lg border border-gray-700 p-3 disabled:opacity-40"
+                    onClick={() => setPicker("layout")}
+                  >
+                    <Search aria-hidden="true" size={20} />
+                  </button>
+                </div>
               </div>
               {loaded && !mold && (
                 <p
@@ -759,9 +802,11 @@ export default function StaffPdfWorkspace({
                 mold.layout.font_name &&
                 !layoutFont(mold.layout, fonts) && (
                   <p role="status" className="text-sm text-amber-200">
-                    A fonte “{mold.layout.font_name}” não está cadastrada ou
-                    ativa. Escolha uma fonte no editor, ou peça seu cadastro
-                    antes de gerar.
+                    Fonte {mold.layout.font_name} não encontrada, por favor
+                    cadastre a fonte nas configurações de fontes para que o
+                    sistema possa utilizá-la.
+                    {main?.fontId === STAFF_PDF_SYSTEM_FONT.id &&
+                      " Usando a fonte padrão do sistema."}
                   </p>
                 )}
               {main && mold && (
@@ -777,69 +822,6 @@ export default function StaffPdfWorkspace({
                       className={input}
                     />
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="col-span-2">
-                      Fonte do texto principal
-                      <select
-                        disabled={busy}
-                        value={
-                          main.fontId === layoutFont(mold.layout, fonts)?.id
-                            ? ""
-                            : main.fontId
-                        }
-                        className={input}
-                        onChange={(e) =>
-                          updateMain({
-                            fontId:
-                              e.target.value ||
-                              layoutFont(mold.layout, fonts)?.id ||
-                              "",
-                          })
-                        }
-                      >
-                        <option value="">Fonte do molde</option>
-                        {fonts
-                          .filter((font) => font.ativo)
-                          .map((font) => (
-                            <option key={font.id} value={font.id}>
-                              {font.nome}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                    <label>
-                      Tamanho (px)
-                      <input
-                        disabled={busy}
-                        type="number"
-                        min={1}
-                        max={4000}
-                        value={
-                          main.fontSize === mold.layout.font_size
-                            ? ""
-                            : main.fontSize
-                        }
-                        placeholder={String(mold.layout.font_size)}
-                        className={input}
-                        onChange={(e) =>
-                          updateMain({
-                            fontSize:
-                              Number(e.target.value) || mold.layout.font_size,
-                          })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Cor
-                      <input
-                        disabled={busy}
-                        type="color"
-                        className={`${input} h-12`}
-                        value={main.color}
-                        onChange={(e) => updateMain({ color: e.target.value })}
-                      />
-                    </label>
-                  </div>
                   <button
                     disabled={busy || lines.length >= STAFF_PDF_MAX_LINES}
                     type="button"
@@ -858,7 +840,6 @@ export default function StaffPdfWorkspace({
                             className="min-w-0 flex-1 truncate rounded border border-gray-700 p-2 text-left"
                             onClick={() => {
                               setSelected(line.id);
-                              setEditor(true);
                             }}
                           >
                             {line.text || `Linha ${index + 2}`}
@@ -977,17 +958,28 @@ export default function StaffPdfWorkspace({
             <div className="min-w-0 space-y-3 rounded-xl border border-gray-800 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-base font-bold">Prévia do PDF</h4>
-                {loaded && mold && (
+                {loaded && mold && main && lines.length === 1 && (
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setEditor(true)}
-                    className="rounded-lg bg-purple-600 px-3 py-2 text-sm"
+                    aria-expanded={mainFormatting}
+                    onClick={() => setMainFormatting(!mainFormatting)}
+                    className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
                   >
-                    Editar texto e geometria
+                    Fonte e tamanho
                   </button>
                 )}
               </div>
+              {mold && lines.length > 1 && (
+                <StaffPdfTextEditor
+                  lines={lines}
+                  selected={selected}
+                  fonts={fonts}
+                  disabled={busy}
+                  onSelect={setSelected}
+                  onChange={updateLine}
+                />
+              )}
               {loaded ? (
                 <StaffPdfPreview
                   original={loaded.original}
@@ -1002,7 +994,7 @@ export default function StaffPdfWorkspace({
                       ? undefined
                       : (id) => {
                           setSelected(id);
-                          setEditor(true);
+                          if (lines.length === 1) setMainFormatting(true);
                         }
                   }
                   fitMargin={mold?.layout.fit_margin}
@@ -1061,7 +1053,7 @@ export default function StaffPdfWorkspace({
                 onClick={() => {
                   setEditingId(null);
                   setOutputName("");
-                  loadLines(mold ? [newPdfLine(mold.layout, fonts)] : []);
+                  loadLines(mold ? [mainFrom(mold)] : []);
                 }}
               >
                 Cancelar revisão
@@ -1099,23 +1091,40 @@ export default function StaffPdfWorkspace({
           </div>
         </>
       )}
-      {editor && loaded && mold && (
-        <StaffPdfTextEditor
-          api={api}
-          baseId={loaded.base.id}
-          original={loaded.original}
-          pageCount={loaded.base.pageCount}
-          layout={mold.layout}
-          fonts={fonts}
-          initialLines={lines}
-          initialSelected={selected}
-          onClose={() => setEditor(false)}
-          onSave={(value) => {
-            setLines(value);
-            if (!value.some((line) => line.id === selected))
-              setSelected(value[0]?.id);
-            setEditor(false);
-          }}
+      {mainFormatting && mold && lines.length === 1 && (
+        <EditorModal
+          title="Fonte e tamanho do texto principal"
+          onClose={() => setMainFormatting(false)}
+          closeLabel="Fechar formatação principal"
+          doneLabel="Concluir"
+          footerText=""
+        >
+          <StaffPdfTextEditor
+            lines={lines}
+            selected={selected}
+            fonts={fonts}
+            disabled={busy}
+            onSelect={setSelected}
+            onChange={updateLine}
+          />
+        </EditorModal>
+      )}
+      {picker && (
+        <StaffPdfPicker
+          title={picker === "base" ? "Buscar base PDF" : "Buscar molde PDF"}
+          options={
+            picker === "base"
+              ? data.bases.map((base) => ({
+                  id: base.id,
+                  name: `${base.name} · ${base.source === "internal" ? "Interno" : "Produto"}`,
+                }))
+              : compatibleMolds
+          }
+          selected={picker === "base" ? baseId : layoutId}
+          onClose={() => setPicker(undefined)}
+          onChoose={(id) =>
+            picker === "base" ? void choose(id) : chooseLayout(id)
+          }
         />
       )}
       {removeId && (

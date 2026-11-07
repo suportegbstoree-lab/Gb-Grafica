@@ -7,6 +7,7 @@ import {
   normalizePdfLayout,
   parsePdfLayoutMap,
   newPdfLine,
+  type StaffPdfBase,
   type StaffPdfLayout,
   type StaffPdfLayoutView,
 } from "../lib/staffPdf";
@@ -29,7 +30,11 @@ export default function StaffPdfLibraryEditor({
   const [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
-    [query, setQuery] = React.useState("");
+    [query, setQuery] = React.useState(""),
+    [replace, setReplace] = React.useState<{
+      file: File;
+      base: StaffPdfBase;
+    }>();
   const [editing, setEditing] = React.useState<{
       name: string;
       layout: StaffPdfLayout;
@@ -46,6 +51,7 @@ export default function StaffPdfLibraryEditor({
       revision?: string;
     } | null>(null);
   const alive = React.useRef(true);
+  const running = React.useRef(false);
   React.useEffect(() => {
     alive.current = true;
     return () => {
@@ -53,7 +59,8 @@ export default function StaffPdfLibraryEditor({
     };
   }, []);
   async function run(fn: () => Promise<void>) {
-    if (busy) return;
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     setError("");
     setMessage("");
@@ -62,16 +69,82 @@ export default function StaffPdfLibraryEditor({
     } catch (e) {
       if (alive.current) setError((e as Error).message);
     } finally {
+      running.current = false;
       if (alive.current) setBusy(false);
     }
+  }
+  async function upload(file: File, replacement?: StaffPdfBase) {
+    await api.uploadBase(file, crypto.randomUUID(), replacement);
+    setReplace(undefined);
+    await reload();
+    setMessage(
+      replacement
+        ? "Base substituída."
+        : "Base cadastrada. Crie ou associe um molde antes de editar.",
+    );
+  }
+  function selectPdf(file?: File) {
+    if (!file || running.current || replace) return;
+    if (!/\.pdf$/i.test(file.name)) {
+      setError("Selecione um PDF.");
+      return;
+    }
+    const key = (name: string) => name.normalize("NFC").trim().toLowerCase();
+    const existing = data.bases.filter(
+      (item) => item.source === "internal" && key(item.name) === key(file.name),
+    );
+    const base =
+      existing.find((item) => item.name === file.name) ??
+      (existing.length === 1 ? existing[0] : undefined);
+    if (base) {
+      setError("");
+      setReplace({ file, base });
+    } else if (existing.length)
+      setError(
+        "Há mais de uma base com este nome. Use o nome exato da base a substituir.",
+      );
+    else void run(() => upload(file));
+  }
+  function importTemplates(file?: File) {
+    if (!file || replace) return;
+    void run(async () => {
+      if (!/\.json$/i.test(file.name) || file.size > 800000)
+        throw new Error("Use um JSON de até 800 KB.");
+      const raw = JSON.parse(await file.text());
+      parsePdfLayoutMap(raw);
+      if (new TextEncoder().encode(JSON.stringify(raw)).length > 240000)
+        throw new Error("Divida este JSON em arquivos menores que 240 KB.");
+      const result = await api.importLayouts(raw);
+      await reload();
+      setMessage(
+        `${result.created} moldes importados; ${result.skipped} existentes preservados.`,
+      );
+    });
+  }
+  function drop(
+    event: React.DragEvent<HTMLElement>,
+    receive: (file: File) => void,
+  ) {
+    event.preventDefault();
+    if (running.current || replace) return;
+    if (event.dataTransfer.files.length !== 1) {
+      setError("Arraste um arquivo de cada vez.");
+      return;
+    }
+    receive(event.dataTransfer.files[0]);
   }
   const open = (row?: StaffPdfLayoutView) => {
     setEditing(
       row ? structuredClone(row) : { name: "", layout: defaultPdfLayout() },
     );
-    setBaseId("");
+    const linked =
+      row?.layout.base_pdf_name &&
+      data.bases.find((item) => item.name === row.layout.base_pdf_name);
+    setBaseId(linked ? linked.id : "");
     setOriginal(null);
     setError("");
+    if (linked)
+      void run(async () => setOriginal(await api.baseFile(linked.id)));
   };
   const patch = (value: Partial<StaffPdfLayout>) =>
     setEditing((old) =>
@@ -86,24 +159,20 @@ export default function StaffPdfLibraryEditor({
           Cadastrar aqui não cria um produto nem publica o arquivo na loja. PDFs
           de 1 a 16 páginas mantêm suas páginas originais.
         </p>
-        <label className="mt-4 block text-sm">
-          Enviar base PDF
+        <label
+          className="mt-4 block rounded-lg border border-dashed border-gray-600 p-3 text-sm"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => drop(e, selectPdf)}
+        >
+          Enviar base PDF ou soltar aqui
           <input
             disabled={busy}
             type="file"
             accept="application/pdf,.pdf"
             className="mt-2 block max-w-full"
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              selectPdf(e.target.files?.[0]);
               e.target.value = "";
-              if (file)
-                void run(async () => {
-                  await api.uploadBase(file, crypto.randomUUID());
-                  await reload();
-                  setMessage(
-                    "Base cadastrada. Crie ou associe um molde antes de editar.",
-                  );
-                });
             }}
           />
         </label>
@@ -186,35 +255,20 @@ export default function StaffPdfLibraryEditor({
           >
             Criar molde
           </button>
-          <label className="cursor-pointer rounded-lg border border-gray-700 px-4 py-2">
-            Importar JSON
+          <label
+            className="cursor-pointer rounded-lg border border-dashed border-gray-600 px-4 py-2"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => drop(e, importTemplates)}
+          >
+            Importar ou soltar JSON
             <input
               disabled={busy}
               type="file"
               accept="application/json,.json"
               className="sr-only"
               onChange={(e) => {
-                const file = e.target.files?.[0];
+                importTemplates(e.target.files?.[0]);
                 e.target.value = "";
-                if (file)
-                  void run(async () => {
-                    if (file.size > 800000)
-                      throw new Error("Use um JSON de até 800 KB.");
-                    const raw = JSON.parse(await file.text());
-                    parsePdfLayoutMap(raw);
-                    if (
-                      new TextEncoder().encode(JSON.stringify(raw)).length >
-                      240000
-                    )
-                      throw new Error(
-                        "Divida este JSON em arquivos menores que 240 KB.",
-                      );
-                    const result = await api.importLayouts(raw);
-                    await reload();
-                    setMessage(
-                      `${result.created} moldes importados; ${result.skipped} existentes preservados.`,
-                    );
-                  });
               }}
             />
           </label>
@@ -482,13 +536,18 @@ export default function StaffPdfLibraryEditor({
                 Inicial em página inteira (compatibilidade do molde)
               </label>
               <label className="block">
-                PDF para testar o molde
+                Base para associar e testar
                 <select
-                  aria-label="PDF para testar molde"
+                  aria-label="Base para associar e testar"
                   value={baseId}
+                  disabled={busy}
                   onChange={(e) => {
                     const id = e.target.value;
                     setBaseId(id);
+                    patch({
+                      base_pdf_name: data.bases.find((item) => item.id === id)
+                        ?.name,
+                    });
                     setOriginal(null);
                     if (id)
                       void run(async () => {
@@ -579,6 +638,19 @@ export default function StaffPdfLibraryEditor({
             </div>
           </div>
         </EditorModal>
+      )}
+      {replace && (
+        <ConfirmDialog
+          title="Substituir base PDF?"
+          message={
+            error ||
+            `A base “${replace.base.name}” já existe. Os itens que usam a versão anterior precisarão ser revisados na fila.`
+          }
+          confirmLabel="Substituir PDF"
+          busy={busy}
+          onCancel={() => setReplace(undefined)}
+          onConfirm={() => void run(() => upload(replace.file, replace.base))}
+        />
       )}
       {confirm && (
         <ConfirmDialog

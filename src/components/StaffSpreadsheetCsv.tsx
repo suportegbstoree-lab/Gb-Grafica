@@ -5,22 +5,66 @@ import {
   excelColumn,
   type StaffWorkbook,
 } from "../lib/spreadsheetCsv";
+import {
+  createStaffSkuMatcher,
+  staffOrderColumn,
+  staffSheetColumn,
+  STAFF_SHEET_FIELDS,
+  type StaffSheetField,
+} from "../lib/staffPdfCsv";
+import type { StaffPdfLayoutView } from "../lib/staffPdf";
 import { downloadPersonalization } from "../services/personalizationExport";
+
+const field =
+  "mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2";
+type Mapping = Record<StaffSheetField, string>;
+
 export default function StaffSpreadsheetCsv({
   onUseCsv,
+  layouts,
 }: {
   onUseCsv: (csv: string, name: string, separator: string) => void;
+  layouts: StaffPdfLayoutView[];
 }) {
-  const [book, setBook] = React.useState<StaffWorkbook | null>(null),
-    [sheet, setSheet] = React.useState(0),
-    [columns, setColumns] = React.useState<number[]>([]),
-    [start, setStart] = React.useState(1),
-    [separator, setSeparator] = React.useState(";"),
-    [error, setError] = React.useState(""),
-    [name, setName] = React.useState("planilha"),
-    [busy, setBusy] = React.useState(false);
+  const [book, setBook] = React.useState<StaffWorkbook | null>(null);
+  const [sheet, setSheet] = React.useState(0);
+  const [start, setStart] = React.useState(2);
+  const [mapping, setMapping] = React.useState<Mapping>({
+    af_clean: "",
+    nome: "",
+    barcode: "",
+    prazo_envio: "",
+    quantidade_itens: "",
+  });
+  const [error, setError] = React.useState("");
+  const [name, setName] = React.useState("planilha");
+  const [busy, setBusy] = React.useState(false);
   const current = book?.sheets[sheet];
-  const load = async (file?: File) => {
+
+  function useSheet(workbook: StaffWorkbook, index: number) {
+    const header = workbook.sheets[index].rows[0] ?? [];
+    setSheet(index);
+    setStart(2);
+    setMapping(
+      Object.fromEntries(
+        STAFF_SHEET_FIELDS.map(({ key, aliases }) => {
+          const normalize = (value: string) =>
+            value
+              .normalize("NFD")
+              .replace(/\p{M}/gu, "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "_")
+              .replace(/^_|_$/g, "");
+          const found = header.findIndex((value) =>
+            aliases.some((alias) => alias === normalize(value)),
+          );
+          return [key, found < 0 ? "" : excelColumn(found)];
+        }),
+      ) as Mapping,
+    );
+  }
+
+  async function load(file?: File) {
     if (!file) return;
     setBusy(true);
     setError("");
@@ -29,29 +73,65 @@ export default function StaffSpreadsheetCsv({
         throw new Error("Selecione um XLSX de até 10 MB.");
       const result = parseStaffXlsx(new Uint8Array(await file.arrayBuffer()));
       setBook(result);
-      setSheet(0);
-      setColumns(Array.from({ length: result.sheets[0].columns }, (_, i) => i));
+      useSheet(result, 0);
       setName(file.name.replace(/\.xlsx$/i, ""));
-      setStart(1);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  };
+  }
+
   function convert(useInQueue: boolean) {
     if (!current) return;
     try {
-      if (start < 1 || start > current.rows.length)
-        throw new Error("Linha inicial inválida.");
-      const filename = `${name}-${current.name}.csv`;
-      const csv = selectedColumnsCsv(
-        current.rows,
-        columns,
-        separator,
-        start - 1,
+      if (!Number.isInteger(start) || start < 1 || start > current.rows.length)
+        throw new Error("Primeira linha de pedidos inválida.");
+      const header = current.rows[0] ?? [];
+      const orderIndex = staffOrderColumn(header);
+      const entries = STAFF_SHEET_FIELDS.map(({ key, label }) => {
+        const index = staffSheetColumn(mapping[key], current.columns, header);
+        if (
+          (mapping[key].trim() || key === "af_clean" || key === "nome") &&
+          index < 0
+        )
+          throw new Error(`Informe uma coluna válida para ${label}.`);
+        return [key, index] as const;
+      });
+      const columns = Object.fromEntries(entries) as Record<
+        StaffSheetField,
+        number
+      >;
+      const optional = (["prazo_envio", "quantidade_itens"] as const).filter(
+        (key) => columns[key] >= 0,
       );
-      if (useInQueue) onUseCsv(csv, filename, separator);
+      const headers = [
+        "pedido_plataforma",
+        "barcode",
+        "af_clean",
+        "nome",
+        ...optional,
+      ];
+      const match = createStaffSkuMatcher(layouts);
+      const data = current.rows
+        .slice(start - 1)
+        .map((row) => [
+          row[orderIndex] || "",
+          row[columns.barcode] || "",
+          match(row[columns.af_clean] || ""),
+          row[columns.nome] || "",
+          ...optional.map((key) => row[columns[key]] || ""),
+        ])
+        .filter((row) => row.some((cell) => cell.trim()));
+      if (!data.length)
+        throw new Error("Nenhum pedido encontrado nas linhas selecionadas.");
+      const csv = selectedColumnsCsv(
+        [headers, ...data],
+        headers.map((_, i) => i),
+        ",",
+      );
+      const filename = `${name}-${current.name}.csv`;
+      if (useInQueue) onUseCsv(csv, filename, ",");
       else
         downloadPersonalization(
           new Blob([csv], { type: "text/csv;charset=utf-8" }),
@@ -62,26 +142,21 @@ export default function StaffSpreadsheetCsv({
       setError((e as Error).message);
     }
   }
+
   return (
     <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
       <h3 className="text-lg font-bold">Converter XLSX para CSV</h3>
-      <p className="text-sm text-gray-400">
-        Escolha a aba e as colunas. A conversão acontece neste navegador; a
-        planilha não é enviada ao servidor. Fórmulas usam o valor salvo no
-        arquivo. Datas são exportadas no formato ISO; códigos com máscara de
-        zeros preservam os zeros.
-      </p>
       <label className="block text-sm">
         Arquivo XLSX
         <input
           disabled={busy}
           type="file"
           accept=".xlsx"
+          className="mt-2 block max-w-full"
           onChange={(e) => {
             void load(e.target.files?.[0]);
             e.target.value = "";
           }}
-          className="mt-2 block max-w-full"
         />
       </label>
       {error && (
@@ -92,105 +167,62 @@ export default function StaffSpreadsheetCsv({
       {busy && <p role="status">Lendo planilha...</p>}
       {current && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <label>
               Aba
               <select
                 aria-label="Aba da planilha"
+                className={field}
                 value={sheet}
-                onChange={(e) => {
-                  const i = Number(e.target.value);
-                  setSheet(i);
-                  setColumns(
-                    Array.from(
-                      { length: book!.sheets[i].columns },
-                      (_, c) => c,
-                    ),
-                  );
-                }}
-                className="block w-full rounded-lg bg-black p-2"
+                onChange={(e) => useSheet(book!, Number(e.target.value))}
               >
-                {book!.sheets.map((s, i) => (
+                {book!.sheets.map((item, i) => (
                   <option key={i} value={i}>
-                    {s.name}
+                    {item.name}
                   </option>
                 ))}
               </select>
             </label>
             <label>
-              Primeira linha exportada
+              Primeira linha de pedidos
               <input
-                aria-label="Primeira linha exportada"
                 type="number"
+                className={field}
                 min={1}
-                max={Math.max(1, current.rows.length)}
+                max={current.rows.length}
                 value={start}
                 onChange={(e) => setStart(Number(e.target.value))}
-                className="block w-full rounded-lg bg-black p-2"
               />
             </label>
-            <label>
-              Separador
-              <select
-                aria-label="Separador CSV"
-                value={separator}
-                onChange={(e) => setSeparator(e.target.value)}
-                className="block w-full rounded-lg bg-black p-2"
-              >
-                <option value=";">Ponto e vírgula</option>
-                <option value=",">Vírgula</option>
-                <option value={"\t"}>Tabulação</option>
-              </select>
-            </label>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() =>
-                setColumns(Array.from({ length: current.columns }, (_, i) => i))
-              }
-            >
-              Selecionar todas
-            </button>
-            <button onClick={() => setColumns([])}>Limpar seleção</button>
-            <span className="text-gray-400">
-              {current.rows.length} linhas · {columns.length} colunas
-              selecionadas
-            </span>
-          </div>
-          <div className="grid max-h-64 gap-2 overflow-y-auto sm:grid-cols-2">
-            {Array.from({ length: current.columns }, (_, i) => (
-              <label
-                key={i}
-                className="flex min-w-0 items-center gap-2 rounded-lg border border-gray-800 p-2"
-              >
+          <div className="grid gap-3 sm:grid-cols-2">
+            {STAFF_SHEET_FIELDS.map(({ key, label }) => (
+              <label key={key} className="text-sm">
+                {label}
                 <input
-                  type="checkbox"
-                  checked={columns.includes(i)}
+                  className={field}
+                  placeholder="Letra ou nome da coluna"
+                  value={mapping[key]}
                   onChange={(e) =>
-                    setColumns((old) =>
-                      e.target.checked
-                        ? [...old, i].sort((a, b) => a - b)
-                        : old.filter((c) => c !== i),
-                    )
+                    setMapping({ ...mapping, [key]: e.target.value })
                   }
                 />
-                <span className="truncate">
-                  {excelColumn(i)} · {current.rows[0]?.[i] || "Sem cabeçalho"}
-                </span>
               </label>
             ))}
           </div>
+          <p className="text-sm text-gray-400">
+            Use a letra da coluna, como AF, ou o texto do cabeçalho. O número do
+            pedido é lido pelo cabeçalho da planilha.
+          </p>
           <div className="flex flex-wrap gap-3">
             <button
-              disabled={!columns.length}
-              className="rounded-xl bg-pink-500 px-5 py-3 font-bold disabled:opacity-40"
+              className="rounded-xl bg-pink-500 px-5 py-3 font-bold"
               onClick={() => convert(true)}
             >
               Converter e revisar pedidos
             </button>
             <button
-              disabled={!columns.length}
-              className="rounded-xl border border-gray-700 px-5 py-3 disabled:opacity-40"
+              className="rounded-xl border border-gray-700 px-5 py-3"
               onClick={() => convert(false)}
             >
               Baixar CSV selecionado

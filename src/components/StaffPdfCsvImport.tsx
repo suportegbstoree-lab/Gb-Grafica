@@ -15,23 +15,22 @@ export interface StaffPdfCsvOrder {
   layoutId: string;
   text: string;
   outputName: string;
-  fallbackFontId: string;
 }
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
 
 export default function StaffPdfCsvImport({
   data,
+  fonts,
   available,
   busy,
   fallback,
-  fonts,
   onAdd,
   onReviewQueue,
 }: {
   data: StaffPdfLibrary;
+  fonts: PersonalizationFont[];
   available: number;
   busy: boolean;
-  fonts: PersonalizationFont[];
   fallback: { baseId: string; layoutId: string };
   onAdd: (orders: StaffPdfCsvOrder[]) => Promise<void>;
   onReviewQueue: () => void;
@@ -46,7 +45,6 @@ export default function StaffPdfCsvImport({
       template: -1,
       reference: -1,
     }),
-    [fallbackFontId, setFallbackFontId] = React.useState(""),
     [overrides, setOverrides] = React.useState<
       Record<number, { baseId: string; layoutId: string }>
     >({}),
@@ -110,22 +108,23 @@ export default function StaffPdfCsvImport({
         layoutId: mold?.id || "",
         text,
         outputName,
-        fallbackFontId,
+        missingFont:
+          mold?.layout.font_name && !layoutFont(mold.layout, fonts)
+            ? mold.layout.font_name
+            : "",
         issue: !text
           ? "Escolha a coluna de texto ou preencha o valor na planilha."
           : text.length > 500
             ? "O texto excede 500 caracteres."
             : !base || !mold
               ? "Confira a base e o molde."
-              : !layoutFont(mold.layout, fonts) && !fallbackFontId
-                ? "Escolha uma fonte para este molde."
-                : "",
+              : "",
       };
     });
   const ready = preview.filter((row) => !row.issue).slice(0, available);
   return (
     <section className="space-y-4">
-      <StaffSpreadsheetCsv onUseCsv={useCsv} />
+      <StaffSpreadsheetCsv onUseCsv={useCsv} layouts={data.layouts} />
       <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
         <div>
           <h3 className="text-lg font-bold">Importar pedidos do CSV</h3>
@@ -220,23 +219,6 @@ export default function StaffPdfCsvImport({
                 </label>
               ))}
             </div>
-            <label className="block max-w-sm text-sm">
-              Fonte para moldes sem fonte ativa
-              <select
-                className={input}
-                value={fallbackFontId}
-                onChange={(e) => setFallbackFontId(e.target.value)}
-              >
-                <option value="">Selecione se necessário</option>
-                {fonts
-                  .filter((font) => font.ativo)
-                  .map((font) => (
-                    <option key={font.id} value={font.id}>
-                      {font.nome}
-                    </option>
-                  ))}
-              </select>
-            </label>
             <p className="text-xs text-gray-400">
               Quando a coluna do modelo estiver vazia, é usada a base
               selecionada em Edição e fila. Confira as associações antes de
@@ -269,6 +251,12 @@ export default function StaffPdfCsvImport({
                           {row.issue && (
                             <p className="text-xs text-amber-300">
                               {row.issue}
+                            </p>
+                          )}
+                          {row.missingFont && (
+                            <p className="text-xs text-amber-300">
+                              Fonte {row.missingFont} não encontrada. Será usada
+                              a fonte padrão do sistema.
                             </p>
                           )}
                         </td>

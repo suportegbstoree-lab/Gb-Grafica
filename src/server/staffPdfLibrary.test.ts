@@ -313,6 +313,73 @@ test("four-page bases stay private, create no product, lock duplicate names, and
     );
   }));
 
+test("replacing a PDF validates first, preserves its identity and rejects stale concurrent replacements", async () =>
+  scenario(async ({ request, docs, objects, services }) => {
+    async function start(
+      char: string,
+      replacement?: { id: string; revision: string },
+    ) {
+      const response = await request("/library/bases", "manager", {
+        name: "Kit.pdf",
+        requestId: char.repeat(36),
+        replacement,
+      });
+      assert.equal(response.status, 201);
+      return response.json();
+    }
+    async function stage(pending: { path: string }, bytes: Buffer) {
+      objects.set(pending.path, {
+        bytes,
+        meta: {
+          contentType: "application/pdf",
+          size: bytes.length,
+          generation: "5",
+          metadata: { uploadedBy: "manager" },
+        },
+      });
+    }
+    const finalize = (id: string) =>
+      request(`/library/bases/${id}/finalize`, "manager", {});
+    const original = await start("a");
+    await stage(original, await pdf(4));
+    assert.equal((await finalize(original.id)).status, 200);
+    const before = await resolveStaffPdfBase(services, original.id);
+    const replacement = { id: before.id, revision: before.revision };
+    const invalid = await start("b", replacement);
+    await stage(invalid, Buffer.from("%PDF-invalid"));
+    assert.ok((await finalize(invalid.id)).status >= 400);
+    assert.equal(
+      (await resolveStaffPdfBase(services, original.id)).revision,
+      before.revision,
+    );
+    const first = await start("c", replacement);
+    const stale = await start("d", replacement);
+    await stage(first, await pdf(2));
+    await stage(stale, await pdf(3));
+    assert.equal((await finalize(first.id)).status, 200);
+    const after = await resolveStaffPdfBase(services, original.id);
+    assert.equal(after.pageCount, 2);
+    assert.notEqual(after.revision, before.revision);
+    assert.match(after.path, new RegExp(first.id));
+    assert.equal((await finalize(first.id)).status, 200);
+    assert.equal((await finalize(stale.id)).status, 409);
+    assert.equal(objects.has(after.path), true);
+    assert.equal(
+      objects.has(`staff-pdf-bases/${original.id}/versions/${stale.id}.pdf`),
+      false,
+    );
+    assert.equal(
+      docs.get(`_staffPdfBaseNames/${pdfLibraryId("Kit.pdf")}`).baseId,
+      original.id,
+    );
+    assert.equal(
+      (await request(`/library/bases/${first.id}/delete`, "manager", {}))
+        .status,
+      200,
+    );
+    assert.equal(objects.has(after.path), true);
+  }));
+
 test("decorative letters require exact folder names and owned PNGs, and active letters cannot be removed as temporary uploads", async () =>
   scenario(async ({ request, docs, objects }) => {
     const id = "a".repeat(32),

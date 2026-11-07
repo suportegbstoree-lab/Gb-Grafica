@@ -75,7 +75,13 @@ export async function resolveStaffPdfBase(
   if (
     !value ||
     value.status !== "ready" ||
-    value.path !== staffPdfStoragePath(id)
+    (value.path !== staffPdfStoragePath(id) &&
+      !(
+        typeof value.path === "string" &&
+        new RegExp(`^staff-pdf-bases/${id}/versions/[a-f0-9]{32}[.]pdf$`).test(
+          value.path,
+        )
+      ))
   )
     throw new OperationsError("Base não encontrada.", 404);
   return { ...value, id, source: "internal" as const } as StaffPdfBase & {
@@ -279,9 +285,16 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         throw new OperationsError("Envio inválido.");
       const id = pdfLibraryId(`${actor.uid}:${requestId}`),
         ref = services().db.collection("_staffPdfBases").doc(id),
+        replacement = req.body?.replacement,
         nameRef = services()
           .db.collection("_staffPdfBaseNames")
           .doc(pdfLibraryId(name));
+      if (
+        replacement !== undefined &&
+        (!validDocumentId(replacement?.id) ||
+          !validDocumentId(replacement?.revision))
+      )
+        throw new OperationsError("Substituição inválida.");
       await services().db.runTransaction(async (tx) => {
         const old = (await tx.get(ref)).data(),
           named = (await tx.get(nameRef)).data();
@@ -289,14 +302,32 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           if (
             old.name !== name ||
             old.ownerId !== actor.uid ||
-            old.status === "deleted"
+            old.status === "deleted" ||
+            old.replaceId !== replacement?.id ||
+            old.replaceRevision !== replacement?.revision
           )
             throw new OperationsError("Este envio já foi utilizado.", 409);
           return;
         }
-        if (named?.baseId && named.baseId !== id)
+        if (replacement) {
+          const target = (
+            await tx.get(
+              services().db.collection("_staffPdfBases").doc(replacement.id),
+            )
+          ).data();
+          if (
+            named?.baseId !== replacement.id ||
+            target?.status !== "ready" ||
+            target.name !== name ||
+            target.revision !== replacement.revision
+          )
+            throw new OperationsError(
+              "A base mudou. Atualize a biblioteca antes de substituir.",
+              409,
+            );
+        } else if (named?.baseId && named.baseId !== id)
           throw new OperationsError(
-            "Já existe uma base com este nome. Exclua a anterior ou renomeie o arquivo.",
+            "Já existe uma base com este nome. Atualize a biblioteca para confirmar a substituição ou renomeie o arquivo.",
             409,
           );
         tx.create(ref, {
@@ -305,14 +336,20 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           ownerId: actor.uid,
           createdAt: new Date(now()).toISOString(),
           revision: revision(),
+          ...(replacement
+            ? {
+                replaceId: replacement.id,
+                replaceRevision: replacement.revision,
+              }
+            : {}),
         });
-        tx.set(nameRef, { baseId: id });
+        if (!replacement) tx.set(nameRef, { baseId: id });
       });
       const data = (await ref.get()).data();
       res.status(201).json({
         id,
         path: `staff-pdf-bases/${id}/upload.pdf`,
-        ready: data?.status === "ready",
+        ready: data?.status === "ready" || data?.status === "applied",
       });
     }),
   );
@@ -471,8 +508,8 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         old.status === "deleted"
       )
         throw new OperationsError("Envio não encontrado.", 404);
-      if (old.status === "ready") {
-        res.json({ id });
+      if (old.status === "ready" || old.status === "applied") {
+        res.json({ id: old.replaceId || id });
         return;
       }
       const file = services().bucket.file(`staff-pdf-bases/${id}/upload.pdf`),
@@ -495,7 +532,15 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         !current.permissions?.includes(STAFF_PDF_LAYOUT_PERMISSION)
       )
         throw new OperationsError("Permissão revogada.", 403);
-      const dest = services().bucket.file(staffPdfStoragePath(id));
+      const targetId = old.replaceId || id;
+      const targetRef = services()
+        .db.collection("_staffPdfBases")
+        .doc(targetId);
+      const path = staffPdfStoragePath(
+        targetId,
+        old.replaceId ? id : undefined,
+      );
+      const dest = services().bucket.file(path);
       try {
         await dest.save(output, {
           resumable: false,
@@ -513,25 +558,57 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           throw new OperationsError("O envio mudou. Envie uma nova base.", 409);
       }
       const [stored] = await dest.getMetadata();
-      await services().db.runTransaction(async (tx) => {
-        const value = (await tx.get(ref)).data();
-        if (!value || value.status === "deleted")
-          throw new OperationsError("Base excluída durante o envio.", 409);
-        tx.set(
-          ref,
-          {
-            status: "ready",
-            path: staffPdfStoragePath(id),
-            generation: String(stored.generation),
-            pages,
-            pageCount: pages.length,
-            updatedAt: new Date(now()).toISOString(),
-          },
-          { merge: true },
-        );
-      });
+      const previous = await services()
+        .db.runTransaction(async (tx) => {
+          const value = (await tx.get(ref)).data();
+          if (value?.status === "applied" || value?.status === "ready")
+            return undefined;
+          if (value?.status !== "uploading")
+            throw new OperationsError("Base excluída durante o envio.", 409);
+          const target = old.replaceId
+            ? (await tx.get(targetRef)).data()
+            : undefined;
+          if (
+            old.replaceId &&
+            (target?.status !== "ready" ||
+              target.revision !== old.replaceRevision)
+          )
+            throw new OperationsError(
+              "A base mudou durante o envio. Atualize e tente novamente.",
+              409,
+            );
+          tx.set(
+            targetRef,
+            {
+              status: "ready",
+              path,
+              generation: String(stored.generation),
+              pages,
+              pageCount: pages.length,
+              updatedAt: new Date(now()).toISOString(),
+              ...(old.replaceId ? { revision: revision() } : {}),
+            },
+            { merge: true },
+          );
+          if (old.replaceId)
+            tx.set(ref, { status: "applied" }, { merge: true });
+          return target && { path: target.path, generation: target.generation };
+        })
+        .catch(async (error) => {
+          if (error instanceof OperationsError && error.status === 409)
+            await services()
+              .bucket.file(path, { generation: String(stored.generation) })
+              .delete()
+              .catch(() => undefined);
+          throw error;
+        });
       await file.delete().catch(() => undefined);
-      res.json({ id });
+      if (previous?.path && previous.generation)
+        await services()
+          .bucket.file(previous.path, { generation: previous.generation })
+          .delete()
+          .catch(() => undefined);
+      res.json({ id: targetId });
     }),
   );
   router.post(
@@ -542,9 +619,18 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       if (!validDocumentId(id)) throw new OperationsError("Base inválida.");
       const ref = services().db.collection("_staffPdfBases").doc(id);
       let letterPaths: string[] = [];
+      let currentPath: string | undefined;
+      let replacementPath: string | undefined;
+      let completedReplacement = false;
       await services().db.runTransaction(async (tx) => {
         const value = (await tx.get(ref)).data();
         if (!value) throw new OperationsError("Base não encontrada.", 404);
+        completedReplacement = value.status === "applied";
+        if (completedReplacement) return;
+        currentPath = value.path;
+        replacementPath = value.replaceId
+          ? staffPdfStoragePath(value.replaceId, id)
+          : undefined;
         letterPaths = Object.values(value.alphabet?.letters || {})
           .map((e: any) => e?.path)
           .filter(
@@ -569,11 +655,16 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         );
         if (named?.baseId === id) tx.delete(nameRef);
       });
-      for (const path of [
-        `staff-pdf-bases/${id}/original.pdf`,
+      if (completedReplacement) {
+        res.json({ deleted: false });
+        return;
+      }
+      for (const path of new Set([
+        currentPath ?? staffPdfStoragePath(id),
         `staff-pdf-bases/${id}/upload.pdf`,
+        ...(replacementPath ? [replacementPath] : []),
         ...letterPaths,
-      ])
+      ]))
         await services()
           .bucket.file(path)
           .delete()

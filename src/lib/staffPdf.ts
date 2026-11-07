@@ -13,6 +13,7 @@ export interface PdfTextBox {
 }
 /** Desktop templates use top-left pixels at 300 DPI, including landscape coordinates. */
 export interface StaffPdfLayout {
+  base_pdf_name?: string;
   pos_x: number;
   pos_y: number;
   max_width_pixels: number;
@@ -47,6 +48,7 @@ export interface StaffPdfLayoutView {
 }
 export interface StaffPdfLine {
   id: string;
+  kind?: "main" | "extra";
   text: string;
   fontId: string;
   fontSize: number;
@@ -63,6 +65,9 @@ export interface StaffPdfTextEffects {
   outline: boolean;
   outlineColor: string;
   outlineWidth: number;
+  outlineOpacity?: number;
+  shadow?: { x: number; y: number; blur: number; color: string };
+  glow?: { intensity: number; color: string };
   curve: number;
   letterSpacing: number;
   lineSpacing: number;
@@ -73,6 +78,7 @@ export const DEFAULT_PDF_TEXT_EFFECTS: StaffPdfTextEffects = {
   outline: false,
   outlineColor: "#000000",
   outlineWidth: 7,
+  outlineOpacity: 100,
   curve: 0,
   letterSpacing: 0,
   lineSpacing: 1.15,
@@ -90,6 +96,9 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
     curve,
     letterSpacing,
     lineSpacing,
+    outlineOpacity,
+    shadow,
+    glow,
   } = effects;
   if (
     typeof bold !== "boolean" ||
@@ -98,6 +107,19 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
     !/^#[a-f0-9]{6}$/i.test(outlineColor) ||
     !number(opacity, 0, 100) ||
     !number(outlineWidth, 1, 30) ||
+    !number(outlineOpacity, 0, 100) ||
+    (shadow !== undefined &&
+      (!object(shadow) ||
+        !number(shadow.x, -200, 200) ||
+        !number(shadow.y, -200, 200) ||
+        !number(shadow.blur, 0, 100) ||
+        typeof shadow.color !== "string" ||
+        !/^#[a-f0-9]{6}$/i.test(shadow.color))) ||
+    (glow !== undefined &&
+      (!object(glow) ||
+        !number(glow.intensity, 1, 100) ||
+        typeof glow.color !== "string" ||
+        !/^#[a-f0-9]{6}$/i.test(glow.color))) ||
     !number(curve, -100, 100) ||
     !number(letterSpacing, -50, 100) ||
     !number(lineSpacing, 0.5, 3)
@@ -112,6 +134,18 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
     curve,
     letterSpacing,
     lineSpacing,
+    ...(value.outlineOpacity === undefined ? {} : { outlineOpacity }),
+    ...(shadow
+      ? {
+          shadow: {
+            x: shadow.x,
+            y: shadow.y,
+            blur: shadow.blur,
+            color: shadow.color,
+          },
+        }
+      : {}),
+    ...(glow ? { glow: { intensity: glow.intensity, color: glow.color } } : {}),
   };
 }
 
@@ -206,6 +240,11 @@ export function normalizePdfLayout(value: unknown): StaffPdfLayout {
       /[\x00-\x1f\x7f/\\]/.test(value.font_name))
   )
     throw new Error("Nome da fonte inválido.");
+  if (value.base_pdf_name !== undefined && value.base_pdf_name !== "") {
+    output.base_pdf_name = staffPdfName(value.base_pdf_name);
+    if (!/\.pdf$/i.test(output.base_pdf_name))
+      throw new Error("Escolha um nome de base PDF.");
+  }
   output.font_name = value.font_name ?? "";
   let color = value.color ?? fallback.color;
   if (typeof color === "string" && /^#[a-fA-F0-9]{3}$/.test(color))
@@ -246,18 +285,25 @@ export function matchPdfLayout(
     `${stem}_template`,
   ];
   const normalized = (value: string) => value.normalize("NFC").toLowerCase();
+  const eligible = layouts.filter(
+    (item) =>
+      !item.layout.base_pdf_name ||
+      normalized(item.layout.base_pdf_name) === normalized(name),
+  );
+  const linked = eligible.filter((item) => item.layout.base_pdf_name);
   return (
     candidates
-      .map((key) => layouts.find((t) => t.name === key))
+      .map((key) => eligible.find((t) => t.name === key))
       .find(Boolean) ??
     candidates
       .map((key) => {
-        const matches = layouts.filter(
+        const matches = eligible.filter(
           (t) => normalized(t.name) === normalized(key),
         );
         return matches.length === 1 ? matches[0] : undefined;
       })
-      .find(Boolean)
+      .find(Boolean) ??
+    (linked.length === 1 ? linked[0] : undefined)
   );
 }
 export function layoutBox(
@@ -278,19 +324,33 @@ export function layoutBox(
         height: layout.max_height_pixels_landscape,
       };
 }
+export const STAFF_PDF_SYSTEM_FONT: PersonalizationFont = {
+  id: "staff-pdf-system",
+  nome: "Padrão do sistema",
+  cssFamily: "Arial, sans-serif",
+  ativo: true,
+};
+
+export function staffPdfFont(id: string, fonts: PersonalizationFont[]) {
+  return id === STAFF_PDF_SYSTEM_FONT.id
+    ? STAFF_PDF_SYSTEM_FONT
+    : fonts.find((f) => f.id === id);
+}
+
 export function layoutFont(
   layout: StaffPdfLayout,
   fonts: PersonalizationFont[],
 ) {
-  const expected = layout.font_name
-    .normalize("NFC")
-    .toLowerCase()
-    .replace(/\.(ttf|otf|woff2)$/i, "");
-  return fonts.find(
-    (f) =>
-      f.ativo &&
-      (f.nome.normalize("NFC").toLowerCase() === expected ||
-        f.id === layout.font_name),
+  const stem = (name: string) =>
+    name
+      .normalize("NFC")
+      .toLowerCase()
+      .replace(/\.(ttf|otf|woff2)$/i, "")
+      .trim();
+  const expected = stem(layout.font_name);
+  return (
+    fonts.find((font) => font.id === layout.font_name) ??
+    (expected ? fonts.find((font) => stem(font.nome) === expected) : undefined)
   );
 }
 export function newPdfLine(
@@ -305,7 +365,7 @@ export function newPdfLine(
   return {
     id: crypto.randomUUID(),
     text: "",
-    fontId: layoutFont(layout, fonts)?.id || "",
+    fontId: layoutFont(layout, fonts)?.id || STAFF_PDF_SYSTEM_FONT.id,
     fontSize: layout.font_size,
     color: layout.color,
     align: layout.align,
@@ -314,6 +374,25 @@ export function newPdfLine(
     landscape,
   };
 }
+export function fixedStaffPdfMain(
+  layout: StaffPdfLayout,
+  line: StaffPdfLine,
+): StaffPdfLine {
+  const { id, text, fontId, fontSize } = line;
+  return {
+    id,
+    kind: "main",
+    text,
+    fontId,
+    fontSize,
+    color: layout.color,
+    align: layout.align,
+    rotation: layout.text_rotation,
+    portrait: layoutBox(layout, "portrait"),
+    landscape: layoutBox(layout, "landscape"),
+  };
+}
+
 export function normalizeStaffPdfJob(
   value: unknown,
   fonts: PersonalizationFont[],
@@ -339,7 +418,8 @@ export function normalizeStaffPdfJob(
       typeof line.text !== "string" ||
       line.text.length > 500 ||
       /[\x00-\x08\x0b-\x1f\x7f]/.test(line.text) ||
-      !fonts.some((f) => f.ativo && f.id === line.fontId) ||
+      (line.kind !== undefined && !["main", "extra"].includes(line.kind)) ||
+      !staffPdfFont(line.fontId, fonts) ||
       !number(line.fontSize, 1, 4000) ||
       !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
       !["left", "center", "right"].includes(line.align) ||
@@ -359,6 +439,7 @@ export function normalizeStaffPdfJob(
     };
     return {
       id: line.id,
+      ...(line.kind === undefined ? {} : { kind: line.kind }),
       text: line.text,
       fontId: line.fontId,
       fontSize: line.fontSize,
@@ -373,6 +454,9 @@ export function normalizeStaffPdfJob(
     };
   });
   if (
+    (lines.some((line) => line.kind) &&
+      (lines[0].kind !== "main" ||
+        lines.slice(1).some((line) => line.kind !== "extra"))) ||
     !lines.some((l) => l.text.trim()) ||
     new Set(lines.map((l) => l.id)).size !== lines.length
   )
@@ -394,7 +478,12 @@ export function normalizeStaffPdfJob(
     lines,
   };
 }
-export function staffPdfStoragePath(id: string): string {
+export function staffPdfStoragePath(id: string, uploadId?: string): string {
   if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("PDF interno inválido.");
+  if (uploadId !== undefined) {
+    if (!/^[a-f0-9]{32}$/.test(uploadId))
+      throw new Error("Versão do PDF inválida.");
+    return `staff-pdf-bases/${id}/versions/${uploadId}.pdf`;
+  }
   return `staff-pdf-bases/${id}/original.pdf`;
 }
