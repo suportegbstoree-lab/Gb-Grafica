@@ -1,3 +1,4 @@
+import { normalizeStaffBarcode } from "./staffPdfBarcode.js";
 import type { PersonalizationFont } from "./textCustomization.js";
 
 export const STAFF_PDF_MAX_PAGES = 16;
@@ -151,6 +152,7 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
 
 export interface StaffPdfJob {
   schemaVersion: 1;
+  barcode?: string;
   baseId: string;
   baseRevision: string;
   layoutId: string;
@@ -469,6 +471,9 @@ export function normalizeStaffPdfJob(
   )
     throw new Error("Nome do arquivo final inválido.");
   return {
+    ...(value.barcode === undefined
+      ? {}
+      : { barcode: normalizeStaffBarcode(value.barcode) }),
     ...(value.outputName ? { outputName: value.outputName } : {}),
     schemaVersion: 1,
     baseId: value.baseId,

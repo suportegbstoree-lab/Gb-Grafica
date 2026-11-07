@@ -148,6 +148,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     .click();
   const record = page.getByRole("row").filter({ hasText: "00123" });
   await expect(record).toContainText("Ana");
+  await record.getByLabel("Rastreio do registro 2").fill("BR2684621549924");
   await record
     .getByLabel("Base do registro 2")
     .selectOption({ label: "Kit de teste.pdf" });
@@ -161,7 +162,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     })
     .click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
-  await expect(page.getByRole("article")).toContainText("Kit de teste_00123");
+  await expect(page.getByRole("article")).toContainText(
+    "Kit de teste Ana BR2684621549924",
+  );
   await page.getByRole("button", { name: "Editar item da fila" }).click();
   await expect(page.getByLabel("Texto principal", { exact: true })).toHaveValue(
     "Ana",
@@ -186,7 +189,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await expect(page.getByRole("article")).toContainText("Concluído");
   const savingPdf = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar PDF-TEST-1" }).click();
-  expect((await savingPdf).suggestedFilename()).toBe("Kit de teste_00123.pdf");
+  expect((await savingPdf).suggestedFilename()).toBe(
+    "Kit de teste ANA REVISADA BR2684621549924.pdf",
+  );
 });
 
 test("desktop CSV matches its model and flags unknown records before processing", async ({
@@ -198,7 +203,7 @@ test("desktop CSV matches its model and flags unknown records before processing"
     name: "pedidos.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,af_clean,nome,prazo_envio\r\n00123,,Kit de teste,ANA,\r\n00124,,Desconhecido,BIA,",
+      "pedido_plataforma,barcode,af_clean,nome,prazo_envio\r\n00123,BR2684621549924,Kit de teste,ANA,\r\n00124,BR263172448223P,Desconhecido,BIA,",
     ),
   });
   const known = page.getByRole("row").filter({ hasText: "00123" });
@@ -217,4 +222,44 @@ test("desktop CSV matches its model and flags unknown records before processing"
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toHaveCount(1);
   await expect(page.getByRole("article")).toContainText("ANA");
+});
+
+test("the workshop saves recipes in previous batches and reconstructs its PDF for download", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/staff-pdf?batches=true");
+  await page
+    .getByLabel("Base PDF da equipe")
+    .selectOption({ label: "Kit de teste.pdf · Interno" });
+  await page.getByLabel("Texto principal", { exact: true }).fill("ANA");
+  await page
+    .getByRole("button", { name: "Adicionar código de barras", exact: true })
+    .click();
+  const barcode = page.getByRole("dialog", {
+    name: "Código de barras do pedido",
+  });
+  await barcode
+    .getByLabel("Código de barras", { exact: true })
+    .fill("BR2684621549924");
+  await barcode
+    .getByRole("button", { name: "Aplicar código", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Adicionar à fila", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Processar fila", exact: true })
+    .click();
+  await expect(page.getByRole("article")).toContainText("Concluído");
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/LOTE-TESTE ·/).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar", exact: true }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe("Kit de teste ANA BR2684621549924.pdf");
+  const pdf = await PDFDocument.load(await readFile((await file.path())!));
+  expect(pdf.getPageCount()).toBe(4);
+  await expect(
+    page.getByRole("heading", { name: /Documentos salvos · teste/ }),
+  ).toBeVisible();
 });

@@ -12,6 +12,11 @@ import {
 } from "./staffPdfLibrary";
 import { createStaffDocumentRouters, sanitizeStaffPdf } from "./staffDocuments";
 import { defaultPdfLayout, newPdfLine } from "../lib/staffPdf";
+import { cleanupStaffPdfBatches } from "./staffPdfBatches";
+import {
+  automaticStaffBarcode,
+  staffPdfDefaultFilename,
+} from "../lib/staffPdfBarcode";
 import { OperationsError } from "../lib/operations";
 async function pdf(pages = 4) {
   const d = await PDFDocument.create();
@@ -89,8 +94,10 @@ async function scenario(run: (s: any) => Promise<void>) {
     ]),
     objects = new Map<string, { bytes: Buffer; meta: any }>();
   let gen = 1,
-    revoked = false;
+    revoked = false,
+    clock = Date.now();
   const bucket = {
+    name: "test.firebasestorage.app",
     file: (name: string, opts?: any) => ({
       name,
       exists: async () => [objects.has(name)],
@@ -148,6 +155,7 @@ async function scenario(run: (s: any) => Promise<void>) {
       services: () => services,
       authorize,
       origin: () => "https://example.test",
+      now: () => clock,
     };
   const app = express();
   app.use(express.json());
@@ -171,6 +179,10 @@ async function scenario(run: (s: any) => Promise<void>) {
       objects,
       request,
       services,
+      advance: (ms: number) => {
+        clock += ms;
+      },
+      time: () => clock,
       revoke: () => {
         revoked = true;
       },
@@ -466,4 +478,268 @@ test("decorative letters require exact folder names and owned PNGs, and active l
       422,
     );
     assert.ok(objects.has(path));
+  }));
+
+test("batch recipes snapshot inputs, preserve tracking and enforce ownership, idempotence and three-day expiry", async () =>
+  scenario(async ({ request, docs, objects, services, advance, time }) => {
+    const baseId = "a".repeat(32),
+      layoutId = "b".repeat(32);
+    const layout = { ...defaultPdfLayout(), font_name: "FreeMono" };
+    const path = `staff-pdf-bases/${baseId}/original.pdf`;
+    objects.set(path, {
+      bytes: await pdf(2),
+      meta: { size: 3000, contentType: "application/pdf", generation: "1" },
+    });
+    docs.set(`_staffPdfBases/${baseId}`, {
+      name: "Kit.pdf",
+      status: "ready",
+      path,
+      generation: "1",
+      pageCount: 2,
+      pages: [
+        { width: 595, height: 842 },
+        { width: 595, height: 842 },
+      ],
+      revision: baseId,
+    });
+    docs.set(`_staffPdfLayouts/${layoutId}`, {
+      enabled: true,
+      layout,
+      revision: layoutId,
+    });
+    const parentResponse = await request("/library/batches", "generator", {
+      requestId: "c".repeat(36),
+    });
+    assert.equal(parentResponse.status, 201);
+    const { batch } = await parentResponse.json();
+    assert.equal(
+      Date.parse(batch.expiresAt) - Date.parse(batch.createdAt),
+      3 * 86400000,
+    );
+    assert.equal((await request("/library/batches", "manager")).status, 403);
+    const line = newPdfLine(layout, [
+      { id: "mono", nome: "FreeMono", cssFamily: "monospace", ativo: true },
+    ]);
+    line.text = "ANA";
+    const barcode = "BR2684621549924";
+    const job = {
+      schemaVersion: 1,
+      baseId,
+      baseRevision: baseId,
+      layoutId,
+      layoutRevision: layoutId,
+      lines: [line],
+      barcode,
+      outputName: staffPdfDefaultFilename("Kit", "ANA", barcode),
+    };
+    const body = { job, requestId: "d".repeat(36) };
+    const response = await request(
+      `/library/batches/${batch.id}/items`,
+      "generator",
+      body,
+    );
+    assert.equal(response.status, 201);
+    const recipe = await response.json();
+    assert.equal(recipe.job.barcode, barcode);
+    assert.equal(recipe.job.outputName, "Kit ANA BR2684621549924");
+    assert.match(
+      recipe.originalUrl,
+      new RegExp(`staff-pdf-batches/${batch.id}/assets/`),
+    );
+    assert.equal(
+      [...objects.keys()].some(
+        (key) => key.includes("document.pdf") || key.endsWith(".png"),
+      ),
+      false,
+    );
+    assert.equal(
+      (
+        await request(
+          `/library/batches/${batch.id}/items/${recipe.item.id}`,
+          "customer",
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await request(
+          `/library/batches/${batch.id}/items/${recipe.item.id}`,
+          "root",
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await request(
+          `/library/batches/${batch.id}/items/${recipe.item.id}/complete`,
+          "generator",
+          {},
+        )
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await request(
+          `/library/batches/${batch.id}/items/${recipe.item.id}/complete`,
+          "generator",
+          {},
+        )
+      ).status,
+      200,
+    );
+    const activities = [...docs.keys()].filter((key) =>
+      key.startsWith("_operationsActivity/"),
+    );
+    assert.equal(activities.length, 1);
+    objects.delete(path);
+    docs.delete(`_staffPdfBases/${baseId}`);
+    docs.delete(`_staffPdfLayouts/${layoutId}`);
+    docs.get("config/main").fontes_personalizacao = [];
+    assert.equal(
+      (await request(`/library/batches/${batch.id}/items`, "generator", body))
+        .status,
+      200,
+    );
+    const replay = await request(
+      `/library/batches/${batch.id}/items/${recipe.item.id}`,
+      "generator",
+    );
+    assert.equal(replay.status, 200);
+    assert.equal((await replay.json()).fonts[0].nome, "FreeMono");
+    assert.equal(
+      (
+        await request(`/library/batches/${batch.id}/items`, "generator", {
+          ...body,
+          job: { ...job, barcode: automaticStaffBarcode("e".repeat(36)) },
+        })
+      ).status,
+      409,
+    );
+    advance(3 * 86400000 + 11 * 60000);
+    assert.equal(
+      (await request(`/library/batches/${batch.id}/items`, "generator")).status,
+      410,
+    );
+    assert.deepEqual(
+      (await (await request("/library/batches", "generator")).json()).batches,
+      [],
+    );
+    services.bucket.deleteFiles = async ({ prefix }: { prefix: string }) => {
+      for (const key of objects.keys())
+        if (key.startsWith(prefix)) objects.delete(key);
+    };
+    services.db.batch = () => {
+      const deletes: any[] = [];
+      return {
+        delete: (ref: any) => deletes.push(ref),
+        commit: async () => {
+          for (const ref of deletes) await ref.delete();
+        },
+      };
+    };
+    assert.deepEqual(await cleanupStaffPdfBatches(services, time()), {
+      deleted: 1,
+      failed: 0,
+    });
+    assert.equal(
+      [...objects.keys()].some((key) => key.startsWith("staff-pdf-batches/")),
+      false,
+    );
+    assert.equal(docs.has(`_staffPdfBatches/${batch.id}`), false);
+  }));
+
+test("batch recipes freeze font files and decorative initials instead of linking current catalog assets", async () =>
+  scenario(async ({ request, docs, objects }) => {
+    const baseId = "a".repeat(32),
+      layoutId = "b".repeat(32);
+    const basePath = `staff-pdf-bases/${baseId}/original.pdf`;
+    const fontPath = `catalog/fonts/mono/${"c".repeat(32)}.otf`;
+    const initialPath = `staff-pdf-bases/${baseId}/letters/${"d".repeat(32)}.png`;
+    for (const [path, type, bytes] of [
+      [basePath, "application/pdf", await pdf(2)],
+      [fontPath, "font/otf", Buffer.from("OTTO-original-font")],
+      [initialPath, "image/png", Buffer.from("original-initial")],
+    ] as const)
+      objects.set(path, {
+        bytes,
+        meta: { size: bytes.length, contentType: type, generation: "1" },
+      });
+    const font = {
+      id: "mono",
+      nome: "FreeMono",
+      cssFamily: "FreeMono",
+      ativo: false,
+      arquivoUrl: `https://firebasestorage.googleapis.com/v0/b/test.firebasestorage.app/o/${encodeURIComponent(fontPath)}?alt=media`,
+      arquivoFormato: "otf" as const,
+    };
+    docs.get("config/main").fontes_personalizacao = [font];
+    docs.set(`_staffPdfBases/${baseId}`, {
+      name: "Kit.pdf",
+      status: "ready",
+      path: basePath,
+      generation: "1",
+      revision: baseId,
+      alphabet: {
+        folderName: "Kit",
+        sizePercent: 65,
+        letters: { A: { path: initialPath } },
+      },
+    });
+    const layout = { ...defaultPdfLayout(), font_name: "FreeMono" };
+    docs.set(`_staffPdfLayouts/${layoutId}`, {
+      enabled: true,
+      revision: layoutId,
+      layout,
+    });
+    const { batch } = await (
+      await request("/library/batches", "generator", {
+        requestId: "e".repeat(36),
+      })
+    ).json();
+    const line = newPdfLine(layout, [font]);
+    line.text = "ANA";
+    const body = {
+      requestId: "f".repeat(36),
+      job: {
+        schemaVersion: 1,
+        baseId,
+        baseRevision: baseId,
+        layoutId,
+        layoutRevision: layoutId,
+        lines: [line],
+        barcode: "BR263172448223P",
+        outputName: "Kit ANA BR263172448223P",
+      },
+    };
+    const saved = await request(
+      `/library/batches/${batch.id}/items`,
+      "generator",
+      body,
+    );
+    assert.equal(saved.status, 201);
+    const recipe = await saved.json();
+    assert.equal(recipe.initial.sizePercent, 65);
+    assert.match(recipe.fonts[0].arquivoUrl, /staff-pdf-batches/);
+    assert.match(recipe.initial.url, /staff-pdf-batches/);
+    const snapshot = docs.get(`_staffPdfBatchItems/${recipe.item.id}`);
+    assert.equal(snapshot.fonts[0].arquivoUrl, undefined);
+    const originalFont = objects.get(
+      `staff-pdf-batches/${batch.id}/assets/${snapshot.fonts[0].asset}`,
+    ).bytes;
+    assert.equal(originalFont.toString(), "OTTO-original-font");
+    objects.delete(fontPath);
+    objects.delete(initialPath);
+    assert.equal(
+      (
+        await request(
+          `/library/batches/${batch.id}/items/${recipe.item.id}`,
+          "generator",
+        )
+      ).status,
+      200,
+    );
+    assert.equal(originalFont.toString(), "OTTO-original-font");
   }));

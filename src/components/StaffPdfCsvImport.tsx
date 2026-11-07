@@ -1,4 +1,5 @@
 import React from "react";
+import { staffTrackingBarcode } from "../lib/staffPdfBarcode";
 import type { StaffPdfLibrary } from "../services/staffPdfService";
 import {
   defaultStaffPdfCsvColumns,
@@ -6,7 +7,7 @@ import {
   resolveStaffPdfCsvModel,
 } from "../lib/staffPdfCsv";
 import { excelColumn } from "../lib/spreadsheetCsv";
-import { layoutFont, staffPdfOutputName } from "../lib/staffPdf";
+import { layoutFont } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import StaffSpreadsheetCsv from "./StaffSpreadsheetCsv";
 
@@ -14,7 +15,7 @@ export interface StaffPdfCsvOrder {
   baseId: string;
   layoutId: string;
   text: string;
-  outputName: string;
+  barcode: string;
 }
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
 
@@ -48,6 +49,7 @@ export default function StaffPdfCsvImport({
     [overrides, setOverrides] = React.useState<
       Record<number, { baseId: string; layoutId: string }>
     >({}),
+    [codes, setCodes] = React.useState<Record<number, string>>({}),
     [added, setAdded] = React.useState(new Set<number>()),
     [page, setPage] = React.useState(0),
     [message, setMessage] = React.useState(""),
@@ -62,6 +64,7 @@ export default function StaffPdfCsvImport({
     setHasHeader(header);
     setColumns(columns);
     setAdded(new Set());
+    setCodes({});
     setOverrides({});
     setPage(0);
     setMessage("");
@@ -97,9 +100,19 @@ export default function StaffPdfCsvImport({
       const base = data.bases.find((base) => base.id === model?.baseId);
       const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
       const reference = row[columns.reference]?.trim() || String(index + 1);
-      const outputName = staffPdfOutputName(
-        `${(base?.name || template || "Pedido").replace(/\.pdf$/i, "")}_${reference}`,
-      );
+      const barcodeIndex =
+        source?.rows[0].findIndex((header) =>
+          /^(barcode|rastreio|numero.?de.?rastreio|n[oº°]?.?de.?rastreio|tracking)$/i.test(
+            header
+              .normalize("NFD")
+              .replace(/\p{M}/gu, "")
+              .trim()
+              .replace(/[ _]+/g, ""),
+          ),
+        ) ?? -1;
+      const barcode = (codes[index] ?? row[barcodeIndex] ?? "")
+        .trim()
+        .toUpperCase();
       return {
         index,
         template,
@@ -107,7 +120,7 @@ export default function StaffPdfCsvImport({
         baseId: base?.id || "",
         layoutId: mold?.id || "",
         text,
-        outputName,
+        barcode,
         missingFont:
           mold?.layout.font_name && !layoutFont(mold.layout, fonts)
             ? mold.layout.font_name
@@ -118,7 +131,9 @@ export default function StaffPdfCsvImport({
             ? "O texto excede 500 caracteres."
             : !base || !mold
               ? "Confira a base e o molde."
-              : "",
+              : !staffTrackingBarcode(barcode)
+                ? "Informe um número de rastreio válido."
+                : "",
       };
     });
   const ready = preview.filter((row) => !row.issue).slice(0, available);
@@ -248,6 +263,21 @@ export default function StaffPdfCsvImport({
                         </td>
                         <td className="whitespace-pre-wrap break-words p-2">
                           {row.text || "—"}
+                          <label className="mt-2 block text-xs">
+                            Rastreio
+                            <input
+                              className={input}
+                              maxLength={15}
+                              value={codes[row.index] ?? row.barcode}
+                              aria-label={`Rastreio do registro ${row.index + 1}`}
+                              onChange={(e) =>
+                                setCodes({
+                                  ...codes,
+                                  [row.index]: e.target.value.toUpperCase(),
+                                })
+                              }
+                            />
+                          </label>
                           {row.issue && (
                             <p className="text-xs text-amber-300">
                               {row.issue}

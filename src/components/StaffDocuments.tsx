@@ -1,6 +1,8 @@
 import React from "react";
 import StaffPdfWorkspace from './StaffPdfWorkspace';
-import type { StaffPdfApi } from '../services/staffPdfService';
+import { staffPdfApi, type StaffPdfApi } from '../services/staffPdfService';
+import { renderStaffPdfRecipe } from '../services/staffPdfBatchService';
+import { automaticStaffBarcode, staffPdfDefaultFilename } from '../lib/staffPdfBarcode';
 import type { Anuncio, PersonalizationFont } from "../types";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { selectedInitial } from "../lib/decorativeInitial";
@@ -35,6 +37,7 @@ export default function StaffDocuments({
   canManageTemplates?: boolean;
   libraryApi?: StaffPdfApi;
 }) {
+  const [batchRevision, setBatchRevision] = React.useState(0);
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
     [truncated, setTruncated] = React.useState(false),
     [query, setQuery] = React.useState(""),
@@ -156,11 +159,10 @@ export default function StaffDocuments({
       <header>
         <h2 className="text-2xl font-bold">PDFs internos da equipe</h2>
         <p className="mt-2 text-sm text-gray-400">
-          Biblioteca, edição e documentos da equipe. Os PDFs gerados ficam
-          disponíveis por sete dias.
+          Biblioteca, edição e lotes da equipe. Os novos lotes ficam disponíveis por três dias.
         </p>
       </header>
-      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} onGenerated={load} timingApi={timingApi} api={libraryApi}/>
+      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} externalBatchRevision={batchRevision} onGenerated={load} timingApi={timingApi} api={libraryApi}/>
       {error && (
         <p role="alert" className="rounded-xl bg-red-950 p-4 text-red-200">
           {error}
@@ -210,7 +212,7 @@ export default function StaffDocuments({
       )}
       </details>}
       {canGenerate && <><div className="flex flex-wrap justify-between gap-3">
-        <h3 className="text-lg font-bold">Documentos salvos</h3>
+        <h3 className="text-lg font-bold">Documentos salvos anteriormente</h3>
         <button
           disabled={busy}
           onClick={() => void run(load)}
@@ -338,6 +340,25 @@ export default function StaffDocuments({
           onSave={async (value, front, back) => {
             if (!value || !back)
               throw new Error("Gere o texto e a contracapa automática.");
+            const batches = (libraryApi || staffPdfApi).batches;
+            if (batches) {
+              const batch = await batches.create(editor.requestId);
+              const barcode = automaticStaffBarcode(editor.requestId);
+              const recipe = await batches.save(batch.id, {
+                kind: "simple", productId: editor.product.id, templateId: editor.template.id,
+                customization: value, barcode,
+                outputName: staffPdfDefaultFilename(editor.template.name, value.texto, barcode),
+              }, editor.requestId);
+              await renderStaffPdfRecipe(recipe);
+              await batches.complete(batch.id, recipe.item.id);
+              if (alive.current) {
+                setEditor(null);
+                setMessage(`${batch.reference} disponível por três dias em Lotes anteriores.`);
+                setBatchRevision((old) => old + 1);
+                await load();
+              }
+              return;
+            }
             const initial = selectedInitial(editor.template, value.texto);
             const blob = await exportPersonalizationPdf({
               title: editor.template.name,

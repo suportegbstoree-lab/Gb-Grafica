@@ -2,6 +2,7 @@ import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
 import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
+import { cleanupStaffPdfBatches } from './staffPdfBatches.js';
 import { createStaffPdfLibraryRouter } from './staffPdfLibrary.js';
 import { workRequestContext } from './workTracking.js';
 import { createWorkRouter,type WorkActor } from './workRouter.js';
@@ -2326,10 +2327,10 @@ app.get('/api/internal/maintenance', async (req, res) => {
     if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
-    const [expiredPromotions, tracking, customerEmails,staffDocuments] = await Promise.all([
-      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),cleanupStaffDocuments(getAdminServices()),
+    const [expiredPromotions, tracking, customerEmails,staffDocuments,staffPdfBatches] = await Promise.all([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),cleanupStaffDocuments(getAdminServices()),cleanupStaffPdfBatches(getAdminServices()),
     ]);
-    res.json({ expiredPromotions, tracking, staffDocuments, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
+    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 

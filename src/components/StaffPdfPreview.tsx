@@ -1,4 +1,8 @@
 import React from "react";
+import {
+  staffBarcodeCanvas,
+  drawStaffBarcode,
+} from "../services/staffPdfBarcode";
 import { staffPdfPreviewPage } from "../services/pdfPreview";
 import {
   drawStaffPdfText,
@@ -38,6 +42,7 @@ export default function StaffPdfPreview({
   onEdit,
   fitMargin = 0.2,
   initial,
+  barcode,
 }: {
   original: Blob;
   pageCount: number;
@@ -50,6 +55,7 @@ export default function StaffPdfPreview({
   onEdit?: (id: string) => void;
   fitMargin?: number;
   initial?: DecorativeInitial;
+  barcode?: string;
 }) {
   const [page, setPage] = React.useState(1);
   const pageNumber = Math.max(1, Math.min(page, pageCount));
@@ -73,6 +79,30 @@ export default function StaffPdfPreview({
   const [drawError, setDrawError] = React.useState("");
   const [fontError, setFontError] = React.useState("");
   const [readyFonts, setReadyFonts] = React.useState("");
+  const [barcodeImage, setBarcodeImage] = React.useState<{
+    code: string;
+    image: HTMLCanvasElement;
+  }>();
+  const [barcodeError, setBarcodeError] = React.useState("");
+  React.useEffect(() => {
+    if (!barcode) return;
+    let active = true,
+      image: HTMLCanvasElement | undefined;
+    setBarcodeError("");
+    void staffBarcodeCanvas(barcode)
+      .then((result) => {
+        image = result;
+        if (active) setBarcodeImage({ code: barcode, image });
+        else image.width = image.height = 1;
+      })
+      .catch((error) => {
+        if (active) setBarcodeError(error.message);
+      });
+    return () => {
+      active = false;
+      if (image) image.width = image.height = 1;
+    };
+  }, [barcode]);
   const canvas = React.useRef<HTMLCanvasElement>(null);
   const boxes = React.useRef(new Map<string, PdfTextBox>());
   const viewport = React.useRef<HTMLDivElement>(null);
@@ -209,6 +239,13 @@ export default function StaffPdfPreview({
       ctx.resetTransform();
       setDrawError((e as Error).message);
     }
+    if (barcode && barcodeImage?.code === barcode) {
+      try {
+        drawStaffBarcode(ctx, barcodeImage.image);
+      } catch (error) {
+        setDrawError((error as Error).message);
+      }
+    }
     const current = lines.find((line) => line.id === selected);
     if (current && onMove) {
       ctx.save();
@@ -247,6 +284,8 @@ export default function StaffPdfPreview({
     initial,
     readyFonts,
     fontIds,
+    barcode,
+    barcodeImage,
   ]);
 
   const point = (
@@ -295,7 +334,7 @@ export default function StaffPdfPreview({
       : Math.round(zoom * 100);
   const adjustZoom = (factor: number) =>
     setZoom(Math.min(4, Math.max(0.1, ((scale * 300) / 72) * factor)));
-  const error = loadError || fontError || drawError;
+  const error = loadError || fontError || drawError || barcodeError;
 
   return (
     <div className="min-w-0 space-y-2 rounded-xl bg-gray-950 p-2">

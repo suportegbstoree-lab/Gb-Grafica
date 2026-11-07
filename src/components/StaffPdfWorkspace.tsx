@@ -1,4 +1,11 @@
 import React from "react";
+import {
+  automaticStaffBarcode,
+  normalizeStaffBarcode,
+  staffPdfDefaultFilename,
+} from "../lib/staffPdfBarcode";
+import { renderStaffPdfRecipe } from "../services/staffPdfBatchService";
+import StaffPdfBatches from "./StaffPdfBatches";
 import { Search } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
@@ -44,6 +51,7 @@ interface QueueItem {
   base: StaffPdfBase;
   original: Blob;
   fitMargin: number;
+  batchId?: string;
   status: "queued" | "processing" | "ready" | "error";
   error?: string;
   reference?: string;
@@ -52,6 +60,7 @@ const input =
   "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-3";
 export default function StaffPdfWorkspace({
   fonts,
+  externalBatchRevision = 0,
   canManage = false,
   canGenerate = true,
   api = staffPdfApi,
@@ -59,6 +68,7 @@ export default function StaffPdfWorkspace({
   timingApi = workApi,
 }: {
   fonts: PersonalizationFont[];
+  externalBatchRevision?: number;
   canManage?: boolean;
   canGenerate?: boolean;
   api?: StaffPdfApi;
@@ -85,6 +95,10 @@ export default function StaffPdfWorkspace({
     [lines, setLines] = React.useState<StaffPdfLine[]>([]),
     [mainFormatting, setMainFormatting] = React.useState(false),
     [selected, setSelected] = React.useState<string>(),
+    [barcode, setBarcode] = React.useState(""),
+    [barcodeEditor, setBarcodeEditor] = React.useState(false),
+    [barcodeDraft, setBarcodeDraft] = React.useState(""),
+    [batchRevision, setBatchRevision] = React.useState(0),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
     [stopRequested, setStopRequested] = React.useState(false),
@@ -180,11 +194,22 @@ export default function StaffPdfWorkspace({
     textLines: StaffPdfLine[],
     name: string,
     id = crypto.randomUUID(),
+    code = barcode,
   ): QueueItem {
-    const filename = staffPdfOutputName(name);
+    const resolvedCode = normalizeStaffBarcode(
+      code || automaticStaffBarcode(id),
+    );
+    const filename =
+      staffPdfOutputName(name) ||
+      staffPdfDefaultFilename(
+        layout.name,
+        textLines[0]?.text || "",
+        resolvedCode,
+      );
     const job = normalizeStaffPdfJob(
       {
         schemaVersion: 1,
+        barcode: resolvedCode,
         baseId: source.base.id,
         baseRevision: source.base.revision,
         layoutId: layout.id,
@@ -241,7 +266,16 @@ export default function StaffPdfWorkspace({
         const line = mainFrom(layout);
         line.text = order.text;
 
-        items.push(queueItem(source, layout, [line], order.outputName));
+        items.push(
+          queueItem(
+            source,
+            layout,
+            [line],
+            "",
+            crypto.randomUUID(),
+            order.barcode,
+          ),
+        );
       }
       if (alive.current) {
         setQueue((old) => [...old, ...items]);
@@ -258,7 +292,11 @@ export default function StaffPdfWorkspace({
   function saveQueue() {
     const items = queue
       .filter((item) => item.status !== "ready")
-      .map(({ requestId, job }) => ({ requestId, job }));
+      .map(({ requestId, job, batchId }) => ({
+        requestId,
+        job,
+        ...(batchId ? { batchId } : {}),
+      }));
     downloadPersonalization(
       new Blob([JSON.stringify({ schemaVersion: 1, items }, null, 2)], {
         type: "application/json",
@@ -289,7 +327,14 @@ export default function StaffPdfWorkspace({
           throw new Error("Identificador de pedido inválido no JSON.");
         if (seen.has(id)) continue;
         seen.add(id);
+        if (
+          item.batchId !== undefined &&
+          (typeof item.batchId !== "string" ||
+            !/^[a-f0-9]{32}$/.test(item.batchId))
+        )
+          throw new Error("Lote inválido no arquivo da fila.");
         incoming.push({
+          ...(item.batchId ? { batchId: item.batchId } : {}),
           requestId: id,
           job: normalizeStaffPdfJob(item.job, fonts),
         });
@@ -300,7 +345,7 @@ export default function StaffPdfWorkspace({
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
       const items: QueueItem[] = [];
-      for (const { requestId, job } of incoming) {
+      for (const { requestId, job, batchId } of incoming) {
         if (!alive.current) return;
         const base = library.bases.find((b) => b.id === job.baseId);
         const layout = library.layouts.find((t) => t.id === job.layoutId);
@@ -319,6 +364,7 @@ export default function StaffPdfWorkspace({
         items.push({
           id: crypto.randomUUID(),
           requestId,
+          ...(batchId ? { batchId } : {}),
           job,
           base: source.base,
           original: source.original,
@@ -350,6 +396,7 @@ export default function StaffPdfWorkspace({
     loadLines([]);
     setEditingId(null);
     setOutputName("");
+    setBarcode("");
     setError("");
     setMessage("");
     setBusy(true);
@@ -374,6 +421,9 @@ export default function StaffPdfWorkspace({
           : undefined);
       if (alive.current && version === revision.current) {
         setLoaded(source);
+        setBarcode(
+          item?.job.barcode || automaticStaffBarcode(crypto.randomUUID()),
+        );
         setLayoutId(layout?.id || "");
         loadLines(
           layout
@@ -393,7 +443,19 @@ export default function StaffPdfWorkspace({
         );
         if (item) {
           setEditingId(item.id);
-          setOutputName(item.job.outputName || "");
+          const automaticName =
+            item.job.barcode && layout
+              ? staffPdfDefaultFilename(
+                  layout.name,
+                  item.job.lines[0]?.text || "",
+                  item.job.barcode,
+                )
+              : undefined;
+          setOutputName(
+            item.job.outputName === automaticName
+              ? ""
+              : item.job.outputName || "",
+          );
           setMessage(
             previousLayout
               ? "Revise a edição e clique em Atualizar item da fila."
@@ -419,6 +481,7 @@ export default function StaffPdfWorkspace({
     try {
       const current = await api.list();
       if (alive.current) setData(current);
+      let createdBatch: string | undefined;
       for (const item of queue.filter(
         (q) => q.status === "queued" || q.status === "error",
       )) {
@@ -454,35 +517,70 @@ export default function StaffPdfWorkspace({
           const b = current.bases.find((b) => b.id === item.job.baseId),
             t = current.layouts.find((t) => t.id === item.job.layoutId);
           if (
-            !b ||
-            b.revision !== item.job.baseRevision ||
-            !t ||
-            t.revision !== item.job.layoutRevision
+            !(api.batches && item.batchId) &&
+            (!b ||
+              b.revision !== item.job.baseRevision ||
+              !t ||
+              t.revision !== item.job.layoutRevision)
           )
             throw new Error(
               "A base ou o molde mudou. Edite este item novamente.",
             );
-          const initial = await api.initial(
-            item.job.baseId,
-            item.job.lines[0]?.text || "",
-          );
-          if (initial && t.layout.imagem_full_page) initial.sizePercent = 100;
-          const blob = await exportStaffPdf(
-            item.original,
-            item.job,
-            fonts,
-            item.fitMargin,
-            initial,
-          );
-          attempts.current.push(Date.now());
-          const doc = await api.generate(item.job, blob, item.requestId);
+          let reference: string;
+          if (api.batches) {
+            const job = item.job.barcode
+              ? item.job
+              : {
+                  ...item.job,
+                  barcode: automaticStaffBarcode(item.requestId),
+                  outputName: staffPdfDefaultFilename(
+                    t?.name || item.base.name,
+                    item.job.lines[0]?.text || "",
+                    automaticStaffBarcode(item.requestId),
+                  ),
+                };
+            let batchId = item.batchId;
+            if (!batchId) {
+              createdBatch ||= (await api.batches.create(crypto.randomUUID()))
+                .id;
+              batchId = createdBatch;
+              if (alive.current)
+                setQueue((old) =>
+                  old.map((row) =>
+                    row.id === item.id ? { ...row, batchId, job } : row,
+                  ),
+                );
+            }
+            attempts.current.push(Date.now());
+            const recipe = await api.batches.save(batchId, job, item.requestId);
+            const rendered = await renderStaffPdfRecipe(recipe);
+            if (rendered.size > 50 * 1024 * 1024)
+              throw new Error("O PDF excede 50 MB.");
+            await api.batches.complete(batchId, recipe.item.id);
+            reference = recipe.item.outputName;
+          } else {
+            const initial = await api.initial(
+              item.job.baseId,
+              item.job.lines[0]?.text || "",
+            );
+            if (initial && t?.layout.imagem_full_page)
+              initial.sizePercent = 100;
+            const blob = await exportStaffPdf(
+              item.original,
+              item.job,
+              fonts,
+              item.fitMargin,
+              initial,
+            );
+            attempts.current.push(Date.now());
+            const doc = await api.generate(item.job, blob, item.requestId);
+            reference = doc.reference;
+          }
           successes++;
           if (alive.current)
             setQueue((old) =>
               old.map((q) =>
-                q.id === item.id
-                  ? { ...q, status: "ready", reference: doc.reference }
-                  : q,
+                q.id === item.id ? { ...q, status: "ready", reference } : q,
               ),
             );
         } catch (e) {
@@ -497,9 +595,10 @@ export default function StaffPdfWorkspace({
         }
       }
       if (alive.current) {
+        setBatchRevision((old) => old + 1);
         await onGenerated();
         setMessage(
-          `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Documentos salvos.`,
+          `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Lotes anteriores.`,
         );
       }
     } catch (e) {
@@ -533,6 +632,7 @@ export default function StaffPdfWorkspace({
       );
       loadLines([mainFrom(mold)]);
       setOutputName("");
+      setBarcode(automaticStaffBarcode(crypto.randomUUID()));
       setEditingId(null);
       setMessage(
         editingId
@@ -866,6 +966,20 @@ export default function StaffPdfWorkspace({
               )}
               <button
                 type="button"
+                disabled={busy || !loaded}
+                className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
+                onClick={() => {
+                  setBarcodeDraft(barcode);
+                  setBarcodeEditor(true);
+                }}
+              >
+                Adicionar código de barras
+              </button>
+              {barcode && (
+                <p className="break-all text-xs text-gray-400">{barcode}</p>
+              )}
+              <button
+                type="button"
                 disabled={busy}
                 className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
                 onClick={() => {
@@ -999,6 +1113,7 @@ export default function StaffPdfWorkspace({
                   }
                   fitMargin={mold?.layout.fit_margin}
                   initial={initial}
+                  barcode={barcode || undefined}
                 />
               ) : (
                 <p className="grid min-h-56 place-items-center text-sm text-gray-400">
@@ -1090,6 +1205,51 @@ export default function StaffPdfWorkspace({
             )}
           </div>
         </>
+      )}
+      {api.batches && canGenerate && (
+        <StaffPdfBatches
+          api={api.batches}
+          revision={batchRevision + externalBatchRevision}
+        />
+      )}
+      {barcodeEditor && (
+        <EditorModal
+          title="Código de barras do pedido"
+          onClose={() => setBarcodeEditor(false)}
+          closeLabel="Fechar código de barras"
+          doneLabel="Voltar"
+          footerText=""
+        >
+          <label className="block text-sm">
+            Código de barras
+            <input
+              className={input}
+              maxLength={18}
+              value={barcodeDraft}
+              onChange={(e) => setBarcodeDraft(e.target.value.toUpperCase())}
+            />
+          </label>
+          <button
+            type="button"
+            className="mt-3 rounded-lg bg-pink-600 px-4 py-2"
+            onClick={() => {
+              try {
+                setBarcode(normalizeStaffBarcode(barcodeDraft));
+                setError("");
+                setBarcodeEditor(false);
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          >
+            Aplicar código
+          </button>
+          {error && (
+            <p role="alert" className="mt-3 text-red-300">
+              {error}
+            </p>
+          )}
+        </EditorModal>
       )}
       {mainFormatting && mold && lines.length === 1 && (
         <EditorModal

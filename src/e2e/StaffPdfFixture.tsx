@@ -1,6 +1,7 @@
 import React from "react";
 import { PDFDocument, rgb } from "pdf-lib";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
+import type { StaffPdfRecipe } from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
 import {
   defaultPdfLayout,
@@ -160,6 +161,67 @@ export default function StaffPdfFixture() {
         return doc;
       },
     };
+    if (params.has("batches")) {
+      const records = new Map<string, StaffPdfRecipe>();
+      const batch = {
+        id: "e".repeat(32),
+        reference: "LOTE-TESTE",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+        ownerName: "Equipe de teste",
+        count: 0,
+      };
+      value.batches = {
+        list: async () => ({
+          batches: records.size ? [{ ...batch, count: records.size }] : [],
+        }),
+        create: async () => batch,
+        items: async () => ({
+          items: [...records.values()].map((recipe) => recipe.item),
+        }),
+        save: async (_batchId, job, requestId) => {
+          if ("kind" in job)
+            throw new Error("Este cenário usa o editor da oficina.");
+          if (!records.has(requestId))
+            records.set(requestId, {
+              rendererVersion: 1,
+              job,
+              fitMargin: 0.2,
+              originalUrl: URL.createObjectURL(
+                await value.baseFile(job.baseId),
+              ),
+              fonts: [
+                {
+                  id: "arial",
+                  nome: "Arial",
+                  cssFamily: "Arial, sans-serif",
+                  ativo: true,
+                },
+              ],
+              item: {
+                id: requestId.replaceAll("-", ""),
+                outputName: job.outputName!,
+                barcode: job.barcode!,
+                status: "pending",
+              },
+            });
+          return records.get(requestId)!;
+        },
+        recipe: async (_batchId, itemId) => {
+          const record = [...records.values()].find(
+            (recipe) => recipe.item.id === itemId,
+          );
+          if (!record) throw new Error("Item não encontrado.");
+          return record;
+        },
+        complete: async (_batchId, itemId) => {
+          const record = [...records.values()].find(
+            (recipe) => recipe.item.id === itemId,
+          )!;
+          record.item.status = "ready";
+        },
+      };
+    }
     return value;
   }, []);
   return (

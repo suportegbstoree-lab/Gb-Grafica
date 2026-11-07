@@ -1,4 +1,5 @@
 import express from "express";
+import { createStaffPdfBatchRouter } from "./staffPdfBatches.js";
 import { createHash, randomUUID } from "node:crypto";
 import { PDFDocument, degrees } from "pdf-lib";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
@@ -192,6 +193,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       );
     return actor;
   };
+  router.use("/batches", createStaffPdfBatchRouter(deps));
   router.get(
     "/",
     action(async (_req, res) => {

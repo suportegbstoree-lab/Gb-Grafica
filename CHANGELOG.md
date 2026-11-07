@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-06
+## Última atualização: 2026-11-07
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -43,6 +43,14 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-07 — Códigos de barras e reconstrução de lotes internos
+
+- PDFs da oficina recebem Code128 transparente no topo e no rodapé das frentes, seguindo as medidas do programa. O CSV fornece o rastreio, e o pedido manual recebe um identificador interno que pode ser editado.
+- O nome padrão combina variação, texto e código de barras. Os arquivos dos lotes podem ser baixados individualmente ou em ZIP e reabertos para impressão.
+- Lotes anteriores mantêm a receita por três dias, com cópias privadas das versões das bases, fontes e iniciais utilizadas. A reconstrução funciona mesmo após alterações no cadastro. O PDF final e a imagem do código de barras são compostos no navegador.
+- A expiração é verificada pela API, e a manutenção existente remove os registros e os arquivos auxiliares expirados. Adicionado índice de consulta por funcionário e vencimento.
+- A retenção por receita também atende à edição simples de modelos internos. O histórico anterior de documentos salvos continua acessível até sua expiração.
 
 ## 2026-11-06 — Ajustes da oficina de PDFs após revisão do cliente
 

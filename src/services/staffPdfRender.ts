@@ -1,3 +1,5 @@
+import { staffBarcodeCanvas } from "./staffPdfBarcode";
+import { staffBarcodeBoxes } from "../lib/staffPdfBarcode";
 import { PDFDocument, degrees } from "pdf-lib";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
@@ -351,7 +353,25 @@ export async function exportStaffPdf(
   if (source.getPageCount() < 1 || source.getPageCount() > STAFF_PDF_MAX_PAGES)
     throw new Error("Quantidade de páginas não suportada.");
   const release = await prepareStaffPdfFonts(job.lines, fonts);
+  let barcode: Awaited<ReturnType<typeof pdf.embedPng>>;
   try {
+    if (job.barcode) {
+      const canvas = await staffBarcodeCanvas(job.barcode);
+      try {
+        const blob = await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob(
+            (result) =>
+              result
+                ? resolve(result)
+                : reject(new Error("Falha ao gerar o código de barras.")),
+            "image/png",
+          ),
+        );
+        barcode = await pdf.embedPng(await blob.arrayBuffer());
+      } finally {
+        canvas.width = canvas.height = 1;
+      }
+    }
     for (const [index, p] of source.getPages().entries()) {
       const crop = p.getCropBox(),
         angle = ((p.getRotation().angle % 360) + 360) % 360,
@@ -431,6 +451,9 @@ export async function exportStaffPdf(
           canvas.width = canvas.height = 1;
         }
       }
+      if (orientation && barcode)
+        for (const box of staffBarcodeBoxes(width, height))
+          sheet.drawImage(barcode, box);
     }
     return new Blob([new Uint8Array(await pdf.save())], {
       type: "application/pdf",

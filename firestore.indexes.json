@@ -2,7 +2,8 @@
   "indexes": [
     { "collectionGroup": "_operationsActivity", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "actor", "order": "ASCENDING" }, { "fieldPath": "at", "order": "DESCENDING" }] },
     { "collectionGroup": "_workdays", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "uid", "order": "ASCENDING" }, { "fieldPath": "day", "order": "ASCENDING" }] },
-    { "collectionGroup": "_staffDocuments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" }] }
+    { "collectionGroup": "_staffDocuments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "_staffPdfBatches", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" }] }
   ],
   "fieldOverrides": []
 }
