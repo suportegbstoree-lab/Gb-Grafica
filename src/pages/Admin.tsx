@@ -264,7 +264,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const [configUploads, setConfigUploads] = useState<Partial<Record<'logo_url' | 'banner_principal', UploadedAdminAsset>>>({});
   const [isUploadingAdminAsset, setIsUploadingAdminAsset] = useState(false);
   const [configDraft, setConfigDraft] = useState<SiteConfig>(() => structuredClone(config));
-  const fontDraftRef = React.useRef(configDraft); fontDraftRef.current = configDraft;
+  const fontDraftRef = React.useRef(configDraft);
+  React.useEffect(() => { fontDraftRef.current = configDraft; }, [configDraft]);
+  const [isUploadingFonts, setIsUploadingFonts] = useState(false);
   const [isFontsEditorOpen, setIsFontsEditorOpen] = useState(false);
   const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
   const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
@@ -750,8 +752,18 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     if (new TextEncoder().encode(JSON.stringify(next)).byteLength > 768 * 1024)
       throw new Error('As configurações excedem o limite de 768 KB.');
     fontDraftRef.current = next;
-    setConfigDraft(next); setConfigDirty(true);
-    setSuccessMessage('Fontes enviadas. Salve as fontes para publicar.');
+    setConfigDirty(true);
+  };
+
+  const handleFontUploadBusy = (busy: boolean) => {
+    setIsUploadingFonts(busy); setIsUploadingAdminAsset(busy);
+    if (busy) { setErrorMessage(null); setSuccessMessage(null); }
+    else {
+      if (fontDraftRef.current !== configDraft) {
+        setConfigDraft(fontDraftRef.current);
+        setSuccessMessage('Fontes enviadas. Salve as fontes para publicar.');
+      }
+    }
   };
 
   const updateConfiguredFont = (index: number, patch: Partial<PersonalizationFont>) => {
@@ -1717,9 +1729,10 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
         )}
       </main>
 
-      {isFontsEditorOpen && <EditorModal title="Fontes da personalização" busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
+      {isFontsEditorOpen && <EditorModal title="Fontes da personalização" compact={isUploadingFonts} busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
         <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} includeInactive />
-        <div className="space-y-5">
+        <div className={isUploadingFonts ? "space-y-0" : "space-y-5"}>
+          <div hidden={isUploadingFonts} className="space-y-5">
           <p className="text-xs text-gray-400">Somente as fontes ativas aparecem para o cliente. Envie WOFF2, TTF ou OTF de até 16 MB.</p>
           {errorMessage && <p role="alert" className="rounded-xl bg-red-950 p-3 text-sm text-red-300">{errorMessage}</p>}
           {successMessage && <p role="status" className="text-sm text-green-400">{successMessage}</p>}
@@ -1733,7 +1746,8 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
             <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
 
           </fieldset>
-          <AdminFontUpload fonts={configDraft.fontes_personalizacao || []} disabled={isUploadingAdminAsset || isSaving} upload={adminAssetStorage.uploadFont} remove={adminAssetStorage.deleteAsset} onAdded={appendUploadedFont} onBusy={setIsUploadingAdminAsset} />
+          </div>
+          <AdminFontUpload fonts={configDraft.fontes_personalizacao || []} disabled={isUploadingAdminAsset || isSaving} upload={adminAssetStorage.uploadFont} remove={adminAssetStorage.deleteAsset} onAdded={appendUploadedFont} onBusy={handleFontUploadBusy} />
         </div>
       </EditorModal>}
 

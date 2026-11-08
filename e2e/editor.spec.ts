@@ -83,6 +83,7 @@ test('fontes TTF e OTF são validadas, publicadas e usadas no canvas do cliente'
     await expect(modal.getByText(`Arquivo ${extension.toUpperCase()}`, { exact: true })).toBeVisible();
   }
   await upload.setInputFiles({ name: 'invalida.ttf', mimeType: 'font/ttf', buffer: Buffer.from([0,1,0,0,9,9,9,9]) });
+  await modal.getByText('Ver 1 falha(s)', { exact: true }).click();
   await expect(modal.getByRole('alert')).toContainText('inválido');
   await modal.getByRole('button', { name: 'Concluir edição de fontes' }).click();
   await expect(trigger).toBeFocused();
@@ -139,11 +140,18 @@ test('400 fonts are lazy on store entry and admin previews only fetch the visibl
 test('a single selection uploads 400 valid font files and preserves the last font after saving', async ({ page }) => {
   test.setTimeout(90000);
   const font = await (await import('node:fs/promises')).readFile(path.join('e2e/fixtures', 'editor-font.ttf'));
-  await page.goto('/__e2e/admin');
+  await page.goto('/__e2e/admin?font-upload-delay=40');
   await page.getByRole('button', { name: 'Fontes', exact: true }).click();
   await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Fontes da personalização', exact: true });
   await modal.locator('input[type=file]').setInputFiles(Array.from({ length: 400 }, (_, i) => ({ name: `Lote-${i}.ttf`, mimeType: 'font/ttf', buffer: font })));
+  await expect(modal.getByRole('progressbar', { name: 'Progresso do envio de fontes' })).toBeVisible();
+  await expect(modal.getByRole('progressbar')).toHaveCount(1);
+  await expect(modal.locator('input[type=file]')).toHaveCount(0);
+  await expect(modal.getByRole('button', { name: 'Pausar após os arquivos atuais', exact: true })).toBeFocused();
+  const compact = await modal.boundingBox();
+  expect(compact!.width).toBeLessThanOrEqual(520);
+  expect(compact!.height).toBeLessThan(320);
   await expect(modal.getByRole('status').filter({ hasText: '400 enviada(s) · 0 com falha · 0 pendente(s)' })).toBeVisible({ timeout: 60000 });
   await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
   await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();

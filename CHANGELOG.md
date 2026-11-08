@@ -44,6 +44,12 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Progresso de fontes em overlay compacto
+
+- Durante o envio em lote, o editor de fontes mostra somente um overlay compacto com uma barra de progresso geral, percentual, contagem e pausa após os arquivos atuais. A lista completa de arquivos deixa de ser renderizada durante o envio.
+- As atualizações visuais de progresso são agrupadas, e o painel recebe o cadastro acumulado ao concluir ou pausar. Isso evita redesenhar o editor inteiro a cada arquivo e preserva os sucessos e a retomada da fila.
+- Ao concluir ou pausar, o editor volta ao formato normal. Falhas ficam em detalhes recolhíveis e continuam disponíveis para retentativa. O foco do teclado acompanha a troca entre editor e progresso.
+
 ## 2026-11-08 — Importação de até 500 fontes e carregamento sob demanda
 
 - O envio de fontes aceita até 500 arquivos por seleção, respeitando o total de 500 fontes cadastradas. O normalizador e a validação de gravação acompanham o novo limite, sem cortar o cadastro no limite antigo. Os demais campos de upload mantêm o padrão de 50 arquivos por seleção.

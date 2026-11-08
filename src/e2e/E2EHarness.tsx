@@ -333,7 +333,9 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         name: file.name,
       };
     },
-    async uploadFont(fontId, file) {
+    async uploadFont(fontId, file, onProgress) {
+      const delay = Math.min(1000, Math.max(0, Number(new URLSearchParams(window.location.search).get('font-upload-delay')) || 0));
+      if (delay) { onProgress?.(25); await new Promise(resolve => setTimeout(resolve, delay)); }
       const format = adminFontFormat(await validateAdminFontFile(file));
       const uploadId = crypto.randomUUID().replace(/-/g, '');
       return {
