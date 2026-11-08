@@ -15,6 +15,16 @@ import {
 } from "./catalogRetention.js";
 
 const at = Date.parse("2026-11-08T12:00:00Z");
+test('deleted email drafts keep a private copy for a full week and are purged by existing maintenance', async () => {
+  const f = fixture(), source = '_emailCampaigns/12345678-1234-4234-8234-123456789abc';
+  await f.mutate(source, { status: 'draft', subject: 'Oferta', text: 'Rascunho', revision: '12345678-1234-4234-8234-123456789abc' });
+  await f.mutate(source, null);
+  assert.equal(f.docs.has(source), false);
+  assert.equal((await cleanupCatalog(f.services, at + WEEK - 1)).backupsDeleted, 0);
+  const result = await cleanupCatalog(f.services, at + WEEK);
+  assert.equal(result.backupsDeleted, 1); assert.equal(result.documentsDeleted, 1);
+  assert.equal([...f.docs.keys()].filter(path => path.startsWith('_catalogTrash/')).length, 0);
+});
 const image = (id = "a") => `catalog/products/product/${id.repeat(32)}.png`;
 function fixture() {
   const { db, docs } = memoryFirestore();

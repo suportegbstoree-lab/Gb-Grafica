@@ -18,6 +18,7 @@ test('customer chooses optional email preferences, persists changes and can opt 
 test('authorized admin prepares a draft, cancels confirmation, and explicitly confirms a campaign', async ({ page }) => {
   await page.goto('/admin/email');
   await expect(page.getByRole('heading', { name: 'E-mails e campanhas', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Nova campanha', exact: true }).click();
   await page.getByLabel('Tipo de campanha').selectOption('news');
   await page.getByLabel('Assunto', { exact: true }).fill('Novidades de novembro');
   await page.getByLabel('Mensagem', { exact: true }).fill('Chegaram novos modelos de cadernos.');
@@ -44,4 +45,75 @@ test('campaign permission is independent and the customer settings fit on mobile
   await page.getByRole('button', { name: 'Preferências de e-mail', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Preferências de e-mail', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+});
+
+test('draft editing previews the actual email, persists changes on the same card and supports confirmed deletion', async ({ page }) => {
+  await page.goto('/admin/email');
+  await page.getByRole('button', { name: 'Nova campanha', exact: true }).click();
+  let editor = page.getByRole('dialog', { name: 'Nova campanha', exact: true });
+  await editor.getByLabel('Assunto', { exact: true }).fill('Oferta inicial');
+  await editor.getByLabel('Mensagem', { exact: true }).fill('Texto inicial.');
+  await editor.getByRole('button', { name: 'Criar rascunho', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await page.getByRole('button', { name: 'Editar rascunho Oferta inicial', exact: true }).click();
+  editor = page.getByRole('dialog', { name: 'Editar rascunho', exact: true });
+  await expect(editor.getByLabel('Mensagem', { exact: true })).toHaveValue('Texto inicial.');
+  await expect(editor.getByRole('button', { name: 'Salvar alterações', exact: true })).toBeInViewport();
+  await editor.getByLabel('Assunto', { exact: true }).fill('Oferta revisada');
+  await editor.getByLabel('Mensagem', { exact: true }).fill('Cadernos com desconto.\nSegunda linha.');
+  const preview = page.frameLocator('iframe[title="Prévia da campanha"]');
+  await expect(preview.locator('p').filter({ hasText: 'Cadernos com desconto.' })).toBeVisible();
+  await expect(preview.getByRole('img', { name: 'GB Gráfica — personalizados feitos com cuidado' })).toBeVisible();
+  await expect.poll(() => preview.locator('img').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1199);
+  expect(await preview.locator('a[href]').count()).toBe(0);
+  await editor.getByRole('button', { name: 'Salvar alterações', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Oferta revisada', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Oferta inicial', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Editar rascunho Oferta revisada', exact: true }).click();
+  await expect(editor.getByLabel('Mensagem', { exact: true })).toHaveValue('Cadernos com desconto.\nSegunda linha.');
+  await editor.getByRole('button', { name: 'Fechar editor', exact: true }).click();
+  await page.getByRole('button', { name: 'Excluir rascunho Oferta revisada', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Excluir rascunho?', exact: true });
+  await confirmation.getByRole('button', { name: 'Voltar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Oferta revisada', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Excluir rascunho Oferta revisada', exact: true }).click();
+  await confirmation.getByRole('button', { name: 'Excluir rascunho', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Oferta revisada', exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Rascunho excluído/)).toBeVisible();
+});
+
+test('the campaign editor fits on mobile and closing a dirty draft requires discarding changes', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin/email');
+  await page.getByRole('button', { name: 'Nova campanha', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Nova campanha', exact: true });
+  await editor.getByLabel('Assunto', { exact: true }).fill('Novidades');
+  await editor.getByLabel('Mensagem', { exact: true }).fill('Uma mensagem para conferir no celular.');
+  await editor.getByRole('button', { name: 'Celular', exact: true }).click();
+  await expect(page.frameLocator('iframe[title="Prévia da campanha"]').getByText('Uma mensagem para conferir no celular.', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(await editor.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.keyboard.press('Escape');
+  const discard = page.getByRole('alertdialog', { name: 'Descartar alterações?', exact: true });
+  await expect(discard).toBeVisible();
+  await discard.getByRole('button', { name: 'Voltar', exact: true }).click();
+  await expect(editor.getByLabel('Assunto', { exact: true })).toHaveValue('Novidades');
+  await page.keyboard.press('Escape');
+  await discard.getByRole('button', { name: 'Descartar alterações', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Nova campanha', exact: true })).toBeFocused();
+});
+
+test('the sandboxed preview works under the production frame CSP', async ({ page }) => {
+  const response = await page.goto('/__e2e/email-csp');
+  expect(response!.headers()['content-security-policy']).toContain("frame-ancestors 'none'");
+  const result = await page.request.post('/__e2e/email-preview', { data: { channel: 'promotions', subject: 'Prévia protegida', text: 'HTML da campanha com isolamento.' } });
+  const previewHtml = (await result.json()).html;
+  await page.evaluate(html => {
+    const frame = document.createElement('iframe'); frame.title = 'Prévia da campanha'; frame.setAttribute('sandbox', '');
+    frame.src = URL.createObjectURL(new Blob([html], { type: 'text/html' })); document.body.append(frame);
+  }, previewHtml);
+  const preview = page.frameLocator('iframe[title="Prévia da campanha"]');
+  await expect(preview.getByText('HTML da campanha com isolamento.', { exact: true })).toBeVisible();
+  await expect(page.locator('iframe[title="Prévia da campanha"]')).toHaveAttribute('sandbox', '');
 });

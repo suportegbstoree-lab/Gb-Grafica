@@ -44,6 +44,15 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Editor de campanhas e gestão de rascunhos
+
+- A seção E-mails oferece Nova campanha e os botões Editar e Excluir para rascunhos. A edição reabre assunto, tipo e mensagem salvos e atualiza o mesmo cadastro, sem criar outro rascunho ou iniciar envios. O botão de salvar permanece no rodapé do modal.
+- O editor mostra o HTML real gerado pelo servidor, com banner, conteúdo, botão e rodapé, além de assunto, remetente e endereço de resposta. A prévia acompanha a digitação, permite conferir larguras de desktop e celular e descarta respostas antigas. O link de descadastro é individual e usa um marcador na prévia.
+- A prévia fica isolada do painel, sem scripts, formulários ou navegação, mantendo a política de segurança existente. Visualizar ou salvar não chama o Resend nem altera preferências. Diferenças de renderização entre clientes de e-mail continuam possíveis.
+- Alterações não salvas exigem confirmação antes do descarte. A API confere a revisão para editar ou excluir; a nova interface também confere a revisão ao confirmar o envio. Conflitos entre sessões preservam o texto digitado e recusam a versão antiga. Rascunhos legados recebem uma revisão na primeira edição.
+- A exclusão exige confirmação, remove o rascunho da lista e guarda sua cópia privada por 7 dias completos, reutilizando a manutenção existente. Campanhas na fila, concluídas ou canceladas não podem ser editadas ou excluídas. O cancelamento dos próximos envios de uma campanha na fila permanece disponível.
+- As rotas de prévia, edição e exclusão exigem a permissão de gerenciar e-mails e as verificações existentes de App Check, com respostas sem cache. A publicação usa o fluxo habitual de commit e deploy; não há novas dependências, variáveis, regras ou aliases de modelos para publicar.
+
 ## 2026-11-08 — Templates de e-mail com banner e envio de teste
 
 - Os sete modelos de e-mail receberam o banner da GB Gráfica, títulos, botões, rodapé de suporte e layout em tabelas com adaptação para celular. O mesmo visual atende ao HTML gerado pelo site e aos modelos publicados pela API do Resend.

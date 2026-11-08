@@ -4,6 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { guardLocalWebSocket, localNetworkMiddleware, localNetworkPolicy } from '../src/server/localServerSecurity.js';
+import { previewEmailCampaign } from '../src/server/emailCampaignPreview.js';
 
 process.env.VITE_E2E_MODE = 'true';
 process.env.DISABLE_HMR = 'true';
@@ -23,6 +24,11 @@ async function startE2EServer() {
   app.get('/__e2e/uploads/:id', (req, res) => { const blob = blobs.get(req.params.id); if (!blob) { res.sendStatus(404); return; } res.type(blob.type).send(blob.bytes); });
   app.use(express.json({ limit: '100kb' }));
   mountE2EOperations(app);
+  process.env.EMAIL_BANNER_URL = `http://${HOST}:${PORT}/email/gb-grafica-banner.png`;
+  app.post('/__e2e/email-preview', (request, response) => {
+    try { response.json(previewEmailCampaign(request.body)); }
+    catch (error) { response.status(Number((error as any)?.status) || 500).json({ error: error instanceof Error ? error.message : 'Não foi possível gerar a prévia.' }); }
+  });
 
   app.get('/__e2e/health', (_request, response) => {
     response.json({ status: 'ok', mode: 'e2e' });
@@ -39,6 +45,14 @@ async function startE2EServer() {
   });
 
   app.get('/__e2e/pixel.png', (_request, response) => { response.type('image/png').send(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')); });
+  app.get('/__e2e/email-csp', async (_request, response, next) => {
+    try {
+      const config = JSON.parse(await readFile(new URL('../vercel.json', import.meta.url), 'utf8'));
+      const headers = config.headers.find((rule: { source: string }) => rule.source === '/(.*)').headers;
+      response.setHeader('Content-Security-Policy', headers.find((header: { key: string }) => header.key === 'Content-Security-Policy').value);
+      response.type('html').send('<!doctype html><html lang="pt-BR"><title>Prévia isolada</title><body><h1>Conferência de isolamento</h1></body></html>');
+    } catch (error) { next(error); }
+  });
 
   app.get('/__e2e/cover.png', async (_request, response, next) => {
     try { response.type('image/png').send(await readFile(new URL('../e2e/fixtures/editor-cover.png', import.meta.url))); }

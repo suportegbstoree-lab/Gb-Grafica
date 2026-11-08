@@ -99,7 +99,7 @@ export function isRetainedSourcePath(path: unknown): path is string {
   return (
     typeof path === "string" &&
     new RegExp(
-      `^(${RETAINED_COLLECTIONS.join("|")})/[A-Za-z0-9_-]{1,160}$`,
+      `^(${[...RETAINED_COLLECTIONS, '_emailCampaigns'].join("|")})/[A-Za-z0-9_-]{1,160}$`,
     ).test(path)
   );
 }

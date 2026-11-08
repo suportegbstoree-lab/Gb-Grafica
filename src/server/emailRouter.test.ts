@@ -34,6 +34,28 @@ test('campaigns require their own management permission and user-controlled HTML
   assert.equal([...c.docs.keys()].filter(key => key.startsWith('_emailOutbox/')).length, 0, 'drafts never send');
   assert.equal((await c.call(`/api/admin/email/campaigns/${campaign.id}/cancel`, 'admin', {})).status, 200);
 }));
+
+test('draft editing, deletion and previews require management permission and App Check', async () => scenario(async c => {
+  const input = { subject: 'Oferta', text: 'Texto de campanha', channel: 'promotions' };
+  const created = await (await c.call('/api/admin/email/campaigns', 'admin', input)).json();
+  const updatePath = `/api/admin/email/campaigns/${created.id}/update`, deletePath = `/api/admin/email/campaigns/${created.id}/delete`;
+  for (const path of ['/api/admin/email/preview', updatePath, deletePath]) {
+    assert.equal((await c.call(path, 'alice', { ...input, expectedRevision: created.revision })).status, 403);
+    c.check(false);
+    assert.equal((await c.call(path, 'admin', { ...input, expectedRevision: created.revision })).status, 403);
+    c.check(true);
+  }
+  const preview = await c.call('/api/admin/email/preview', 'admin', input);
+  assert.equal(preview.status, 200); assert.match(preview.headers.get('cache-control') || '', /no-store/);
+  assert.match((await preview.json()).html, /Texto de campanha/);
+  const edited = await c.call(updatePath, 'admin', { ...input, text: 'Texto revisado', expectedRevision: created.revision });
+  assert.equal(edited.status, 200); const saved = await edited.json();
+  assert.equal(c.docs.get(`_emailCampaigns/${created.id}`).text, 'Texto revisado');
+  assert.equal((await c.call(deletePath, 'admin', { expectedRevision: created.revision })).status, 409);
+  assert.equal((await c.call(deletePath, 'admin', { expectedRevision: saved.revision })).status, 200);
+  assert.equal(c.docs.has(`_emailCampaigns/${created.id}`), false);
+  assert.equal([...c.docs.keys()].filter(key => key.startsWith('_emailOutbox/')).length, 0);
+}));
 test('unsubscribe GET never changes consent and one-click POST works without login or App Check', async () => scenario(async c => {
   const old = process.env.EMAIL_UNSUBSCRIBE_SECRET; process.env.EMAIL_UNSUBSCRIBE_SECRET = 'test-only-unsubscribe-secret'.repeat(3);
   try {

@@ -4,17 +4,59 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type { Auth } from 'firebase-admin/auth';
 import { EmailError, emailConfiguration } from './emailPreferences.js';
 import { sendCustomerEmail, userKey } from './customerEmails.js';
+import { prepareCatalogRetention } from './catalogRetention.js';
+import type { EmailCampaignInput } from '../lib/email.js';
+export function emailCampaignInput(input: any, allowEmpty = false): EmailCampaignInput {
+  if (!['promotions', 'news'].includes(input?.channel) || typeof input.subject !== 'string' || (!allowEmpty && !input.subject.trim()) || input.subject.length > 160 || /[\x00-\x1f\x7f]/.test(input.subject) || typeof input.text !== 'string' || (!allowEmpty && !input.text.trim()) || input.text.length > 10000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.text)) throw new EmailError(422, 'Informe o tipo, assunto (até 160 caracteres) e mensagem (até 10.000 caracteres).');
+  return { channel: input.channel, subject: input.subject.trim(), text: input.text.trim() };
+}
+const campaignRef = (db: Firestore, id: string) => {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id)) throw new EmailError(422, 'Campanha inválida.');
+  return db.collection('_emailCampaigns').doc(id);
+};
+function validRevision(value: unknown) {
+  if (!(value === null || typeof value === 'string' && /^[a-f0-9-]{36}$/.test(value))) throw new EmailError(422, 'Atualize a lista de campanhas antes de continuar.');
+}
+function matchesRevision(data: any, expected: unknown) {
+  validRevision(expected);
+  if ((data.revision ?? null) !== expected) throw new EmailError(409, 'Este rascunho mudou em outra sessão. Feche a edição, atualize a lista e confira a versão mais recente.');
+}
 export async function createEmailCampaign(db: Firestore, actor: string, input: any) {
-  if (!['promotions', 'news'].includes(input?.channel) || typeof input.subject !== 'string' || !input.subject.trim() || input.subject.length > 160 || /[\x00-\x1f\x7f]/.test(input.subject) || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 10000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(input.text)) throw new EmailError(422, 'Informe o tipo, assunto (até 160 caracteres) e mensagem (até 10.000 caracteres).');
-  const id = randomUUID(), campaign = { channel: input.channel, subject: input.subject.trim(), text: input.text.trim(), status: 'draft', queuedCount: 0, processedCount: 0, acceptedCount: 0, skippedCount: 0, reviewCount: 0, createdAt: new Date().toISOString(), createdBy: actor };
+  const fields = emailCampaignInput(input);
+  const id = randomUUID(), campaign = { ...fields, revision: randomUUID(), status: 'draft', queuedCount: 0, processedCount: 0, acceptedCount: 0, skippedCount: 0, reviewCount: 0, createdAt: new Date().toISOString(), createdBy: actor };
   await db.collection('_emailCampaigns').doc(id).create(campaign); return { id, ...campaign };
 }
-export async function changeEmailCampaign(db: Firestore, id: string, actor: string, action: 'queue' | 'cancel') {
+export async function updateEmailCampaign(db: Firestore, id: string, actor: string, input: any) {
+  const fields = emailCampaignInput(input), ref = campaignRef(db, id);
+  validRevision(input.expectedRevision);
+  return db.runTransaction(async tx => {
+    const data = (await tx.get(ref)).data();
+    if (!data) throw new EmailError(404, 'Rascunho não encontrado.');
+    if (data.status !== 'draft') throw new EmailError(409, 'Somente rascunhos podem ser editados.');
+    matchesRevision(data, input.expectedRevision);
+    const next = { ...data, ...fields, revision: randomUUID(), updatedAt: new Date().toISOString(), updatedBy: actor };
+    tx.set(ref, next);
+    return { ...next, id };
+  });
+}
+export async function deleteEmailCampaign(db: Firestore, id: string, expectedRevision: unknown) {
+  const ref = campaignRef(db, id); validRevision(expectedRevision);
+  await db.runTransaction(async tx => {
+    const data = (await tx.get(ref)).data();
+    if (!data) throw new EmailError(404, 'Rascunho não encontrado.');
+    if (data.status !== 'draft') throw new EmailError(409, 'Somente rascunhos podem ser excluídos.');
+    matchesRevision(data, expectedRevision);
+    const retain = await prepareCatalogRetention(db, tx, ref.path, data, null, '');
+    retain(); tx.delete(ref);
+  });
+}
+export async function changeEmailCampaign(db: Firestore, id: string, actor: string, action: 'queue' | 'cancel', expectedRevision?: unknown) {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new EmailError(422, 'Campanha inválida.');
   if (action === 'queue' && !emailConfiguration().marketingConfigured) throw new EmailError(503, 'Configure o serviço de e-mail, a URL da loja e o segredo de descadastro antes de enviar campanhas.');
   const ref = db.collection('_emailCampaigns').doc(id);
   await db.runTransaction(async tx => {
     const campaign = (await tx.get(ref)).data(); if (!campaign) throw new EmailError(404, 'Campanha não encontrada.');
+    if (expectedRevision !== undefined) matchesRevision(campaign, expectedRevision);
     if (action === 'queue') {
       if (campaign.status === 'queued' || campaign.status === 'completed') return;
       if (campaign.status !== 'draft') throw new EmailError(409, 'Esta campanha não pode ser enviada.');
