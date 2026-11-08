@@ -2,7 +2,8 @@ export const MAX_CUSTOM_TEXT_LENGTH = 200;
 export const MAX_CUSTOM_TEXT_LINES = 8;
 export const MIN_TEXT_SIZE = 1;
 export const MAX_TEXT_SIZE = 20;
-export const MAX_PERSONALIZATION_FONTS = 20;
+export const MAX_PERSONALIZATION_FONTS = 500;
+export const MAX_FONT_CATALOG_BYTES = 512 * 1024;
 
 export type ProductCustomizationType = 'arte' | 'texto' | 'texto_arte' | 'nenhum';
 
@@ -124,6 +125,20 @@ export function normalizePersonalizationFonts(value: unknown): PersonalizationFo
 
 export function activePersonalizationFonts(value: unknown): PersonalizationFont[] {
   return normalizePersonalizationFonts(value).filter(font => font.ativo);
+}
+
+export function personalizationFontsIssue(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (!Array.isArray(value)) return 'A lista de fontes é inválida.';
+  if (value.length > MAX_PERSONALIZATION_FONTS)
+    return `O cadastro aceita até ${MAX_PERSONALIZATION_FONTS} fontes.`;
+  const fonts = normalizePersonalizationFonts(value);
+  if (fonts.length !== value.length || value.some(font =>
+    font.arquivoUrl !== undefined && (!normalizedFontUrl(font.arquivoUrl) || font.arquivoUrl.length > 2048)))
+    return 'Revise as fontes: há nome, identificador, família ou URL inválidos ou duplicados.';
+  if (new TextEncoder().encode(JSON.stringify(fonts)).byteLength > MAX_FONT_CATALOG_BYTES)
+    return 'Os dados das fontes excedem o limite de 512 KB do cadastro. Reduza os dados antes de continuar.';
+  return null;
 }
 
 export function isProductCustomizationType(value: unknown): value is ProductCustomizationType {

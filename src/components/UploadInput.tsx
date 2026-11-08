@@ -2,10 +2,11 @@ import React, { forwardRef, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 type Props = React.InputHTMLAttributes<HTMLInputElement> & {
   originalPdf?: boolean;
+  maxFiles?: number;
 };
 /** Batch slots accept every file. Single slots require an explicit choice from a batch. */
 export default forwardRef<HTMLInputElement, Props>(function UploadInput(
-  { multiple, onChange, originalPdf = false, ...props },
+  { multiple, onChange, originalPdf = false, maxFiles = 50, ...props },
   forwarded,
 ) {
   const input = useRef<HTMLInputElement>(null),
@@ -24,8 +25,9 @@ export default forwardRef<HTMLInputElement, Props>(function UploadInput(
   };
   const receive = async (files: File[]) => {
     if (props.disabled || !files.length) return;
-    if (files.length > 50) {
-      setError("Selecione até 50 arquivos por envio.");
+    const limit = Math.max(1, Math.min(500, Math.floor(maxFiles)));
+    if (files.length > limit) {
+      setError(`Selecione até ${limit} arquivos por envio.`);
       return;
     }
     setError("");

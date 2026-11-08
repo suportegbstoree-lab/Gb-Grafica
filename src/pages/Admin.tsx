@@ -30,6 +30,8 @@ import ProductPrintEditor from '../components/ProductPrintEditor';
 import OrderProductionSheet from '../components/OrderProductionSheet';
 import EditorModal from '../components/EditorModal';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
+import AdminFontUpload from '../components/AdminFontUpload';
+import AdminFontList from '../components/AdminFontList';
 import StoreSettingsLists from '../components/StoreSettingsLists';
 import { storeContacts, storeBenefits } from '../lib/storePresentation';
 import PersonalizationViewer from '../components/PersonalizationViewer';
@@ -75,7 +77,7 @@ import {
   validateSiteConfig,
 } from '../lib/adminValidation';
 import { textCustomizationFontLabel } from '../lib/textCustomization';
-import { MAX_PERSONALIZATION_FONTS, normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
+import { personalizationFontsIssue, type PersonalizationFont } from '../lib/textCustomization';
 import {
   removeAdminAsset,
   storedAdminAssetPath,
@@ -83,7 +85,6 @@ import {
   uploadAdminImage,
   type UploadedAdminAsset,
 } from '../services/adminAssetService';
-import { adminFontUploadType, adminFontFormat } from '../lib/adminAsset';
 import type { AdminImageScope } from '../lib/adminAsset';
 import { formattedDiscountPercentage } from '../lib/promotions';
 
@@ -105,7 +106,7 @@ export interface AdminCatalogImageStorage {
 
 export interface AdminAssetStorage {
   uploadImage: (scope: AdminImageScope, ownerId: string, file: File) => Promise<UploadedAdminAsset>;
-  uploadFont: (fontId: string, file: File) => Promise<UploadedAdminAsset>;
+  uploadFont: (fontId: string, file: File, onProgress?: (percent: number) => void) => Promise<UploadedAdminAsset>;
   deleteAsset: (path: string) => Promise<void>;
   pathFromUrl: (url: string) => string | null;
 }
@@ -263,6 +264,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const [configUploads, setConfigUploads] = useState<Partial<Record<'logo_url' | 'banner_principal', UploadedAdminAsset>>>({});
   const [isUploadingAdminAsset, setIsUploadingAdminAsset] = useState(false);
   const [configDraft, setConfigDraft] = useState<SiteConfig>(() => structuredClone(config));
+  const fontDraftRef = React.useRef(configDraft); fontDraftRef.current = configDraft;
   const [isFontsEditorOpen, setIsFontsEditorOpen] = useState(false);
   const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
   const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
@@ -445,7 +447,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   const aiPreviewOpen = aiPreview !== null;
 
   const requestTabChange = (nextTab: AdminTab) => {
-    if (!tabAllowed(nextTab) || nextTab === activeTab) return;
+    if (isUploadingAdminAsset || !tabAllowed(nextTab) || nextTab === activeTab) return;
     if (['config', 'branding', 'fonts'].includes(activeTab) && configDirty) {
       setConfirmation({
         title: 'Sair sem salvar?',
@@ -627,7 +629,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   // Config Handlers
   const handleSaveConfig = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (isSaving) return;
+    if (isSaving || isUploadingAdminAsset) return;
     setErrorMessage(null);
     const formData = new FormData(e.currentTarget);
     const contacts = configDraft.contatos ?? storeContacts(configDraft);
@@ -732,35 +734,24 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
       return;
     }
     const nextFonts = [...(configDraft.fontes_personalizacao || []), { id, nome, cssFamily, ativo: true }];
-    if (normalizePersonalizationFonts(nextFonts).length !== nextFonts.length) {
-      setErrorMessage('A fonte possui dados inválidos ou já existe na lista.');
-      return;
-    }
+    const issue = personalizationFontsIssue(nextFonts);
+    if (issue) { setErrorMessage(issue); return; }
     setConfigDraft(current => ({ ...current, fontes_personalizacao: nextFonts }));
     setNewSystemFont({ nome: '', cssFamily: '' });
     setConfigDirty(true);
   };
 
-  const handleFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = [...(event.target.files || [])]; event.target.value = '';
-    if (!files.length || isUploadingAdminAsset) return;
-    if (files.length > 20 || (configDraft.fontes_personalizacao || []).length + files.length > MAX_PERSONALIZATION_FONTS) { setErrorMessage('Limite de fontes excedido (até 20 arquivos por envio).'); return; }
-    setIsUploadingAdminAsset(true); setErrorMessage(null);
-    const staged: UploadedAdminAsset[] = [], fonts: PersonalizationFont[] = [];
-    try {
-      const ids = new Set((configDraft.fontes_personalizacao || []).map(font => font.id));
-      for (const file of files) {
-        const type = adminFontUploadType(file.name, file.type);
-        if (!type) throw new Error('Envie arquivos WOFF2, TTF ou OTF.');
-        const nome = file.name.replace(/\.(woff2|ttf|otf)$/i, '').replace(/[-_]+/g, ' ').slice(0, 100);
-        const base = slugifyDocumentId(nome).slice(0, 48) || 'fonte'; let id = base, suffix = 2;
-        while (ids.has(id)) id = `${base}-${suffix++}`; ids.add(id);
-        const uploaded = await adminAssetStorage.uploadFont(id, file); staged.push(uploaded);
-        fonts.push({ id, nome, cssFamily: `GBFont_${id.replaceAll('-', '_')}`, arquivoUrl: uploaded.url, arquivoFormato: adminFontFormat(type)!, ativo: true });
-      }
-      setConfigDraft(current => ({ ...current, fontes_personalizacao: [...(current.fontes_personalizacao || []), ...fonts] })); setConfigDirty(true); setSuccessMessage('Fontes enviadas. Salve as configurações para concluir.');
-    } catch (error) { await Promise.allSettled(staged.map(asset => adminAssetStorage.deleteAsset(asset.path))); setErrorMessage(error instanceof Error ? error.message : 'Não foi possível enviar as fontes.'); }
-    finally { setIsUploadingAdminAsset(false); }
+  const appendUploadedFont = (font: PersonalizationFont) => {
+    const current = fontDraftRef.current;
+    const fonts = [...(current.fontes_personalizacao || []), font];
+    const issue = personalizationFontsIssue(fonts);
+    if (issue) throw new Error(issue);
+    const next = { ...current, fontes_personalizacao: fonts };
+    if (new TextEncoder().encode(JSON.stringify(next)).byteLength > 768 * 1024)
+      throw new Error('As configurações excedem o limite de 768 KB.');
+    fontDraftRef.current = next;
+    setConfigDraft(next); setConfigDirty(true);
+    setSuccessMessage('Fontes enviadas. Salve as fontes para publicar.');
   };
 
   const updateConfiguredFont = (index: number, patch: Partial<PersonalizationFont>) => {
@@ -1727,35 +1718,22 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
       </main>
 
       {isFontsEditorOpen && <EditorModal title="Fontes da personalização" busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
-        <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} />
+        <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} includeInactive />
         <div className="space-y-5">
           <p className="text-xs text-gray-400">Somente as fontes ativas aparecem para o cliente. Envie WOFF2, TTF ou OTF de até 16 MB.</p>
           {errorMessage && <p role="alert" className="rounded-xl bg-red-950 p-3 text-sm text-red-300">{errorMessage}</p>}
           {successMessage && <p role="status" className="text-sm text-green-400">{successMessage}</p>}
           <fieldset disabled={isUploadingAdminAsset} className="space-y-5">
-            <div className="space-y-3">
-              {(configDraft.fontes_personalizacao || []).map((font, index) => (
-                <div key={font.id} className="grid grid-cols-1 items-center gap-3 rounded-lg border border-gray-800 bg-black p-4 sm:grid-cols-[1fr_1fr_auto_auto]">
-                  <input aria-label={`Nome da fonte ${index + 1}`} value={font.nome} onChange={event => updateConfiguredFont(index, { nome: event.target.value })} className="rounded border border-gray-800 bg-[#111111] px-3 py-2 text-sm" />
-                  <div className="min-w-0"><div style={{ fontFamily: font.cssFamily }} className="truncate text-lg">Texto de exemplo</div><div className="truncate text-[10px] text-gray-600">{font.arquivoUrl ? `Arquivo ${(font.arquivoFormato || 'woff2').toUpperCase()}` : font.cssFamily}</div></div>
-                  <label className="flex items-center gap-2 text-xs font-bold text-gray-400"><input type="checkbox" checked={font.ativo} onChange={event => updateConfiguredFont(index, { ativo: event.target.checked })} className="accent-[#ff4d79]" /> Ativa</label>
-                  <button type="button" onClick={() => removeConfiguredFont(index)} aria-label={`Remover fonte ${font.nome}`} className="p-2 text-gray-500 hover:text-red-500"><Trash2 size={17} /></button>
-                </div>
-              ))}
-              {(configDraft.fontes_personalizacao || []).length === 0 && <p className="rounded-lg border border-dashed border-gray-800 p-5 text-sm text-gray-500">Nenhuma fonte cadastrada. Produtos com texto ficam indisponíveis até que ao menos uma fonte ativa seja salva.</p>}
-            </div>
+            <AdminFontList fonts={configDraft.fontes_personalizacao || []} onChange={updateConfiguredFont} onRemove={removeConfiguredFont} />
             <div className="grid grid-cols-1 gap-4 border-t border-gray-800 pt-5 md:grid-cols-[1fr_1fr_auto]">
               <input aria-label="Nome da nova fonte do sistema" value={newSystemFont.nome} onChange={event => setNewSystemFont(current => ({ ...current, nome: event.target.value }))} placeholder="Nome exibido, ex.: Montserrat" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
               <input aria-label="Família CSS da nova fonte" value={newSystemFont.cssFamily} onChange={event => setNewSystemFont(current => ({ ...current, cssFamily: event.target.value }))} placeholder="Família CSS, ex.: Montserrat, sans-serif" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
               <button type="button" onClick={addSystemFont} className="rounded-lg border border-gray-700 px-5 py-3 text-xs font-bold hover:bg-gray-800">Adicionar fonte do sistema</button>
             </div>
-            <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg bg-purple-500 px-5 py-3 text-xs font-bold text-white hover:bg-purple-600">
-              {isUploadingAdminAsset ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />} Enviar fonte WOFF2, TTF ou OTF
-              <UploadInput multiple type="file" accept=".woff2,.ttf,.otf,font/woff2,font/ttf,font/otf,application/font-woff2,application/x-font-ttf,application/x-font-otf" onChange={handleFontUpload} disabled={isUploadingAdminAsset} className="sr-only" />
-            </label>
             <p className="text-[10px] text-gray-600">Remover uma fonte da lista não apaga o arquivo imediatamente, preservando a leitura de pedidos antigos.</p>
 
           </fieldset>
+          <AdminFontUpload fonts={configDraft.fontes_personalizacao || []} disabled={isUploadingAdminAsset || isSaving} upload={adminAssetStorage.uploadFont} remove={adminAssetStorage.deleteAsset} onAdded={appendUploadedFont} onBusy={setIsUploadingAdminAsset} />
         </div>
       </EditorModal>}
 

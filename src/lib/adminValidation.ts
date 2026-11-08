@@ -9,6 +9,7 @@ import { parseShippingProfile, type ProductShippingProfile } from './shipping.js
 import {
   isProductCustomizationType,
   normalizePersonalizationFonts,
+  personalizationFontsIssue,
   productRequiresText,
 } from './textCustomization.js';
 
@@ -314,6 +315,8 @@ export function validatePromotionDraft(
 }
 
 export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteConfig> {
+  if (new TextEncoder().encode(JSON.stringify(config)).byteLength > 768 * 1024)
+    return { ok: false, message: 'As configurações excedem o limite de 768 KB. Reduza os dados antes de salvar.' };
   const normalized = Object.fromEntries(Object.entries(config).map(([key, value]) => [
     key,
     typeof value === 'string' ? value.trim() : value,
@@ -337,9 +340,8 @@ export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteCon
     return { ok: false, message: 'O e-mail de privacidade é inválido.' };
   }
   const fonts = normalizePersonalizationFonts(config.fontes_personalizacao);
-  if ((config.fontes_personalizacao || []).length !== fonts.length) {
-    return { ok: false, message: 'Revise as fontes de personalização: há nome, identificador, família ou URL inválidos ou duplicados.' };
-  }
+  const fontIssue = personalizationFontsIssue(config.fontes_personalizacao);
+  if (fontIssue) return { ok: false, message: fontIssue };
   return { ok: true, value: { ...normalized, ...(normalized.contatos !== undefined ? { contatos: parseStoreContacts(normalized.contatos)! } : {}), ...(normalized.beneficios !== undefined ? { beneficios: parseStoreBenefits(normalized.beneficios)! } : {}), fontes_personalizacao: fonts } };
 }
 

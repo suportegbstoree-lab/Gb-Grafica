@@ -118,3 +118,38 @@ test.describe('editor no celular', () => {
     await expect(card.getByText('Linha um')).toHaveCount(0);
   });
 });
+
+test('400 fonts are lazy on store entry and admin previews only fetch the visible page', async ({ page }) => {
+  const fontRequests = new Set<string>();
+  page.on('request', request => { if (request.url().includes('/__e2e/fonts/')) fontRequests.add(request.url()); });
+  await page.goto('/__e2e/store?font-count=400');
+  await expect(page.getByTestId('e2e-store')).toBeVisible();
+  await expect.poll(() => fontRequests.size).toBe(0);
+  await page.getByRole('link', { name: 'Área Admin', exact: true }).click();
+  await page.getByRole('button', { name: 'Fontes', exact: true }).click();
+  await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Fontes da personalização', exact: true });
+  await expect(modal.getByText('Página 1 de 16 · 400 fontes', { exact: true })).toBeVisible();
+  await expect.poll(() => fontRequests.size).toBeGreaterThan(0);
+  expect(fontRequests.size).toBeLessThanOrEqual(25);
+  await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Fonte bulk 399');
+  await expect(modal.getByLabel('Nome da fonte 400', { exact: true })).toHaveValue('Fonte bulk 399');
+});
+
+test('a single selection uploads 400 valid font files and preserves the last font after saving', async ({ page }) => {
+  test.setTimeout(90000);
+  const font = await (await import('node:fs/promises')).readFile(path.join('e2e/fixtures', 'editor-font.ttf'));
+  await page.goto('/__e2e/admin');
+  await page.getByRole('button', { name: 'Fontes', exact: true }).click();
+  await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Fontes da personalização', exact: true });
+  await modal.locator('input[type=file]').setInputFiles(Array.from({ length: 400 }, (_, i) => ({ name: `Lote-${i}.ttf`, mimeType: 'font/ttf', buffer: font })));
+  await expect(modal.getByRole('status').filter({ hasText: '400 enviada(s) · 0 com falha · 0 pendente(s)' })).toBeVisible({ timeout: 60000 });
+  await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
+  await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();
+  await modal.getByRole('button', { name: 'Concluir edição de fontes', exact: true }).click();
+  await page.getByRole('button', { name: 'Salvar fontes', exact: true }).click();
+  await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
+  await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
+  await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();
+});

@@ -65,7 +65,7 @@ export async function uploadAdminImage(
   }
 }
 
-export async function uploadAdminFont(fontId: string, file: File): Promise<UploadedAdminAsset> {
+export async function uploadAdminFont(fontId: string, file: File, onProgress?: (percent: number) => void): Promise<UploadedAdminAsset> {
   const user = auth.currentUser;
   if (!user) throw new Error('Sua sessão expirou. Faça login novamente.');
   if (!isSafeAdminAssetId(fontId)) throw new Error('O identificador da fonte é inválido.');
@@ -74,12 +74,16 @@ export async function uploadAdminFont(fontId: string, file: File): Promise<Uploa
   if (!path) throw new Error('Não foi possível gerar um caminho seguro para a fonte.');
   const originalName = sanitizeAdminAssetName(file.name);
   try {
-    const snapshot = await uploadBytesResumable(ref(storage, path), file, {
+    const task = uploadBytesResumable(ref(storage, path), file, {
       contentType: normalizedContentType,
       cacheControl: 'public,max-age=31536000,immutable',
       customMetadata: { uploadedBy: user.uid, originalName },
     });
-    return { path, url: await getDownloadURL(snapshot.ref), name: originalName };
+    const unsubscribe = onProgress && task.on('state_changed', state => onProgress(state.totalBytes ? state.bytesTransferred / state.totalBytes * 100 : 0));
+    try {
+      const snapshot = await task;
+      return { path, url: await getDownloadURL(snapshot.ref), name: originalName };
+    } finally { unsubscribe?.(); }
   } catch (error) {
     if (needsCatalogFallback(error)) return uploadCatalogFallback(file.slice(0, file.size, normalizedContentType), originalName, 'fonts', fontId, user.uid);
     throw adminAssetError(error);

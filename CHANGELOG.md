@@ -11,14 +11,14 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 | Data da implementação | Funcionalidade                                                         | Status                               |
 | --------------------- | ---------------------------------------------------------------------- | ------------------------------------ |
-| 2026-11-01            | Gerador interno de PDF, retenção e compartilhamento para funcionários  | CÓDIGO COMPLETO; PUBLICAÇÃO PENDENTE |
-| 2026-11-01            | Produção automática, expediente e relatórios de produtividade privados | CÓDIGO COMPLETO; PUBLICAÇÃO PENDENTE |
+| 2026-11-01            | Gerador interno de PDF, retenção e compartilhamento para funcionários  | COMPLETO                             |
+| 2026-11-01            | Produção automática, expediente e relatórios de produtividade privados | COMPLETO                             |
 | 2026-11-01            | Filtros de produtos no Admin e upload paralelo do alfabeto             | COMPLETO                             |
 | 2026-11-01            | Páginas do catálogo, vitrine padronizada e compartilhamento            | COMPLETO                             |
 | 2026-11-01            | Pacotes de produtos com composição e desconto próprios                 | COMPLETO                             |
 | 2026-11-01            | Perfil do cliente, histórico e preenchimento do checkout               | COMPLETO                             |
 | 2026-11-01            | Busca por tags, filtros e avaliações de compras verificadas            | COMPLETO                             |
-| 2026-10-31            | Integração de e-mails, preferências e campanhas                        | CÓDIGO COMPLETO; ATIVAÇÃO PENDENTE   |
+| 2026-10-31            | Integração de e-mails, preferências e campanhas                        | COMPLETP                             |
 | 2026-10-31            | Cargos personalizados, exclusão segura e revogação de acessos          | COMPLETO                             |
 | 2026-10-31            | Atividades da equipe e simplificação da aparência                      | COMPLETO                             |
 | 2026-10-31            | Inicial decorativa de cadernetas e correções de PDF/API                | COMPLETO                             |
@@ -43,6 +43,14 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-08 — Importação de até 500 fontes e carregamento sob demanda
+
+- O envio de fontes aceita até 500 arquivos por seleção, respeitando o total de 500 fontes cadastradas. O normalizador e a validação de gravação acompanham o novo limite, sem cortar o cadastro no limite antigo. Os demais campos de upload mantêm o padrão de 50 arquivos por seleção.
+- A fila envia no máximo três arquivos simultaneamente, mostra progresso e resultado por arquivo, permite pausar após os envios atuais e retomar os pendentes. A retentativa processa somente as falhas, preservando as fontes já enviadas. As fontes válidas entram no rascunho e são publicadas ao salvar.
+- Nomes de arquivo repetidos recebem nomes de exibição e identificadores próprios. Formatos WOFF2, TTF e OTF, validação real do arquivo, limite de 16 MB e verificações de permissão existentes permanecem no fluxo de upload.
+- O cadastro limita os metadados das fontes a 512 KB e a configuração completa a 768 KB. Somente a rota de gravação de configurações aceita JSON de até 800 KB, preservando autenticação e validação no servidor.
+- As fontes são registradas sem download antecipado. A loja e o administrador carregam arquivos ao usar a fonte ou exibir sua amostra. O gerenciador inclui filtro e páginas de 25 fontes, preservando o cadastro completo.
 
 ## 2026-11-08 — Categorias de bases, importação e códigos de barras
 

@@ -12,7 +12,7 @@ async function scenario(run: (context: { call: (collection: string, id: string, 
   const memory = memoryFirestore([['anuncios/product', product], ['categories/category', { id: 'category', nome: 'Cadernos' }], ['_staffProfiles/employee', { name: 'Ana Designer' }], ['_staffAccess/employee', { schemaVersion: 1, roleId: 'custom-designer', enabled: true, epoch: 'a'.repeat(32) }], ['_staffRoles/custom-designer', { schemaVersion: 1, name: 'Arte e Design', enabled: true, revision: 'b'.repeat(32), permissions: ['products.images'] }]]);
   const actor: CatalogActor = { uid: 'employee', permissions: ['products.images'] };
   const services = { db: memory.db } as any;
-  const app = express(); app.use(express.json()); app.use('/catalog', createCatalogManagementRouter({ services: () => services, authorize: async () => actor }));
+  const app = express(); app.use(express.json({ limit: '800kb' })); app.use('/catalog', createCatalogManagementRouter({ services: () => services, authorize: async () => actor }));
   app.use('/ops', createOperationsRouter({ services: () => services, authorize: async req => { if (req.get('authorization') !== 'Bearer operations') throw new OperationsError('Acesso negado.', 403); return { uid: 'observer', admin: true }; } }));
   const server = createServer(app); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as any, base = `http://127.0.0.1:${address.port}`;
@@ -64,4 +64,19 @@ test('bundle permission manages packages without granting ordinary product manag
  assert.equal((await c.call('anuncios','product','patch',{nome:'Proibido'})).status,403);assert.equal((await c.call('anuncios','product','delete')).status,403);assert.equal((await c.call('anuncios','product','patch',{pacote})).status,422);
  const revision=saved.pacote.revision;assert.equal((await c.call('anuncios','kit','patch',{desc:'Nova descrição'})).status,200);assert.equal(c.docs.get('anuncios/kit').pacote.revision,revision);assert.equal((await c.call('anuncios','kit','patch',{pacote:{...pacote,discountValue:20}})).status,200);assert.notEqual(c.docs.get('anuncios/kit').pacote.revision,revision);
  c.actor.permissions=['products.manage'];assert.equal((await c.call('anuncios','kit','patch',{preco_base:'1.00'})).status,403);assert.equal((await c.call('anuncios','kit','delete')).status,403);c.actor.permissions=['bundles.manage'];assert.equal((await c.call('anuncios','kit','delete')).status,200);
+}));
+
+test('font managers can persist 400 fonts without truncation and cannot exceed the catalog bound or edit other settings', async () => scenario(async context => {
+  const fonts = Array.from({ length: 400 }, (_, i) => ({ id: `fonte${i}`, nome: `Fonte ${i}`, cssFamily: `GBFont_${i}`, arquivoUrl: `https://example.test/${i}/${'a'.repeat(800)}.ttf`, arquivoFormato: 'ttf', ativo: true }));
+  context.docs.set('config/main', { banner_principal: '/banner.png', fontes_personalizacao: [] });
+  context.docs.get('_staffRoles/custom-designer').permissions = ['fonts.manage'];
+  context.actor.permissions = ['fonts.manage'];
+  const result = await context.call('config', 'main', 'patch', { fontes_personalizacao: fonts });
+  assert.equal(result.status, 200, await result.text());
+  assert.equal(context.docs.get('config/main').fontes_personalizacao.length, 400);
+  assert.equal(context.docs.get('config/main').fontes_personalizacao[399].nome, 'Fonte 399');
+  assert.equal((await context.call('config', 'main', 'patch', { banner_principal: '/forbidden.png' })).status, 403);
+  const excess = Array.from({ length: 501 }, (_, i) => ({ id: `f${i}`, nome: `Fonte ${i}`, cssFamily: 'sans-serif', ativo: true }));
+  assert.equal((await context.call('config', 'main', 'patch', { fontes_personalizacao: excess })).status, 422);
+  assert.equal(context.docs.get('config/main').fontes_personalizacao.length, 400);
 }));

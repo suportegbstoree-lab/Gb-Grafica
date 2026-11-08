@@ -1,31 +1,13 @@
 import React from 'react';
-import { activePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
+import { normalizePersonalizationFonts, type PersonalizationFont } from '../lib/textCustomization';
+import { createPersonalizationFontRegistry } from '../services/personalizationFontRegistration';
 
-export default function PersonalizationFontLoader({ fonts }: { fonts: PersonalizationFont[] }) {
-  const normalized = React.useMemo(() => activePersonalizationFonts(fonts), [fonts]);
+export default function PersonalizationFontLoader({ fonts, includeInactive = false }: { fonts: PersonalizationFont[]; includeInactive?: boolean }) {
+  const normalized = React.useMemo(() => normalizePersonalizationFonts(fonts).filter(font => includeInactive || font.ativo), [fonts, includeInactive]);
 
-  React.useEffect(() => {
-    if (typeof FontFace === 'undefined' || !document.fonts) return undefined;
-    let cancelled = false;
-    const loadedFaces: FontFace[] = [];
-
-    void Promise.all(normalized.filter(font => font.arquivoUrl).map(async font => {
-      try {
-        const face = new FontFace(font.cssFamily, `url(${JSON.stringify(font.arquivoUrl)})`);
-        const loaded = await face.load();
-        if (cancelled) return;
-        document.fonts.add(loaded);
-        loadedFaces.push(loaded);
-      } catch (error) {
-        console.error(`Não foi possível carregar a fonte ${font.nome}:`, error);
-      }
-    }));
-
-    return () => {
-      cancelled = true;
-      loadedFaces.forEach(face => document.fonts.delete(face));
-    };
-  }, [normalized]);
+  const registry = React.useMemo(() => createPersonalizationFontRegistry(), []);
+  React.useEffect(() => { registry.sync(normalized); }, [registry, normalized]);
+  React.useEffect(() => () => registry.dispose(), [registry]);
 
   return null;
 }

@@ -1,4 +1,5 @@
 import React from 'react';
+import FontSample from './FontSample';
 import { MAX_TEXT_SIZE, MIN_TEXT_SIZE, type PersonalizationFont, type TextCustomization, type TextCustomizationLine } from '../lib/textCustomization';
 import { textLineValue } from '../lib/textLines';
 
@@ -33,7 +34,7 @@ export default function TextLineControls({ draft, fonts, selectedId, onSelect, o
     <fieldset className="space-y-2">
       <legend className="mb-2 text-xs font-bold text-gray-700">Fonte</legend>
       <label className="flex items-center gap-2 text-xs text-gray-600"><input type="checkbox" checked={draft.fonteCompartilhada !== false} onChange={event => { const shared = event.target.checked; onChange(current => ({ ...current, fonteCompartilhada: shared, ...(shared ? { fonte: active.fonte, fonteNome: active.fonteNome, fonteCssFamily: active.fonteCssFamily, fonteArquivoUrl: active.fonteArquivoUrl } : { linhas: current.linhas?.map(row => ({ ...row, fonte: current.fonte, fonteNome: current.fonteNome, fonteCssFamily: current.fonteCssFamily, fonteArquivoUrl: current.fonteArquivoUrl })) }) })); }} />Compartilhar fonte entre linhas</label>
-      <div className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">{fonts.map(font => <button key={font.id} type="button" onClick={() => setFont(font)} aria-pressed={active.fonte === font.id} className={`break-words rounded-xl border px-3 py-3 text-sm ${active.fonte === font.id ? 'border-pink-400 bg-pink-50 text-pink-700' : 'border-gray-200 text-gray-600 hover:border-pink-200'}`} style={{ fontFamily: font.cssFamily }}>{font.nome}</button>)}</div>
+      <div className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">{fonts.map(font => <button key={font.id} type="button" onClick={() => setFont(font)} aria-pressed={active.fonte === font.id} className={`break-words rounded-xl border px-3 py-3 text-sm ${active.fonte === font.id ? 'border-pink-400 bg-pink-50 text-pink-700' : 'border-gray-200 text-gray-600 hover:border-pink-200'}`}><FontSample font={font}>{font.nome}</FontSample></button>)}</div>
       {!fonts.length && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">Nenhuma fonte foi disponibilizada pela loja.</p>}
     </fieldset>
 

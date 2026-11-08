@@ -1,3 +1,4 @@
+import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
 import StaffPdfFixture from './StaffPdfFixture';
 import { currentWorkTask } from '../services/workContext';
@@ -386,9 +387,15 @@ export default function E2EHarness() {
   const teamPanel = <PanelAccessGate user={entry.signedIn ? FIXTURE_USER : null} ready={entry.access.ready} allowed={mayEnterPanel(false, entry.permissions)} issue={entry.access.issue} onSignIn={entry.signIn} onSignOut={entry.signOut} onRetry={entry.retry}><AdminFixture permissionOverride={entry.permissions} /></PanelAccessGate>;
   const teamStore = <StoreFixture panelAccess={mayEnterPanel(false, entry.permissions)} panelAccessNeedsCheck={entry.access.assigned && Boolean(entry.access.issue)} />;
   const [products, setProducts] = React.useState(FIXTURE_PRODUCTS);
-  const [config, setConfig] = React.useState(FIXTURE_CONFIG);
+  const [config, setConfig] = React.useState(() => {
+    const count = Number(new URLSearchParams(window.location.search).get('font-count'));
+    return Number.isInteger(count) && count > 0 && count <= 500
+      ? { ...FIXTURE_CONFIG, fontes_personalizacao: Array.from({ length: count }, (_, i) => ({ id: `bulk${i}`, nome: `Fonte bulk ${i}`, cssFamily: `BulkFont_${i}`, arquivoUrl: `/__e2e/fonts/editor-font.ttf?sample=${i}`, arquivoFormato: 'ttf' as const, ativo: true })) }
+      : FIXTURE_CONFIG;
+  });
   return (
     <FixtureCatalog.Provider value={{ products, setProducts, config, setConfig }}>
+    <PersonalizationFontLoader fonts={config.fontes_personalizacao || []} />
     <BrowserRouter>
       <StoreThemeProvider><Routes>
         <Route path="/__e2e/staff-pdf" element={<StaffPdfFixture />} />

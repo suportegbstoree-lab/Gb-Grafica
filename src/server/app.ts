@@ -374,6 +374,15 @@ app.use('/api/admin/catalog-uploads', (req, res, next) => {
   })).catch(caught => sendCatalogRelayError(res, caught));
 });
 
+// Large font catalogs use a bounded parser only on the existing config mutation route.
+app.post('/api/admin/catalog/config/main', express.json({
+  limit: '800kb',
+  verify: (request, _response, buffer) => {
+    (request as RawBodyRequest).rawBody = buffer.toString('utf8');
+    (request as RawBodyRequest).rawBodyBytes = Buffer.from(buffer);
+  },
+}));
+
 app.use(express.json({
 	limit: '256kb',
 	verify: (request, _response, buffer) => {
