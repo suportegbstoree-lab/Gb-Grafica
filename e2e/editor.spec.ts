@@ -85,6 +85,7 @@ test('fontes TTF e OTF são validadas, publicadas e usadas no canvas do cliente'
   await upload.setInputFiles({ name: 'invalida.ttf', mimeType: 'font/ttf', buffer: Buffer.from([0,1,0,0,9,9,9,9]) });
   await modal.getByText('Ver 1 falha(s)', { exact: true }).click();
   await expect(modal.getByRole('alert')).toContainText('inválido');
+  await modal.getByRole('button', { name: 'Marcar todas', exact: true }).click();
   await modal.getByRole('button', { name: 'Concluir edição de fontes' }).click();
   await expect(trigger).toBeFocused();
   await page.getByRole('button', { name: 'Salvar fontes' }).click();
@@ -160,4 +161,19 @@ test('a single selection uploads 400 valid font files and preserves the last fon
   await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
   await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
   await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();
+});
+
+
+test('bulk font activation applies across filters and pages without changing saved fonts on entry', async ({ page }) => {
+  await page.goto('/__e2e/admin?font-count=40');
+  await page.getByRole('button', { name: 'Fontes', exact: true }).click();
+  await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Fontes da personalização', exact: true });
+  await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Fonte bulk 39');
+  await modal.getByRole('button', { name: 'Desmarcar todas', exact: true }).click();
+  await expect(modal.getByText('0 de 40 ativas', { exact: true })).toBeVisible();
+  await modal.getByLabel('Filtrar fontes', { exact: true }).fill('');
+  await expect(modal.getByRole('checkbox').first()).not.toBeChecked();
+  await modal.getByRole('button', { name: 'Marcar todas', exact: true }).click();
+  await expect(modal.getByText('40 de 40 ativas', { exact: true })).toBeVisible();
 });

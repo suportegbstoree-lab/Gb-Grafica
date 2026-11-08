@@ -1,4 +1,5 @@
 import { prepareEmailSession } from './services/emailService';
+import { catalogPersistence } from './services/catalogManagementService';
 import { mayEnterPanel } from './lib/panelAccess';
 import PanelAccessGate from './components/PanelAccessGate';
 import { LOADING_STAFF_ACCESS, type StaffAccessState, observeStaffAccess } from './services/staffAccessClient';
@@ -192,7 +193,7 @@ export default function App() {
   useEffect(() => {
     if (!isAdmin || configExists !== false) return;
 
-    setDoc(doc(db, 'config', 'main'), INITIAL_CONFIG)
+    catalogPersistence.setDocument('config', 'main', INITIAL_CONFIG)
       .catch((error) => handleFirestoreError(error, OperationType.CREATE, 'config/main'));
   }, [configExists, isAdmin]);
 

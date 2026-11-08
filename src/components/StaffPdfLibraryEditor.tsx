@@ -205,7 +205,6 @@ export default function StaffPdfLibraryEditor({
             .map((category) => (
               <details
                 key={category}
-                open
                 className="rounded-lg border border-gray-800 p-3"
               >
                 <summary className="cursor-pointer font-semibold">

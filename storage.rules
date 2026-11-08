@@ -130,7 +130,7 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if canProductImage();
+      allow delete: if false; // Limpeza após 7 dias, somente pelo servidor.
     }
 
     match /catalog/{scope}/{ownerId}/{fileName} {
@@ -146,7 +146,7 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if canScope(scope) && scope in ['categories', 'site', 'promotions'];
+      allow delete: if false;
     }
 
     match /operations/releases/{allPaths=**} {
@@ -154,7 +154,8 @@ service firebase.storage {
     }
 
     match /catalog/templates/{productId}/{fileName} {
-      allow read, delete: if (can('products.manage') || can('products.images'));
+      allow read: if (can('products.manage') || can('products.images'));
+      allow delete: if false;
       allow create: if (can('products.manage') || can('products.images')) && isValidAdminOwner(productId) && resource == null && request.resource.size > 0 && request.resource.size <= 50 * 1024 * 1024 && request.resource.contentType == 'application/pdf' && fileName.matches('^[a-f0-9]{32}[.]pdf$') && request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
     }
@@ -173,7 +174,7 @@ service firebase.storage {
         request.resource.metadata.keys().hasAll(['uploadedBy']) &&
         request.resource.metadata.uploadedBy == request.auth.uid;
       allow update: if false;
-      allow delete: if can('fonts.manage');
+      allow delete: if false;
     }
 
     match /{allPaths=**} {

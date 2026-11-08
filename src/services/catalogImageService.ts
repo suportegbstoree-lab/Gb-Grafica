@@ -1,5 +1,6 @@
-import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { retireCatalogAsset } from './catalogRetentionService';
+import { needsCatalogFallback, uploadCatalogFallback } from './adminCatalogFallback';
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   catalogImageExtension,
@@ -74,16 +75,7 @@ export async function removeCatalogImage(path: string): Promise<void> {
   if (!auth.currentUser) throw new Error('Sua sessão expirou. Faça login novamente.');
   if (!isCatalogImagePath(path)) throw new Error('O caminho da imagem do catálogo é inválido.');
 
-  try {
-    await deleteObject(ref(storage, path));
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code || '')
-      : '';
-    if (code === 'storage/object-not-found') return;
-    if (needsCatalogFallback(error)) return deleteCatalogFallback(path);
-    throw catalogStorageError(error);
-  }
+  await retireCatalogAsset(path);
 }
 
 export function storedCatalogImagePath(url: string, productId?: string): string | null {

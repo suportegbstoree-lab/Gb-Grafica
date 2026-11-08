@@ -44,6 +44,16 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Limpeza após exclusão, fontes e biblioteca PDF
+
+- Exclusões do catálogo e da biblioteca da equipe retiram o cadastro da interface imediatamente e guardam uma cópia privada por 7 dias completos. Arquivos removidos ou substituídos entram na fila de limpeza na mesma transação do cadastro.
+- A manutenção diária apaga cópias vencidas, subcoleções e arquivos sem uso após esse prazo, com limites por execução e retentativas. Produtos excluídos também têm suas avaliações, agregados e registros auxiliares de autoria removidos. Arquivos ainda usados por outros cadastros ou pedidos são preservados; a retirada do último vínculo inicia um novo prazo de 7 dias.
+- Arquivos órfãos antigos são identificados gradualmente. Sem uma data de remoção conhecida, recebem 7 dias a partir da primeira detecção. A limpeza restringe os caminhos ao bucket da aplicação, verifica referências e a geração do objeto e impede reutilizações concorrentes durante a exclusão.
+- Alterações do catálogo e solicitações de limpeza passam pela API autenticada. As regras impedem gravações diretas nos cadastros e exclusões diretas dos arquivos pelo SDK, preservando uploads autorizados. A configuração inicial do site também passa pela API. As coleções de retenção são privadas e o conteúdo das cópias não é indexado.
+- O gerenciador de fontes inclui Marcar todas e Desmarcar todas, aplicados ao cadastro completo, inclusive outras páginas e filtros. Fontes novas, tanto de arquivo quanto de sistema, entram inativas; fontes existentes preservam sua seleção. A publicação continua dependendo de salvar as configurações.
+- Os grupos de bases PDF exclusivas da equipe começam recolhidos e podem ser abertos individualmente.
+- A publicação exige a nova aplicação antes das regras e dos índices. O cron e o `CRON_SECRET` existentes são reutilizados. Backups, PITR, versionamento e Soft Delete geridos pelo Google mantêm suas políticas próprias. Detalhes em [docs/catalog-retention.md](docs/catalog-retention.md).
+
 ## 2026-11-08 — Progresso de fontes em overlay compacto
 
 - Durante o envio em lote, o editor de fontes mostra somente um overlay compacto com uma barra de progresso geral, percentual, contagem e pausa após os arquivos atuais. A lista completa de arquivos deixa de ser renderizada durante o envio.

@@ -91,7 +91,7 @@ test('real CLI: migration, revocation with a frozen old token, unaffected peer a
   const staleToken = await signIn(user); const peerToken = await signIn(peer);
   const stale = client(staleToken); const other = client(peerToken);
   const category = doc(stale.db, 'categories', user.uid);
-  await setDoc(category, { nome: 'Before revocation' });
+  await denied(setDoc(category, { nome: 'Before revocation' }));
   const existing = ref(stale.storage, `catalog/products/${user.uid}/${imageName()}`);
   await uploadBytes(existing, new Uint8Array([1, 2, 3]), metadata(user.uid));
   await listAll(ref(stale.storage, `catalog/products/${user.uid}`));
@@ -111,7 +111,7 @@ test('real CLI: migration, revocation with a frozen old token, unaffected peer a
   await denied(uploadBytes(ref(stale.storage, `catalog/products/${user.uid}/${imageName()}`), new Uint8Array([1]), metadata(user.uid)));
   await denied(deleteObject(existing));
   await getMetadata(existing); // Catalog images remain public, as before.
-  await setDoc(doc(other.db, 'categories', peer.uid), { nome: 'Peer remains admin' });
+  await denied(setDoc(doc(other.db, 'categories', peer.uid), { nome: 'Peer remains admin' }));
   await uploadBytes(ref(other.storage, `catalog/products/${peer.uid}/${imageName()}`), new Uint8Array([1]), metadata(peer.uid));
   // Running migration again must preserve the tombstone.
   const secondSync = await cli('sync-admin-access', ['--apply']); assert.equal(secondSync.code, 0, secondSync.output);
@@ -120,7 +120,7 @@ test('real CLI: migration, revocation with a frozen old token, unaffected peer a
   await denied(setDoc(category, { nome: 'Old token after regrant' }));
   await denied(deleteObject(existing));
   const fresh = client(await signIn(user));
-  await setDoc(doc(fresh.db, 'categories', user.uid), { nome: 'New epoch permitted' });
+  await denied(setDoc(doc(fresh.db, 'categories', user.uid), { nome: 'New epoch permitted' }));
   await uploadBytes(ref(fresh.storage, `catalog/products/${user.uid}/${imageName()}`), new Uint8Array([1]), metadata(user.uid));
   const again = await cli('set-admin-claim', ['--email', user.email, '--revoke']); assert.equal(again.code, 0, again.output);
   await denied(setDoc(doc(fresh.db, 'categories', user.uid), { nome: 'Also denied after second revocation' }));
@@ -134,7 +134,7 @@ test('missing registry in either database fails closed; legacy role alone does n
   await denied(setDoc(category, { nome: 'No authorization' }));
   await denied(listAll(ref(frozen.storage, `catalog/products/${user.uid}`)));
   await primary.doc(`_adminAccess/${user.uid}`).set(access);
-  await setDoc(category, { nome: 'Primary authorization' });
+  await denied(setDoc(category, { nome: 'Primary authorization' }));
   await denied(listAll(ref(frozen.storage, `catalog/products/${user.uid}`)));
   await primary.doc(`_adminAccess/${user.uid}`).delete(); await mirror.doc(`_adminAccess/${user.uid}`).set(access);
   await denied(setDoc(category, { nome: 'Mirror cannot grant database access' }));
@@ -146,7 +146,7 @@ test('UID revocation blocks a frozen token even after the account was deleted fr
   await adminFirestore(app, databaseId).doc(`_adminAccess/${user.uid}`).set(access);
   await adminFirestore(app).doc(`_adminAccess/${user.uid}`).set(access);
   const frozen = client(await signIn(user));
-  await setDoc(doc(frozen.db, 'categories', user.uid), { nome: 'Before account deletion' });
+  await denied(setDoc(doc(frozen.db, 'categories', user.uid), { nome: 'Before account deletion' }));
   await listAll(ref(frozen.storage, `catalog/products/${user.uid}`));
   await getAuth(app).deleteUser(user.uid);
   const revoke = await cli('set-admin-claim', ['--uid', user.uid, '--revoke']);

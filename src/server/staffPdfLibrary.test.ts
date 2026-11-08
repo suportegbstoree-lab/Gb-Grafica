@@ -230,7 +230,8 @@ test("JSON imports preserve existing molds, malformed maps have no writes, edits
       revision: old.revision,
     });
     assert.equal(response.status, 200);
-    assert.equal(docs.get(`_staffPdfLayouts/${id}`).enabled, false);
+    assert.equal(docs.has(`_staffPdfLayouts/${id}`), false);
+    assert.ok([...docs.keys()].some(key => key.startsWith('_catalogTrash/')));
     const before = docs.size;
     await request("/library/layouts/import", "manager", {
       templates: { good: defaultPdfLayout(), bad: { color: "red" } },
@@ -378,7 +379,7 @@ test("replacing a PDF validates first, preserves its identity and rejects stale 
     assert.equal(objects.has(after.path), true);
     assert.equal(
       objects.has(`staff-pdf-bases/${original.id}/versions/${stale.id}.pdf`),
-      false,
+      true,
     );
     assert.equal(
       docs.get(`_staffPdfBaseNames/${pdfLibraryId("Kit.pdf")}`).baseId,

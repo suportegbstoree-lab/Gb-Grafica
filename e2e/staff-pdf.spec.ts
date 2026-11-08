@@ -341,6 +341,7 @@ test("uploading an individual PDF asks for a category and offers direct template
   await uploading
     .getByRole("button", { name: "Concluir", exact: true })
     .click();
+  await page.getByText('Cadernetas', { exact: true }).click();
   await page
     .getByRole("button", { name: "Editar Nova Base.pdf", exact: true })
     .click();
@@ -385,6 +386,9 @@ test("folder import uses its root category for every PDF including nested files"
       .filter({
         has: page.locator("summary").getByText("Agendas", { exact: true }),
       });
+    await expect(category.locator('summary')).toBeVisible();
+    await expect(category).not.toHaveAttribute('open', '');
+    await category.locator('summary').click();
     await expect(
       category.getByRole("button", { name: "Editar Adulto.pdf", exact: true }),
     ).toBeVisible();

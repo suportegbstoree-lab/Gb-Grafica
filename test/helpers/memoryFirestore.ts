@@ -21,11 +21,11 @@ export function memoryFirestore(initial: Array<[string, Record<string, unknown>]
     let limit = Infinity, sort: string | undefined, descending = false, cursor: unknown;
     const filters: Array<(data: Record<string, unknown>) => boolean> = [];
     const query = { doc: (id: string) => reference(`${path}/${id}`), limit(count: number) { limit = count; return query; },
-      where(field: string, op: string, value: unknown) { filters.push(data => op === '==' ? data[field] === value : op === '>=' ? data[field]! >= value! : op === '>' ? data[field]! > value! : op === '<' ? data[field]! < value! : data[field]! <= value!); return query; },
+      where(field: string, op: string, value: unknown) { filters.push(data => op === 'in' ? (value as unknown[]).includes(data[field]) : op === '==' ? data[field] === value : op === '>=' ? data[field]! >= value! : op === '>' ? data[field]! > value! : op === '<' ? data[field]! < value! : data[field]! <= value!); return query; },
       startAfter(value: unknown) { cursor = value; return query; },
       orderBy(field: string, direction?: string) { sort = field; descending = direction === 'desc'; return query; },
-      async get() { const entries = [...docs].filter(([key, value]) => key.startsWith(`${path}/`) && key.split('/').length === path.split('/').length + 1 && filters.every(filter => filter(value)) && (cursor === undefined || (sort && value[sort]! > cursor!)))
-        .sort((a, b) => sort ? (a[1][sort]! < b[1][sort]! ? -1 : a[1][sort]! > b[1][sort]! ? 1 : a[0].localeCompare(b[0])) * (descending ? -1 : 1) : 0).slice(0, limit);
+      async get() { const entries = [...docs].filter(([key, value]) => key.startsWith(`${path}/`) && key.split('/').length === path.split('/').length + 1 && filters.every(filter => filter(value)) && (cursor === undefined || (sort === '__name__' ? key > String((cursor as any)?.ref?.path || cursor) : sort && value[sort]! > cursor!)))
+        .sort((a, b) => sort === '__name__' ? a[0].localeCompare(b[0]) : sort ? (a[1][sort]! < b[1][sort]! ? -1 : a[1][sort]! > b[1][sort]! ? 1 : a[0].localeCompare(b[0])) * (descending ? -1 : 1) : 0).slice(0, limit);
         return { size: entries.length, docs: entries.map(([key, data]) => ({ id: key.split('/').at(-1)!, ref: reference(key), data: () => data })) }; },
     }; return query;
   }

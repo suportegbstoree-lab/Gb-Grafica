@@ -58,7 +58,7 @@ export function planFontUploads(
         nome,
         cssFamily: `GBFont_${id.replaceAll("-", "_")}`,
         ...(format ? { arquivoFormato: format } : {}),
-        ativo: true,
+        ativo: false,
       },
       status: "pending",
       progress: 0,

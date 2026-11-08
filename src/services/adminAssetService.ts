@@ -1,6 +1,7 @@
+import { retireCatalogAsset } from './catalogRetentionService';
 import { validateAdminFontFile } from './adminFontValidation';
-import { needsCatalogFallback, uploadCatalogFallback, deleteCatalogFallback } from './adminCatalogFallback';
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
+import { needsCatalogFallback, uploadCatalogFallback } from './adminCatalogFallback';
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage';
 import { auth, storage } from '../firebase';
 import {
   adminAssetPathFromUrl,
@@ -93,16 +94,7 @@ export async function uploadAdminFont(fontId: string, file: File, onProgress?: (
 export async function removeAdminAsset(path: string): Promise<void> {
   if (!auth.currentUser) throw new Error('Sua sessão expirou. Faça login novamente.');
   if (!isAdminImagePath(path) && !isAdminFontPath(path)) throw new Error('O caminho do arquivo administrativo é inválido.');
-  try {
-    await deleteObject(ref(storage, path));
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error
-      ? String((error as { code?: unknown }).code || '')
-      : '';
-    if (code === 'storage/object-not-found') return;
-    if (needsCatalogFallback(error)) return deleteCatalogFallback(path);
-    throw adminAssetError(error);
-  }
+  await retireCatalogAsset(path);
 }
 
 export function storedAdminAssetPath(url: string): string | null {

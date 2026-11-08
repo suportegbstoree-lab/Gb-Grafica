@@ -9,6 +9,7 @@ import { BRANDING_FIELDS, FONTS_FIELDS, SETTINGS_FIELDS, PRODUCT_IMAGE_FIELDS, P
 import { adminAccessRecordAllows } from '../lib/adminAccess.js';
 import { validateCategoryDraft, validateProductDraft, validatePromotionDraft, validateSiteConfig } from '../lib/adminValidation.js';
 import { OperationsError } from '../lib/operations.js';
+import { prepareCatalogRetention } from './catalogRetention.js';
 import type { Anuncio, Category, Promocao } from '../types.js';
 type Services = ReturnType<typeof getAdminServices>;
 export interface CatalogActor { uid: string; admin?: boolean; email?: string; name?: string; permissions: StaffPermission[]; claims?: Record<string, unknown>; }
@@ -64,6 +65,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         else if (keys.every(key => PRODUCT_PERSONALIZATION_FIELDS.includes(key as any))) action = 'product.personalization';
       }
       if (collection === 'config') action = keys.every(key => FONTS_FIELDS.includes(key as any)) ? 'fonts.updated' : keys.every(key => BRANDING_FIELDS.includes(key as any)) ? 'branding.updated' : 'settings.updated';
+      const retain = await prepareCatalogRetention(db, tx, `${collection}/${id}`, old, next, services.bucket?.name || '');
       const audit=await prepareWorkActivity(db,who,action,id,tx);
       if (next) {
         if (next.id !== undefined && next.id !== id) fail('Identificador inconsistente.');
@@ -83,6 +85,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         // Keep fields outside this patch intact; validators check the resulting document.
         tx.set(target, collection === 'config' ? next : { ...next, id });
       } else tx.delete(target);
+      retain();
       audit.write(tx);
     });
     res.json({ saved: true });

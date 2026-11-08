@@ -83,8 +83,9 @@ export function createCustomerAccountRouters(deps: Deps) {
     '/:id/reviews',
     action(async (req, res) => {
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(req.params.id)) throw new OperationsError('Produto inválido.', 422);
-      const db = deps.db(),
-        reviews = await db
+      const db = deps.db();
+      if (!(await db.collection('anuncios').doc(req.params.id).get()).exists) throw new OperationsError('Produto não encontrado.', 404);
+      const reviews = await db
           .collection('anuncios')
           .doc(req.params.id)
           .collection('reviews')

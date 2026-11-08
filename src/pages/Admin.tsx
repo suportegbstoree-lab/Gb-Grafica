@@ -680,13 +680,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
         .filter((upload): upload is UploadedAdminAsset => Boolean(upload))
         .filter(upload => !usedConfigUrls.has(upload.url))
         .map(upload => upload.path);
-      const replacedAssetPaths = [
-        config.logo_url && config.logo_url !== validation.value.logo_url ? adminAssetStorage.pathFromUrl(config.logo_url) : null,
-        config.banner_principal !== validation.value.banner_principal ? adminAssetStorage.pathFromUrl(config.banner_principal) : null,
-      ].filter((path): path is string => Boolean(path));
-      if (unusedConfigPaths.length > 0 || replacedAssetPaths.length > 0) {
+      if (unusedConfigPaths.length > 0) {
         try {
-          await deleteAdminPaths([...unusedConfigPaths, ...replacedAssetPaths]);
+          await deleteAdminPaths(unusedConfigPaths);
         } catch (cleanupError) {
           console.error('Configurações salvas, mas um arquivo substituído não pôde ser removido:', cleanupError);
         }
@@ -735,7 +731,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
       setErrorMessage('Informe o nome e a família CSS da fonte.');
       return;
     }
-    const nextFonts = [...(configDraft.fontes_personalizacao || []), { id, nome, cssFamily, ativo: true }];
+    const nextFonts = [...(configDraft.fontes_personalizacao || []), { id, nome, cssFamily, ativo: false }];
     const issue = personalizationFontsIssue(nextFonts);
     if (issue) { setErrorMessage(issue); return; }
     setConfigDraft(current => ({ ...current, fontes_personalizacao: nextFonts }));
@@ -847,15 +843,12 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
             })),
         ]);
       }
-      const oldIconPath = previousCategory?.icon && previousCategory.icon !== validation.value.icon
-        ? adminAssetStorage.pathFromUrl(previousCategory.icon)
-        : null;
       const unusedUploadPath = categoryUpload && categoryUpload.url !== validation.value.icon
         ? categoryUpload.path
         : null;
       let cleanupFailed = false;
       try {
-        await deleteAdminPaths([oldIconPath, unusedUploadPath].filter((path): path is string => Boolean(path)));
+        await deleteAdminPaths([unusedUploadPath].filter((path): path is string => Boolean(path)));
       } catch (cleanupError) {
         cleanupFailed = true;
         console.error('Categoria salva, mas um ícone substituído não pôde ser removido:', cleanupError);
@@ -900,12 +893,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   };
 
   const deleteCategory = async (catId: string) => {
-    const category = categories.find(item => item.id === catId);
     try {
       await persistence.deleteDocument('categories', catId);
-      const iconPath = category?.icon ? adminAssetStorage.pathFromUrl(category.icon) : null;
-      if (iconPath) await deleteAdminPaths([iconPath]);
-      setSuccessMessage('Categoria excluída.');
+      setSuccessMessage('Categoria excluída. A limpeza definitiva será feita após 7 dias.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `categories/${catId}`);
       setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir a categoria.'));
@@ -1027,20 +1017,12 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     try {
       await persistence.setDocument('anuncios', id, productToSave);
       const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
-      const original = originalProductImagesRef.current;
-      const staleOriginalPaths = original
-        ? original.urls
-          .filter(url => !finalUrls.has(url))
-          .map(url => catalogImageStorage.pathFromUrl(url, original.productId))
-          .filter((path): path is string => Boolean(path))
-        : [];
       const unusedSessionPaths = sessionCatalogUploads
         .filter(upload => !finalUrls.has(upload.url))
         .map(upload => upload.path);
       let cleanupFailed = false;
       try {
-        const removedTemplates = (products.find(product => product.id === id)?.modelosPdf || []).filter(template => !(productToSave.modelosPdf || []).some(current => current.path === template.path)).map(template => template.path);
-        await deleteCatalogPaths([...staleOriginalPaths, ...unusedSessionPaths, ...removedTemplates]);
+        await deleteCatalogPaths(unusedSessionPaths);
       } catch (cleanupError) {
         cleanupFailed = true;
         console.error('Produto salvo, mas houve falha ao limpar imagens substituídas:', cleanupError);
@@ -1059,24 +1041,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   };
 
   const deleteProduct = async (id: string) => {
-    const product = products.find(item => item.id === id);
     try {
       await persistence.deleteDocument('anuncios', id);
-      const catalogPaths = product
-        ? [product.imagem, ...(product.imagens || []), ...alphabetUrls(product.modelosPdf)]
-          .map(url => catalogImageStorage.pathFromUrl(url, id))
-          .filter((path): path is string => Boolean(path))
-        : [];
-      let cleanupFailed = false;
-      try {
-        await deleteCatalogPaths([...catalogPaths, ...(product?.modelosPdf || []).map(template => template.path)]);
-      } catch (cleanupError) {
-        cleanupFailed = true;
-        console.error('Produto excluído, mas houve falha ao limpar suas imagens:', cleanupError);
-      }
-      setSuccessMessage(cleanupFailed
-        ? 'Produto excluído, mas uma imagem não pôde ser removida do Storage.'
-        : 'Anúncio excluído com sucesso!');
+      setSuccessMessage('Anúncio excluído. A limpeza definitiva será feita após 7 dias.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `anuncios/${id}`);
       setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir o anúncio.'));
@@ -1087,7 +1054,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     const product = products.find(item => item.id === id);
     setConfirmation({
       title: 'Excluir produto?',
-      message: `O produto “${product?.nome || id}” será excluído permanentemente.`,
+      message: `O produto “${product?.nome || id}” será removido da loja agora. A cópia de segurança e os arquivos sem uso serão limpos após 7 dias.`,
       confirmLabel: 'Excluir produto',
       danger: true,
       onConfirm: () => deleteProduct(id),
@@ -1206,16 +1173,12 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     setIsSaving(true);
     try {
       await persistence.setDocument('promocoes', id, promotionToSave);
-      const previousPromotion = promotions.find(promotion => promotion.id === id);
-      const previousImagePath = previousPromotion?.imagem && previousPromotion.imagem !== promotionToSave.imagem
-        ? adminAssetStorage.pathFromUrl(previousPromotion.imagem)
-        : null;
       const unusedUploadPath = promotionUpload && promotionUpload.url !== promotionToSave.imagem
         ? promotionUpload.path
         : null;
       let cleanupFailed = false;
       try {
-        await deleteAdminPaths([previousImagePath, unusedUploadPath].filter((path): path is string => Boolean(path)));
+        await deleteAdminPaths([unusedUploadPath].filter((path): path is string => Boolean(path)));
       } catch (cleanupError) {
         cleanupFailed = true;
         console.error('Promoção salva, mas um banner substituído não pôde ser removido:', cleanupError);
@@ -1237,9 +1200,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     const promotion = promotions.find(item => item.id === id);
     try {
       await persistence.deleteDocument('promocoes', id);
-      const imagePath = promotion?.imagem ? adminAssetStorage.pathFromUrl(promotion.imagem) : null;
-      if (imagePath) await deleteAdminPaths([imagePath]);
-      setSuccessMessage('Promoção excluída com sucesso!');
+      setSuccessMessage('Promoção excluída. A limpeza definitiva será feita após 7 dias.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `promocoes/${id}`);
       setErrorMessage(adminPersistenceError(error, 'Não foi possível excluir a promoção.'));
@@ -1737,7 +1698,10 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
           {errorMessage && <p role="alert" className="rounded-xl bg-red-950 p-3 text-sm text-red-300">{errorMessage}</p>}
           {successMessage && <p role="status" className="text-sm text-green-400">{successMessage}</p>}
           <fieldset disabled={isUploadingAdminAsset} className="space-y-5">
-            <AdminFontList fonts={configDraft.fontes_personalizacao || []} onChange={updateConfiguredFont} onRemove={removeConfiguredFont} />
+            <AdminFontList fonts={configDraft.fontes_personalizacao || []} onChange={updateConfiguredFont} onRemove={removeConfiguredFont} onSetAll={ativo => {
+              setConfigDraft(current => ({ ...current, fontes_personalizacao: (current.fontes_personalizacao || []).map(font => ({ ...font, ativo })) }));
+              setConfigDirty(true);
+            }} />
             <div className="grid grid-cols-1 gap-4 border-t border-gray-800 pt-5 md:grid-cols-[1fr_1fr_auto]">
               <input aria-label="Nome da nova fonte do sistema" value={newSystemFont.nome} onChange={event => setNewSystemFont(current => ({ ...current, nome: event.target.value }))} placeholder="Nome exibido, ex.: Montserrat" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />
               <input aria-label="Família CSS da nova fonte" value={newSystemFont.cssFamily} onChange={event => setNewSystemFont(current => ({ ...current, cssFamily: event.target.value }))} placeholder="Família CSS, ex.: Montserrat, sans-serif" className="rounded-lg border border-gray-800 bg-black px-4 py-3 text-sm" />

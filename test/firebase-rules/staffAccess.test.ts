@@ -33,19 +33,19 @@ const designer = () => env.authenticatedContext('designer', claims);
 const path = (scope = 'products/product') => `catalog/${scope}/${randomUUID().replaceAll('-', '')}.png`;
 const metadata = (uid = 'designer') => ({ contentType: 'image/png', customMetadata: { uploadedBy: uid } });
 
-test('designer edits only image and personalization fields, never commercial fields or creation/deletion', async () => {
+test('direct catalog writes are denied even for the designer; mutations use the authenticated API', async () => {
   const db = designer().firestore(), ref = db.doc('anuncios/product');
-  await assertSucceeds(ref.update({ imagem: '/changed.png', imagens: ['/gallery.png'] }));
-  await assertSucceeds(ref.update({ tipoInput: 'texto_arte', labelTexto: 'Nome', printProfile: { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 } }));
+  await assertFails(ref.update({ imagem: '/changed.png', imagens: ['/gallery.png'] }));
+  await assertFails(ref.update({ tipoInput: 'texto_arte', labelTexto: 'Nome', printProfile: { widthMm: 100, heightMm: 150, bleedMm: 2, safeMarginMm: 5, targetDpi: 300 } }));
   for (const fields of [{ nome: 'Changed' }, { desc: 'Changed' }, { categoria: 'Changed' }, { preco_base: '0.01' }, { combinacoes: {} }, { destaque: true }, { shipping: {} }, { unknown: true }]) await assertFails(ref.update(fields));
   await assertFails(db.doc('anuncios/new').set(product)); await assertFails(ref.delete());
 });
-test('product manager creates and edits products/categories/promotions without private orders or settings access', async () => {
+test('product manager uses the API for catalog writes and keeps its Storage upload scope', async () => {
   await seed([['_staffAccess/manager', { ...access, roleId: 'product-manager' }], ['_staffRoles/product-manager', { ...policy, permissions: DEFAULT_ROLE_PERMISSIONS['product-manager'] }]]);
   const context = env.authenticatedContext('manager', { ...claims, staffRole: 'product-manager', email: 'manager@example.test' }), db = context.firestore();
-  await assertSucceeds(db.doc('anuncios/new').set(product)); await assertSucceeds(db.doc('anuncios/new').update({ preco_base: '30.00' }));
-  await assertSucceeds(db.doc('categories/category').set({ nome: 'Nova' }));
-  await assertSucceeds(db.doc('promocoes/promotion').set({ titulo: 'Oferta', ativa: true, alvoTipo: 'produto', alvoId: 'product', alvoNome: 'Caderno', descontoTipo: 'percentual', descontoPercentual: 10 }));
+  await assertFails(db.doc('anuncios/new').set(product)); await assertFails(db.doc('anuncios/new').update({ preco_base: '30.00' }));
+  await assertFails(db.doc('categories/category').set({ nome: 'Nova' }));
+  await assertFails(db.doc('promocoes/promotion').set({ titulo: 'Oferta', ativa: true, alvoTipo: 'produto', alvoId: 'product', alvoNome: 'Caderno', descontoTipo: 'percentual', descontoPercentual: 10 }));
   await assertFails(db.doc('config/main').update({ logo_url: '/changed.png' }));
   await assertFails(db.doc('orders/order').get());
   await assertFails(db.collection('orders').get());
@@ -54,8 +54,8 @@ test('product manager creates and edits products/categories/promotions without p
 });
 test('branding and font permissions cannot overwrite business settings through a full document write', async () => {
   const db = designer().firestore();
-  await assertSucceeds(db.doc('config/main').update({ logo_url: '/new.png', banner_titulo: 'Novo' }));
-  await assertSucceeds(db.doc('config/main').update({ fontes_personalizacao: [] }));
+  await assertFails(db.doc('config/main').update({ logo_url: '/new.png', banner_titulo: 'Novo' }));
+  await assertFails(db.doc('config/main').update({ fontes_personalizacao: [] }));
   await assertFails(db.doc('config/main').update({ razao_social: 'Changed' }));
   await assertFails(db.doc('config/main').set({ logo_url: '/new.png', banner_principal: '/banner.png' }));
   await assertFails(db.doc('config/main').delete());
@@ -76,7 +76,7 @@ test('order read is independent from production updates and permissions are live
   await seed([['_staffRoles/designer', { ...policy, permissions: ['products.images'] }]]);
   await assertFails(db.doc('orders/order').get());
   await assertFails(db.collection('orders').get());
-  await assertSucceeds(db.doc('anuncios/product').update({ imagem: '/still-allowed.png' }));
+  await assertFails(db.doc('anuncios/product').update({ imagem: '/still-allowed.png' }));
 });
 test('Storage uses at most the two staff authorization documents and revokes uploads/list/delete live', async () => {
   const storage = designer().storage(), name = path(), ref = storage.ref(name);
@@ -126,7 +126,7 @@ test('flash schedules require integer start/end and private tracking jobs/labels
   await seed([['_staffRoles/designer', { ...policy, permissions: ['promotions.manage'] }]]);
   const db = designer().firestore(), promo = db.doc('promocoes/flash');
   const value = { titulo: 'Oferta', ativa: true, alvoTipo: 'produto', alvoId: 'product', alvoNome: 'Caderno', descontoTipo: 'percentual', descontoPercentual: 10, relampago: true, startsAt: 1000, endsAt: 2000 };
-  await assertSucceeds(promo.set(value));
+  await assertFails(promo.set(value));
   await assertFails(promo.update({ endsAt: 999 })); await assertFails(promo.update({ endsAt: 'tomorrow' }));
   const { startsAt: _, ...missingStart } = value; await assertFails(promo.set(missingStart));
   await assertFails(db.doc('_trackingJobs/order').get()); await assertFails(db.doc('_trackingJobs/order').set({ code: 'AA123456789BR' }));
@@ -151,7 +151,7 @@ test('PDF originals are private, images accept >5MB and removed operational rele
 
 test('deleted and pending roles revoke Firestore and Storage access for an unchanged session', async () => {
   const context = designer(), db = context.firestore(), storage = context.storage(), uploaded = path();
-  await assertSucceeds(db.doc('anuncios/product').update({ imagem: '/before-delete.png' }));
+  await assertFails(db.doc('anuncios/product').update({ imagem: '/before-delete.png' }));
   await assertSucceeds(db.doc('orders/order').get());
   await assertSucceeds(storage.ref(uploaded).put(new Uint8Array([1]), metadata()));
   for (const state of [{ deletionPending: true }, { deleted: true, deletionPending: false, deletedAt: new Date().toISOString() }]) {

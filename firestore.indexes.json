@@ -5,5 +5,5 @@
     { "collectionGroup": "_staffDocuments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" }] },
     { "collectionGroup": "_staffPdfBatches", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "ownerId", "order": "ASCENDING" }, { "fieldPath": "expiresAt", "order": "DESCENDING" }] }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [{ "collectionGroup": "_catalogTrash", "fieldPath": "data", "indexes": [] }]
 }

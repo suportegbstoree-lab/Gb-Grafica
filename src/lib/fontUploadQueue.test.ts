@@ -19,6 +19,7 @@ test("400 uploaded fonts survive normalization, unique-name allocation and confi
     ...row.font,
     arquivoUrl: `https://firebasestorage.googleapis.com/catalog/fonts/${row.font.id}/original.ttf`,
   }));
+  assert.ok(fonts.every(font => font.ativo === false), 'new uploaded fonts remain inactive until explicitly enabled');
   assert.equal(normalizePersonalizationFonts(fonts).length, 400);
   assert.equal(personalizationFontsIssue(fonts), null);
   const config = {

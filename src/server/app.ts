@@ -1,3 +1,5 @@
+import { cleanupCatalog, scheduleCatalogAssetRemoval } from './catalogRetention.js';
+import { isRetainedAssetPath } from '../lib/catalogRetention.js';
 import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
 import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
@@ -1553,6 +1555,21 @@ app.post('/api/admin/catalog-uploads/:uploadId/chunk', async (req, res) => {
   } catch (caught) { sendCatalogRelayError(res, caught); }
 });
 
+app.post('/api/admin/catalog-assets/retire', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requireFirebaseUser(req), services = getAdminServices(), path = req.body?.path;
+    if (!isRetainedAssetPath(path) || !path.startsWith('catalog/')) throw new HttpError(422, 'Caminho de arquivo inválido.');
+    const scope = path.split('/')[1];
+    const required: Record<string, string[]> = { products: ['products.manage', 'products.images'], templates: ['products.manage', 'products.images'], categories: ['categories.manage'], promotions: ['promotions.manage'], site: ['branding.manage'], fonts: ['fonts.manage'] };
+    const admin = await userIsAdmin(user, services.db);
+    const permissions = admin ? [] : await userStaffPermissions(user);
+    if (!admin && !required[scope]?.some(permission => permissions.includes(permission as any))) throw new HttpError(403, 'Sua função não permite alterar este arquivo.');
+    enforceRateLimit(`catalog-retire:${user.uid}`, 600, 60000);
+    await scheduleCatalogAssetRemoval(services.db, path);
+    res.json({ scheduled: true, retentionDays: 7 });
+  } catch (error) { sendError(res, error); }
+});
+
 app.post('/api/admin/catalog-assets/delete', requireAppCheck, async (req, res) => {
   try {
     const user = await requireCatalogLeaseUser(req);
@@ -1561,8 +1578,8 @@ app.post('/api/admin/catalog-assets/delete', requireAppCheck, async (req, res) =
     if (typeof path !== 'string' || !(isCatalogImagePath(path) || isAdminImagePath(path) || isAdminFontPath(path))) {
       throw new HttpError(422, 'Caminho de arquivo administrativo inválido.');
     }
-    await getAdminServices().bucket.file(path).delete({ ignoreNotFound: true });
-    res.json({ deleted: true });
+    await scheduleCatalogAssetRemoval(getAdminServices().db, path);
+    res.json({ scheduled: true, retentionDays: 7 });
   } catch (caught) { sendCatalogRelayError(res, caught); }
 });
 
@@ -2336,10 +2353,15 @@ app.get('/api/internal/maintenance', async (req, res) => {
     if (!cronAuthorized(req.get('authorization'))) throw new HttpError(401, 'Não autorizado.');
     const { db } = getAdminServices();
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
-    const [expiredPromotions, tracking, customerEmails,staffDocuments,staffPdfBatches] = await Promise.all([
-      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth),cleanupStaffDocuments(getAdminServices()),cleanupStaffPdfBatches(getAdminServices()),
+    const work = await Promise.allSettled([
+      expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth), cleanupStaffDocuments(getAdminServices()), cleanupStaffPdfBatches(getAdminServices()), cleanupCatalog(getAdminServices()),
     ]);
-    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
+    const cleanup = work[5];
+    if (cleanup.status === 'fulfilled') logEvent(cleanup.value.failed || cleanup.value.scanDeferred ? 'warn' : 'info', 'catalog_cleanup_completed', { ...cleanup.value });
+    const rejected = work.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (rejected) throw rejected.reason;
+    const [expiredPromotions, tracking, customerEmails, staffDocuments, staffPdfBatches, catalogCleanup] = work.map(result => (result as PromiseFulfilledResult<any>).value);
+    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, catalogCleanup, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 

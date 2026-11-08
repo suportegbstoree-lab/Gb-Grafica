@@ -1,4 +1,5 @@
-import { ref, uploadBytesResumable, deleteObject } from "firebase/storage";
+import { retireCatalogAsset } from './catalogRetentionService';
+import { ref, uploadBytesResumable } from "firebase/storage";
 import { auth, storage } from "../firebase";
 import { pdfPreviewPages } from "./pdfPreview";
 import {
@@ -46,7 +47,7 @@ export async function uploadCatalogPdf(
   } catch (error) {
     await Promise.allSettled([
       ...images.map((image) => removeCatalogImage(image.path)),
-      ...(stored ? [deleteObject(ref(storage, path))] : []),
+      ...(stored ? [retireCatalogAsset(path)] : []),
     ]);
     throw error;
   }
@@ -54,5 +55,5 @@ export async function uploadCatalogPdf(
 export async function removeCatalogPdf(path: string) {
   const productId = path.split("/")[2];
   if (!isTemplatePath(path, productId)) throw new Error("Modelo inválido.");
-  await deleteObject(ref(storage, path));
+  await retireCatalogAsset(path);
 }

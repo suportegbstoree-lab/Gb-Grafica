@@ -175,15 +175,15 @@ test('Firestore: usuário comum não altera catálogo nem configuração', async
 	await assertFails(firestore.doc('config/main').set({ telefone1: '(16) 98888-8888' }));
 });
 
-test('Firestore: custom claim administrativa gerencia documentos válidos do catálogo', async () => {
+test('Firestore: catálogo administrativo exige a API, inclusive com claim administrativa', async () => {
 	const firestore = authenticatedContext('admin-claim', { admin: true }).firestore();
 
-	await assertSucceeds(firestore.doc('anuncios/produto-1').set(validProduct()));
-	await assertSucceeds(firestore.doc('anuncios/produto-1').update({ desc: 'Descrição atualizada' }));
-	await assertSucceeds(firestore.doc('categories/carimbos').set({ nome: 'Carimbos', icon: '', ordem: 0 }));
-	await assertSucceeds(firestore.doc('promocoes/promocao-1').set(validPromotion()));
-	await assertSucceeds(firestore.doc('config/main').set({ telefone1: '(16) 99999-9999' }));
-	await assertSucceeds(firestore.doc('anuncios/produto-1').delete());
+	await assertFails(firestore.doc('anuncios/produto-1').set(validProduct()));
+	await assertFails(firestore.doc('anuncios/produto-1').update({ desc: 'Descrição atualizada' }));
+	await assertFails(firestore.doc('categories/carimbos').set({ nome: 'Carimbos', icon: '', ordem: 0 }));
+	await assertFails(firestore.doc('promocoes/promocao-1').set(validPromotion()));
+	await assertFails(firestore.doc('config/main').set({ telefone1: '(16) 99999-9999' }));
+	await assertFails(firestore.doc('anuncios/produto-1').delete());
 });
 
 test('Firestore: perfil legado com role admin mantém o acesso administrativo', async () => {
@@ -192,7 +192,7 @@ test('Firestore: perfil legado com role admin mantém o acesso administrativo', 
 	]);
 
 	const firestore = authenticatedContext('admin-role').firestore();
-	await assertSucceeds(firestore.doc('categories/cadernos').set({ nome: 'Cadernos' }));
+	await assertFails(firestore.doc('categories/cadernos').set({ nome: 'Cadernos' }));
 });
 
 test('Firestore: administrador não grava documentos de catálogo inválidos', async () => {
@@ -206,12 +206,12 @@ test('Firestore: administrador não grava documentos de catálogo inválidos', a
 		ativa: true,
 	}));
 	await assertFails(firestore.doc('promocoes/desconto-invalido').set(validPromotion({ descontoPercentual: 100 })));
-	await assertSucceeds(firestore.doc('promocoes/desconto-fixo').set(validPromotion({
+	await assertFails(firestore.doc('promocoes/desconto-fixo').set(validPromotion({
 		descontoTipo: 'valor_fixo',
 		descontoPercentual: null,
 		descontoFixoCentavos: 500,
 	})));
-	await assertSucceeds(firestore.doc('anuncios/texto-e-arte').set(validProduct({ tipoInput: 'texto_arte' })));
+	await assertFails(firestore.doc('anuncios/texto-e-arte').set(validProduct({ tipoInput: 'texto_arte' })));
 	await assertFails(firestore.doc('anuncios/tipo-invalido').set(validProduct({ tipoInput: 'inventado' })));
 });
 
@@ -354,7 +354,7 @@ test('Firestore: claim administrativa permite primeiro login com perfil básico'
 	await assertSucceeds(admin.doc('users/admin-primeiro-login').set({
 		uid: 'admin-primeiro-login', email: 'admin-primeiro-login@example.com', role: 'user',
 	}));
-	await assertSucceeds(admin.doc('categories/primeiro-login').set({ nome: 'Teste' }));
+	await assertFails(admin.doc('categories/primeiro-login').set({ nome: 'Teste' }));
 	await assertFails(admin.doc('users/admin-primeiro-login').update({ role: 'admin' }));
 });
 
@@ -364,7 +364,7 @@ test('Firestore: administrador legado não altera papéis pelo cliente', async (
 		['users/bob', { uid: 'bob', email: 'bob@example.com', role: 'user' }],
 	]);
 	const admin = authenticatedContext('admin-legado').firestore();
-	await assertSucceeds(admin.doc('categories/legado').set({ nome: 'Teste' }));
+	await assertFails(admin.doc('categories/legado').set({ nome: 'Teste' }));
 	await assertFails(admin.doc('users/bob').update({ role: 'admin' }));
 });
 
@@ -374,6 +374,10 @@ test('Firestore: coleções técnicas e caminhos desconhecidos são inacessívei
 
 	for (const documentPath of [
 		'_rateLimits/alice',
+		'_catalogTrash/removed',
+		'_catalogAssetCleanup/file',
+		'_catalogDocumentCleanup/item',
+		'_catalogCleanupControl/main',
 		'_checkoutRequests/tentativa-1',
 		'_pagbankHomologation/captura-1',
 		'internal/secreto',
@@ -574,7 +578,7 @@ test('Storage: imagem do catálogo é pública somente para leitura individual',
 	await assertFails(environment().unauthenticatedContext().storage().ref('catalog/products/produto-1').listAll());
 });
 
-test('Storage: somente claim administrativa envia e remove imagens válidas do catálogo', async () => {
+test('Storage: somente claim administrativa envia imagens e não pode antecipar a limpeza de 7 dias', async () => {
 	const objectPath = `catalog/products/produto-1/${'c1'.repeat(16)}.webp`;
 	const adminReference = authenticatedContext('admin-claim', { admin: true }).storage().ref(objectPath);
 	const userReference = authenticatedContext('alice').storage().ref(objectPath);
@@ -588,7 +592,7 @@ test('Storage: somente claim administrativa envia e remove imagens válidas do c
 		catalogImageMetadata('admin-claim', 'image/webp'),
 	));
 	await assertFails(userReference.delete());
-	await assertSucceeds(adminReference.delete());
+	await assertFails(adminReference.delete());
 });
 
 test('Storage: imagem de catálogo valida tamanho, MIME, nome e metadados', async () => {
@@ -628,7 +632,7 @@ test('Storage: imagem existente do catálogo não pode ser sobrescrita', async (
 		new Uint8Array([2]),
 		catalogImageMetadata('admin-claim', 'image/jpeg'),
 	));
-	await assertSucceeds(reference.delete());
+	await assertFails(reference.delete());
 });
 
 test('Storage: imagens administrativas são públicas e somente administrador altera', async () => {
@@ -652,7 +656,7 @@ test('Storage: imagens administrativas são públicas e somente administrador al
 			catalogImageMetadata('admin-claim', 'image/png'),
 		));
 		await assertSucceeds(publicStorage.ref(objectPath).getMetadata());
-		await assertSucceeds(adminReference.delete());
+		await assertFails(adminReference.delete());
 	}
 
 	await assertUploadFails(adminStorage.ref('catalog/site/logo/logo.png').put(
@@ -680,7 +684,7 @@ test('Storage: fonte WOFF2 é pública e exige claim, nome, MIME e limite válid
 	const reference = adminStorage.ref(validPath);
 	await assertUploadSucceeds(reference.put(new Uint8Array([1, 2, 3, 4]), metadata));
 	await assertSucceeds(environment().unauthenticatedContext().storage().ref(validPath).getMetadata());
-	await assertSucceeds(reference.delete());
+	await assertFails(reference.delete());
 });
 
 test('Storage: caminhos fora das áreas autorizadas são bloqueados', async () => {
@@ -711,7 +715,7 @@ test('Storage: TTF e OTF mantêm autorização, MIME correspondente e arquivos i
     await assertUploadSucceeds(admin.ref(path).put(new Uint8Array([1]), metadata));
     await assertSucceeds(publicStorage.ref(path).getMetadata());
     await assertUploadFails(admin.ref(path).put(new Uint8Array([2]), metadata));
-    await assertSucceeds(admin.ref(path).delete());
+    await assertFails(admin.ref(path).delete());
   }
 });
 
@@ -723,7 +727,7 @@ test('Custom roles: registered policies grant only selected Firestore/Storage ac
     ['anuncios/produto-1', validProduct()],
   ]);
   const context = authenticatedContext('worker', { admin: false, staffRole: role, gbStaffEpoch: epoch });
-  await assertSucceeds(context.firestore().doc('anuncios/produto-1').update({ imagem: 'https://example.com/new.png' }));
+  await assertFails(context.firestore().doc('anuncios/produto-1').update({ imagem: 'https://example.com/new.png' }));
   await assertFails(context.firestore().doc('anuncios/produto-1').update({ nome: 'Nome proibido' }));
   const upload = `catalog/products/produto-1/${'ab'.repeat(16)}.png`;
   await assertUploadSucceeds(context.storage().ref(upload).put(new Uint8Array([1]), catalogImageMetadata('worker', 'image/png')));
@@ -744,6 +748,7 @@ test('Removed operations packages stay private even for administrators', async (
 
 test('reviews and aggregates are public reads with server-only writes, including for administrators', async () => {
   await seedDocuments([
+    ['anuncios/product', validProduct()],
     ['anuncios/product/reviews/review', { rating: 5, comment: 'Aprovado', authorName: 'Ana', verifiedPurchase: true }],
     ['productRatings/product', { count: 1, sum: 5, average: 5 }],
     ['_adminAccess/review-admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }],
@@ -768,7 +773,7 @@ test('profiles and review ownership proofs cannot be read or written directly by
 test('bundle catalog writes must pass through the server even for an administrator', async () => {
   await seedDocuments([['_adminAccess/bundle-admin', { schemaVersion: 1, enabled: true, epoch: 'legacy' }], ['anuncios/plain', validProduct()], ['anuncios/bundle', validProduct({ pacote: { components: [] } })]]);
   const db = authenticatedContext('bundle-admin', { admin: true }).firestore();
-  await assertSucceeds(db.doc('anuncios/plain').update({ nome: 'Produto comum' }));
+  await assertFails(db.doc('anuncios/plain').update({ nome: 'Produto comum' }));
   await assertFails(db.doc('anuncios/plain').update({ pacote: { components: [] } }));
   await assertFails(db.doc('anuncios/new-bundle').set(validProduct({ pacote: { components: [] } })));
   await assertFails(db.doc('anuncios/bundle').update({ nome: 'Alteração direta' }));

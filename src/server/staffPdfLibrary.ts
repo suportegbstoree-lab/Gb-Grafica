@@ -1,3 +1,8 @@
+import {
+  prepareCatalogRetention,
+  scheduleCatalogAssetRemoval,
+  scheduleRetiredCatalogDocument,
+} from "./catalogRetention.js";
 import express from "express";
 import {
   normalizePdfCategory,
@@ -344,6 +349,16 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             "Já existe uma base com este nome. Atualize a biblioteca para confirmar a substituição ou renomeie o arquivo.",
             409,
           );
+        const retain = await prepareCatalogRetention(
+          services().db,
+          tx,
+          ref.path,
+          undefined,
+          { name, category, status: "uploading" },
+          services().bucket.name,
+          now(),
+        );
+        retain();
         tx.create(ref, {
           name,
           category,
@@ -468,6 +483,19 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         const current = (await tx.get(ref)).data();
         if (current?.status !== "ready" || current.revision !== base.revision)
           throw new OperationsError("A base mudou. Atualize a lista.", 409);
+        const retain = await prepareCatalogRetention(
+          services().db,
+          tx,
+          ref.path,
+          current,
+          {
+            ...current,
+            alphabet: { folderName, letters: canonical, sizePercent },
+          },
+          services().bucket.name,
+          now(),
+        );
+        retain();
         tx.set(
           ref,
           {
@@ -502,7 +530,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         const [meta] = await file.getMetadata();
         if (meta.metadata?.uploadedBy !== actor.uid)
           throw new OperationsError("Arquivo não autorizado.", 403);
-        await file.delete();
+        await scheduleCatalogAssetRemoval(services().db, path, now());
       } catch (e) {
         if (Number((e as any)?.code) !== 404) throw e;
       }
@@ -592,6 +620,24 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
               "A base mudou durante o envio. Atualize e tente novamente.",
               409,
             );
+          const nextBase = {
+            ...(target || value),
+            status: "ready",
+            path,
+            generation: String(stored.generation),
+            pages,
+            pageCount: pages.length,
+          };
+          const retain = await prepareCatalogRetention(
+            services().db,
+            tx,
+            targetRef.path,
+            target || value,
+            nextBase,
+            services().bucket.name,
+            now(),
+          );
+          retain();
           tx.set(
             targetRef,
             {
@@ -610,19 +656,26 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           return target && { path: target.path, generation: target.generation };
         })
         .catch(async (error) => {
-          if (error instanceof OperationsError && error.status === 409)
-            await services()
-              .bucket.file(path, { generation: String(stored.generation) })
-              .delete()
-              .catch(() => undefined);
+          await scheduleCatalogAssetRemoval(services().db, path, now()).catch(
+            () => undefined,
+          );
           throw error;
         });
-      await file.delete().catch(() => undefined);
-      if (previous?.path && previous.generation)
-        await services()
-          .bucket.file(previous.path, { generation: previous.generation })
-          .delete()
-          .catch(() => undefined);
+      await scheduleCatalogAssetRemoval(
+        services().db,
+        `staff-pdf-bases/${id}/upload.pdf`,
+        now(),
+      );
+      if (old.replaceId)
+        await scheduleRetiredCatalogDocument(
+          services().db,
+          ref.path,
+          "status",
+          "applied",
+          now(),
+        );
+      if (previous?.path)
+        await scheduleCatalogAssetRemoval(services().db, previous.path, now());
       res.json({ id: targetId });
     }),
   );
@@ -666,15 +719,17 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
               ),
             ),
           named = (await tx.get(nameRef)).data();
-        tx.set(
-          ref,
-          {
-            status: "deleted",
-            revision: revision(),
-            deletedAt: new Date(now()).toISOString(),
-          },
-          { merge: true },
+        const retain = await prepareCatalogRetention(
+          services().db,
+          tx,
+          ref.path,
+          value,
+          null,
+          services().bucket.name,
+          now(),
         );
+        retain();
+        tx.delete(ref);
         if (named?.baseId === id) tx.delete(nameRef);
       });
       if (completedReplacement) {
@@ -687,12 +742,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         ...(replacementPath ? [replacementPath] : []),
         ...letterPaths,
       ]))
-        await services()
-          .bucket.file(path)
-          .delete()
-          .catch((e) => {
-            if (Number(e?.code) !== 404) throw e;
-          });
+        await scheduleCatalogAssetRemoval(services().db, path, now());
       res.json({ deleted: true });
     }),
   );
@@ -711,6 +761,16 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             "O molde foi alterado. Atualize antes de salvar.",
             409,
           );
+        const retain = await prepareCatalogRetention(
+          services().db,
+          tx,
+          ref.path,
+          old,
+          { name, layout, enabled: true },
+          services().bucket.name,
+          now(),
+        );
+        retain();
         tx.set(ref, {
           name,
           layout,
@@ -741,12 +801,28 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           old = await Promise.all(refs.map((ref) => tx.get(ref)));
         created = 0;
         skipped = 0;
+        const retention = await Promise.all(
+          rows.map((row, i) =>
+            old[i].data()?.enabled
+              ? undefined
+              : prepareCatalogRetention(
+                  services().db,
+                  tx,
+                  refs[i].path,
+                  old[i].data(),
+                  { ...row, enabled: true },
+                  services().bucket.name,
+                  now(),
+                ),
+          ),
+        );
         rows.forEach((row, i) => {
           if (old[i].data()?.enabled) {
             skipped++;
             return;
           }
           created++;
+          retention[i]?.();
           tx.set(refs[i], {
             ...row,
             enabled: true,
@@ -773,7 +849,17 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         if (!old) throw new OperationsError("Molde não encontrado.", 404);
         if (old.revision !== req.body?.revision)
           throw new OperationsError("O molde mudou. Atualize a lista.", 409);
-        tx.set(ref, { enabled: false, revision: revision() }, { merge: true });
+        const retain = await prepareCatalogRetention(
+          services().db,
+          tx,
+          ref.path,
+          old,
+          null,
+          services().bucket.name,
+          now(),
+        );
+        retain();
+        tx.delete(ref);
       });
       res.json({ deleted: true });
     }),

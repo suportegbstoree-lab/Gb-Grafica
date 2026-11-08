@@ -7,10 +7,12 @@ export default function AdminFontList({
   fonts,
   onChange,
   onRemove,
+  onSetAll,
 }: {
   fonts: PersonalizationFont[];
   onChange: (index: number, patch: Partial<PersonalizationFont>) => void;
   onRemove: (index: number) => void;
+  onSetAll: (active: boolean) => void;
 }) {
   const [query, setQuery] = React.useState(""),
     [page, setPage] = React.useState(0);
@@ -27,6 +29,31 @@ export default function AdminFontList({
     "rounded-lg border border-gray-700 px-3 py-2 text-xs disabled:opacity-40";
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={button}
+          disabled={!fonts.some((font) => !font.ativo)}
+          onClick={() => onSetAll(true)}
+        >
+          Marcar todas
+        </button>
+        <button
+          type="button"
+          className={button}
+          disabled={!fonts.some((font) => font.ativo)}
+          onClick={() => onSetAll(false)}
+        >
+          Desmarcar todas
+        </button>
+        <span className="text-xs text-gray-400">
+          {fonts.filter((font) => font.ativo).length} de {fonts.length} ativas
+        </span>
+      </div>
+      <p className="text-xs text-gray-400">
+        Estas ações se aplicam a todas as fontes, incluindo outras páginas e
+        filtros. Salve para publicar.
+      </p>
       <label className="block text-xs">
         Filtrar fontes
         <input
