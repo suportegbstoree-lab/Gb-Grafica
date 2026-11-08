@@ -44,6 +44,15 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Templates de e-mail com banner e envio de teste
+
+- Os sete modelos de e-mail receberam o banner da GB Gráfica, títulos, botões, rodapé de suporte e layout em tabelas com adaptação para celular. O mesmo visual atende ao HTML gerado pelo site e aos modelos publicados pela API do Resend.
+- As fichas do cliente e da loja exibem número, data, pagamento, contato, entrega ou retirada, produtos, quantidades, valores e observações, preservando o PDF anexo. As mensagens distinguem pedido recebido de pagamento confirmado e não inventam dados de cobrança que o sistema não coleta.
+- Atualizadas as instruções e a configuração sugerida para `no-reply@gblgrafica.com.br`, `promo@gblgrafica.com.br` e `suporte@gblgrafica.com.br`. O banner está versionado em `public/email/gb-grafica-banner.png`; opcionalmente, `EMAIL_BANNER_URL` permite outra imagem pública HTTPS. As variáveis da Vercel continuam dependendo de configuração no ambiente.
+- Adicionado `npm run email:test:send -- --email "destinatario@dominio.com.br"`: envia uma amostra de cada modelo somente ao endereço informado, com assunto identificado como teste, dados fictícios e anexos PDF de demonstração. Não lê nem altera Firebase, pedidos, cargos, campanhas ou preferências. O modo `--dry-run` mostra o plano sem envio, e `--preview-dir` salva os HTMLs e o banner para conferência local, também sem envio.
+- O teste valida os remetentes, exige a URL pública HTTPS para envio real, espaça as chamadas e distingue aceite, recusa e ausência de confirmação. Recusas de autenticação ou cota interrompem o lote; somente uma limitação curta e explícita de frequência permite retentativa com o mesmo corpo e chave de idempotência.
+- As variáveis dos modelos respeitam os limites de tamanho do Resend. Conteúdos maiores usam o mesmo layout em HTML direto, preservando todos os dados. Tentativas já iniciadas conservam remetente, conteúdo, alias e anexos para manter a idempotência. Novos aliases precisam ser publicados antes da aplicação quando o uso de modelos hospedados estiver ativo.
+
 ## 2026-11-08 — Limpeza após exclusão, fontes e biblioteca PDF
 
 - Exclusões do catálogo e da biblioteca da equipe retiram o cadastro da interface imediatamente e guardam uma cópia privada por 7 dias completos. Arquivos removidos ou substituídos entram na fila de limpeza na mesma transação do cadastro.

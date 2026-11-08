@@ -33,7 +33,8 @@
     "admin:sync": "tsx scripts/sync-admin-access.ts",
     "email:check": "node --import tsx scripts/check-email.ts",
     "email:setup": "node --import tsx scripts/setup-resend.ts",
-    "email:templates": "node --import tsx scripts/setup-resend-templates.ts"
+    "email:templates": "node --import tsx scripts/setup-resend-templates.ts",
+    "email:test:send": "node --import tsx scripts/test-email-send.ts"
   },
   "dependencies": {
     "@google/genai": "^2.24.0",

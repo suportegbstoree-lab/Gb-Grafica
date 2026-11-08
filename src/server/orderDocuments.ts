@@ -3,6 +3,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import type { Order } from "../types.js";
 import { createOrderLabel } from "./productionLabel.js";
 import { resendEmailContent } from "./resendEmailTemplates.js";
+import { orderReceiptEmailMessage } from "./emailMessages.js";
 
 const email = (value: unknown): string =>
   typeof value === "string" &&
@@ -74,13 +75,19 @@ export async function sendOrderEmail(
     if (data.lockUntil > now) return { status: "pending" as const };
     const from =
       data.from ||
-      email(process.env.ORDER_EMAIL_FROM || process.env.EMAIL_FROM || process.env.STAFF_EMAIL_FROM);
+      email(
+        process.env.ORDER_EMAIL_FROM ||
+          process.env.EMAIL_FROM ||
+          process.env.STAFF_EMAIL_FROM,
+      );
     const recipient =
       email(data.recipient) ||
       (data.kind === "merchant" && !data.firstAttemptAt
         ? email(process.env.ORDER_NOTIFICATION_EMAIL)
         : "");
-    const replyTo = data.firstAttemptAt ? email(data.replyTo) : email(process.env.EMAIL_REPLY_TO);
+    const replyTo = data.firstAttemptAt
+      ? email(data.replyTo)
+      : email(process.env.EMAIL_REPLY_TO);
     if (!recipient || !from || !process.env.RESEND_API_KEY?.trim()) {
       transaction.update(ref, {
         status: "not_configured",
@@ -97,11 +104,29 @@ export async function sendOrderEmail(
     }
     const orderId = String(data.orderId);
     const merchant = data.kind === "merchant";
+    const [orderSnapshot, shopSnapshot] = data.emailContent
+      ? []
+      : await Promise.all([
+          transaction.get(db.collection("orders").doc(orderId)),
+          transaction.get(db.collection("config").doc("main")),
+        ]);
+    const receipt = orderSnapshot?.data();
     const emailContent = data.emailContent ?? {
       subject: `Pedido ${orderId} · GB Gráfica`,
-      ...resendEmailContent(merchant ? "order-internal" : "order-received", {
-        text: `${merchant ? "Um pedido foi criado" : "Seu pedido foi criado"} na GB Gráfica.\nA ficha inicial está em anexo. Ela não confirma pagamento nem inicia a produção. Confira o andamento na loja.`,
-      }, !data.firstAttemptAt),
+      ...resendEmailContent(
+        merchant ? "order-internal" : "order-received",
+        receipt
+          ? orderReceiptEmailMessage(
+              orderId,
+              receipt as Order,
+              merchant,
+              shopSnapshot?.data(),
+            )
+          : {
+              text: `${merchant ? "Um pedido foi criado" : "Seu pedido foi criado"} na GB Gráfica.\nA ficha inicial está em anexo. Ela não confirma pagamento nem inicia a produção. Confira o andamento na loja.`,
+            },
+        !data.firstAttemptAt,
+      ),
     };
     transaction.update(ref, {
       from,

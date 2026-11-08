@@ -137,7 +137,7 @@ test("sender inspection uses exact domains, shares domain lookups and reports mi
   const ready = { ...pending, status: "verified" },
     { client, calls } = fixture([{ data: [ready] }, ready]);
   const rows = await inspectResendSenders(client, {
-    EMAIL_FROM: "not-reply@gblgrafica.com.br",
+    EMAIL_FROM: "no-reply@gblgrafica.com.br",
     EMAIL_MARKETING_FROM: "promo@gblgrafica.com.br",
     OTHER: "a@other.test",
   });

@@ -3,6 +3,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { STAFF_ROLE_LABELS, isStaffRoleId, type AssignedRole } from '../lib/staffAccess.js';
 import { emailAddress } from './emailPreferences.js';
 import { resendEmailContent } from './resendEmailTemplates.js';
+import { staffRoleEmailMessage } from './emailMessages.js';
 
 export const STAFF_EMAIL_COLLECTION = '_staffNotifications';
 export type StaffEmailStatus = 'accepted' | 'pending' | 'not_configured';
@@ -32,9 +33,7 @@ export async function sendStaffEmail(db: Firestore, id: string, fetcher: typeof 
     const replyTo = emailAddress(process.env.EMAIL_REPLY_TO?.trim());
     const payload = data.payload || { from: (process.env.STAFF_EMAIL_FROM || process.env.EMAIL_FROM)!.trim(), to: [data.email],
       ...(replyTo && !data.attempts ? { reply_to: replyTo } : {}), subject: 'Sua função na GB Gráfica foi atualizada',
-      ...resendEmailContent('staff-role', {
-        text: `Sua função foi atualizada para: ${roleName}.\n\n${data.role === 'none' ? 'Seu acesso ao painel foi removido.' : 'Saia e entre novamente na loja para atualizar sua sessão. As áreas disponíveis dependem das permissões da sua função.'}\n\nSe você não esperava esta alteração, entre em contato com a administração da loja.`,
-      }, !data.attempts) };
+      ...resendEmailContent('staff-role', staffRoleEmailMessage(roleName, data.role === 'none'), !data.attempts) };
     transaction.update(ref, { payload, lockNonce: nonce, lockUntil: Date.now() + 60_000, attempts: Number(data.attempts || 0) + 1 });
     return { accepted: false, payload } as const;
   });

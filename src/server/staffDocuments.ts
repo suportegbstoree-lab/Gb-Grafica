@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { resendEmailContent } from "./resendEmailTemplates.js";
+import { staffDocumentEmailMessage } from "./emailMessages.js";
 import express from "express";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import { FieldValue } from "firebase-admin/firestore";
@@ -694,9 +695,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
         }
         const emailContent = job.emailContent ?? {
           subject: `GB Gráfica · ${data.reference}`,
-          ...resendEmailContent("staff-document", {
-            text: `O PDF gerado pela GB Gráfica está disponível até ${new Date(data.expiresAt).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.\n\n${job.url}\n\n${data.size <= 8 * 1024 * 1024 ? "O documento também está anexado." : "Use o link para baixar o documento em qualidade integral."}`,
-          }, !job.attempts),
+          ...resendEmailContent("staff-document", staffDocumentEmailMessage({ reference: data.reference, url: job.url, expiresAt: data.expiresAt, attached: data.size <= 8 * 1024 * 1024 }), !job.attempts),
         };
         tx.set(
           jobRef,

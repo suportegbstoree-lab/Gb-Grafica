@@ -47,7 +47,7 @@ try {
         "Verificação assíncrona solicitada. Publique os registros de envio no provedor DNS e execute novamente; esta resposta não confirma propagação.",
       );
     console.log(
-      `\nConfiguração sugerida para o servidor:\nEMAIL_FROM=not-reply@${domain}\nORDER_EMAIL_FROM=not-reply@${domain}\nSTAFF_EMAIL_FROM=not-reply@${domain}\nEMAIL_MARKETING_FROM=promo@${domain}\nEMAIL_REPLY_TO=suporte@${domain}\nORDER_NOTIFICATION_EMAIL=suporte@${domain}`,
+      `\nConfiguração sugerida para o servidor:\nEMAIL_FROM=no-reply@${domain}\nORDER_EMAIL_FROM=no-reply@${domain}\nSTAFF_EMAIL_FROM=no-reply@${domain}\nEMAIL_MARKETING_FROM=promo@${domain}\nEMAIL_REPLY_TO=suporte@${domain}\nORDER_NOTIFICATION_EMAIL=suporte@${domain}`,
     );
     console.log(
       "\nNenhum e-mail foi enviado. A caixa suporte precisa receber no provedor de e-mail. Não substitua os registros MX da raiz para ativar apenas o envio.",
