@@ -31,13 +31,25 @@ async function readSignedModel(url: string): Promise<Blob> {
 }
 
 export async function loadOrderPersonalizationDocument(orderId: string, item: CartItem, production = false): Promise<PersonalizationDocument> {
-  const front = await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id));
+  let front = await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id));
+  const extras=await Promise.all((item.paginasModelo||[]).map(async(_,i)=>({label:`Página ${i+3}` as const,blob:await readSignedModel(await requestPersonalizationModelUrl(orderId,item.id,i+3))})));
   const back = item.contracapaPath ? await readSignedModel(await requestPersonalizationModelUrl(orderId, item.id, 'back')) : null;
   const originalPdf = production && item.arquivoPath?.endsWith('.pdf') ? await readOriginalPdf(await requestArtworkUrl(orderId, item.id)) : undefined;
   const originalBackPdf = production && item.contracapaOriginalPath ? await readOriginalPdf(await requestBackPdfUrl(orderId, item.id)) : undefined;
+  const customerImage=production && item.moldePedido && item.imagemClientePath ? await readSignedModel(await requestArtworkUrl(orderId,item.id,'customer-image')) : undefined;
   const initial = originalPdf && item.inicialPath ? { source: await readSignedModel(await requestInitialUrl(orderId, item.id)), sizePercent: item.inicialTamanho! } : undefined;
   const fonts = item.personalizacaoTexto ? (await import('../lib/textLines')).textLayers(item.personalizacaoTexto).map(layer => ({ id: layer.value.fonte, nome: layer.value.fonteNome || layer.value.fonte, cssFamily: layer.value.fonteCssFamily || 'sans-serif', arquivoUrl: layer.value.fonteArquivoUrl, ativo: true })) : [];
-  return { ...(initial ? { initial } : {}), ...(originalBackPdf ? { originalBackPdf } : {}), ...(originalPdf ? { originalPdf, automaticPdfBack: item.contracapaModo === 'automatic', customization: item.personalizacaoTexto, fonts } : {}), title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : [])] };
+  if(production && item.baseImagemPedido && item.arquivoPath && !item.arquivoPath.endsWith('.pdf') && !item.moldePedido) {
+    const original=await readSignedModel(await requestArtworkUrl(orderId,item.id));
+    front=(await (await import('./personalizationModelService')).composePersonalizationModel({source:original,customization:item.personalizacaoTexto||null,fonts})).blob;
+  }
+  if(production && item.moldePedido && originalPdf) {
+    const recipe=item.moldePedido;
+    const productionPdf=await (await import('./staffPdfRender')).exportStaffPdf(originalPdf,recipe.job,recipe.fonts,recipe.fitMargin,initial,customerImage,recipe.fullPage);
+    const rendered=await (await import('./pdfPreview')).pdfPreviewPages(productionPdf,16);
+    return {title:item.nome,productionPdf,workshop:recipe,originalPdf,pages:rendered.map((blob,i)=>({label:i===0?'Capa':i===1?'Contracapa':`Página ${i+1}`,blob}))};
+  }
+  return { ...(production && item.moldePedido ? {workshop:item.moldePedido,customerImage} : {}), ...(initial ? { initial } : {}), ...(originalBackPdf ? { originalBackPdf } : {}), ...(originalPdf ? { originalPdf, automaticPdfBack: item.contracapaModo === 'automatic', customization: item.personalizacaoTexto, fonts } : {}), title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [{ label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : []),...extras] };
 }
 
 async function readOriginalPdf(url: string): Promise<Blob> {

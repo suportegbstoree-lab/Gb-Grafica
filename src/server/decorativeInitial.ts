@@ -1,3 +1,4 @@
+import { bindingValid } from '../lib/productCustomization.js';
 import { initialReference, selectedInitial } from '../lib/decorativeInitial.js';
 import { validPdfTemplates } from '../lib/pdfTemplate.js';
 import { matchesArtworkSignature, isAllowedArtwork } from '../lib/artwork.js';
@@ -7,10 +8,10 @@ import { parseArtworkObjectGeneration, readArtworkPrefix, type ArtworkBucket, ty
 export async function resolveOrderInitial(bucket: ArtworkBucket, productId: string, product: Record<string, unknown>, templateId: unknown, text: string, reference: unknown): Promise<{
   version: ArtworkObjectVersion; letter: string; sizePercent: number;
 } | undefined> {
-  if (typeof templateId !== 'string' || !templateId) return undefined;
+  if(!product.moldePdf && (typeof templateId !== 'string' || !templateId)) return undefined;
   const gallery = [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].filter((url): url is string => typeof url === 'string');
-  if (!validPdfTemplates(product.modelosPdf, productId, gallery)) throw new Error('Modelos PDF ou alfabetos inválidos. Atualize o produto.');
-  const template = product.modelosPdf.find(item => item.id === templateId);
+  if (product.moldePdf ? !bindingValid(product.moldePdf,productId) : !validPdfTemplates(product.modelosPdf, productId, gallery)) throw new Error('Modelos PDF ou alfabetos inválidos. Atualize o produto.');
+  const template = product.moldePdf ? (product.moldePdf as import('../lib/productCustomization.js').ProductPdfBinding).pdf : (product.modelosPdf as import('../lib/pdfTemplate.js').ProductPdfTemplate[]).find(item => item.id === templateId);
   if (!template) throw new Error('O modelo PDF não está mais disponível.');
   if (!template.alphabet) {
     if (reference !== undefined && reference !== 'null') throw new Error('O alfabeto foi removido. Gere o modelo novamente.');

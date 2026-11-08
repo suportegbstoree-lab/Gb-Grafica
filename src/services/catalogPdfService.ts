@@ -15,10 +15,11 @@ export interface UploadedCatalogPdf {
 export async function uploadCatalogPdf(
   productId: string,
   file: File,
+  maxPages = 2,
 ): Promise<UploadedCatalogPdf> {
   const user = auth.currentUser;
   if (!user) throw new Error("Entre novamente para enviar um modelo.");
-  const pages = await pdfPreviewPages(file),
+  const pages = await pdfPreviewPages(file, maxPages),
     id = crypto.randomUUID().replaceAll("-", ""),
     path = `catalog/templates/${productId}/${id}.pdf`;
   if (!isTemplatePath(path, productId)) throw new Error("Produto inválido.");

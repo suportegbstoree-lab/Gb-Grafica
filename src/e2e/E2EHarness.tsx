@@ -20,6 +20,7 @@ import type { PrintProfile } from '../lib/printProfile';
 import { validateAdminFontFile } from '../services/adminFontValidation';
 import { adminFontFormat } from '../lib/adminAsset';
 import type { PersonalizationDocument } from '../services/personalizationExport';
+import {defaultPdfLayout} from '../lib/staffPdf';
 import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -92,6 +93,11 @@ const FIXTURE_PRODUCTS: Anuncio[] = [
 ];
 
 FIXTURE_PRODUCTS.push({ id: 'caderno', nome: 'Caderno Personalizado', desc: 'Caderno com capa e contracapa.', categoria: 'Personalizados', imagem: FIXTURE_IMAGE, preco_base: '20.00', atributos: [], combinacoes: {}, tipoInput: 'arte' });
+if(new URLSearchParams(window.location.search).has('variations')) {
+ const id='caderneta-azul';
+ FIXTURE_PRODUCTS.push({id,nome:'Caderneta Azul',desc:'Base e divulgação independentes',categoria:'Personalizados',imagem:FIXTURE_IMAGE,imagens:['/logo.png'],preco_base:'20.00',precificacao:'adicionais',tipoInput:'texto_arte',labelTexto:'Nome',combinacoes:{},atributos:[{nome:'Imagem',opcoes:['Com imagem','Sem imagem'],configuracao:{'Com imagem':{adicional:'10.00',imagem:true},'Sem imagem':{adicional:'5.00',imagem:false}}},{nome:'Nome',opcoes:['Com nome','Sem nome'],configuracao:{'Com nome':{adicional:'2.00',texto:true},'Sem nome':{adicional:'0',texto:false}}}],moldePdf:{revision:'a'.repeat(32),baseId:'b'.repeat(32),baseRevision:'c'.repeat(32),layoutId:'d'.repeat(32),layoutRevision:'e'.repeat(32),fonts:[],layout:{...defaultPdfLayout(),pos_x:100,pos_y:200,max_width_pixels:600,max_height_pixels:200,font_size:80,pos_x_landscape:100,pos_y_landscape:200,max_width_pixels_landscape:600,max_height_pixels_landscape:200},pdf:{id:'f'.repeat(32),path:`catalog/templates/${id}/${'f'.repeat(32)}.pdf`,name:'Caderneta.pdf',pages:Array.from({length:new URLSearchParams(window.location.search).get('variations')==='4'?4:2},()=>'/__e2e/cover.png')}}});
+}
+
 
 const CATALOG4 = new URLSearchParams(window.location.search).get('catalog') === '4';
 if(CATALOG4) {
@@ -316,7 +322,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         name: file.name,
       };
     },
-    async uploadPdf(productId, file) { const pages = await pdfPreviewPages(file), id = crypto.randomUUID().replaceAll('-', ''), images = []; for (const page of pages) { const uid = crypto.randomUUID().replaceAll('-', ''); const response = await fetch(`/__e2e/uploads/${uid}`, { method: 'POST', headers: { 'Content-Type': page.type }, body: page }); images.push({ path: `catalog/products/${productId}/${uid}.png`, url: (await response.json()).url, name: page.name }); } return { template: { id, path: `catalog/templates/${productId}/${id}.pdf`, name: file.name, pages: images.map(image => image.url) }, images }; },
+    async uploadPdf(productId, file, maxPages=2) { const pages = await pdfPreviewPages(file,maxPages), id = crypto.randomUUID().replaceAll('-', ''), images = []; for (const page of pages) { const uid = crypto.randomUUID().replaceAll('-', ''); const response = await fetch(`/__e2e/uploads/${uid}`, { method: 'POST', headers: { 'Content-Type': page.type }, body: page }); images.push({ path: `catalog/products/${productId}/${uid}.png`, url: (await response.json()).url, name: page.name }); } return { template: { id, path: `catalog/templates/${productId}/${id}.pdf`, name: file.name, pages: images.map(image => image.url) }, images }; },
     async deletePdf() {},
     async deleteImage() {},
     pathFromUrl() {

@@ -8,6 +8,7 @@ export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationF
 export interface ProductAttribute {
   nome: string;
   opcoes: string[];
+  configuracao?: Record<string, { adicional?: string; texto?: boolean; imagem?: boolean }>;
 }
 
 export interface Anuncio {
@@ -22,6 +23,10 @@ export interface Anuncio {
   imagens?: string[];
   imagensPorCombinacao?: Record<string, string>;
   modelosPdf?: import('./lib/pdfTemplate').ProductPdfTemplate[];
+  /** Production assets are independent of advertising images. */
+  imagemBase?: string;
+  precificacao?: 'combinacoes' | 'adicionais';
+  moldePdf?: import('./lib/productCustomization').ProductPdfBinding;
   preco_base: string;
   atributos: ProductAttribute[];
   combinacoes: Record<string, string>;
@@ -35,6 +40,12 @@ export interface Anuncio {
 }
 
 export interface CartItem {
+  moldePedido?: import('./lib/productCustomization').ProductPdfOrder;
+  textoMolde?: string;
+  moldeRevisao?: string;
+  imagemClientePath?: string;
+  paginasModelo?: string[];
+  baseImagemPedido?: boolean;
   bundleItems?: CartItem[];
   /** Present only on flattened order views; component prices are included in the package total. */
   bundleParentName?: string;

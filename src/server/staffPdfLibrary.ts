@@ -48,6 +48,7 @@ export function catalogPdfBase(productId: string, t: any): StaffPdfBase {
   return {
     id: `catalog_${productId}_${t.id}`,
     name: t.name,
+    initialLetters: Object.keys(t.alphabet?.letters || {}),
     pageCount: t.pages.length,
     pages: [],
     source: "catalog",
@@ -226,6 +227,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         return {
           id: d.id,
           name: b.name,
+          initialLetters: Object.keys(b.alphabet?.letters || {}),
           category: b.category || UNCATEGORIZED_PDFS,
           pageCount: b.pageCount,
           pages: b.pages,

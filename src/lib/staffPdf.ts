@@ -33,6 +33,7 @@ export interface StaffPdfLayout {
   fit_margin: number;
 }
 export interface StaffPdfBase {
+  initialLetters?: string[];
   category?: string;
   id: string;
   name: string;

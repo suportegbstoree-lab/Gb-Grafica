@@ -1,3 +1,4 @@
+import { bindingValid, productMinimum } from './productCustomization.js';
 import { parseBundle, bundleMinimum } from './bundles.js';
 import { validPdfTemplates } from './pdfTemplate.js';
 import { validPromotionWindow } from './promotions.js';
@@ -151,7 +152,15 @@ export function validateProductDraft(
   if ((draft.atributos || []).length > ADMIN_LIMITS.attributes) {
     return { ok: false, message: `Use no máximo ${ADMIN_LIMITS.attributes} atributos por produto.` };
   }
+  if(draft.precificacao !== undefined && !['combinacoes','adicionais'].includes(draft.precificacao)) return {ok:false,message:'Modo de preço inválido.'};
+  if(draft.imagemBase && !isSafeAdminUrl(draft.imagemBase)) return {ok:false,message:'Arte-base inválida.'};
+  if(draft.moldePdf && draft.printProfile) return {ok:false,message:'O formato de impressão segue a base PDF vinculada. Atualize o vínculo para usar suas medidas originais.'};
+  if(draft.moldePdf !== undefined && !bindingValid(draft.moldePdf,draft.id||'')) return {ok:false,message:'Revise o vínculo com o molde PDF.'};
+  for(const attr of draft.atributos || []) {
+    if(attr.configuracao && (typeof attr.configuracao!=='object' || Array.isArray(attr.configuracao) || Object.entries(attr.configuracao).some(([key,option])=>!attr.opcoes.includes(key) || !option || typeof option!=='object' || Array.isArray(option) || Object.keys(option).some(k=>!['adicional','texto','imagem'].includes(k)) || (option.texto!==undefined && typeof option.texto!=='boolean') || (option.imagem!==undefined && typeof option.imagem!=='boolean') || (option.adicional!==undefined && (parseMoneyToCents(option.adicional)===null || parseMoneyToCents(option.adicional)!<0))))) return {ok:false,message:'Revise os adicionais e a personalização de cada opção.'};
+  }
   const atributos = (draft.atributos || []).map(attribute => ({
+    ...(attribute.configuracao ? {configuracao:Object.fromEntries(Object.entries(attribute.configuracao).map(([key,value])=>[normalizedSpaces(key),value]))} : {}),
     nome: normalizedSpaces(attribute.nome),
     opcoes: uniqueCaseInsensitive(attribute.opcoes.map(normalizedSpaces).filter(Boolean)),
   }));
@@ -166,7 +175,7 @@ export function validateProductDraft(
   }
 
   const combinationKeys = generateProductCombinations(atributos);
-  if (combinationKeys.length > ADMIN_LIMITS.combinations) {
+  if (draft.precificacao !== 'adicionais' && combinationKeys.length > ADMIN_LIMITS.combinations) {
     return { ok: false, message: 'Este produto gera combinações demais. Reduza a quantidade de atributos ou opções.' };
   }
   if (draft.modelosPdf !== undefined && !validPdfTemplates(draft.modelosPdf, draft.id || '', [imagem, ...imagens])) return { ok: false, message: 'Revise as páginas dos modelos PDF e as imagens da galeria.' };
@@ -175,19 +184,19 @@ export function validateProductDraft(
   const combinacoes = Object.fromEntries(
     combinationKeys.map(key => [key, normalizedText(draft.combinacoes?.[key])]),
   );
-  if (combinationKeys.some(key => {
+  if (draft.precificacao !== 'adicionais' && combinationKeys.some(key => {
     const cents = parseMoneyToCents(combinacoes[key]);
     return cents === null || cents <= 0;
   })) {
     return { ok: false, message: 'Defina um preço válido e maior que zero para todas as combinações.' };
   }
-  if (atributos.length === 0) {
+  if (atributos.length === 0 || draft.precificacao === 'adicionais') {
     const cents = parseMoneyToCents(precoBase);
     if (cents === null || cents <= 0) {
       return { ok: false, message: 'Defina um preço base válido e maior que zero.' };
     }
   }
-  if (productRequiresText(tipoInput) && !labelTexto) {
+  if ((productRequiresText(tipoInput) || atributos.some(a=>Object.values(a.configuracao||{}).some(o=>o.texto===true))) && !labelTexto) {
     return { ok: false, message: 'Informe o rótulo do texto que o cliente deverá preencher.' };
   }
 
@@ -216,6 +225,9 @@ export function validateProductDraft(
       desc,
       categoria,
       imagem,
+      ...(draft.imagemBase ? {imagemBase:draft.imagemBase} : {}),
+      ...(draft.moldePdf ? {moldePdf:draft.moldePdf} : {}),
+      ...(draft.precificacao ? {precificacao:draft.precificacao} : {}),
       imagens,
       imagensPorCombinacao,
       ...(draft.modelosPdf ? { modelosPdf: draft.modelosPdf } : {}),
@@ -232,6 +244,7 @@ export function validateProductDraft(
 }
 
 function productConfiguredPrices(product: Anuncio): number[] {
+  if(product.precificacao==='adicionais') return [productMinimum(product)].filter((n):n is number=>n!==null);
   const rawValues = product.atributos.length > 0
     ? Object.values(product.combinacoes)
     : [product.preco_base];

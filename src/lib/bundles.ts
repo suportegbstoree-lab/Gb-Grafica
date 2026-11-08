@@ -1,3 +1,4 @@
+import { productPrice, productMinimum } from './productCustomization.js';
 import type { Anuncio, CartItem } from '../types.js';
 import { parseMoneyToCents } from './commerce.js';
 export interface BundleComponent {
@@ -62,24 +63,8 @@ export function parseBundle(value: unknown): BundleDefinition | null {
     ...(typeof v.revision === 'string' ? { revision: v.revision } : {}),
   };
 }
-export function selectedPrice(product: Anuncio, selections: Record<string, string>) {
-  if (
-    Object.keys(selections).some((key) => !product.atributos.some((a) => a.nome === key)) ||
-    product.atributos.some((a) => !a.opcoes.includes(selections[a.nome]))
-  )
-    return null;
-  return parseMoneyToCents(
-    product.atributos.length
-      ? product.combinacoes[product.atributos.map((a) => selections[a.nome]).join('|')]
-      : product.preco_base,
-  );
-}
-export function minimumPrice(product: Anuncio): number | null {
-  const amounts = (product.atributos.length ? Object.values(product.combinacoes) : [product.preco_base])
-    .map(parseMoneyToCents)
-    .filter((v): v is number => v !== null && v > 0);
-  return amounts.length ? Math.min(...amounts) : null;
-}
+export function selectedPrice(product: Anuncio, selections: Record<string, string>) { return productPrice(product,selections); }
+export function minimumPrice(product: Anuncio): number | null { return productMinimum(product); }
 export function discountBundle(subtotal: number, definition: BundleDefinition) {
   const discount =
     definition.discountType === 'percent'

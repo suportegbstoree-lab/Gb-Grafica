@@ -18,7 +18,7 @@ export function repriceCart(items: CartItem[], products: Anuncio[], promotions: 
       } catch {return item;}
     }
     const key = product.atributos.map(attribute => item.selecoes[attribute.nome] || '').join('|');
-    const amount = parseMoneyToCents(product.atributos.length ? product.combinacoes[key] : product.preco_base);
+    const amount = selectedPrice(product, item.selecoes);
     if (amount === null || amount <= 0) return item;
     const price = promotionalPrice(amount, product, promotions, now);
     const preco = ((price?.finalCents ?? amount) / 100).toFixed(2);

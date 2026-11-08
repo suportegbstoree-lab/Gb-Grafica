@@ -26,6 +26,9 @@ import { staffAdministrationApi, type StaffAdministrationApi } from '../services
 import { parsePrintProfile } from '../lib/printProfile';
 import { isProductCustomizationType, productRequiresText } from '../lib/textCustomization';
 import { deleteField } from 'firebase/firestore';
+import { productionAssetUrls, productMayRequireText } from '../lib/productCustomization';
+import ProductProductionEditor from '../components/ProductProductionEditor';
+import ProductOptionEditor from '../components/ProductOptionEditor';
 import ProductPrintEditor from '../components/ProductPrintEditor';
 import OrderProductionSheet from '../components/OrderProductionSheet';
 import EditorModal from '../components/EditorModal';
@@ -97,7 +100,7 @@ export interface AdminPersistence {
 }
 
 export interface AdminCatalogImageStorage {
-  uploadPdf?: (productId: string, file: File) => Promise<UploadedCatalogPdf>;
+  uploadPdf?: (productId: string, file: File, maxPages?:number) => Promise<UploadedCatalogPdf>;
   deletePdf?: (path: string) => Promise<void>;
   uploadImage: (productId: string, file: File) => Promise<UploadedCatalogImage>;
   deleteImage: (path: string) => Promise<void>;
@@ -364,8 +367,8 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     const storageId = copy.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
     const originalUrls = [copy.imagem, ...(copy.imagens || []), ...alphabetUrls(copy.modelosPdf)]
       .filter((value): value is string => typeof value === 'string' && Boolean(value));
-    setEditingProduct(copy);
-    setProductBaseline(draftFingerprint(copy));
+    setEditingProduct({...copy,id:storageId});
+    setProductBaseline(draftFingerprint({...copy,id:storageId}));
     setProductStorageId(storageId);
     setSessionCatalogUploads([]);
     originalProductImagesRef.current = { productId: storageId, urls: originalUrls };
@@ -1016,7 +1019,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     setIsSaving(true);
     try {
       await persistence.setDocument('anuncios', id, productToSave);
-      const finalUrls = new Set([productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
+      const finalUrls = new Set([...productionAssetUrls(productToSave), productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
       const unusedSessionPaths = sessionCatalogUploads
         .filter(upload => !finalUrls.has(upload.url))
         .map(upload => upload.path);
@@ -1072,14 +1075,16 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     if (productRequiresText(patch.tipoInput ?? current.tipoInput) && typeof (patch.labelTexto ?? current.labelTexto) !== 'string') throw new Error('Informe o rótulo da personalização.');
     if (productRequiresText(patch.tipoInput ?? current.tipoInput) && !String(patch.labelTexto ?? current.labelTexto ?? '').trim()) throw new Error('Informe o rótulo da personalização.');
     if (patch.printProfile !== undefined && !parsePrintProfile(patch.printProfile)) throw new Error('Revise o formato de impressão.');
-    const removed = canEditProductPersonalization(effectivePermissions) && current.printProfile && !draft.printProfile ? ['printProfile'] : [];
+    const removed = ['printProfile','moldePdf'].filter(key=>canEditProductPersonalization(effectivePermissions) && current[key as keyof Anuncio] && !draft[key as keyof Anuncio]);
+    if(canEditProductImages(effectivePermissions) && current.imagemBase && !draft.imagemBase) removed.push('imagemBase');
     const next = { ...current, ...patch } as Anuncio;
-    if (removed.length) delete next.printProfile;
+    for(const key of removed) delete (next as any)[key];
     if (next.modelosPdf && !validPdfTemplates(next.modelosPdf, next.id, [next.imagem, ...(next.imagens || [])])) throw new Error('Revise os modelos PDF e os alfabetos.');
     if (persistence.patchDocument) await persistence.patchDocument('anuncios', current.id, patch, removed);
     else await persistence.setDocument('anuncios', current.id, next);
-    const used = new Set([next.imagem, ...(next.imagens || []), ...alphabetUrls(next.modelosPdf)]);
-    const stale = [current.imagem, ...(current.imagens || []), ...alphabetUrls(current.modelosPdf)].filter(url => !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
+    const used = new Set([...productionAssetUrls(next), next.imagem, ...(next.imagens || []), ...alphabetUrls(next.modelosPdf)]);
+    const stale = [...productionAssetUrls(current).filter(url=>!url.startsWith("catalog/templates/")), current.imagem, ...(current.imagens || []), ...alphabetUrls(current.modelosPdf)].filter((url):url is string => Boolean(url) && !used.has(url)).map(url => catalogImageStorage.pathFromUrl(url, current.id)).filter((path): path is string => Boolean(path));
+    if(current.moldePdf && current.moldePdf.pdf.path!==next.moldePdf?.pdf.path)stale.push(current.moldePdf.pdf.path);
     stale.push(...(current.modelosPdf || []).filter(template => !(next.modelosPdf || []).some(item => item.path === template.path)).map(template => template.path));
     await Promise.allSettled(stale.map(path => (path.startsWith('catalog/templates/') ? (catalogImageStorage.deletePdf || removeCatalogPdf)(path) : catalogImageStorage.deleteImage(path))));
     setSuccessMessage('Arte do produto atualizada.');
@@ -1730,7 +1735,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
               className="relative bg-[#111111] border border-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl p-4 sm:p-8"
             >
               <div className="flex justify-between items-center mb-8">
-                <h3 id="product-editor-title" className="text-xl font-bold">{editingProduct.id ? 'Editar Produto' : 'Novo Produto'}</h3>
+                <h3 id="product-editor-title" className="text-xl font-bold">{products.some(p=>p.id===editingProduct.id) ? 'Editar Produto' : 'Novo Produto'}</h3>
                 <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} aria-label="Fechar editor de produto" className="disabled:opacity-50"><X size={24} /></button>
               </div>
 
@@ -1825,7 +1830,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                   </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <span className="text-xs font-bold text-gray-500 uppercase">Imagem Principal</span>
+                      <span className="text-xs font-bold text-gray-500 uppercase">Imagem principal do anúncio</span>
                       <div className="flex flex-col sm:flex-row gap-3">
                         <label className={cn(
                           "flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-3 text-xs font-bold transition-colors",
@@ -1961,7 +1966,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                         <option value="texto_arte">Texto + Imagem</option>
                       </select>
                     </div>
-                    {(editingProduct.tipoInput === 'texto' || editingProduct.tipoInput === 'texto_arte') && (
+                    {productMayRequireText(editingProduct) && (
                       <div className="space-y-2">
                         <label htmlFor="product-text-label" className="text-xs font-bold text-gray-500 uppercase">Rótulo do Texto</label>
                         <input
@@ -2034,7 +2039,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                               return;
                             }
                             const nextAttributes = [...(editingProduct.atributos || []), { nome: attrName, opcoes: options }];
-                            if (generateProductCombinations(nextAttributes).length > ADMIN_LIMITS.combinations) {
+                            if (editingProduct.precificacao !== 'adicionais' && generateProductCombinations(nextAttributes).length > ADMIN_LIMITS.combinations) {
                               setErrorMessage('Esse atributo geraria combinações demais. Reduza a quantidade de opções.');
                               return;
                             }
@@ -2079,7 +2084,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                     ))}
                   </div>
 
-                  {editingProduct.atributos && editingProduct.atributos.length > 0 && (
+                  {editingProduct.precificacao !== 'adicionais' && editingProduct.atributos && editingProduct.atributos.length > 0 && (
                     <div className="space-y-4 pt-4 border-t border-gray-800">
                       <div className="text-[10px] text-gray-500 uppercase font-bold">Definir Preços das Combinações</div>
                       <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
@@ -2109,7 +2114,9 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
 
                 <PdfTemplatesEditor templates={editingProduct.modelosPdf || []} onChange={modelosPdf => setEditingProduct(current => current ? { ...current, id: productStorageId, modelosPdf } : current)} upload={file => catalogImageStorage.uploadImage(productStorageId!, file)} remove={catalogImageStorage.deleteImage} onUploaded={images => setSessionCatalogUploads(current => [...current, ...images])} onBusy={setIsUploadingCatalogImages} />
                 <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
-                <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} />
+                <ProductOptionEditor product={editingProduct} onChange={setEditingProduct} />
+                <ProductProductionEditor product={{...editingProduct,id:productStorageId!}} fonts={config.fontes_personalizacao||[]} onChange={setEditingProduct} onUploaded={images=>setSessionCatalogUploads(current=>[...current,...images])} onBusy={setIsUploadingCatalogImages} uploadImage={catalogImageStorage.uploadImage} uploadPdf={catalogImageStorage.uploadPdf} api={pdfLibraryApi} canBind={can('documents.generate') || can('documents.templates.manage')} />
+                {!editingProduct.moldePdf ? <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} /> : <p className="text-xs text-gray-400">O formato de impressão segue as medidas da base PDF vinculada.</p>}
                 <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
 
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
@@ -2484,7 +2491,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
           />
         )}
       </AnimatePresence>
-      {editingProduct?.id && !can('products.manage') && productDesignAllowed && <ProductDesignEditor product={editingProduct as Anuncio} permissions={effectivePermissions} storage={catalogImageStorage} onSave={saveProductDesign} onClose={() => { setEditingProduct(null); setProductBaseline(null); }} />}
+      {editingProduct?.id && !can('products.manage') && productDesignAllowed && <ProductDesignEditor product={editingProduct as Anuncio} permissions={effectivePermissions} storage={catalogImageStorage} fonts={config.fontes_personalizacao||[]} libraryApi={pdfLibraryApi} onSave={saveProductDesign} onClose={() => { setEditingProduct(null); setProductBaseline(null); }} />}
       {modelDocument && <PersonalizationViewer onExport={format => { if (!modelSource) throw new Error('Item não encontrado.'); return activityApi.exportArtwork(modelSource.orderId, modelSource.itemId, format); }} allowDownload={can('orders.artwork')} document={modelDocument} onClose={() => setModelDocument(null)} />}
       {/* Removidos modais de upload */}
     </div>

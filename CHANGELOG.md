@@ -44,6 +44,16 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Arte de produção, vínculo com a oficina e variações de personalização
+
+- O cadastro separa a imagem-base de impressão das imagens de divulgação. Produtos com uma base podem usar a arte padrão sem exigir envio do cliente; trocar fotos da galeria não altera a produção configurada.
+- Produtos podem publicar um vínculo com a base PDF e o molde existentes na oficina. O editor simplificado do cliente reutiliza sua geometria, fonte, tamanho, cor, alinhamento e rotação, com texto e imagem opcional. Prévias, produção e exportação usam o renderizador da oficina; preservam as 1 a 16 páginas, as medidas originais e a regra de texto nas páginas 1 e 3 dos PDFs de quatro páginas. Iniciais cadastradas permanecem somente na primeira página.
+- A imagem adicional do cliente é centralizada proporcionalmente na primeira página; o modo de página inteira do molde preenche a página com corte nas bordas. A base original permanece como fundo. O cliente confere todas as páginas no site e não recebe controles de download. JPG e PDF continuam no painel de pedidos, gerados a partir das fontes e da receita validadas.
+- Atributos recebem controles independentes para habilitar ou desabilitar nome e imagem. O modo por adicionais soma preço base e valor de cada escolha, incluindo zero, sem exigir um preço para cada combinação. O modo anterior por combinação permanece disponível. Carrinho, pacotes, promoções e checkout usam o mesmo cálculo em centavos no servidor.
+- Alterações de opções invalidam a prévia anterior. O checkout recusa preços adulterados, vínculos antigos e arquivos de outra conta; remove campos desativados da receita e valida todas as prévias. A base, a imagem adicional, as iniciais e as páginas são copiadas separadamente para o pedido com suas versões de Storage.
+- O vínculo guarda a versão publicada da base, do molde e da fonte. Mudanças na oficina são publicadas pelo botão Vincular / atualizar molde, sem modificar pedidos anteriores. A API confere revisões, conteúdo dos arquivos e permissões; imagens-base, fontes e cópias publicadas participam da retenção existente de 7 dias.
+- Produtos antigos preservam seu fluxo até receberem uma base separada. Não há novas dependências, variáveis, regras, índices ou cron. Configuração e publicação permanecem no fluxo habitual; detalhes em [docs/product-production.md](docs/product-production.md).
+
 ## 2026-11-08 — Editor de campanhas e gestão de rascunhos
 
 - A seção E-mails oferece Nova campanha e os botões Editar e Excluir para rascunhos. A edição reabre assunto, tipo e mensagem salvos e atualiza o mesmo cadastro, sem criar outro rascunho ou iniciar envios. O botão de salvar permanece no rodapé do modal.

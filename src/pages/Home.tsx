@@ -13,6 +13,8 @@ import { initialReference } from '../lib/decorativeInitial';
 import OrderDocuments from '../components/OrderDocuments';
 import UploadInput from '../components/UploadInput';
 import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../lib/storePresentation';
+import ProductPdfEditor from '../components/ProductPdfEditor';
+import { productCustomization, productPrice } from '../lib/productCustomization';
 import React, { useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { StoreThemeControl } from '../components/StoreTheme';
@@ -79,10 +81,7 @@ interface HomeSlide {
 
 function productPriceForSelections(product: Anuncio, selections: Record<string, string>): number | null {
   if (!product.atributos.every(attribute => selections[attribute.nome])) return null;
-  const rawPrice = product.atributos.length === 0
-    ? product.preco_base
-    : product.combinacoes[product.atributos.map(attribute => selections[attribute.nome]).join('|')];
-  return parseMoneyToCents(rawPrice);
+  return productPrice(product,selections);
 }
 
 function openExternal(url: string) {
@@ -398,7 +397,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   const removeFromCart = (id: string) => {
     const item = cart.find(candidate => candidate.id === id);
     setCart(prev => prev.filter(i => i.id !== id));
-    const pendingPaths = (item ? cartShippingItems([item]) : []).flatMap(c => [c.arquivoPath,c.modeloPath,c.contracapaPath,c.contracapaOriginalPath])
+    const pendingPaths = (item ? cartShippingItems([item]) : []).flatMap(c => [c.arquivoPath,c.modeloPath,c.contracapaPath,c.contracapaOriginalPath,c.imagemClientePath,...(c.paginasModelo||[])])
       .filter((path): path is string => Boolean(path?.includes('/pending/')));
     void Promise.allSettled(pendingPaths.map(path => personalizationModelStorage.deleteModel(path))).then(results => {
       if (results.some(result => result.status === 'rejected')) {
@@ -428,8 +427,9 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     try {
       const front = await personalizationModelStorage.readModel(item.modeloPath);
       const back = item.contracapaPath ? await personalizationModelStorage.readModel(item.contracapaPath) : null;
+      const extras=await Promise.all((item.paginasModelo||[]).map(async(path,i)=>({label:`Página ${i+3}` as const,blob:await personalizationModelStorage.readModel(path)})));
       if (request === viewerRequest.current) setModelDocument({ title: item.nome, ...(item.printProfile ? { printProfile: item.printProfile } : {}), pages: [
-        { label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : []),
+        { label: 'Capa', blob: front }, ...(back ? [{ label: 'Contracapa' as const, blob: back }] : []),...extras,
       ] });
     } catch (error) { setNotice({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível carregar o modelo.' }); }
   };
@@ -492,6 +492,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
           ...(item.bundleItems ? { bundleItems: item.bundleItems.map(serializeItem), bundleRevision: item.bundleRevision } : {}),
           productId: item.productId,
           ...(item.templateId ? { templateId: item.templateId } : {}),
+          paginasModelo:item.paginasModelo,
+          moldeRevisao:item.moldeRevisao, textoMolde:item.textoMolde, imagemClientePath:item.imagemClientePath,
           expectedUnitAmountCents: parseMoneyToCents(item.preco),
           quantidade: item.quantidade,
           selecoes: item.selecoes,
@@ -1895,6 +1897,7 @@ function ProductCard({
   const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
   const [uploadedBackOriginal, setUploadedBackOriginal] = useState<UploadedArtwork | null>(null);
   const [uploadedBack, setUploadedBack] = useState<UploadedArtwork | null>(null);
+  const [extraModels,setExtraModels]=useState<UploadedArtwork[]>([]);
   const [backDraft, setBackDraft] = useState<BackCoverDraft>({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
   const [generatedDocument, setGeneratedDocument] = useState<PersonalizationDocument | null>(null);
   const [isUploadingArtwork, setIsUploadingArtwork] = useState(false);
@@ -1903,15 +1906,20 @@ function ProductCard({
   const [isTextDrawerOpen, setIsTextDrawerOpen] = useState(false);
   const [activeImage, setActiveImage] = useState(product.imagem);
 
-  const template = (product.modelosPdf || []).find(template => template.pages.includes(activeImage));
+  const binding=product.moldePdf;
+  const [moldText,setMoldText]=useState('');
+  const baseImage=product.imagemBase;
+  const template = !binding && !baseImage ? (product.modelosPdf || []).find(template => template.pages.includes(activeImage)) : undefined;
   const [pdfBack, setPdfBack] = useState<Blob | undefined>();
   React.useEffect(() => { let cancelled = false; setPdfBack(undefined); if (artworkSourceFile?.type === 'application/pdf') void import('../services/pdfPreview').then(module => module.pdfPreviewPages(artworkSourceFile)).then(pages => { if (!cancelled) setPdfBack(pages[1]); }).catch(error => onNotify({ type: 'error', message: error.message })); return () => { cancelled = true; }; }, [artworkSourceFile]);
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
   const availableFonts = activePersonalizationFonts(fonts);
   const printProfile = parsePrintProfile(product.printProfile) || undefined;
-  const requiresArtwork = productRequiresArtwork(product.tipoInput);
-  const requiresText = productRequiresText(product.tipoInput);
+  const customization = productCustomization(product,selections);
+  const requiresArtwork = customization.image;
+  const requiresText = customization.text;
+  const mustCompose=Boolean(binding || requiresText || baseImage || requiresArtwork && printProfile);
 
   // Sincroniza a imagem ativa se o produto mudar (ex: edição no admin)
   React.useEffect(() => {
@@ -1929,12 +1937,13 @@ function ProductCard({
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
   }, [artworkPreviewUrl]);
 
-  const sourceKey = `${uploadedArtwork?.path || ''}:${activeImage}:${printProfileKey(printProfile)}:${JSON.stringify(template?.alphabet || null)}`;
+  const sourceKey = JSON.stringify([requiresArtwork?uploadedArtwork?.path:'', binding?.revision || baseImage || activeImage, printProfileKey(printProfile),template?.alphabet||null, customization, selections]);
   const previousSource = useRef(sourceKey);
-  React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
+  React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; for(const file of [uploadedModel,uploadedBack,...extraModels])if(file)void personalizationModelStorage.deleteModel(file.path).catch(()=>undefined); setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null);setExtraModels([]); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
   const handleSelect = (attrName: string, option: string) => {
     if(lockSelections) return;
+    if(product.precificacao==='adicionais'){setSelections(previous=>({...previous,[attrName]:option}));return;}
     const attributeIndex = product.atributos.findIndex(attribute => attribute.nome === attrName);
     setSelections(previous => {
       const nextSelections: Record<string, string> = {};
@@ -1950,6 +1959,7 @@ function ProductCard({
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    if(binding && !isComposablePersonalizationImage(file.type,file.size)){onNotify({type:'error',message:'Para este molde, envie uma imagem JPG, PNG ou WebP.'});return;}
     if (file.type !== 'application/pdf' && (requiresText || printProfile) && !isComposablePersonalizationImage(file.type, file.size)) {
       onNotify({
         type: 'error',
@@ -2000,6 +2010,7 @@ function ProductCard({
     if (uploadedModel) void personalizationModelStorage.deleteModel(uploadedModel.path).catch(() => undefined);
     if (uploadedBack) void personalizationModelStorage.deleteModel(uploadedBack.path).catch(() => undefined);
     setUploadedBack(null);
+    setExtraModels([]);
     setGeneratedDocument(null);
     setUploadedArtwork(null);
     setArtworkSourceFile(null);
@@ -2010,27 +2021,21 @@ function ProductCard({
 
   const isFullySelected = product.atributos.every(attr => selections[attr.nome]);
 
-  const currentPrice = () => {
-    if (!isFullySelected) return null;
-    if (product.atributos.length === 0) return product.preco_base;
-    const key = product.atributos.map(attr => selections[attr.nome]).join('|');
-    return product.combinacoes[key] || null;
-  };
-
+  const currentPrice = () => { const amount=productPrice(product,selections);return amount===null?null:(amount/100).toFixed(2); };
   const rawPrice = currentPrice();
   const originalPriceCents = parseMoneyToCents(rawPrice);
   const discount = originalPriceCents === null ? null : promotionalPrice(originalPriceCents, product, promotions);
   const priceCents = discount?.finalCents ?? originalPriceCents;
   const price = priceCents === null ? rawPrice : (priceCents / 100).toFixed(2);
-  const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork) || Boolean(template)) &&
-    (!requiresText || Boolean(textCustomization && uploadedModel));
+  const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork || template || baseImage || binding)) &&
+    (!requiresText || Boolean(binding ? moldText && uploadedModel : textCustomization && uploadedModel)) && (!mustCompose || Boolean(uploadedModel));
 
   const openTextCustomizer = async () => {
-    if (requiresText && availableFonts.length === 0) {
+    if (!binding && requiresText && availableFonts.length === 0) {
       onNotify({ type: 'error', message: 'As fontes de personalização ainda não foram configuradas.' });
       return;
     }
-    if (requiresArtwork && !template && (!uploadedArtwork || !artworkSourceFile)) {
+    if (requiresArtwork && !template && !baseImage && !binding && (!uploadedArtwork || !artworkSourceFile)) {
       onNotify({ type: 'error', message: 'Envie a imagem antes de posicionar o texto.' });
       return;
     }
@@ -2047,23 +2052,23 @@ function ProductCard({
 
   const handleAdd = () => {
     if (!isFullySelected || !price || priceCents === null || priceCents <= 0) return;
-    if (requiresArtwork && !uploadedArtwork && !template) {
+    if (requiresArtwork && !uploadedArtwork && !template && !baseImage && !binding) {
       onNotify({ type: 'error', message: 'Envie a arte antes de adicionar este produto ao carrinho.' });
       return;
     }
 
-    if (requiresText && !textCustomization) {
+    if (requiresText && !(binding ? moldText : textCustomization)) {
       onNotify({ type: 'error', message: 'Configure o texto, a fonte e a posição da personalização.' });
       return;
     }
-    if ((requiresText || (requiresArtwork && printProfile)) && !uploadedModel) {
+    if (mustCompose && !uploadedModel) {
       onNotify({ type: 'error', message: 'Gere o modelo composto antes de adicionar este produto ao carrinho.' });
       return;
     }
     if (uploadedModel && printProfileKey(generatedDocument?.printProfile) !== printProfileKey(printProfile)) {
       onNotify({ type: 'error', message: 'O formato de impressão mudou. Gere o modelo novamente.' }); return;
     }
-    const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
+    const customizationFingerprint = binding ? `${binding.revision}:${requiresText?moldText:''}` : textCustomization ? textCustomizationFingerprint(textCustomization) : '';
     const cartId = createCartItemId(
       product.id,
       selections,
@@ -2085,8 +2090,8 @@ function ProductCard({
       selecoes: { ...selections },
       quantidade: 1,
       ...(printProfile ? { printProfile } : {}),
-      arquivoPath: uploadedArtwork?.path,
-      arquivoNome: uploadedArtwork?.name,
+      ...(binding ? {moldeRevisao:binding.revision,textoMolde:requiresText?moldText:'',textoPersonalizado:requiresText?moldText:undefined,inicialReferencia:initialReference(binding.pdf,requiresText?moldText:''),imagemClientePath:requiresArtwork?uploadedArtwork?.path:undefined} : {arquivoPath:requiresArtwork?uploadedArtwork?.path:undefined,arquivoNome:requiresArtwork?uploadedArtwork?.name:undefined}),
+      ...(extraModels.length?{paginasModelo:extraModels.map(f=>f.path)}:{}),
       modeloPath: uploadedModel?.path,
       modeloNome: uploadedModel?.name,
       contracapaPath: uploadedBack?.path,
@@ -2094,8 +2099,8 @@ function ProductCard({
       contracapaOriginalNome: uploadedBackOriginal?.name,
       contracapaNome: uploadedBack?.name,
       ...(uploadedBack && backDraft.mode !== 'none' ? { contracapaModo: backDraft.mode } : {}),
-      textoPersonalizado: textCustomization?.texto,
-      personalizacaoTexto: textCustomization || undefined,
+      textoPersonalizado: binding ? (requiresText?moldText:undefined) : requiresText?textCustomization?.texto:undefined,
+      personalizacaoTexto: !binding && requiresText?textCustomization || undefined:undefined,
       ...(template?.alphabet && !uploadedArtwork ? { inicialReferencia: initialReference(template, textCustomization?.texto || '') } : {}),
     });
 
@@ -2105,6 +2110,7 @@ function ProductCard({
     // Reset after adding
     setUploadedBackOriginal(null);
     setUploadedBack(null);
+    setExtraModels([]);
     setGeneratedDocument(null);
     setBackDraft({ mode: /caderno/i.test(`${product.nome} ${product.categoria}`) ? 'automatic' : 'none' });
     setUploadedArtwork(null);
@@ -2176,7 +2182,7 @@ function ProductCard({
 
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-6 mb-10">
           {product.atributos.map((attr, idx) => {
-            const isEnabled = idx === 0 || product.atributos.slice(0, idx).every(a => selections[a.nome]);
+            const isEnabled = product.precificacao==='adicionais' || idx === 0 || product.atributos.slice(0, idx).every(a => selections[a.nome]);
 
             return (
               <div key={attr.nome} className={cn("min-w-0 flex flex-col transition-all", !isEnabled && "opacity-20 pointer-events-none grayscale")}>
@@ -2196,7 +2202,7 @@ function ProductCard({
                           : "bg-gray-50 border-gray-100 text-gray-500 hover:border-pink-200 hover:text-pink-600"
                       )}
                     >
-                      {option}
+                      {option}{product.precificacao==='adicionais' && attr.configuracao?.[option]?.adicional && <span className="ml-2 opacity-80">+ {formatMoney(attr.configuracao[option].adicional)}</span>}
                     </button>
                   ))}
                 </div>
@@ -2230,7 +2236,7 @@ function ProductCard({
                     {isUploadingArtwork ? 'Enviando...' : 'Selecionar arquivo'}
                     <UploadInput
                       type="file"
-                      originalPdf accept="application/pdf,image/png,image/jpeg,image/webp"
+                      originalPdf accept={binding?"image/png,image/jpeg,image/webp":"application/pdf,image/png,image/jpeg,image/webp"}
                       onChange={handleArtworkFile}
                       disabled={isUploadingArtwork}
                       className="sr-only"
@@ -2238,14 +2244,15 @@ function ProductCard({
                   </label>
                 )}
                 <p className="mt-2 text-[9px] text-gray-400 leading-tight">
-                  {'PDF, PNG, JPG ou WebP'}, até 50 MB. O arquivo fica privado, vinculado ao pedido e é obrigatório para concluir a compra.
+                  {binding?'PNG, JPG ou WebP':'PDF, PNG, JPG ou WebP'}, até 50 MB. O arquivo fica privado, vinculado ao pedido. {baseImage||binding||template?'Envio opcional: sem arquivo, será usada a base da loja.':'Envie a arte para concluir a compra.'}
                 </p>
               </div>
             )}
 
-            {requiresArtwork && !requiresText && (template || artworkSourceFile && (artworkSourceFile.type === 'application/pdf' || isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size))) && <button type="button" onClick={() => void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">Personalizar capa e contracapa</button>}
+            {!binding && !requiresText && (baseImage || template || artworkSourceFile && (artworkSourceFile.type === 'application/pdf' || isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size))) && <button type="button" onClick={() => void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">Personalizar capa e contracapa</button>}
+            {binding && <button type="button" onClick={()=>void openTextCustomizer()} className="rounded-xl border border-pink-200 bg-pink-50 px-4 py-3 text-xs font-bold text-pink-600">{uploadedModel?'Editar personalização':'Personalizar e conferir modelo'}</button>}
             {generatedDocument && <button type="button" onClick={() => onOpenModel(generatedDocument)} className="rounded-xl border border-purple-200 px-4 py-3 text-xs font-bold text-purple-600">Visualizar modelo{uploadedBack ? ' · capa e contracapa' : ''}</button>}
-            {requiresText && (
+            {!binding && requiresText && (
               <div className="flex flex-col">
                 <span className="mb-4 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{product.labelTexto || 'Personalização'}</span>
                 {textCustomization ? (
@@ -2267,12 +2274,12 @@ function ProductCard({
                   <button
                     type="button"
                     onClick={() => void openTextCustomizer()}
-                    disabled={availableFonts.length === 0 || (requiresArtwork && !uploadedArtwork && !template)}
+                    disabled={availableFonts.length === 0 || (requiresArtwork && !uploadedArtwork && !template && !baseImage)}
                     className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-pink-200 bg-pink-50 px-4 py-4 text-xs font-bold text-pink-600 transition-colors hover:border-pink-400 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <FileText size={16} /> {availableFonts.length === 0
                       ? 'Fontes indisponíveis'
-                      : requiresArtwork && !uploadedArtwork
+                      : requiresArtwork && !uploadedArtwork && !baseImage && !template
                         ? 'Envie a imagem primeiro'
                         : 'Personalizar texto'}
                   </button>
@@ -2330,15 +2337,25 @@ function ProductCard({
       </div>
       </div>
     </motion.article>
-    {isTextDrawerOpen && (
+    {isTextDrawerOpen && binding && <ProductPdfEditor binding={binding} textEnabled={requiresText} initialText={moldText} image={requiresArtwork ? artworkSourceFile || baseImage : undefined} onClose={()=>setIsTextDrawerOpen(false)} onSave={async(text,document)=>{
+      const files:UploadedArtwork[]=[];
+      try {
+        for(const [i,page] of document.pages.entries()) {const bitmap=await createImageBitmap(page.blob);const model={blob:page.blob,width:bitmap.width,height:bitmap.height};bitmap.close();files.push(await personalizationModelStorage.uploadModel(model,personalizationModelName(product.nome,undefined,i===1)));}
+        const previous=[uploadedModel,uploadedBack,...extraModels].filter((f):f is UploadedArtwork=>Boolean(f));
+        const next={...document,title:product.nome,...(printProfile?{printProfile}:{})};
+        setUploadedModel(files[0]);setUploadedBack(files[1]||null);setExtraModels(files.slice(2));setBackDraft({mode:files[1]?'automatic':'none'});setGeneratedDocument(next);setMoldText(text);setIsTextDrawerOpen(false);onOpenModel(next);
+        void Promise.allSettled(previous.map(f=>personalizationModelStorage.deleteModel(f.path)));
+      }catch(e){await Promise.allSettled(files.map(f=>personalizationModelStorage.deleteModel(f.path)));throw e;}
+    }} />}
+    {isTextDrawerOpen && !binding && (
       <TextCustomizationDrawer
         productName={product.nome}
         template={!uploadedArtwork ? template : undefined}
         printProfile={printProfile}
-        previewImage={artworkPreviewUrl || template?.pages[0] || activeImage || product.imagem || DEFAULT_LOGO_URL}
-        previewSource={artworkSourceFile || undefined}
+        previewImage={(requiresArtwork?artworkPreviewUrl:undefined) || baseImage || template?.pages[0] || activeImage || product.imagem || DEFAULT_LOGO_URL}
+        previewSource={requiresArtwork?artworkSourceFile || undefined:undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
-        initialValue={textCustomization}
+        initialValue={requiresText?textCustomization:null}
         textRequired={requiresText}
         initialBack={backDraft}
         automaticBack={pdfBack || template?.pages[1]}

@@ -339,12 +339,20 @@ export function editedStaffPdfPage(
       ? "landscape"
       : null;
 }
+/** Center and clip a customer image to the front page; share placement with the customer preview. */
+export function drawStaffPdfImage(context:CanvasRenderingContext2D,width:number,height:number,source:CanvasImageSource,imageWidth:number,imageHeight:number,fullPage:boolean) {
+  const ratio=(fullPage?Math.max:Math.min)(width/imageWidth,height/imageHeight);
+  const w=imageWidth*ratio,h=imageHeight*ratio;
+  context.save();context.beginPath();context.rect(0,0,width,height);context.clip();context.drawImage(source,(width-w)/2,(height-h)/2,w,h);context.restore();
+}
 export async function exportStaffPdf(
   original: Blob,
   job: StaffPdfJob,
   fonts: PersonalizationFont[],
   fitMargin = 0.2,
   initial?: DecorativeInitial,
+  customerImage?: Blob,
+  fullPage = false,
 ) {
   const source = await PDFDocument.load(await original.arrayBuffer(), {
       updateMetadata: false,
@@ -398,6 +406,16 @@ export async function exportStaffPdf(
           height: crop.height,
           rotate: degrees(-angle),
         });
+      }
+      if(index===0 && customerImage) {
+        const decoded=await (await import('./personalizationModelService')).decodePersonalizationSource(customerImage);
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.ceil(width*STAFF_PDF_DPI/72);canvas.height=Math.ceil(height*STAFF_PDF_DPI/72);
+        if(canvas.width*canvas.height>64_000_000 || Math.max(canvas.width,canvas.height)>32767){decoded.dispose();throw new Error('Página excede a capacidade de edição a 300 DPI.');}
+        try {const ctx=canvas.getContext('2d');if(!ctx)throw new Error('Canvas indisponível.');drawStaffPdfImage(ctx,canvas.width,canvas.height,decoded.source,decoded.width,decoded.height,fullPage);
+          const blob=await (await import('./personalizationModelService')).personalizationCanvasBlob(canvas,'image/png');
+          sheet.drawImage(await pdf.embedPng(await blob.arrayBuffer()),{x:0,y:0,width,height});
+        } finally{decoded.dispose();canvas.width=canvas.height=1;}
       }
       if (index === 0 && initial) {
         const blob = initial.source as Blob,

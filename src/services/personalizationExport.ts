@@ -4,7 +4,7 @@ import { personalizationModelDimensions } from '../lib/personalizationModel';
 import { decodePersonalizationSource, personalizationCanvasBlob } from './personalizationModelService';
 
 export interface PersonalizationPage {
-  label: 'Capa' | 'Contracapa';
+  label: 'Capa' | 'Contracapa' | `Página ${number}`;
   blob: Blob;
 }
 
@@ -12,6 +12,9 @@ export interface PersonalizationDocument {
   title: string;
   initial?: import('../lib/decorativeInitial').DecorativeInitial;
   originalPdf?: Blob;
+  productionPdf?: Blob;
+  workshop?: import('../lib/productCustomization').ProductPdfOrder;
+  customerImage?: Blob;
   originalBackPdf?: Blob;
   automaticPdfBack?: boolean;
   repeatFrontForBack?: boolean;
@@ -44,6 +47,8 @@ export async function exportPersonalizationImage(blob: Blob, type: 'image/png' |
 }
 
 export async function exportPersonalizationPdf(document: PersonalizationDocument): Promise<Blob> {
+  if(document.productionPdf)return document.productionPdf;
+  if(document.workshop && document.originalPdf) return (await import('./staffPdfRender')).exportStaffPdf(document.originalPdf,document.workshop.job,document.workshop.fonts,document.workshop.fitMargin,document.initial,document.customerImage,document.workshop.fullPage);
   if (document.pages.length < 1 || document.pages.length > 2) throw new Error('Selecione a capa e, se existir, a contracapa.');
   if (document.originalPdf || document.originalBackPdf) return (await import('./originalPdfExport')).exportOriginalPdf(document);
   const { PDFDocument } = await import('pdf-lib');

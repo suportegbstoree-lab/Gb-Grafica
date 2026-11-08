@@ -1,3 +1,4 @@
+import { defaultPdfLayout } from '../lib/staffPdf';
 import { initialReference } from '../lib/decorativeInitial';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -61,6 +62,7 @@ function replaceSource() {
   objects.set(sourcePath, { generation: 18, bytes: Buffer.from('substituto'), metadata: { ownerId: uid, kind: 'source-artwork' } });
 }
 const fakeBucket = {
+  name:env.FIREBASE_STORAGE_BUCKET,
   file(path: string, options?: { generation?: number; preconditionOpts?: { ifGenerationMatch?: number } }) {
     return {
       name: path,
@@ -443,3 +445,55 @@ for(const [name,change,status] of [
   ['changed fixed quantity',(value:any)=>({...value,bundleItems:[{...value.bundleItems[0],quantidade:1}]}),422],
   ['another customer artwork',(value:any)=>({...value,bundleItems:[{...value.bundleItems[0],arquivoPath:'artworks/victim/pending/00000000000000000000000000000000.png'}]}),422],
 ] as const) test(`bundle checkout rejects ${name} before contacting payment provider`,async()=>{const response=await checkout(change(bundleSetup()));assert.equal(response.status,status,JSON.stringify(await response.clone().json()));assert.equal(providerCalls,0);});
+
+function linkedProduct() {
+ const pdfId='a'.repeat(32),path=`catalog/templates/produto/${pdfId}.pdf`,model=`artworks/${uid}/pending/${'b'.repeat(32)}.png`;
+ const binding={revision:'c'.repeat(32),baseId:'d'.repeat(32),baseRevision:'e'.repeat(32),layoutId:'f'.repeat(32),layoutRevision:'1'.repeat(32),layout:{...defaultPdfLayout(),font_size:91},fonts:[],pdf:{id:pdfId,path,name:'Base.pdf',pages:['https://example.com/front.png']}};
+ docs.set('anuncios/produto',{...docs.get('anuncios/produto'),moldePdf:binding,tipoInput:'texto_arte',preco_base:'20.00',precificacao:'adicionais',combinacoes:{},atributos:[{nome:'Imagem',opcoes:['Com','Sem'],configuracao:{Com:{adicional:'10.00',imagem:true},Sem:{adicional:'5.00',imagem:false}}},{nome:'Nome',opcoes:['Com','Sem'],configuracao:{Com:{adicional:'2.00',texto:true},Sem:{adicional:'0',texto:false}}}]});
+ objects.set(path,{generation:22,bytes:Buffer.from('%PDF-1.7\ntest base'),metadata:{}});
+ objects.set(model,{generation:23,bytes:Buffer.from([137,80,78,71,13,10,26,10,0]),metadata:{ownerId:uid,kind:'personalization-model',originalName:'modelo.png'}});
+ return {arquivoPath:'',selecoes:{Imagem:'Com',Nome:'Com'},textoMolde:'ANA',moldeRevisao:binding.revision,modeloPath:model,expectedUnitAmountCents:3200};
+}
+test('linked checkout accepts the default with no customer upload and stores the locked workshop recipe',async()=>{
+ const input=linkedProduct(),response=await checkout({...input,moldePedido:{job:{lines:[{fontSize:999}]}}});
+ assert.equal(response.status,201,JSON.stringify(await response.clone().json()));assert.equal(providerPayload.items[0].unit_amount,3200);
+ const order=[...docs].find(([p])=>p.startsWith('orders/'))![1] as any,item=order.itens[0];
+ assert.match(item.arquivoPath,/orders.*[.]pdf$/);assert.equal(item.moldePedido.job.lines[0].fontSize,91);assert.equal(item.moldePedido.job.lines[0].text,'ANA');assert.equal(item.imagemClientePath,undefined);assert.equal(copies.length,2);
+ assert.ok(objects.has(`catalog/templates/produto/${'a'.repeat(32)}.pdf`));
+});
+test('linked checkout copies a private customer image independently from the immutable PDF base',async()=>{
+ const response=await checkout({...linkedProduct(),imagemClientePath:sourcePath});assert.equal(response.status,201,JSON.stringify(await response.clone().json()));
+ const order=[...docs].find(([p])=>p.startsWith('orders/'))![1] as any,item=order.itens[0];assert.match(item.imagemClientePath,/orders.*[.]png$/);assert.notEqual(item.imagemClientePath,item.modeloPath);assert.equal(copies.length,3);
+ const denied=await localFetch(`${baseUrl}/api/orders/${order.id || [...docs].find(([p])=>p.startsWith('orders/'))![0].slice(7)}/artwork/${item.id}?source=customer-image`,{headers:{authorization:'Bearer usuario-teste'}});assert.equal(denied.status,403);
+});
+test('choices without name or image discard hidden client values and charge only selected additions',async()=>{
+ const response=await checkout({...linkedProduct(),selecoes:{Imagem:'Sem',Nome:'Sem'},textoMolde:'HIDDEN',imagemClientePath:'artworks/victim/pending/'+ '0'.repeat(32)+'.png',expectedUnitAmountCents:2500});assert.equal(response.status,201,JSON.stringify(await response.clone().json()));
+ const order=[...docs].find(([p])=>p.startsWith('orders/'))![1] as any;assert.equal(order.itens[0].moldePedido.job.lines[0].text,'');assert.equal(order.itens[0].imagemClientePath,undefined);assert.equal(providerPayload.items[0].unit_amount,2500);
+});
+for(const [name,change,status] of [
+ ['a stale published mold',{moldeRevisao:'0'.repeat(32)},409],
+ ['a forged additive total',{expectedUnitAmountCents:1},409],
+ ['a missing required name',{textoMolde:''},422],
+ ['an unapproved model',{aprovarArte:false},422],
+ ['another customer image',{imagemClientePath:'artworks/victim/pending/'+ '0'.repeat(32)+'.png'},422],
+] as const) test(`linked checkout rejects ${name} before contacting the provider`,async()=>{const response=await checkout({...linkedProduct(),...change});assert.equal(response.status,status,JSON.stringify(await response.clone().json()));assert.equal(providerCalls,0);});
+test('an independent image-base is accepted instead of a mandatory upload and never deleted after checkout',async()=>{
+ const path=`catalog/products/produto/${'a'.repeat(32)}.png`,model=`artworks/${uid}/pending/${'b'.repeat(32)}.png`;
+ docs.set('anuncios/produto',{...docs.get('anuncios/produto'),imagemBase:`https://firebasestorage.googleapis.com/v0/b/${env.FIREBASE_STORAGE_BUCKET}/o/${encodeURIComponent(path)}?alt=media`});
+ objects.set(path,{...objects.get(sourcePath)!,metadata:{}});objects.set(model,{...objects.get(sourcePath)!,metadata:{ownerId:uid,kind:'personalization-model'}});
+ const response=await checkout({arquivoPath:'',modeloPath:model});assert.equal(response.status,201,JSON.stringify(await response.clone().json()));assert.ok(objects.has(path));assert.equal(copies.length,2);
+});
+
+test('four-page linked models copy every preview and serve only owned order pages',async()=>{
+ const input=linkedProduct(),p=docs.get('anuncios/produto') as any;p.moldePdf.pdf.pages=Array.from({length:4},(_,i)=>`https://example.com/p${i+1}.png`);
+ const extras=Array.from({length:3},(_,i)=>`artworks/${uid}/pending/${String(i+4).repeat(32)}.png`);
+ for(const path of extras)objects.set(path,{...objects.get(String(input.modeloPath))!,generation:30,metadata:{ownerId:uid,kind:'personalization-model'}});
+ const response=await checkout({...input,contracapaPath:extras[0],contracapaModo:'automatic',paginasModelo:extras.slice(1)});assert.equal(response.status,201,JSON.stringify(await response.clone().json()));
+ const [path,order]=[...docs].find(([p])=>p.startsWith('orders/'))! as [string,any];const item=order.itens[0];assert.equal(copies.length,5);assert.equal(item.paginasModelo.length,2);assert.match(item.paginasModelo[1],/orders.*[.]png$/);
+ const own=await localFetch(`${baseUrl}/api/orders/${path.slice(7)}/model/${item.id}?page=3`,{headers:{authorization:'Bearer usuario-teste'}});assert.equal(own.status,200);
+ const invalid=await localFetch(`${baseUrl}/api/orders/${path.slice(7)}/model/${item.id}?page=99`,{headers:{authorization:'Bearer usuario-teste'}});assert.equal(invalid.status,422);
+});
+test('linked models reject an incomplete set of preview pages',async()=>{
+ const input=linkedProduct(),p=docs.get('anuncios/produto') as any;p.moldePdf.pdf.pages=Array.from({length:4},(_,i)=>`https://example.com/p${i+1}.png`);
+ const response=await checkout(input);assert.equal(response.status,422);assert.equal(providerCalls,0);
+});

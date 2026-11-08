@@ -144,9 +144,9 @@ async function uploadViaRelay(blob: Blob, name: string, kind: 'source-artwork' |
   );
 }
 
-export async function requestArtworkUrl(orderId: string, itemId: string): Promise<string> {
+export async function requestArtworkUrl(orderId: string, itemId: string, source?:'customer-image'): Promise<string> {
   const data = await authenticatedRequest<{ url?: unknown }>(
-    `/api/orders/${encodeURIComponent(orderId)}/artwork/${encodeURIComponent(itemId)}`,
+    `/api/orders/${encodeURIComponent(orderId)}/artwork/${encodeURIComponent(itemId)}${source ? '?source=customer-image' : ''}`,
   );
   if (typeof data.url !== 'string' || !data.url.startsWith('https://')) {
     throw new Error('O servidor não retornou um link válido para a arte.');
@@ -162,9 +162,9 @@ export async function readPendingPersonalizationModel(path: string): Promise<Blo
   return getBlob(ref(storage, path), MAX_PERSONALIZATION_MODEL_BYTES);
 }
 
-export async function requestPersonalizationModelUrl(orderId: string, itemId: string, face: 'front' | 'back' = 'front'): Promise<string> {
+export async function requestPersonalizationModelUrl(orderId: string, itemId: string, face: 'front' | 'back' | number = 'front'): Promise<string> {
   const data = await authenticatedRequest<{ url?: unknown }>(
-    `/api/orders/${encodeURIComponent(orderId)}/model/${encodeURIComponent(itemId)}${face === 'back' ? '?face=back' : ''}`,
+    `/api/orders/${encodeURIComponent(orderId)}/model/${encodeURIComponent(itemId)}${typeof face==='number'?`?page=${face}`:face === 'back' ? '?face=back' : ''}`,
   );
   if (typeof data.url !== 'string' || !data.url.startsWith('https://')) {
     throw new Error('O servidor não retornou um link válido para o modelo personalizado.');

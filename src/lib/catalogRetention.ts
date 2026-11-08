@@ -50,6 +50,8 @@ export function retainedAssetPath(
 }
 const assetKeys = new Set([
   "imagem",
+  "imagemBase",
+  "moldePdf",
   "imagens",
   "image",
   "images",
@@ -67,9 +69,12 @@ const assetKeys = new Set([
   "fonteArquivoUrl",
   "arquivoPath",
   "modeloPath",
+  "paginasModelo",
   "contracapaPath",
   "contracapaOriginalPath",
   "inicialPath",
+  "imagemClientePath",
+  "moldePedido",
   "alphabet",
   "letters",
 ]);

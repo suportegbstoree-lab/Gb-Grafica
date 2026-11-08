@@ -81,8 +81,8 @@ export function hasStaffPermission(permissions: readonly StaffPermission[], perm
 export function canEditProductImages(permissions: readonly StaffPermission[]): boolean { return permissions.includes('products.manage') || permissions.includes('products.images'); }
 export function canEditProductPersonalization(permissions: readonly StaffPermission[]): boolean { return permissions.includes('products.manage') || permissions.includes('products.personalization'); }
 
-export const PRODUCT_IMAGE_FIELDS = ['imagem', 'imagens', 'imagensPorCombinacao', 'modelosPdf'] as const;
-export const PRODUCT_PERSONALIZATION_FIELDS = ['tipoInput', 'labelTexto', 'printProfile'] as const;
+export const PRODUCT_IMAGE_FIELDS = ['imagem', 'imagens', 'imagensPorCombinacao', 'modelosPdf', 'imagemBase'] as const;
+export const PRODUCT_PERSONALIZATION_FIELDS = ['tipoInput', 'labelTexto', 'printProfile', 'moldePdf'] as const;
 export const BRANDING_FIELDS = ['logo_url', 'banner_principal', 'banner_titulo', 'banner_subtitulo', 'banner_botao'] as const;
 export const FONTS_FIELDS = ['fontes_personalizacao'] as const;
 export const SETTINGS_FIELDS = ['contatos', 'beneficios', 'telefone1', 'telefone2', 'beneficio1_titulo', 'beneficio1_desc', 'beneficio2_titulo', 'beneficio2_desc', 'beneficio3_titulo', 'beneficio3_desc', 'razao_social', 'documento_fiscal', 'endereco_comercial', 'email_atendimento', 'email_privacidade', 'prazo_producao'] as const;

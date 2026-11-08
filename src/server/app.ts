@@ -4,6 +4,9 @@ import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
 import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
+import { productPrice, productCustomization, productPdfOrder } from '../lib/productCustomization.js';
+import { retainedAssetPath } from '../lib/catalogRetention.js';
+import { defaultProductArtwork, productCustomerImage } from './pdfTemplates.js';
 import { cleanupStaffPdfBatches } from './staffPdfBatches.js';
 import { createStaffPdfLibraryRouter } from './staffPdfLibrary.js';
 import { workRequestContext } from './workTracking.js';
@@ -154,11 +157,19 @@ interface ShippingQuote {
 interface NormalizedCartItem {
   components?: NormalizedCartItem[];
   initialVersion?: ArtworkObjectVersion;
+  customerImageVersion?: ArtworkObjectVersion;
+  additionalModelVersions?: ArtworkObjectVersion[];
 	artworkVersion?: ArtworkObjectVersion;
 	modelVersion?: ArtworkObjectVersion;
 	backModelVersion?: ArtworkObjectVersion;
 	backOriginalVersion?: ArtworkObjectVersion;
 	cartItem: {
+    imagemClientePath?: string;
+    paginasModelo?: string[];
+    baseImagemPedido?: boolean;
+    moldePedido?: import('../lib/productCustomization.js').ProductPdfOrder;
+    textoMolde?: string;
+    moldeRevisao?: string;
 		id: string;
 		productId: string;
     bundleItems?: import('../types.js').CartItem[];
@@ -840,11 +851,10 @@ async function normalizeCart(
 
 		const combinationKey = normalizedAttributes.map(attribute => selections[attribute.name]).join('|');
 		const combinations = isPlainRecord(product.combinacoes) ? product.combinacoes : {};
-		if (normalizedAttributes.length > 0 && !(combinationKey in combinations)) {
+		if (product.precificacao !== 'adicionais' && normalizedAttributes.length > 0 && !(combinationKey in combinations)) {
 			throw new HttpError(422, `A combinação escolhida de ${productName} está sem preço.`);
 		}
-		const rawPrice = normalizedAttributes.length > 0 ? combinations[combinationKey] : product.preco_base;
-		const originalUnitAmount = parseMoneyToCents(rawPrice);
+		const originalUnitAmount = productPrice(product as unknown as Anuncio, selections);
 
 		if (originalUnitAmount === null || originalUnitAmount <= 0 || originalUnitAmount > 999999900) {
 			throw new HttpError(422, `O preço de ${productName} está inválido.`);
@@ -879,13 +889,28 @@ async function normalizeCart(
 			throw new HttpError(422, `O formato de impressão de ${productName} mudou. Remova o item do carrinho e gere a arte novamente.`);
 		}
 		const productType = isProductCustomizationType(product.tipoInput) ? product.tipoInput : 'nenhum';
-		const requiresArtwork = productRequiresArtwork(productType);
-		const requiresText = productRequiresText(productType);
+		const effectiveCustomization = productCustomization(product as unknown as Anuncio,selections);
+    const requiresArtwork = effectiveCustomization.image;
+    const requiresText = effectiveCustomization.text;
+    const binding = product.moldePdf as Anuncio['moldePdf'];
+    let recipe: ReturnType<typeof productPdfOrder>|undefined;
+    let customerImageVersion: ArtworkObjectVersion|undefined;
+    if(binding) {
+      if(item.moldeRevisao!==binding.revision) throw new HttpError(409,'O molde mudou. Personalize o produto novamente.','DESIGN_CHANGED');
+      try {recipe=productPdfOrder(binding,item.textoMolde,requiresText);
+        if(item.arquivoPath || item.templateId) throw new Error('Gere a personalização com o molde vinculado.');
+        customerImageVersion=requiresArtwork ? await productCustomerImage(bucket,userId,item.imagemClientePath) : undefined;
+        if(requiresArtwork && !customerImageVersion && product.imagemBase) customerImageVersion=await defaultProductArtwork(bucket,productId,{imagemBase:product.imagemBase});
+      }catch(e){throw new HttpError(422,(e as Error).message);}
+    }
 		let templateVersion: ArtworkObjectVersion | undefined;
-		try { templateVersion = await templateArtwork(bucket, productId, product, item.templateId); } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Modelo PDF inválido.'); }
+		try { templateVersion = binding ? await defaultProductArtwork(bucket,productId,product) : await templateArtwork(bucket, productId, product, item.templateId);
+      if(!binding && !templateVersion && !item.arquivoPath && product.imagemBase ) templateVersion=await defaultProductArtwork(bucket,productId,product);
+    } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Modelo PDF inválido.'); }
 		if (templateVersion && item.arquivoPath) throw new HttpError(422, 'Escolha um modelo da loja ou a sua própria arte.');
 		const artworkPath = templateVersion?.path || (requiresArtwork ? textValue(item.arquivoPath, 300) : '');
-		const modelPath = (requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
+		const modelPath = (binding || product.imagemBase || requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
+    if((binding || product.imagemBase) && !modelPath) throw new HttpError(422,'Confira e confirme a personalização antes de continuar.');
 		const backModelPath = textValue(item.contracapaPath, 300);
 		const backMode = item.contracapaModo;
 		let backOriginalVersion: ArtworkObjectVersion | undefined;
@@ -944,7 +969,7 @@ async function normalizeCart(
 		}
 
 		let textCustomization: TextCustomization | null = null;
-		if (requiresText) {
+		if (requiresText && !binding) {
 			if (configuredFonts.length === 0) {
 				throw new HttpError(422, `As fontes de personalização de ${productName} ainda não foram configuradas.`);
 			}
@@ -961,7 +986,7 @@ async function normalizeCart(
 			if (!modelPath) throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
 		}
     let initial: Awaited<ReturnType<typeof resolveOrderInitial>>;
-    try { initial = await resolveOrderInitial(bucket, productId, product, item.templateId, textCustomization?.texto || '', item.inicialReferencia); }
+    try { initial = await resolveOrderInitial(bucket, productId, product, item.templateId, recipe?.job.lines[0].text || textCustomization?.texto || '', item.inicialReferencia); }
     catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Inicial inválida. Gere o modelo novamente.'); }
     if (initial && !modelPath) throw new HttpError(422, 'Gere o modelo com a inicial antes de concluir o pedido.');
 		const validateModel = async (path: string, name: unknown): Promise<ArtworkObjectVersion> => {
@@ -992,12 +1017,21 @@ async function normalizeCart(
 			backModelVersion = await validateModel(backModelPath, item.contracapaNome);
 			backModelName = backModelVersion.originalName;
 		}
-		const approval: ArtworkApproval | undefined = modelVersion ? {
+		const additionalModelVersions:ArtworkObjectVersion[]=[];
+    if(binding){
+      const extras=item.paginasModelo ?? [];
+      if(backOriginalVersion || backModelPath && backMode!=='automatic' || binding.pdf.pages.length===1 && backModelPath)throw new HttpError(422,'A contracapa segue a base PDF vinculada.');
+      if(!Array.isArray(extras) || extras.length!==Math.max(0,binding.pdf.pages.length-2) || new Set([modelPath,backModelPath,...extras].filter(Boolean)).size!==[modelPath,backModelPath,...extras].filter(Boolean).length || binding.pdf.pages.length>1 && !backModelPath) throw new HttpError(422,'Confira todas as páginas do molde novamente.');
+      for(const [index,path] of extras.entries())additionalModelVersions.push(await validateModel(String(path),`pagina-${index+3}.png`));
+    }
+    const approval: ArtworkApproval | undefined = modelVersion ? {
 			version: 1, acceptedAt: new Date().toISOString(), userId,
 			modelGeneration: modelVersion.generation,
 			...(backModelVersion ? { backGeneration: backModelVersion.generation } : {}),
 			designFingerprint: createHash('sha256').update(JSON.stringify({
 				productId, selections, printProfile: printProfile || null, text: textCustomization,
+        additionalModels:additionalModelVersions.map(v=>[v.path,v.generation]),
+        recipe:recipe || null, customerImage:customerImageVersion ? [customerImageVersion.path,customerImageVersion.generation] : null,
         initial: initial ? [initial.letter, initial.version.path, initial.version.generation, initial.sizePercent] : null,
 				artwork: artworkVersion ? [artworkVersion.path, artworkVersion.generation] : null,
 				model: [modelVersion.path, modelVersion.generation],
@@ -1005,13 +1039,15 @@ async function normalizeCart(
 				back: backModelVersion ? [backModelVersion.path, backModelVersion.generation] : null,
 			})).digest('hex'),
 		} : undefined;
-		const customText = textCustomization?.texto;
-		const customizationFingerprint = textCustomization ? textCustomizationFingerprint(textCustomization) : '';
+		const customText = recipe?.job.lines[0].text || textCustomization?.texto;
+		const customizationFingerprint = recipe ? JSON.stringify(recipe.job) : textCustomization ? textCustomizationFingerprint(textCustomization) : '';
 		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath, backOriginalVersion?.path].filter(Boolean).join('|'));
 		const price = (unitAmount / 100).toFixed(2);
 
 		normalizedItems.push({
 			...(artworkVersion ? { artworkVersion } : {}),
+      ...(customerImageVersion ? {customerImageVersion} : {}),
+      ...(additionalModelVersions.length?{additionalModelVersions}:{}),
       ...(initial ? { initialVersion: initial.version } : {}),
 			...(modelVersion ? { modelVersion } : {}),
 			...(backModelVersion ? { backModelVersion } : {}),
@@ -1019,7 +1055,10 @@ async function normalizeCart(
 			cartItem: {
 				id: cartId,
 				productId,
-				...(templateVersion ? { templateId: String(item.templateId) } : {}),
+				...(templateVersion && item.templateId ? { templateId: String(item.templateId) } : {}),
+        ...(recipe ? {moldePedido:recipe,moldeRevisao:binding!.revision,textoMolde:recipe.job.lines[0].text,textoPersonalizado:recipe.job.lines[0].text} : {}),
+        ...(customerImageVersion ? {imagemClientePath:customerImageVersion.path} : {}),
+        ...(additionalModelVersions.length?{paginasModelo:additionalModelVersions.map(v=>v.path)}:{}),
         ...(initial ? { inicialPath: initial.version.path, inicialLetra: initial.letter, inicialTamanho: initial.sizePercent } : {}),
 				nome: productName,
 				imagem: isPlainRecord(product.imagensPorCombinacao) && typeof product.imagensPorCombinacao[combinationKey] === 'string' && [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].includes(product.imagensPorCombinacao[combinationKey]) ? String(product.imagensPorCombinacao[combinationKey]) : productImage || '',
@@ -1032,6 +1071,7 @@ async function normalizeCart(
 				selecoes: selections,
 				quantidade: quantity,
 				...(printProfile ? { printProfile } : {}),
+        ...(product.imagemBase && !binding ? {baseImagemPedido:true} : {}),
 				...(approval ? { aprovacaoArte: approval } : {}),
 				...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
 				...(backOriginalVersion ? { contracapaOriginalPath: backOriginalVersion.path, contracapaOriginalNome: backOriginalVersion.originalName } : {}),
@@ -1106,10 +1146,12 @@ async function copyArtworksToOrder(
 		for (const item of items.flatMap(item => item.components || [item])) {
 			const assets = [
 				{ field: 'arquivoPath' as const, path: item.cartItem.arquivoPath, version: item.artworkVersion, model: false },
+        { field: 'imagemClientePath' as const, path: item.cartItem.imagemClientePath, version: item.customerImageVersion, model: false },
 				{ field: 'modeloPath' as const, path: item.cartItem.modeloPath, version: item.modelVersion, model: true },
 				{ field: 'contracapaPath' as const, path: item.cartItem.contracapaPath, version: item.backModelVersion, model: true },
         { field: 'inicialPath' as const, path: item.cartItem.inicialPath, version: item.initialVersion, model: false },
 				{ field: 'contracapaOriginalPath' as const, path: item.cartItem.contracapaOriginalPath, version: item.backOriginalVersion, model: false },
+        ...(item.additionalModelVersions||[]).map((v,index)=>({field:'modeloPath' as const,path:v.path,version:v,model:true,index})),
 			];
 
 			for (const asset of assets) {
@@ -1120,7 +1162,7 @@ async function copyArtworksToOrder(
 				}
 				const isValidSource = asset.model
 					? isPendingPersonalizationModelPath(sourcePath, userId)
-					: isPendingArtworkPath(sourcePath, userId) || (asset.version === item.artworkVersion && isTemplatePath(sourcePath, item.cartItem.productId)) || (asset.version === item.initialVersion && isAlphabetImagePath(sourcePath, item.cartItem.productId));
+					: isPendingArtworkPath(sourcePath, userId) || ((asset.version === item.artworkVersion || asset.version === item.customerImageVersion) && (isTemplatePath(sourcePath, item.cartItem.productId) || String(sourcePath).startsWith(`catalog/products/${item.cartItem.productId}/`) && retainedAssetPath(sourcePath,services.bucket.name)===sourcePath)) || (asset.version === item.initialVersion && isAlphabetImagePath(sourcePath, item.cartItem.productId));
 				if (!isValidSource) {
 					throw new HttpError(422, `${asset.model ? 'O modelo composto' : 'A arte'} de ${item.cartItem.nome} não está mais disponível.`);
 				}
@@ -1144,7 +1186,7 @@ async function copyArtworksToOrder(
 					}
 					throw error;
 				}
-				item.cartItem[asset.field] = destinationPath;
+				if('index' in asset) item.cartItem.paginasModelo![Number(asset.index)]=destinationPath;else item.cartItem[asset.field] = destinationPath;
 				if (!sourcePath.startsWith('catalog/')) pendingPaths.push(asset.version);
 				orderPaths.push(destinationPath);
 			}
@@ -2388,7 +2430,9 @@ app.get('/api/orders/:orderId/artwork/:itemId', requireAppCheck, async (req, res
 
 		const items = Array.isArray(order.itens) ? orderItems(order.itens).filter(isPlainRecord) : [];
 		const item = items.find(candidate => candidate.id === itemId);
-		const artworkPath = item?.arquivoPath;
+		const imageSource = req.query.source;
+    if(imageSource !== undefined && imageSource !== 'customer-image') throw new HttpError(422,'Origem inválida.');
+    const artworkPath = imageSource === 'customer-image' ? item?.imagemClientePath : item?.arquivoPath;
 		if (!isOrderArtworkPath(artworkPath, String(order.userId || ''), orderId)) {
 			throw new HttpError(404, 'Este item não possui uma arte armazenada.');
 		}
@@ -2459,7 +2503,9 @@ app.get('/api/orders/:orderId/model/:itemId', requireAppCheck, async (req, res) 
 		const item = items.find(candidate => candidate.id === itemId);
 		const face = req.query.face ?? 'front';
 		if (face !== 'front' && face !== 'back') throw new HttpError(400, 'Face do modelo inválida.');
-		const modelPath = face === 'back' ? item?.contracapaPath : item?.modeloPath;
+		const page=req.query.page===undefined?undefined:Number(req.query.page);
+    if(page!==undefined && (!Number.isInteger(page)||page<1||page>16||req.query.face!==undefined)) throw new HttpError(422,'Página inválida.');
+    const modelPath = page && page>2 ? item?.paginasModelo?.[page-3] : page===2 || face === 'back' ? item?.contracapaPath : item?.modeloPath;
 		if (!isOrderPersonalizationModelPath(modelPath, String(order.userId || ''), orderId)) {
 			throw new HttpError(404, 'Este item não possui um modelo composto armazenado.');
 		}

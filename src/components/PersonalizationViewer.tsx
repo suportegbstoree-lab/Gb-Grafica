@@ -76,7 +76,7 @@ export default function PersonalizationViewer({ document: model, onClose, allowD
           <button ref={closeButton} type="button" onClick={onClose} aria-label="Fechar visualização do modelo" className="rounded-lg p-2 hover:bg-gray-100"><X size={22} /></button>
         </header>
         <div className="flex flex-wrap items-center gap-2 border-b border-gray-200 p-3">
-          <div role="group" aria-label="Faces do modelo" className="flex gap-1">
+          <div role="group" aria-label="Faces do modelo" className="flex max-w-full flex-wrap gap-1">
             {pages.map((page, index) => <button key={page.label} type="button" aria-pressed={index === pageIndex} onClick={() => { setPageIndex(index); setZoom(null); setError(''); }} className={`rounded-lg px-3 py-2 text-xs font-bold ${index === pageIndex ? 'bg-pink-500 text-white' : 'bg-gray-100'}`}>{page.label}</button>)}
           </div>
           <div role="group" aria-label="Zoom do modelo" className="flex items-center gap-1">

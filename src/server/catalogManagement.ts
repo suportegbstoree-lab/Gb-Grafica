@@ -1,3 +1,5 @@
+import { verifyProductPdfBinding } from './productPdfBinding.js';
+import { retainedAssetPath } from '../lib/catalogRetention.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { parseBundle } from '../lib/bundles.js';
 import express from 'express';
@@ -65,6 +67,13 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         else if (keys.every(key => PRODUCT_PERSONALIZATION_FIELDS.includes(key as any))) action = 'product.personalization';
       }
       if (collection === 'config') action = keys.every(key => FONTS_FIELDS.includes(key as any)) ? 'fonts.updated' : keys.every(key => BRANDING_FIELDS.includes(key as any)) ? 'branding.updated' : 'settings.updated';
+      if(collection==='anuncios' && next) {
+        if(next.imagemBase && !retainedAssetPath(next.imagemBase,services.bucket.name)?.startsWith(`catalog/products/${id}/`)) fail('Envie a arte-base para o Storage deste produto.');
+        if(next.moldePdf && !isDeepStrictEqual(old?.moldePdf,next.moldePdf)) {
+          if(!admin && !permissions.some(p=>['documents.generate','documents.templates.manage'].includes(p))) fail('Sua função não permite vincular bases da oficina.',403);
+          await verifyProductPdfBinding(services,tx,id,next.moldePdf);
+        }
+      }
       const retain = await prepareCatalogRetention(db, tx, `${collection}/${id}`, old, next, services.bucket?.name || '');
       const audit=await prepareWorkActivity(db,who,action,id,tx);
       if (next) {
@@ -80,6 +89,7 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
             next.pacote = { ...parsed, revision: same ? previous.revision : randomUUID().replaceAll('-', '') };
             next.preco_base = (result as any).value.preco_base;
           }
+          if(keys.includes('atributos'))next.atributos=(result as any).value.atributos;
           if (next.tags) next.tags = (result as any).value.tags;
         }
         // Keep fields outside this patch intact; validators check the resulting document.

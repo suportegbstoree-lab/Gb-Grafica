@@ -28,3 +28,8 @@ test('modelo antigo com uma única face continua exportando PDF de uma página',
 test('nomes de download não contêm caminhos de arquivos', () => {
   assert.equal(personalizationDownloadName('../../caderno.png', 'capa', 'jpg'), 'caderno-capa.jpg');
 });
+
+test('a production PDF already rendered from the locked workshop recipe is exported unchanged', async()=>{
+ const source=await PDFDocument.create();for(let i=0;i<4;i++)source.addPage([200,300]);const original=new Blob([new Uint8Array(await source.save())],{type:'application/pdf'});
+ const result=await exportPersonalizationPdf({title:'Oficina',productionPdf:original,pages:Array.from({length:4},(_,i)=>({label:`Página ${i+1}`,blob:png}))});assert.equal(result,original);assert.equal((await PDFDocument.load(await result.arrayBuffer())).getPageCount(),4);
+});

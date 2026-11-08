@@ -16,8 +16,7 @@ export default function VariantImagesEditor({
     <fieldset className="space-y-3 rounded-xl border border-gray-700 p-4">
       <legend>Imagem por combinação (opcional)</legend>
       <p className="text-xs text-gray-400">
-        O preço continua sendo o valor definido para a combinação. Sem vínculo,
-        usa a imagem principal.
+        A escolha muda apenas a imagem de divulgação. Sem vínculo, usa a imagem principal. A arte de produção é configurada separadamente.
       </p>
       {keys.map((key) => (
         <label key={key} className="block text-xs">

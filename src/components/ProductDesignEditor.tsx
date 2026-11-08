@@ -1,3 +1,7 @@
+import {productionAssetUrls,productMayRequireText} from '../lib/productCustomization';
+import ProductProductionEditor from './ProductProductionEditor';
+import type {PersonalizationFont} from '../types';
+import type {StaffPdfApi} from '../services/staffPdfService';
 import PdfTemplatesEditor from './PdfTemplatesEditor';
 import { alphabetUrls } from '../lib/decorativeInitial';
 import { uploadCatalogPdf, removeCatalogPdf } from '../services/catalogPdfService';
@@ -10,13 +14,14 @@ import EditorModal from './EditorModal';
 import VariantImagesEditor from './VariantImagesEditor';
 import ProductPrintEditor from './ProductPrintEditor';
 
-export default function ProductDesignEditor({ product, permissions, storage, onSave, onClose }: {
+export default function ProductDesignEditor({ product, permissions, storage, onSave, onClose, fonts, libraryApi }: {
+  fonts?:PersonalizationFont[]; libraryApi?:StaffPdfApi;
   product: Anuncio; permissions: StaffPermission[]; storage: AdminCatalogImageStorage;
   onSave: (draft: Anuncio) => Promise<Anuncio>; onClose: () => void;
 }) {
   const [draft, setDraft] = React.useState(() => structuredClone(product));
   const [busy, setBusy] = React.useState(false), [error, setError] = React.useState('');
-  const uploaded = React.useRef(new Map<string, string>()), saved = React.useRef(false), savedUrls = React.useRef(new Set<string>());
+  const uploaded = React.useRef(new Map<string, string>()), saved = React.useRef(false), savedUrls = React.useRef(new Set<string|undefined>());
   const remove = (path: string) => path.startsWith('catalog/templates/') ? (storage.deletePdf || removeCatalogPdf)(path) : storage.deleteImage(path);
   const alive = React.useRef(true);
   React.useEffect(() => { alive.current = true; return () => {
@@ -48,7 +53,7 @@ export default function ProductDesignEditor({ product, permissions, storage, onS
   const save = async () => {
     if (busy) return; setBusy(true); setError('');
     try {
-      const stored = await onSave(draft); saved.current = true; savedUrls.current = new Set([stored.imagem, ...(stored.imagens || []), ...(stored.modelosPdf || []).map(template => template.path), ...alphabetUrls(stored.modelosPdf)]);
+      const stored = await onSave(draft); saved.current = true; savedUrls.current = new Set([...productionAssetUrls(stored),stored.imagem, ...(stored.imagens || []), ...(stored.modelosPdf || []).map(template => template.path), ...alphabetUrls(stored.modelosPdf)]);
       if (alive.current) onClose();
     } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'Não foi possível salvar.'); }
     finally { if (alive.current) setBusy(false); }
@@ -57,7 +62,7 @@ export default function ProductDesignEditor({ product, permissions, storage, onS
     <form onSubmit={event => { event.preventDefault(); void save(); }} className="space-y-6">
       <header><h3 className="text-lg font-bold">{product.nome}</h3><p className="mt-1 text-xs text-gray-400">{product.categoria}</p></header>
       {images && <fieldset disabled={busy} className="space-y-4 rounded-xl border border-gray-800 p-4">
-        <legend className="px-2 text-sm font-bold">Imagens do produto</legend>
+        <legend className="px-2 text-sm font-bold">Imagens do anúncio</legend>
         <label className="block text-xs text-gray-400">Imagem principal (URL)<input type="text" value={draft.imagem} onChange={event => setDraft(current => ({ ...current, imagem: event.target.value }))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2" /></label>
         <img src={draft.imagem} alt="Prévia da imagem principal" className="h-36 w-full rounded-lg object-contain" />
         <label className="inline-flex cursor-pointer rounded-lg bg-pink-500 px-4 py-3 text-xs font-bold">Enviar imagem principal<UploadInput originalPdf type="file" aria-label="Enviar imagem principal" accept="application/pdf,image/png,image/jpeg,image/webp" onChange={event => void upload(event, false)} className="sr-only" /></label>
@@ -66,10 +71,11 @@ export default function ProductDesignEditor({ product, permissions, storage, onS
         <PdfTemplatesEditor templates={draft.modelosPdf || []} onChange={modelosPdf => setDraft(current => ({ ...current, modelosPdf }))} upload={file => storage.uploadImage(product.id, file)} remove={storage.deleteImage} onUploaded={images => { for (const image of images) uploaded.current.set(image.path, image.url); }} onBusy={setBusy} />
         <VariantImagesEditor product={draft} onChange={value => setDraft(value as Anuncio)} />
       </fieldset>}
+      {images && personalization && <ProductProductionEditor product={draft} fonts={fonts} api={libraryApi} uploadImage={storage.uploadImage} uploadPdf={storage.uploadPdf} onChange={value=>setDraft(value as Anuncio)} onUploaded={files=>{for(const f of files)uploaded.current.set(f.path,f.url);}} onBusy={setBusy} canBind={permissions.includes('documents.generate')||permissions.includes('documents.templates.manage')} />}
       {personalization && <fieldset disabled={busy} className="space-y-4">
         <label className="block text-xs text-gray-400">Tipo de personalização<select aria-label="Tipo de personalização" value={draft.tipoInput || 'nenhum'} onChange={event => setDraft(current => ({ ...current, tipoInput: event.target.value as Anuncio['tipoInput'] }))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2"><option value="nenhum">Nenhuma</option><option value="arte">Upload de arte</option><option value="texto">Texto</option><option value="texto_arte">Texto e imagem</option></select></label>
-        {(draft.tipoInput === 'texto' || draft.tipoInput === 'texto_arte') && <label className="block text-xs text-gray-400">Rótulo do texto<input maxLength={160} required value={draft.labelTexto || ''} onChange={event => setDraft(current => ({ ...current, labelTexto: event.target.value }))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2" /></label>}
-        <ProductPrintEditor product={draft} onChange={value => setDraft(value as Anuncio)} />
+        {productMayRequireText(draft) && <label className="block text-xs text-gray-400">Rótulo do texto<input maxLength={160} required value={draft.labelTexto || ''} onChange={event => setDraft(current => ({ ...current, labelTexto: event.target.value }))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2" /></label>}
+        {!draft.moldePdf ? <ProductPrintEditor product={draft} onChange={value => setDraft(value as Anuncio)} /> : <p className="text-xs text-gray-400">O formato de impressão segue as medidas da base PDF vinculada.</p>}
       </fieldset>}
       {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
       <button type="submit" disabled={busy} className="rounded-lg bg-pink-500 px-6 py-3 text-sm font-bold disabled:opacity-40">{busy ? 'Salvando...' : 'Salvar arte do produto'}</button>
