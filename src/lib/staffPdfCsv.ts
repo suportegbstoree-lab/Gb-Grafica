@@ -242,10 +242,13 @@ export function resolveStaffPdfCsvModel(
   const named = layouts.filter((layout) => key(layout.name) === exact);
   const associated =
     named.length === 1 ? named[0].layout.base_pdf_name : undefined;
+  const associatedId = named.length === 1 ? named[0].layout.base_id : undefined;
   const candidates = bases.filter((base) =>
-    associated
-      ? key(base.name) === key(associated)
-      : modelStem(base.name) === modelStem(value),
+    associatedId
+      ? base.id === associatedId
+      : associated
+        ? key(base.name) === key(associated)
+        : modelStem(base.name) === modelStem(value),
   );
   const internal = candidates.filter((base) => base.source === "internal");
   const choices = internal.length ? internal : candidates;
@@ -256,6 +259,6 @@ export function resolveStaffPdfCsvModel(
     named.length === 1 &&
     (!variant?.[1] || Number(variant[1]) === base.pageCount)
       ? named[0]
-      : matchPdfLayout(base.name, base.pageCount, layouts);
+      : matchPdfLayout(base.name, base.pageCount, layouts, base.id);
   return { baseId: base.id, layoutId: layout?.id || "" };
 }

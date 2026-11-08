@@ -143,9 +143,11 @@ export default function StaffPdfWorkspace({
   const baseName = loaded?.base.name;
   const compatibleMolds = data.layouts.filter(
     (item) =>
-      !item.layout.base_pdf_name ||
-      item.layout.base_pdf_name.toLowerCase() === baseName?.toLowerCase() ||
-      item.id === layoutId,
+      (item.layout.base_id
+        ? item.layout.base_id === loaded?.base.id
+        : !item.layout.base_pdf_name ||
+          item.layout.base_pdf_name.toLowerCase() ===
+            baseName?.toLowerCase()) || item.id === layoutId,
   );
   React.useEffect(() => {
     if (mold)
@@ -210,6 +212,7 @@ export default function StaffPdfWorkspace({
       {
         schemaVersion: 1,
         barcode: resolvedCode,
+        barcodeVersion: 2,
         baseId: source.base.id,
         baseRevision: source.base.revision,
         layoutId: layout.id,
@@ -417,6 +420,7 @@ export default function StaffPdfWorkspace({
               source.base.name,
               source.base.pageCount,
               data.layouts,
+              source.base.id,
             )
           : undefined);
       if (alive.current && version === revision.current) {
@@ -529,10 +533,14 @@ export default function StaffPdfWorkspace({
           let reference: string;
           if (api.batches) {
             const job = item.job.barcode
-              ? item.job
+              ? {
+                  ...item.job,
+                  ...(!item.batchId ? { barcodeVersion: 2 as const } : {}),
+                }
               : {
                   ...item.job,
                   barcode: automaticStaffBarcode(item.requestId),
+                  barcodeVersion: 2 as const,
                   outputName: staffPdfDefaultFilename(
                     t?.name || item.base.name,
                     item.job.lines[0]?.text || "",
@@ -833,7 +841,10 @@ export default function StaffPdfWorkspace({
                       {data.bases.map((base) => (
                         <option key={base.id} value={base.id}>
                           {base.name} ·{" "}
-                          {base.source === "internal" ? "Interno" : "Produto"}
+                          {base.category ||
+                            (base.source === "internal"
+                              ? "Sem categoria"
+                              : "Produtos")}
                         </option>
                       ))}
                     </select>
@@ -1224,9 +1235,9 @@ export default function StaffPdfWorkspace({
             Código de barras
             <input
               className={input}
-              maxLength={18}
+              maxLength={80}
               value={barcodeDraft}
-              onChange={(e) => setBarcodeDraft(e.target.value.toUpperCase())}
+              onChange={(e) => setBarcodeDraft(e.target.value)}
             />
           </label>
           <button
@@ -1276,7 +1287,7 @@ export default function StaffPdfWorkspace({
             picker === "base"
               ? data.bases.map((base) => ({
                   id: base.id,
-                  name: `${base.name} · ${base.source === "internal" ? "Interno" : "Produto"}`,
+                  name: `${base.name} · ${base.category || (base.source === "internal" ? "Sem categoria" : "Produtos")}`,
                 }))
               : compatibleMolds
           }

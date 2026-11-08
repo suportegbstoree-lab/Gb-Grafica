@@ -123,3 +123,37 @@ test("CSV supports two explicitly named molds associated with one PDF", () => {
     "b",
   );
 });
+
+test("explicit base association disambiguates identical PDF names in different categories", () => {
+  const a: StaffPdfBase = {
+    id: "a",
+    name: "Kit.pdf",
+    category: "Cadernetas",
+    revision: "a",
+    pageCount: 2,
+    pages: [],
+  };
+  const b = { ...a, id: "b", category: "Agendas" };
+  const layouts = [
+    {
+      id: "x",
+      name: "Caderneta Personalizada",
+      revision: "x",
+      layout: { ...defaultPdfLayout(), base_pdf_name: "Kit.pdf", base_id: "a" },
+    },
+    {
+      id: "y",
+      name: "Agenda Personalizada",
+      revision: "y",
+      layout: { ...defaultPdfLayout(), base_pdf_name: "Kit.pdf", base_id: "b" },
+    },
+  ];
+  assert.equal(
+    resolveStaffPdfCsvModel(layouts[0].name, [a, b], layouts)?.baseId,
+    "a",
+  );
+  assert.equal(
+    resolveStaffPdfCsvModel(layouts[1].name, [a, b], layouts)?.baseId,
+    "b",
+  );
+});

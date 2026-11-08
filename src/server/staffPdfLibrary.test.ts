@@ -530,6 +530,7 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       layoutRevision: layoutId,
       lines: [line],
       barcode,
+      barcodeVersion: 2,
       outputName: staffPdfDefaultFilename("Kit", "ANA", barcode),
     };
     const body = { job, requestId: "d".repeat(36) };
@@ -541,6 +542,7 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
     assert.equal(response.status, 201);
     const recipe = await response.json();
     assert.equal(recipe.job.barcode, barcode);
+    assert.equal(recipe.job.barcodeVersion, 2);
     assert.equal(recipe.job.outputName, "Kit ANA BR2684621549924");
     assert.match(
       recipe.originalUrl,
@@ -742,4 +744,69 @@ test("batch recipes freeze font files and decorative initials instead of linking
       200,
     );
     assert.equal(originalFont.toString(), "OTTO-original-font");
+  }));
+
+test("PDF categories isolate identical filenames and retain the original category when replacing a base", async () =>
+  scenario(async ({ request, docs, objects, services }) => {
+    async function create(category: string, id: string, replacement?: unknown) {
+      return request("/library/bases", "manager", {
+        name: "Kit.pdf",
+        category,
+        requestId: id.repeat(36),
+        replacement,
+      });
+    }
+    async function finish(pending: { id: string; path: string }) {
+      const bytes = await pdf(2);
+      objects.set(pending.path, {
+        bytes,
+        meta: {
+          contentType: "application/pdf",
+          size: bytes.length,
+          generation: "1",
+          metadata: { uploadedBy: "manager" },
+        },
+      });
+      assert.equal(
+        (await request(`/library/bases/${pending.id}/finalize`, "manager", {}))
+          .status,
+        200,
+      );
+    }
+    const first = await create("Cadernetas", "a");
+    assert.equal(first.status, 201);
+    const a = await first.json();
+    await finish(a);
+    const second = await create("Agendas", "b");
+    assert.equal(second.status, 201);
+    const b = await second.json();
+    await finish(b);
+    const listing = await (await request("/library", "manager")).json();
+    assert.deepEqual(listing.bases.map((base: any) => base.category).sort(), [
+      "Agendas",
+      "Cadernetas",
+    ]);
+    assert.equal((await create("Cadernetas", "c")).status, 409);
+    assert.equal((await create("../Privado", "d")).status, 422);
+    const base = await resolveStaffPdfBase(services, a.id);
+    const replace = await create("Cadernetas", "e", {
+      id: a.id,
+      revision: base.revision,
+    });
+    assert.equal(replace.status, 201);
+    await finish(await replace.json());
+    assert.equal(
+      (await resolveStaffPdfBase(services, a.id)).category,
+      "Cadernetas",
+    );
+    assert.equal(
+      (await resolveStaffPdfBase(services, b.id)).category,
+      "Agendas",
+    );
+    assert.equal(
+      (await request(`/library/bases/${a.id}/delete`, "manager", {})).status,
+      200,
+    );
+    assert.equal((await create("Cadernetas", "f")).status, 201);
+    assert.equal(docs.get(`_staffPdfBases/${b.id}`).status, "ready");
   }));

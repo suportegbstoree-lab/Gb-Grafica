@@ -356,7 +356,10 @@ export async function exportStaffPdf(
   let barcode: Awaited<ReturnType<typeof pdf.embedPng>>;
   try {
     if (job.barcode) {
-      const canvas = await staffBarcodeCanvas(job.barcode);
+      const canvas = await staffBarcodeCanvas(
+        job.barcode,
+        job.barcodeVersion ?? 1,
+      );
       try {
         const blob = await new Promise<Blob>((resolve, reject) =>
           canvas.toBlob(
@@ -452,7 +455,12 @@ export async function exportStaffPdf(
         }
       }
       if (orientation && barcode)
-        for (const box of staffBarcodeBoxes(width, height))
+        for (const box of staffBarcodeBoxes(
+          width,
+          height,
+          job.barcode,
+          job.barcodeVersion ?? 1,
+        ))
           sheet.drawImage(barcode, box);
     }
     return new Blob([new Uint8Array(await pdf.save())], {

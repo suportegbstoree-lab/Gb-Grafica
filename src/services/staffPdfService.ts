@@ -30,7 +30,8 @@ export interface StaffPdfApi {
   uploadBase(
     file: File,
     requestId: string,
-    replacement?: Pick<StaffPdfBase, "id" | "name" | "revision">,
+    replacement?: Pick<StaffPdfBase, "id" | "name" | "revision" | "category">,
+    category?: string,
   ): Promise<void>;
   deleteBase(id: string): Promise<void>;
   saveLayout(
@@ -60,7 +61,7 @@ export const staffPdfApi: StaffPdfApi = {
     readStaffPdf(
       (await staffPdfRequest(`/bases/${encodeURIComponent(id)}/file`)).url,
     ),
-  uploadBase: async (file, requestId, replacement) => {
+  uploadBase: async (file, requestId, replacement, category) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
     if (
@@ -73,6 +74,9 @@ export const staffPdfApi: StaffPdfApi = {
     const pending = await staffPdfRequest("/bases", {
       name: replacement?.name ?? file.name,
       requestId,
+      ...(category || replacement?.category
+        ? { category: category || replacement?.category }
+        : {}),
       ...(replacement
         ? {
             replacement: { id: replacement.id, revision: replacement.revision },

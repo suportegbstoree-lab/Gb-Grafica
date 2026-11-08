@@ -1,12 +1,16 @@
 import React from "react";
 import EditorModal from "./EditorModal";
 import ConfirmDialog from "./ConfirmDialog";
+import StaffPdfBaseImport from "./StaffPdfBaseImport";
+import StaffPdfPicker from "./StaffPdfPicker";
+import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
 import StaffPdfPreview from "./StaffPdfPreview";
 import {
   defaultPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
   newPdfLine,
+  matchPdfLayout,
   type StaffPdfBase,
   type StaffPdfLayout,
   type StaffPdfLayoutView,
@@ -27,14 +31,13 @@ export default function StaffPdfLibraryEditor({
   fonts: PersonalizationFont[];
   reload: () => Promise<void>;
 }) {
-  const [busy, setBusy] = React.useState(false),
+  const [operationBusy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
     [query, setQuery] = React.useState(""),
-    [replace, setReplace] = React.useState<{
-      file: File;
-      base: StaffPdfBase;
-    }>();
+    [importBusy, setImportBusy] = React.useState(false),
+    [editBase, setEditBase] = React.useState<StaffPdfBase>();
+  const busy = operationBusy || importBusy;
   const [editing, setEditing] = React.useState<{
       name: string;
       layout: StaffPdfLayout;
@@ -73,40 +76,8 @@ export default function StaffPdfLibraryEditor({
       if (alive.current) setBusy(false);
     }
   }
-  async function upload(file: File, replacement?: StaffPdfBase) {
-    await api.uploadBase(file, crypto.randomUUID(), replacement);
-    setReplace(undefined);
-    await reload();
-    setMessage(
-      replacement
-        ? "Base substituída."
-        : "Base cadastrada. Crie ou associe um molde antes de editar.",
-    );
-  }
-  function selectPdf(file?: File) {
-    if (!file || running.current || replace) return;
-    if (!/\.pdf$/i.test(file.name)) {
-      setError("Selecione um PDF.");
-      return;
-    }
-    const key = (name: string) => name.normalize("NFC").trim().toLowerCase();
-    const existing = data.bases.filter(
-      (item) => item.source === "internal" && key(item.name) === key(file.name),
-    );
-    const base =
-      existing.find((item) => item.name === file.name) ??
-      (existing.length === 1 ? existing[0] : undefined);
-    if (base) {
-      setError("");
-      setReplace({ file, base });
-    } else if (existing.length)
-      setError(
-        "Há mais de uma base com este nome. Use o nome exato da base a substituir.",
-      );
-    else void run(() => upload(file));
-  }
   function importTemplates(file?: File) {
-    if (!file || replace) return;
+    if (!file) return;
     void run(async () => {
       if (!/\.json$/i.test(file.name) || file.size > 800000)
         throw new Error("Use um JSON de até 800 KB.");
@@ -126,26 +97,64 @@ export default function StaffPdfLibraryEditor({
     receive: (file: File) => void,
   ) {
     event.preventDefault();
-    if (running.current || replace) return;
+    if (running.current) return;
     if (event.dataTransfer.files.length !== 1) {
       setError("Arraste um arquivo de cada vez.");
       return;
     }
     receive(event.dataTransfer.files[0]);
   }
-  const open = (row?: StaffPdfLayoutView) => {
-    setEditing(
-      row ? structuredClone(row) : { name: "", layout: defaultPdfLayout() },
+  function associated(base: StaffPdfBase) {
+    return data.layouts.filter((row) =>
+      Boolean(matchPdfLayout(base.name, base.pageCount, [row], base.id)),
     );
+  }
+  function unusedName(base: StaffPdfBase) {
+    const stem = base.name.replace(/\.pdf$/i, "").slice(0, 125);
+    let name = `${stem}_template__${base.pageCount}p`;
+    let index = 2;
+    while (data.layouts.some((row) => row.name === name))
+      name = `${`${stem} - ${base.category || UNCATEGORIZED_PDFS}`.slice(0, 160)} (${index++})`;
+    return name;
+  }
+  const open = (row?: StaffPdfLayoutView, selectedBase?: StaffPdfBase) => {
     const linked =
-      row?.layout.base_pdf_name &&
-      data.bases.find((item) => item.name === row.layout.base_pdf_name);
+      selectedBase ||
+      data.bases.find((base) => base.id === row?.layout.base_id) ||
+      (row?.layout.base_pdf_name &&
+        data.bases.find((base) => base.name === row.layout.base_pdf_name));
+    setEditing(
+      row
+        ? {
+            ...structuredClone(row),
+            layout: {
+              ...row.layout,
+              ...(linked
+                ? { base_pdf_name: linked.name, base_id: linked.id }
+                : {}),
+            },
+          }
+        : {
+            name: linked ? unusedName(linked) : "",
+            layout: {
+              ...defaultPdfLayout(),
+              ...(linked
+                ? { base_pdf_name: linked.name, base_id: linked.id }
+                : {}),
+            },
+          },
+    );
     setBaseId(linked ? linked.id : "");
     setOriginal(null);
     setError("");
     if (linked)
       void run(async () => setOriginal(await api.baseFile(linked.id)));
   };
+  function edit(base: StaffPdfBase) {
+    const rows = associated(base);
+    if (rows.length > 1) setEditBase(base);
+    else open(rows[0], base);
+  }
   const patch = (value: Partial<StaffPdfLayout>) =>
     setEditing((old) =>
       old ? { ...old, layout: { ...old.layout, ...value } } : old,
@@ -159,23 +168,13 @@ export default function StaffPdfLibraryEditor({
           Cadastrar aqui não cria um produto nem publica o arquivo na loja. PDFs
           de 1 a 16 páginas mantêm suas páginas originais.
         </p>
-        <label
-          className="mt-4 block rounded-lg border border-dashed border-gray-600 p-3 text-sm"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => drop(e, selectPdf)}
-        >
-          Enviar base PDF ou soltar aqui
-          <input
-            disabled={busy}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="mt-2 block max-w-full"
-            onChange={(e) => {
-              selectPdf(e.target.files?.[0]);
-              e.target.value = "";
-            }}
-          />
-        </label>
+        <StaffPdfBaseImport
+          api={api}
+          bases={data.bases}
+          disabled={busy}
+          onBusy={setImportBusy}
+          onImported={reload}
+        />
         <div className="mt-4 space-y-2">
           {data.pendingUploads?.map((b) => (
             <div
@@ -195,49 +194,86 @@ export default function StaffPdfLibraryEditor({
               </button>
             </div>
           ))}
-          {data.bases
-            .filter((b) => b.source === "internal")
-            .map((b) => (
-              <div
-                key={b.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 p-3"
+          {[
+            ...new Set(
+              data.bases
+                .filter((base) => base.source === "internal")
+                .map((base) => base.category || UNCATEGORIZED_PDFS),
+            ),
+          ]
+            .sort()
+            .map((category) => (
+              <details
+                key={category}
+                open
+                className="rounded-lg border border-gray-800 p-3"
               >
-                <span className="min-w-0 break-words">
-                  {b.name} · {b.pageCount} páginas
-                </span>
-                <label className="cursor-pointer rounded-lg border border-gray-700 p-2 text-sm">
-                  Importar pasta de letras
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/png"
-                    ref={(el) => {
-                      el?.setAttribute("webkitdirectory", "");
-                    }}
-                    disabled={busy}
-                    className="sr-only"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []) as File[];
-                      e.target.value = "";
-                      if (files.length)
-                        void run(async () => {
-                          await api.uploadAlphabet(b, files);
-                          await reload();
-                          setMessage("Pasta de letras associada à base.");
-                        });
-                    }}
-                  />
-                </label>
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    setConfirm({ kind: "base", id: b.id, name: b.name })
-                  }
-                  className="text-sm text-red-300"
-                >
-                  Excluir base
-                </button>
-              </div>
+                <summary className="cursor-pointer font-semibold">
+                  {category}
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {data.bases
+                    .filter(
+                      (base) =>
+                        base.source === "internal" &&
+                        (base.category || UNCATEGORIZED_PDFS) === category,
+                    )
+                    .map((b) => (
+                      <div
+                        key={b.id}
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 p-3"
+                      >
+                        <span className="min-w-0 break-words">
+                          {b.name} · {b.pageCount} páginas
+                        </span>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          className="rounded-lg border border-gray-700 p-2 text-sm"
+                          onClick={() => edit(b)}
+                        >
+                          Editar {b.name}
+                        </button>
+                        <label className="cursor-pointer rounded-lg border border-gray-700 p-2 text-sm">
+                          Importar pasta de letras
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/png"
+                            ref={(el) => {
+                              el?.setAttribute("webkitdirectory", "");
+                            }}
+                            disabled={busy}
+                            className="sr-only"
+                            onChange={(e) => {
+                              const files = Array.from(
+                                e.target.files || [],
+                              ) as File[];
+                              e.target.value = "";
+                              if (files.length)
+                                void run(async () => {
+                                  await api.uploadAlphabet(b, files);
+                                  await reload();
+                                  setMessage(
+                                    "Pasta de letras associada à base.",
+                                  );
+                                });
+                            }}
+                          />
+                        </label>
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            setConfirm({ kind: "base", id: b.id, name: b.name })
+                          }
+                          className="text-sm text-red-300"
+                        >
+                          Excluir base
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              </details>
             ))}
         </div>
       </div>
@@ -379,9 +415,8 @@ export default function StaffPdfLibraryEditor({
                 />
               </label>
               <p className="text-xs text-gray-400">
-                Use o nome do PDF sem .pdf, ou o padrão legado Nome_template e
-                Nome_template__4p. Nomes diferentes podem ser associados
-                manualmente na edição.
+                Use um nome distinto para cada molde. A base e a categoria
+                escolhidas ficam associadas a ele.
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label>
@@ -547,6 +582,7 @@ export default function StaffPdfLibraryEditor({
                     patch({
                       base_pdf_name: data.bases.find((item) => item.id === id)
                         ?.name,
+                      base_id: id || undefined,
                     });
                     setOriginal(null);
                     if (id)
@@ -559,7 +595,11 @@ export default function StaffPdfLibraryEditor({
                   <option value="">Selecione uma base</option>
                   {data.bases.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.name}
+                      {b.name} ·{" "}
+                      {b.category ||
+                        (b.source === "catalog"
+                          ? "Produtos"
+                          : UNCATEGORIZED_PDFS)}
                     </option>
                   ))}
                 </select>
@@ -639,17 +679,22 @@ export default function StaffPdfLibraryEditor({
           </div>
         </EditorModal>
       )}
-      {replace && (
-        <ConfirmDialog
-          title="Substituir base PDF?"
-          message={
-            error ||
-            `A base “${replace.base.name}” já existe. Os itens que usam a versão anterior precisarão ser revisados na fila.`
-          }
-          confirmLabel="Substituir PDF"
-          busy={busy}
-          onCancel={() => setReplace(undefined)}
-          onConfirm={() => void run(() => upload(replace.file, replace.base))}
+      {editBase && (
+        <StaffPdfPicker
+          title={`Escolher molde de ${editBase.name}`}
+          options={[
+            ...associated(editBase),
+            { id: "new", name: "Criar outro molde para esta base" },
+          ]}
+          selected=""
+          onClose={() => setEditBase(undefined)}
+          onChoose={(id) => {
+            open(
+              data.layouts.find((row) => row.id === id),
+              editBase,
+            );
+            setEditBase(undefined);
+          }}
         />
       )}
       {confirm && (

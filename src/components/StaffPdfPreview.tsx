@@ -241,7 +241,7 @@ export default function StaffPdfPreview({
     }
     if (barcode && barcodeImage?.code === barcode) {
       try {
-        drawStaffBarcode(ctx, barcodeImage.image);
+        drawStaffBarcode(ctx, barcodeImage.image, barcode);
       } catch (error) {
         setDrawError((error as Error).message);
       }

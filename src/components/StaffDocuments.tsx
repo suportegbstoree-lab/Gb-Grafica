@@ -346,7 +346,7 @@ export default function StaffDocuments({
               const barcode = automaticStaffBarcode(editor.requestId);
               const recipe = await batches.save(batch.id, {
                 kind: "simple", productId: editor.product.id, templateId: editor.template.id,
-                customization: value, barcode,
+                customization: value, barcode, barcodeVersion: 2,
                 outputName: staffPdfDefaultFilename(editor.template.name, value.texto, barcode),
               }, editor.requestId);
               await renderStaffPdfRecipe(recipe);

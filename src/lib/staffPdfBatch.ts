@@ -8,6 +8,7 @@ export interface StaffPdfSimpleJob {
   templateId: string;
   customization: TextCustomization;
   barcode: string;
+  barcodeVersion?: 1 | 2;
   outputName: string;
 }
 export type StaffPdfBatchJob = StaffPdfJob | StaffPdfSimpleJob;

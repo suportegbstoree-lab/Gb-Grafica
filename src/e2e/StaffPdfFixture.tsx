@@ -91,13 +91,16 @@ export default function StaffPdfFixture() {
       },
       initial: async () => undefined,
       uploadAlphabet: async () => {},
-      uploadBase: async (file) => {
+      uploadBase: async (file, _requestId, replacement, category) => {
         const d = await PDFDocument.load(await file.arrayBuffer()),
-          id = crypto.randomUUID().replaceAll("-", "");
+          id = replacement?.id || crypto.randomUUID().replaceAll("-", "");
         files.set(id, file);
+        if (replacement)
+          bases = bases.filter((base) => base.id !== replacement.id);
         bases.push({
           id,
-          name: file.name,
+          name: replacement?.name || file.name,
+          category,
           pageCount: d.getPageCount(),
           pages: [],
           revision: crypto.randomUUID().replaceAll("-", ""),

@@ -98,7 +98,11 @@ export async function renderStaffPdfRecipe(recipe: StaffPdfRecipe) {
         { label: "Contracapa", blob: page },
       ],
     });
-    return stampStaffBarcode(value, recipe.job.barcode);
+    return stampStaffBarcode(
+      value,
+      recipe.job.barcode,
+      recipe.job.barcodeVersion ?? 1,
+    );
   }
   return exportStaffPdf(original, recipe.job, fonts, recipe.fitMargin, initial);
 }

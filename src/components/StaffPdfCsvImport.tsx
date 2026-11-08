@@ -9,6 +9,7 @@ import {
 import { excelColumn } from "../lib/spreadsheetCsv";
 import { layoutFont } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
+import StaffPdfImportTable from "./StaffPdfImportTable";
 import StaffSpreadsheetCsv from "./StaffSpreadsheetCsv";
 
 export interface StaffPdfCsvOrder {
@@ -40,6 +41,7 @@ export default function StaffPdfCsvImport({
       name: string;
       rows: string[][];
     }>(),
+    [table, setTable] = React.useState(false),
     [hasHeader, setHasHeader] = React.useState(true),
     [columns, setColumns] = React.useState({
       text: -1,
@@ -79,12 +81,23 @@ export default function StaffPdfCsvImport({
             : `Coluna ${excelColumn(index)}`,
       )
     : [];
-  const pending =
+  const imported =
     source?.rows
       .map((row, index) => ({ row, index }))
-      .filter(
-        ({ index }) => !(hasHeader && index === 0) && !added.has(index),
-      ) ?? [];
+      .filter(({ index }) => !(hasHeader && index === 0)) ?? [];
+  const pending = imported.filter(({ index }) => !added.has(index));
+  const barcodeIndex =
+    source?.rows[0].findIndex((header) =>
+      /^(barcode|rastreio|numero.?de.?rastreio|n[oº°]?.?de.?rastreio|tracking)$/i.test(
+        header
+          .normalize("NFD")
+          .replace(/\p{M}/gu, "")
+          .trim()
+          .replace(/[ _]+/g, ""),
+      ),
+    ) ?? -1;
+  const getBarcode = (row: string[], index: number) =>
+    (codes[index] ?? row[barcodeIndex] ?? "").trim();
   const lastPage = Math.max(0, Math.ceil(pending.length / 50) - 1);
   const pageIndex = Math.min(page, lastPage);
   const preview = pending
@@ -100,19 +113,7 @@ export default function StaffPdfCsvImport({
       const base = data.bases.find((base) => base.id === model?.baseId);
       const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
       const reference = row[columns.reference]?.trim() || String(index + 1);
-      const barcodeIndex =
-        source?.rows[0].findIndex((header) =>
-          /^(barcode|rastreio|numero.?de.?rastreio|n[oº°]?.?de.?rastreio|tracking)$/i.test(
-            header
-              .normalize("NFD")
-              .replace(/\p{M}/gu, "")
-              .trim()
-              .replace(/[ _]+/g, ""),
-          ),
-        ) ?? -1;
-      const barcode = (codes[index] ?? row[barcodeIndex] ?? "")
-        .trim()
-        .toUpperCase();
+      const barcode = getBarcode(row, index);
       return {
         index,
         template,
@@ -188,6 +189,13 @@ export default function StaffPdfCsvImport({
             <legend className="mb-2 break-all text-sm font-bold">
               {source.name}
             </legend>
+            <button
+              type="button"
+              className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
+              onClick={() => setTable(true)}
+            >
+              Visualizar planilha importada
+            </button>
             <label className="flex gap-2 text-sm">
               <input
                 type="checkbox"
@@ -267,13 +275,13 @@ export default function StaffPdfCsvImport({
                             Rastreio
                             <input
                               className={input}
-                              maxLength={15}
+                              maxLength={80}
                               value={codes[row.index] ?? row.barcode}
                               aria-label={`Rastreio do registro ${row.index + 1}`}
                               onChange={(e) =>
                                 setCodes({
                                   ...codes,
-                                  [row.index]: e.target.value.toUpperCase(),
+                                  [row.index]: e.target.value,
                                 })
                               }
                             />
@@ -415,6 +423,20 @@ export default function StaffPdfCsvImport({
           </fieldset>
         )}
       </section>
+      {table && source && (
+        <StaffPdfImportTable
+          name={source.name}
+          onClose={() => setTable(false)}
+          headers={barcodeIndex < 0 ? [...headers, "Rastreio"] : headers}
+          barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
+          rows={imported.map(({ row, index }) => {
+            const cells = [...row];
+            cells[barcodeIndex < 0 ? headers.length : barcodeIndex] =
+              getBarcode(row, index);
+            return cells;
+          })}
+        />
+      )}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-07
+## Última atualização: 2026-11-08
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -43,6 +43,14 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-08 — Categorias de bases, importação e códigos de barras
+
+- O Code128 aceita códigos de 1 a 80 caracteres ASCII imprimíveis, preservando o conteúdo completo e a diferença entre maiúsculas e minúsculas. Rastreios fora do formato BR também são aceitos, sem cortes automáticos.
+- O PNG parte de 650 px para até 15 caracteres e cresce proporcionalmente nos maiores. A aplicação ao PDF usa escala horizontal de 1,8 com teto de 1170 px e ajuste à largura da página. A altura permanece em 222 px, com margens transparentes e sem o texto abaixo das barras. Receitas de lotes já salvos preservam a versão anterior.
+- Bases PDF podem ser importadas por pasta, usando seu nome como categoria, ou individualmente, escolhendo uma categoria existente ou nova. O envio permite acompanhar resultados, interromper após o arquivo atual e confirmar substituições dentro da mesma categoria.
+- A biblioteca agrupa as bases por categoria e oferece Editar diretamente em cada base. Abre o molde associado, permite escolhê-lo quando há vários ou inicia um novo molde vinculado. Bases homônimas em categorias diferentes mantêm associações próprias por identificador.
+- Códigos de rastreio repetidos continuam gerando itens independentes na fila. A importação CSV/XLSX oferece uma planilha somente para visualização, com os valores importados e destaque dos códigos repetidos, sem exigir exportação ou salvamento.
 
 ## 2026-11-07 — Códigos de barras e reconstrução de lotes internos
 

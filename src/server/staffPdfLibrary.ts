@@ -1,4 +1,9 @@
 import express from "express";
+import {
+  normalizePdfCategory,
+  pdfBaseIdentity,
+  UNCATEGORIZED_PDFS,
+} from "../lib/staffPdfCategory.js";
 import { createStaffPdfBatchRouter } from "./staffPdfBatches.js";
 import { createHash, randomUUID } from "node:crypto";
 import { PDFDocument, degrees } from "pdf-lib";
@@ -41,6 +46,7 @@ export function catalogPdfBase(productId: string, t: any): StaffPdfBase {
     pageCount: t.pages.length,
     pages: [],
     source: "catalog",
+    category: "Produtos",
     productId,
     templateId: t.id,
     revision: pdfLibraryId(
@@ -215,6 +221,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         return {
           id: d.id,
           name: b.name,
+          category: b.category || UNCATEGORIZED_PDFS,
           pageCount: b.pageCount,
           pages: b.pages,
           revision: b.revision,
@@ -279,7 +286,10 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     "/bases",
     action(async (req, res) => {
       const actor = manage(res),
-        name = input(() => staffPdfName(req.body?.name));
+        name = input(() => staffPdfName(req.body?.name)),
+        category = input(() =>
+          normalizePdfCategory(req.body?.category ?? UNCATEGORIZED_PDFS),
+        );
       if (!/\.pdf$/i.test(name))
         throw new OperationsError("O nome da base deve terminar em .pdf.");
       const requestId = req.body?.requestId;
@@ -290,7 +300,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         replacement = req.body?.replacement,
         nameRef = services()
           .db.collection("_staffPdfBaseNames")
-          .doc(pdfLibraryId(name));
+          .doc(pdfLibraryId(pdfBaseIdentity(name, category)));
       if (
         replacement !== undefined &&
         (!validDocumentId(replacement?.id) ||
@@ -303,6 +313,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         if (old) {
           if (
             old.name !== name ||
+            (old.category || UNCATEGORIZED_PDFS) !== category ||
             old.ownerId !== actor.uid ||
             old.status === "deleted" ||
             old.replaceId !== replacement?.id ||
@@ -321,6 +332,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             named?.baseId !== replacement.id ||
             target?.status !== "ready" ||
             target.name !== name ||
+            (target.category || UNCATEGORIZED_PDFS) !== category ||
             target.revision !== replacement.revision
           )
             throw new OperationsError(
@@ -334,6 +346,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           );
         tx.create(ref, {
           name,
+          category,
           status: "uploading",
           ownerId: actor.uid,
           createdAt: new Date(now()).toISOString(),
@@ -644,7 +657,14 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           );
         const nameRef = services()
             .db.collection("_staffPdfBaseNames")
-            .doc(pdfLibraryId(value.name)),
+            .doc(
+              pdfLibraryId(
+                pdfBaseIdentity(
+                  value.name,
+                  value.category || UNCATEGORIZED_PDFS,
+                ),
+              ),
+            ),
           named = (await tx.get(nameRef)).data();
         tx.set(
           ref,

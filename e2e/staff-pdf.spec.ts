@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import { zipSync, strToU8 } from "fflate";
 
@@ -16,7 +18,10 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   });
   await picker.getByLabel("Filtrar por nome").fill("Kit");
   await picker
-    .getByRole("button", { name: "Kit de teste.pdf · Interno", exact: true })
+    .getByRole("button", {
+      name: "Kit de teste.pdf · Sem categoria",
+      exact: true,
+    })
     .click();
   await page.getByLabel("Texto principal", { exact: true }).fill("ANA");
   await expect(
@@ -151,7 +156,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await record.getByLabel("Rastreio do registro 2").fill("BR2684621549924");
   await record
     .getByLabel("Base do registro 2")
-    .selectOption({ label: "Kit de teste.pdf" });
+    .selectOption({ label: "Kit de teste.pdf · Sem categoria" });
   await expect(record.getByLabel("Molde do registro 2")).toHaveValue(
     "b".repeat(32),
   );
@@ -230,7 +235,7 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await page.goto("/__e2e/staff-pdf?batches=true");
   await page
     .getByLabel("Base PDF da equipe")
-    .selectOption({ label: "Kit de teste.pdf · Interno" });
+    .selectOption({ label: "Kit de teste.pdf · Sem categoria" });
   await page.getByLabel("Texto principal", { exact: true }).fill("ANA");
   await page
     .getByRole("button", { name: "Adicionar código de barras", exact: true })
@@ -262,4 +267,131 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await expect(
     page.getByRole("heading", { name: /Documentos salvos · teste/ }),
   ).toBeVisible();
+});
+
+test("equal tracking codes remain separate orders and are highlighted in the import table", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page
+    .getByRole("button", { name: "Importar CSV ou XLSX", exact: true })
+    .click();
+  await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
+    name: "mesma-entrega.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "pedido_plataforma,barcode,af_clean,nome\n001,BR264979796804XSPXLM14002828,Kit de teste,ANA\n001,BR264979796804XSPXLM14002828,Kit de teste,BIA",
+    ),
+  });
+  await page
+    .getByRole("button", { name: "Visualizar planilha importada", exact: true })
+    .click();
+  const table = page.getByRole("dialog", {
+    name: "Planilha dos pedidos importados",
+  });
+  await expect(
+    table.getByText("Código repetido · 2 itens", { exact: true }),
+  ).toHaveCount(2);
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "Adicionar 2 pedido(s) da página à fila",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Revisar fila principal", exact: true })
+    .click();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(
+    page.getByRole("article").filter({ hasText: "ANA" }),
+  ).toContainText("BR264979796804XSPXLM14002828");
+  await expect(
+    page.getByRole("article").filter({ hasText: "BIA" }),
+  ).toContainText("BR264979796804XSPXLM14002828");
+});
+
+test("uploading an individual PDF asks for a category and offers direct template editing", async ({
+  page,
+}) => {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([595, 842]);
+  pdf.addPage([595, 842]);
+  await page.goto("/__e2e/staff-pdf");
+  await page
+    .getByRole("button", { name: "Bases e moldes", exact: true })
+    .click();
+  await page
+    .getByLabel("Enviar base PDF ou soltar aqui", { exact: true })
+    .setInputFiles({
+      name: "Nova Base.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from(await pdf.save()),
+    });
+  const category = page.getByRole("dialog", { name: "Categoria do PDF" });
+  await category.getByLabel("Categoria", { exact: true }).fill("Cadernetas");
+  await category
+    .getByRole("button", { name: "Continuar", exact: true })
+    .click();
+  const uploading = page.getByRole("dialog", { name: "Importar bases PDF" });
+  await uploading
+    .getByRole("button", { name: "Enviar 1 PDF(s)", exact: true })
+    .click();
+  await expect(uploading.getByText("Enviado", { exact: true })).toBeVisible();
+  await uploading
+    .getByRole("button", { name: "Concluir", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Editar Nova Base.pdf", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "Editor de molde PDF" });
+  await expect(
+    editor.getByLabel("Base para associar e testar"),
+  ).not.toHaveValue("");
+  await expect(editor.getByLabel("Nome do molde")).toHaveValue(
+    "Nova Base_template__2p",
+  );
+});
+
+test("folder import uses its root category for every PDF including nested files", async ({
+  page,
+}) => {
+  const temporary = await mkdtemp(join(tmpdir(), "gb-pdf-import-"));
+  try {
+    const folder = join(temporary, "Agendas");
+    await mkdir(join(folder, "Infantil"), { recursive: true });
+    const pdf = await PDFDocument.create();
+    pdf.addPage([595, 842]);
+    const bytes = await pdf.save();
+    await writeFile(join(folder, "Adulto.pdf"), bytes);
+    await writeFile(join(folder, "Infantil", "Crianca.pdf"), bytes);
+    await writeFile(join(folder, "ignorar.txt"), "Este arquivo não é um PDF.");
+    await page.goto("/__e2e/staff-pdf");
+    await page
+      .getByRole("button", { name: "Bases e moldes", exact: true })
+      .click();
+    await page
+      .getByLabel("Importar pasta de PDFs", { exact: true })
+      .setInputFiles(folder);
+    const upload = page.getByRole("dialog", { name: "Importar bases PDF" });
+    await expect(upload.getByText("Agendas", { exact: true })).toHaveCount(2);
+    await upload
+      .getByRole("button", { name: "Enviar 2 PDF(s)", exact: true })
+      .click();
+    await expect(upload.getByText("Enviado", { exact: true })).toHaveCount(2);
+    await upload.getByRole("button", { name: "Concluir", exact: true }).click();
+    const category = page
+      .locator("details")
+      .filter({
+        has: page.locator("summary").getByText("Agendas", { exact: true }),
+      });
+    await expect(
+      category.getByRole("button", { name: "Editar Adulto.pdf", exact: true }),
+    ).toBeVisible();
+    await expect(
+      category.getByRole("button", { name: "Editar Crianca.pdf", exact: true }),
+    ).toBeVisible();
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 });

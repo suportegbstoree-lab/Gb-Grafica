@@ -316,7 +316,15 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
           if (!printProfile)
             throw new OperationsError("Formato de impressão inválido.");
         }
+        if (
+          input.barcodeVersion !== undefined &&
+          ![1, 2].includes(input.barcodeVersion)
+        )
+          throw new OperationsError("Versão do código de barras inválida.");
         job = {
+          ...(input.barcodeVersion === undefined
+            ? {}
+            : { barcodeVersion: input.barcodeVersion }),
           kind: "simple",
           productId: input.productId,
           templateId: input.templateId,

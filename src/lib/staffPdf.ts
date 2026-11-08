@@ -15,6 +15,7 @@ export interface PdfTextBox {
 /** Desktop templates use top-left pixels at 300 DPI, including landscape coordinates. */
 export interface StaffPdfLayout {
   base_pdf_name?: string;
+  base_id?: string;
   pos_x: number;
   pos_y: number;
   max_width_pixels: number;
@@ -32,6 +33,7 @@ export interface StaffPdfLayout {
   fit_margin: number;
 }
 export interface StaffPdfBase {
+  category?: string;
   id: string;
   name: string;
   pageCount: number;
@@ -153,6 +155,7 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
 export interface StaffPdfJob {
   schemaVersion: 1;
   barcode?: string;
+  barcodeVersion?: 1 | 2;
   baseId: string;
   baseRevision: string;
   layoutId: string;
@@ -242,6 +245,14 @@ export function normalizePdfLayout(value: unknown): StaffPdfLayout {
       /[\x00-\x1f\x7f/\\]/.test(value.font_name))
   )
     throw new Error("Nome da fonte inválido.");
+  if (value.base_id !== undefined && value.base_id !== "") {
+    if (
+      typeof value.base_id !== "string" ||
+      !/^[A-Za-z0-9_-]{1,160}$/.test(value.base_id)
+    )
+      throw new Error("Base associada inválida.");
+    output.base_id = value.base_id;
+  }
   if (value.base_pdf_name !== undefined && value.base_pdf_name !== "") {
     output.base_pdf_name = staffPdfName(value.base_pdf_name);
     if (!/\.pdf$/i.test(output.base_pdf_name))
@@ -279,6 +290,7 @@ export function matchPdfLayout(
   name: string,
   pageCount: number,
   layouts: StaffPdfLayoutView[],
+  baseId?: string,
 ) {
   const stem = name.replace(/\.pdf$/i, "").normalize("NFC");
   const candidates = [
@@ -287,12 +299,15 @@ export function matchPdfLayout(
     `${stem}_template`,
   ];
   const normalized = (value: string) => value.normalize("NFC").toLowerCase();
-  const eligible = layouts.filter(
-    (item) =>
-      !item.layout.base_pdf_name ||
-      normalized(item.layout.base_pdf_name) === normalized(name),
+  const eligible = layouts.filter((item) =>
+    item.layout.base_id
+      ? item.layout.base_id === baseId
+      : !item.layout.base_pdf_name ||
+        normalized(item.layout.base_pdf_name) === normalized(name),
   );
-  const linked = eligible.filter((item) => item.layout.base_pdf_name);
+  const linked = eligible.filter(
+    (item) => item.layout.base_pdf_name || item.layout.base_id,
+  );
   return (
     candidates
       .map((key) => eligible.find((t) => t.name === key))
@@ -402,6 +417,8 @@ export function normalizeStaffPdfJob(
   if (
     !object(value) ||
     value.schemaVersion !== 1 ||
+    (value.barcodeVersion !== undefined &&
+      ![1, 2].includes(value.barcodeVersion)) ||
     typeof value.baseId !== "string" ||
     !/^[A-Za-z0-9_-]{1,160}$/.test(value.baseId) ||
     !/^[a-f0-9]{32}$/.test(value.baseRevision) ||
@@ -471,6 +488,9 @@ export function normalizeStaffPdfJob(
   )
     throw new Error("Nome do arquivo final inválido.");
   return {
+    ...(value.barcodeVersion === undefined
+      ? {}
+      : { barcodeVersion: value.barcodeVersion }),
     ...(value.barcode === undefined
       ? {}
       : { barcode: normalizeStaffBarcode(value.barcode) }),
