@@ -34,6 +34,12 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
 
+## 2026-11-09 — Bases, moldes e letras decorativas
+
+- A importação de PDFs na oficina também cadastra as letras PNG da pasta de mesmo nome que estiver ao lado de cada PDF.
+- Ao selecionar um molde com base identificável, o editor de produtos e opções oferece essa base com o alfabeto já cadastrado. O vínculo mostra as letras disponíveis e indica quando deve ser atualizado.
+- A oficina exibe a inicial decorativa na prévia do molde. A prévia do cliente usa as letras da base selecionada e informa quando a inicial digitada está ausente.
+
 ## 2026-11-09 — Compra da base, opções avulsas e referência automática
 
 - O cliente pode marcar e desmarcar cada variação de forma independente. A loja e o checkout aceitam a base sem opções ou uma opção avulsa, quando houver preço. O frete usa a embalagem padrão para seleções sem embalagem específica.

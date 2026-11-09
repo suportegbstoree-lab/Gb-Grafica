@@ -5,7 +5,9 @@ import StaffPdfBaseImport from "./StaffPdfBaseImport";
 import StaffPdfPicker from "./StaffPdfPicker";
 import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
 import StaffPdfPreview from "./StaffPdfPreview";
+import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
+  baseForPdfLayout,
   defaultPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
@@ -118,11 +120,7 @@ export default function StaffPdfLibraryEditor({
     return name;
   }
   const open = (row?: StaffPdfLayoutView, selectedBase?: StaffPdfBase) => {
-    const linked =
-      selectedBase ||
-      data.bases.find((base) => base.id === row?.layout.base_id) ||
-      (row?.layout.base_pdf_name &&
-        data.bases.find((base) => base.name === row.layout.base_pdf_name));
+    const linked = selectedBase || (row && baseForPdfLayout(row, data.bases));
     setEditing(
       row
         ? {
@@ -160,6 +158,12 @@ export default function StaffPdfLibraryEditor({
       old ? { ...old, layout: { ...old.layout, ...value } } : old,
     );
   const base = data.bases.find((b) => b.id === baseId);
+  const { initial, initialError } = useStaffPdfInitial(
+    api,
+    editing && original && base?.initialLetters?.length ? base.id : "",
+    sample,
+    editing?.layout.imagem_full_page,
+  );
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-gray-800 p-5">
@@ -224,6 +228,12 @@ export default function StaffPdfLibraryEditor({
                       >
                         <span className="min-w-0 break-words">
                           {b.name} · {b.pageCount} páginas
+                          {!!b.initialLetters?.length && (
+                            <span className="block text-xs text-gray-400">
+                              Letras cadastradas ·{" "}
+                              {b.initialLetters.slice().sort().join(", ")}
+                            </span>
+                          )}
                         </span>
                         <button
                           type="button"
@@ -637,9 +647,15 @@ export default function StaffPdfLibraryEditor({
               </button>
             </div>
             <div className="min-w-0">
+              {initialError && (
+                <p role="alert" className="mb-2 text-sm text-red-300">
+                  {initialError}
+                </p>
+              )}
               {original && base ? (
                 <StaffPdfPreview
                   original={original}
+                  initial={initial}
                   pageCount={base.pageCount}
                   lines={[
                     {

@@ -68,6 +68,32 @@ test("publication accepts the original PDF and canonical workshop layout without
   const x = setup();
   await verifyProductPdfBinding(x.services, x.tx, "product", x.binding);
 });
+test("publication requires the preview URL to reference the copied letter", async () => {
+  const { services, tx, binding, metadata, memory } = setup();
+  const path = `catalog/products/product/${"1".repeat(32)}.png`;
+  const originalPath = `staff-pdf-bases/${baseId}/letters/${"2".repeat(32)}.png`;
+  const info = { contentType: "image/png", md5Hash: "letter-hash", size: "32" };
+  metadata.set(originalPath, info);
+  metadata.set(path, info);
+  const source = memory.docs.get("_staffPdfBases/" + baseId)!;
+  source.alphabet = {
+    folderName: "Base",
+    sizePercent: 60,
+    letters: { A: { path: originalPath } },
+  };
+  const alphabet = {
+    folderName: "Base",
+    sizePercent: 60,
+    letters: { A: { path, url: image("1".repeat(32)) } },
+  };
+  const withAlphabet = { ...binding, pdf: { ...binding.pdf, alphabet } };
+  await verifyProductPdfBinding(services, tx, "product", withAlphabet);
+  alphabet.letters.A.url = image("3".repeat(32));
+  await assert.rejects(
+    verifyProductPdfBinding(services, tx, "product", withAlphabet),
+    /Endereço da inicial publicada inválido/,
+  );
+});
 for (const [name, change] of [
   ["geometry", (x: ReturnType<typeof setup>) => x.binding.layout.pos_x++],
   [

@@ -41,7 +41,7 @@ export interface StaffPdfApi {
     requestId: string,
     replacement?: Pick<StaffPdfBase, "id" | "name" | "revision" | "category">,
     category?: string,
-  ): Promise<void>;
+  ): Promise<string>;
   deleteBase(id: string): Promise<void>;
   saveLayout(
     name: string,
@@ -53,7 +53,10 @@ export interface StaffPdfApi {
     templates: unknown,
   ): Promise<{ created: number; skipped: number }>;
   initial(id: string, text: string): Promise<DecorativeInitial | undefined>;
-  uploadAlphabet(base: StaffPdfBase, files: File[]): Promise<void>;
+  uploadAlphabet(
+    base: Pick<StaffPdfBase, "id" | "name">,
+    files: File[],
+  ): Promise<void>;
   generate(
     job: StaffPdfJob,
     pdf: Blob,
@@ -97,18 +100,19 @@ export const staffPdfApi: StaffPdfApi = {
           }
         : {}),
     });
-    if (pending.ready) return;
     if (
       pending.path !== `staff-pdf-bases/${pending.id}/upload.pdf` ||
       !/^[a-f0-9]{32}$/.test(pending.id)
     )
       throw new Error("Destino inválido.");
+    if (pending.ready) return replacement?.id ?? pending.id;
     try {
       await uploadBytesResumable(ref(storage, pending.path), file, {
         contentType: "application/pdf",
         customMetadata: { uploadedBy: user.uid },
       });
-      await staffPdfRequest(`/bases/${pending.id}/finalize`, {});
+      const { id } = await staffPdfRequest(`/bases/${pending.id}/finalize`, {});
+      return id;
     } catch (e) {
       await staffPdfRequest(`/bases/${pending.id}/delete`, {}).catch(
         () => undefined,

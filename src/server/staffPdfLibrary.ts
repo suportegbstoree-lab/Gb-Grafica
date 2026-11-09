@@ -683,14 +683,10 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           now(),
         );
         retain();
-        tx.set(
-          ref,
-          {
-            alphabet: { folderName, letters: canonical, sizePercent },
-            revision: revision(),
-          },
-          { merge: true },
-        );
+        tx.update(ref, {
+          alphabet: { folderName, letters: canonical, sizePercent },
+          revision: revision(),
+        });
       });
       res.json({ saved: true });
     }),

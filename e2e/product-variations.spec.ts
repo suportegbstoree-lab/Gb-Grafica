@@ -381,6 +381,9 @@ test("base e molde têm busca independente, correspondência inicial e reaprovei
     "Álbum_template",
     "Zebra_template",
   ]);
+  await layout.selectOption({ label: "Zebra_template" });
+  await expect(base).toHaveValue("z".repeat(32));
+  await base.selectOption("");
   await editor
     .getByRole("button", { name: "Buscar base pdf", exact: true })
     .click();
@@ -415,7 +418,7 @@ test("base e molde têm busca independente, correspondência inicial e reaprovei
   expect(copies).toHaveLength(1);
 });
 
-test("a opção usa sua própria capa na prévia e o carrinho recebe a revisão dela", async ({
+test("a opção usa sua capa e inicial decorativa na prévia e no carrinho", async ({
   page,
 }) => {
   await page.route("**/__e2e/option-cover.png", (route) =>
@@ -425,6 +428,20 @@ test("a opção usa sua própria capa na prévia e o carrinho recebe a revisão 
     }),
   );
   await page.goto("/produto/caderneta-azul?variations=option");
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 10;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#ff00ff";
+    context.fillRect(0, 0, 10, 10);
+    return canvas.toDataURL().split(",")[1];
+  });
+  await page.route("**/__e2e/option-letter-a.png", (route) =>
+    route.fulfill({
+      body: Buffer.from(png, "base64"),
+      contentType: "image/png",
+    }),
+  );
   const card = page.locator("article#produto-caderneta-azul");
   await card.getByRole("button", { name: /^Com imagem/ }).click();
   await card.getByRole("button", { name: /^Com nome/ }).click();
@@ -441,7 +458,35 @@ test("a opção usa sua própria capa na prévia e o carrinho recebe a revisão 
   await expect(
     modal.getByRole("img", { name: "Prévia da capa personalizada" }),
   ).toBeVisible();
-  await modal.getByLabel("Nome ou texto do molde").fill("Ana");
+  const text = modal.getByLabel("Nome ou texto do molde");
+  await text.fill("Teste");
+  await expect(
+    modal.getByRole("status").filter({ hasText: "A letra T" }),
+  ).toContainText("A letra T não está cadastrada");
+  const letter = page.waitForRequest("**/__e2e/option-letter-a.png");
+  await text.fill("Ana");
+  await letter;
+  const centerPixel = (name: string) =>
+    modal
+      .getByRole("img", { name })
+      .evaluate((element: HTMLCanvasElement) =>
+        Array.from(
+          element
+            .getContext("2d")!
+            .getImageData(
+              Math.floor(element.width / 2),
+              Math.floor(element.height / 2),
+              1,
+              1,
+            ).data,
+        ),
+      );
+  await expect
+    .poll(() => centerPixel("Prévia da capa personalizada"))
+    .toEqual([255, 0, 255, 255]);
+  expect(await centerPixel("Prévia da contracapa")).not.toEqual([
+    255, 0, 255, 255,
+  ]);
   await modal.getByRole("button", { name: "Confirmar personalização" }).click();
   await page
     .getByRole("button", { name: "Fechar visualização do modelo" })
@@ -451,6 +496,11 @@ test("a opção usa sua própria capa na prévia e o carrinho recebe a revisão 
     (await page.getByTestId("e2e-cart").textContent()) || "[]",
   );
   expect(item.moldeRevisao).toBe("6".repeat(32));
+  expect(JSON.parse(item.inicialReferencia)).toEqual([
+    "A",
+    `catalog/products/caderneta-azul/${"7".repeat(32)}.png`,
+    60,
+  ]);
 
   await card.getByRole("button", { name: /^Sem imagem/ }).click();
   await card.getByRole("button", { name: /^Com nome/ }).click();

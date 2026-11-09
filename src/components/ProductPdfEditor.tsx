@@ -1,6 +1,6 @@
 import React from "react";
 import EditorModal from "./EditorModal";
-import { selectedInitial } from "../lib/decorativeInitial";
+import { firstInitial, selectedInitial } from "../lib/decorativeInitial";
 import {
   productPdfOrder,
   type ProductPdfBinding,
@@ -190,6 +190,8 @@ export default function ProductPdfEditor({
   const fontError =
     fontState?.binding === binding ? fontState.error : undefined;
   const pageCount = binding.pdf.pages.length;
+  const initialLetter =
+    textEnabled && binding.pdf.alphabet ? firstInitial(text) : undefined;
   const visiblePages =
     pageCount > 2
       ? [Math.min(page, pageCount - 1)]
@@ -252,6 +254,11 @@ export default function ProductPdfEditor({
           A posição, a fonte, o tamanho e a cor seguem o modelo da loja. O PDF
           preserva as {pageCount} páginas originais.
         </p>
+        {initialLetter && !selectedInitial(binding.pdf, text) && (
+          <p role="status" className="text-xs text-gray-400">
+            A letra {initialLetter} não está cadastrada no alfabeto desta base.
+          </p>
+        )}
         {pageCount > 2 && (
           <label className="block text-sm">
             Página

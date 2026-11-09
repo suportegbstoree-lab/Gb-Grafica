@@ -74,7 +74,8 @@ export function alphabetUrls(templates: { alphabet?: DecorativeAlphabet }[] = []
 
 export function readAlphabetFiles(files: File[], pdfName: string): { folderName: string; letters: Array<{ letter: string; file: File }> } {
   if (!files.length) throw new Error('Selecione uma pasta com A.png até Z.png.');
-  const folderName = files[0].webkitRelativePath.split('/')[0];
+  const folder = files[0].webkitRelativePath.split('/').slice(0, -1);
+  const folderName = folder.at(-1);
   if (!folderName || !matchingAlphabetName(pdfName, folderName)) throw new Error(`A pasta deve se chamar “${pdfBaseName(pdfName)}”, exatamente como o PDF sem a extensão.`);
   const letters: Array<{ letter: string; file: File }> = [], used = new Set<string>();
   for (const file of files) {
@@ -82,7 +83,7 @@ export function readAlphabetFiles(files: File[], pdfName: string): { folderName:
     // OS metadata is not artwork. All other files must be unambiguous PNG letters.
     if (file.name.startsWith('.')) continue;
     const match = /^([A-Z])\.png$/i.exec(file.name);
-    if (parts.length !== 2 || parts[0] !== folderName || !match) throw new Error('Use somente A.png até Z.png diretamente dentro da pasta, sem subpastas.');
+    if (parts.slice(0, -1).join('/') !== folder.join('/') || !match) throw new Error('Use somente A.png até Z.png diretamente dentro da pasta, sem subpastas.');
     const letter = match[1].toUpperCase();
     if (used.has(letter)) throw new Error(`A letra ${letter} está duplicada.`);
     if (file.size <= 0 || file.size > 50 * 1024 * 1024) throw new Error(`A letra ${letter} excede o limite de 50 MB.`);

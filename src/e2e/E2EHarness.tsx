@@ -129,7 +129,13 @@ if(new URLSearchParams(window.location.search).has('variations')) {
    const binding = product.moldePdf!;
    product.atributos[0].configuracao!['Com imagem'].moldePdf = {
      ...binding, revision: '6'.repeat(32), layout: { ...binding.layout, font_size: 120 },
-     pdf: { ...binding.pdf, name: 'Capa da opção.pdf', pages: ['/__e2e/option-cover.png', '/__e2e/cover.png'] },
+     pdf: {
+       ...binding.pdf, name: 'Capa da opção.pdf', pages: ['/__e2e/option-cover.png', '/__e2e/cover.png'],
+       alphabet: {
+         folderName: 'Capa da opção', sizePercent: 60,
+         letters: { A: { path: `catalog/products/${id}/${'7'.repeat(32)}.png`, url: '/__e2e/option-letter-a.png' } },
+       },
+     },
    };
  }
 

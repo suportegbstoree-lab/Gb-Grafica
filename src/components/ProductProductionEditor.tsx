@@ -14,7 +14,7 @@ import {
   uploadCatalogImage,
   type UploadedCatalogImage,
 } from "../services/catalogImageService";
-import { layoutFont, matchPdfLayout } from "../lib/staffPdf";
+import { baseForPdfLayout, layoutFont, matchPdfLayout } from "../lib/staffPdf";
 import UploadInput from "./UploadInput";
 const field =
   "mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2 text-sm";
@@ -139,6 +139,14 @@ export default function ProductProductionEditor({
     [layoutId, setLayout] = React.useState(product.moldePdf?.layoutId || "");
   const [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState("");
+  const base = library?.bases.find((row) => row.id === baseId);
+  const layout = library?.layouts.find((row) => row.id === layoutId);
+  const suggestedBase =
+    library && layout ? baseForPdfLayout(layout, library.bases) : undefined;
+  const saved = product.moldePdf;
+  const linkedBase = library?.bases.find((row) => row.id === saved?.baseId);
+  const savedLetters = Object.keys(saved?.pdf.alphabet?.letters || {}).sort();
+  const baseLetters = base?.initialLetters?.slice().sort();
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     onBusy(true);
@@ -225,7 +233,12 @@ export default function ProductProductionEditor({
             <>
               <LibrarySelect
                 label="Base PDF"
-                options={library.bases}
+                options={library.bases.map((row) => ({
+                  id: row.id,
+                  name: row.category
+                    ? `${row.name} · ${row.category}`
+                    : row.name,
+                }))}
                 value={baseId}
                 onChange={(id) => {
                   setBase(id);
@@ -246,16 +259,35 @@ export default function ProductProductionEditor({
                 label="Molde de edição"
                 options={library.layouts}
                 value={layoutId}
-                onChange={setLayout}
+                onChange={(id) => {
+                  setLayout(id);
+                  const picked = library.layouts.find((row) => row.id === id);
+                  if (!baseId && picked)
+                    setBase(baseForPdfLayout(picked, library.bases)?.id || "");
+                }}
               />
+              {suggestedBase && suggestedBase.id !== baseId && (
+                <button
+                  type="button"
+                  onClick={() => setBase(suggestedBase.id)}
+                  className="text-left text-sm text-pink-300 underline"
+                >
+                  Usar a base do molde ({suggestedBase.name})
+                </button>
+              )}
+              {baseLetters && (
+                <p className="text-xs text-gray-400">
+                  {baseLetters.length
+                    ? `Letras desta base · ${baseLetters.join(", ")}`
+                    : "Esta base não tem pasta de letras cadastrada na oficina."}
+                </p>
+              )}
               <button
                 type="button"
                 disabled={!baseId || !layoutId}
                 className="rounded-lg bg-purple-500 px-4 py-3 text-sm disabled:opacity-40"
                 onClick={() =>
                   void run(async () => {
-                    const base = library.bases.find((b) => b.id === baseId),
-                      layout = library.layouts.find((l) => l.id === layoutId);
                     if (!base || !layout || !product.id)
                       throw new Error("Selecione a base e o molde.");
                     const font = layoutFont(layout.layout, fonts);
@@ -263,11 +295,12 @@ export default function ProductProductionEditor({
                       throw new Error(
                         "Cadastre a fonte do molde antes de vincular.",
                       );
-                    const previous = product.moldePdf;
                     let template =
-                      previous?.baseId === base.id &&
-                      previous.baseRevision === base.revision
-                        ? previous.pdf
+                      saved?.baseId === base.id &&
+                      saved.baseRevision === base.revision &&
+                      (!baseLetters ||
+                        baseLetters.join() === savedLetters.join())
+                        ? saved.pdf
                         : undefined;
                     if (!template) {
                       const prepared = await api.prepareProductCopy(
@@ -324,6 +357,22 @@ export default function ProductProductionEditor({
             Vinculado: {product.moldePdf.pdf.name} ·{" "}
             {product.moldePdf.pdf.pages.length} páginas
           </p>
+          {savedLetters.length > 0 && (
+            <p className="mt-2 text-xs text-gray-400">
+              Letras vinculadas · {savedLetters.join(", ")}
+            </p>
+          )}
+          {saved &&
+            linkedBase &&
+            (linkedBase.revision !== saved.baseRevision ||
+              (linkedBase.initialLetters &&
+                linkedBase.initialLetters.slice().sort().join() !==
+                  savedLetters.join())) && (
+              <p role="status" className="mt-2 text-xs text-amber-300">
+                A base da oficina mudou. Atualize o vínculo para publicar a nova
+                versão.
+              </p>
+            )}
           <p className="mt-2 text-xs text-gray-400">
             Posição, fonte, tamanho e cor seguem o molde. Para publicar mudanças
             da oficina, atualize este vínculo. Pedidos anteriores mantêm a

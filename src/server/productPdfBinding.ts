@@ -68,6 +68,11 @@ export async function verifyProductPdfBinding(
   await uploadBatch(
     Object.keys(oldLetters),
     async (letter) => {
+      if (
+        retainedAssetPath(newLetters[letter].url, services.bucket.name) !==
+        newLetters[letter].path
+      )
+        throw new OperationsError("Endereço da inicial publicada inválido.");
       const [[original], [published]] = await Promise.all([
         services.bucket.file(oldLetters[letter].path).getMetadata(),
         services.bucket.file(newLetters[letter].path).getMetadata(),

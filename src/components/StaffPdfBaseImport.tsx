@@ -7,13 +7,18 @@ import {
 } from "../lib/staffPdfCategory";
 import type { StaffPdfBase } from "../lib/staffPdf";
 import type { StaffPdfApi } from "../services/staffPdfService";
+import { pdfBaseName, readAlphabetFiles } from "../lib/decorativeInitial";
 
-interface UploadRow {
+interface ImportFiles {
   file: File;
   category: string;
+  alphabet?: File[];
+}
+interface UploadRow extends ImportFiles {
   requestId: string;
   selected: boolean;
   replacement?: StaffPdfBase;
+  storedBaseId?: string;
   status: "pending" | "ready" | "error";
   error?: string;
 }
@@ -74,9 +79,9 @@ export default function StaffPdfBaseImport({
       pdfCategoryKey(group),
       name.normalize("NFC").toLocaleLowerCase("pt-BR"),
     ]);
-  function plan(files: { file: File; category: string }[]) {
+  function plan(files: ImportFiles[]) {
     const seen = new Set<string>();
-    const next = files.map(({ file, category }): UploadRow => {
+    const next = files.map(({ file, category, alphabet }): UploadRow => {
       const normalized = normalizePdfCategory(category);
       const canonical =
         categories.find(
@@ -93,6 +98,7 @@ export default function StaffPdfBaseImport({
       return {
         file,
         category: canonical,
+        alphabet,
         requestId: crypto.randomUUID(),
         selected,
         replacement,
@@ -119,14 +125,35 @@ export default function StaffPdfBaseImport({
       const pdfs = files.filter((file) => /\.pdf$/i.test(file.name));
       if (!pdfs.length) throw new Error("A pasta não possui PDFs.");
       if (pdfs.length > 500) throw new Error("Importe até 500 PDFs por vez.");
+      const byFolder = new Map<string, File[]>();
+      for (const file of files) {
+        const folder = file.webkitRelativePath
+          .split("/")
+          .slice(0, -1)
+          .map((part) => part.normalize("NFC").trim())
+          .join("/");
+        const group = byFolder.get(folder);
+        if (group) group.push(file);
+        else byFolder.set(folder, [file]);
+      }
       plan(
         pdfs.map((file) => {
-          const relative = file.webkitRelativePath
-            .replaceAll("\\", "/")
-            .split("/");
+          const relative = file.webkitRelativePath.split("/");
           if (relative.length < 2)
             throw new Error("Selecione a pasta pelo botão de importar pasta.");
-          return { file, category: relative[0] };
+          const folder = [...relative.slice(0, -1), pdfBaseName(file.name)]
+            .map((part) => part.normalize("NFC").trim())
+            .join("/");
+          const alphabet = byFolder
+            .get(folder)
+            ?.filter((item) => !item.name.startsWith("."));
+          return {
+            file,
+            category: relative[0],
+            alphabet: alphabet?.some((item) => /\.png$/i.test(item.name))
+              ? alphabet
+              : undefined,
+          };
         }),
       );
     } catch (e) {
@@ -165,13 +192,25 @@ export default function StaffPdfBaseImport({
         setProgress(
           `Enviando ${row.file.name} · ${count + 1} de ${pending.length}`,
         );
+        let storedBaseId = row.storedBaseId;
         try {
-          await api.uploadBase(
+          if (row.alphabet) readAlphabetFiles(row.alphabet, row.file.name);
+          storedBaseId ??= await api.uploadBase(
             row.file,
             row.requestId,
             row.replacement,
             row.category,
           );
+          if (row.alphabet) {
+            setProgress(`Vinculando as letras de ${row.file.name}…`);
+            await api.uploadAlphabet(
+              {
+                id: storedBaseId,
+                name: row.replacement?.name || row.file.name,
+              },
+              row.alphabet,
+            );
+          }
           count++;
           if (alive.current)
             setRows((old) =>
@@ -189,6 +228,7 @@ export default function StaffPdfBaseImport({
                   ? {
                       ...item,
                       status: "error",
+                      storedBaseId,
                       requestId: crypto.randomUUID(),
                       error: (e as Error).message,
                     }
@@ -249,7 +289,6 @@ export default function StaffPdfBaseImport({
           disabled={disabled || busy}
           type="file"
           multiple
-          accept="application/pdf,.pdf"
           className="sr-only"
           ref={(element) => element?.setAttribute("webkitdirectory", "")}
           onChange={(e) => {
@@ -258,6 +297,10 @@ export default function StaffPdfBaseImport({
           }}
         />
       </label>
+      <p className="text-xs text-gray-400">
+        Se a pasta de letras estiver ao lado do PDF com o mesmo nome, ela será
+        importada junto com a base.
+      </p>
       {error && !rows && !single && (
         <p role="alert" className="text-sm text-red-300">
           {error}
@@ -360,7 +403,14 @@ export default function StaffPdfBaseImport({
                         }
                       />
                     </td>
-                    <td className="break-words p-2">{row.file.name}</td>
+                    <td className="break-words p-2">
+                      {row.file.name}
+                      {row.alphabet && (
+                        <span className="block text-xs text-gray-400">
+                          Pasta de letras encontrada
+                        </span>
+                      )}
+                    </td>
                     <td className="p-2">{row.category}</td>
                     <td className="p-2">
                       {row.status === "ready"

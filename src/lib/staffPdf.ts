@@ -324,6 +324,17 @@ export function matchPdfLayout(
     (linked.length === 1 ? linked[0] : undefined)
   );
 }
+export function baseForPdfLayout(
+  layout: StaffPdfLayoutView,
+  bases: StaffPdfBase[],
+) {
+  if (layout.layout.base_id)
+    return bases.find((base) => base.id === layout.layout.base_id);
+  const matches = bases.filter((base) =>
+    matchPdfLayout(base.name, base.pageCount, [layout], base.id),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
 export function layoutBox(
   layout: StaffPdfLayout,
   orientation: PdfTextLayout,

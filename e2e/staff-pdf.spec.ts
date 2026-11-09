@@ -354,18 +354,22 @@ test("uploading an individual PDF asks for a category and offers direct template
   );
 });
 
-test("folder import uses its root category for every PDF including nested files", async ({
+test("folder import keeps the root category and attaches letters to the matching nested PDF", async ({
   page,
 }) => {
   const temporary = await mkdtemp(join(tmpdir(), "gb-pdf-import-"));
   try {
     const folder = join(temporary, "Agendas");
-    await mkdir(join(folder, "Infantil"), { recursive: true });
+    await mkdir(join(folder, "Infantil", "Crianca"), { recursive: true });
     const pdf = await PDFDocument.create();
     pdf.addPage([595, 842]);
     const bytes = await pdf.save();
     await writeFile(join(folder, "Adulto.pdf"), bytes);
     await writeFile(join(folder, "Infantil", "Crianca.pdf"), bytes);
+    await writeFile(
+      join(folder, "Infantil", "Crianca", "T.png"),
+      await readFile("e2e/fixtures/editor-cover.png"),
+    );
     await writeFile(join(folder, "ignorar.txt"), "Este arquivo não é um PDF.");
     await page.goto("/__e2e/staff-pdf");
     await page
@@ -376,6 +380,9 @@ test("folder import uses its root category for every PDF including nested files"
       .setInputFiles(folder);
     const upload = page.getByRole("dialog", { name: "Importar bases PDF" });
     await expect(upload.getByText("Agendas", { exact: true })).toHaveCount(2);
+    await expect(
+      upload.getByRole("row").filter({ hasText: "Crianca.pdf" }),
+    ).toContainText("Pasta de letras encontrada");
     await upload
       .getByRole("button", { name: "Enviar 2 PDF(s)", exact: true })
       .click();
@@ -394,6 +401,9 @@ test("folder import uses its root category for every PDF including nested files"
     ).toBeVisible();
     await expect(
       category.getByRole("button", { name: "Editar Crianca.pdf", exact: true }),
+    ).toBeVisible();
+    await expect(
+      category.getByText("Letras cadastradas · T", { exact: true }),
     ).toBeVisible();
   } finally {
     await rm(temporary, { recursive: true, force: true });

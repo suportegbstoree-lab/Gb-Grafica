@@ -586,6 +586,28 @@ test('checkout rejects the default revision when the selected option has its own
  assert.equal(providerCalls, 0);
 });
 
+test('checkout copies the selected option alphabet letter into the order', async () => {
+  const { input, binding } = optionProductionProduct();
+  const path = `catalog/products/produto/${'7'.repeat(32)}.png`;
+  binding.pdf.alphabet = {
+    folderName: 'Opção', sizePercent: 60,
+    letters: { A: { path, url: `https://example.test/${encodeURIComponent(path)}` } },
+  };
+  objects.set(path, { ...objects.get(sourcePath)!, generation: 42, metadata: {} });
+  const response = await checkout({
+    ...input, moldeRevisao: binding.revision,
+    inicialReferencia: initialReference(binding.pdf, input.textoMolde),
+  });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const order = [...docs].find(([key]) => key.startsWith('orders/'))![1] as any;
+  const item = order.itens[0];
+  const letter = copies.find(copy => copy.generation === 42);
+  assert.ok(letter);
+  assert.equal(item.inicialPath, letter.path);
+  assert.equal(item.inicialLetra, 'A');
+  assert.equal(objects.has(path), true);
+});
+
 test('checkout uses the default for an option without its own art', async () => {
  const { input } = optionProductionProduct();
  const response = await checkout({ ...input, selecoes: { Imagem: 'Sem', Nome: 'Com' }, expectedUnitAmountCents: 2700 });

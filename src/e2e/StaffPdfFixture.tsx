@@ -3,6 +3,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
 import type { StaffPdfRecipe } from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
+import { readAlphabetFiles } from "../lib/decorativeInitial";
 import {
   defaultPdfLayout,
   normalizePdfLayout,
@@ -56,6 +57,7 @@ export default function StaffPdfFixture() {
         },
       ];
     const files = new Map<string, Blob>(),
+      alphabets = new Map<string, Map<string, File>>(),
       saved = new Map<string, StaffDocumentView>();
     const value: StaffPdfApi = {
       list: async () => ({
@@ -63,7 +65,9 @@ export default function StaffPdfFixture() {
         layouts: structuredClone(layouts),
         truncated: false,
       }),
-      prepareProductCopy: async () => { throw new Error("Use o editor de produtos para vincular."); },
+      prepareProductCopy: async () => {
+        throw new Error("Use o editor de produtos para vincular.");
+      },
       baseFile: async (id) => {
         if (files.has(id)) return files.get(id)!;
         const d = await PDFDocument.create();
@@ -90,8 +94,22 @@ export default function StaffPdfFixture() {
         files.set(id, blob);
         return blob;
       },
-      initial: async () => undefined,
-      uploadAlphabet: async () => {},
+      initial: async (id, letter) => {
+        const source = alphabets.get(id)?.get(letter);
+        return source ? { source, sizePercent: 60 } : undefined;
+      },
+      uploadAlphabet: async ({ id, name }, files) => {
+        const { letters } = readAlphabetFiles(files, name);
+        alphabets.set(
+          id,
+          new Map(letters.map(({ letter, file }) => [letter, file])),
+        );
+        bases = bases.map((base) =>
+          base.id === id
+            ? { ...base, initialLetters: letters.map(({ letter }) => letter) }
+            : base,
+        );
+      },
       uploadBase: async (file, _requestId, replacement, category) => {
         const d = await PDFDocument.load(await file.arrayBuffer()),
           id = replacement?.id || crypto.randomUUID().replaceAll("-", "");
@@ -107,6 +125,7 @@ export default function StaffPdfFixture() {
           revision: crypto.randomUUID().replaceAll("-", ""),
           source: "internal",
         });
+        return id;
       },
       deleteBase: async (id) => {
         bases = bases.filter((b) => b.id !== id);
