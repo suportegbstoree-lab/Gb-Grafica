@@ -1,4 +1,8 @@
-import type { Anuncio, ProductAttribute } from "../types.js";
+import type {
+  Anuncio,
+  ProductAttribute,
+  ProductOptionConfig,
+} from "../types.js";
 
 export interface VariationType {
   id: string;
@@ -29,6 +33,15 @@ export function variationTypeName(value: unknown): string {
   return name;
 }
 
+export function optionReferenceImage(config?: ProductOptionConfig): string {
+  return (
+    config?.referencia ||
+    config?.moldePdf?.pdf.pages[0] ||
+    config?.imagemBase ||
+    ""
+  );
+}
+
 export function variationImage(
   product: Pick<Anuncio, "atributos">,
   selections: Record<string, string>,
@@ -36,7 +49,7 @@ export function variationImage(
   for (const attribute of product.atributos || []) {
     const option = selections[attribute.nome];
     if (attribute.opcoes.includes(option)) {
-      const image = attribute.configuracao?.[option]?.referencia;
+      const image = optionReferenceImage(attribute.configuracao?.[option]);
       if (image) return image;
     }
   }
@@ -55,24 +68,29 @@ export function productSku(
   product: Pick<Anuncio, "nome" | "sku" | "atributos" | "skuPorCombinacao">,
   selections: Record<string, string>,
 ): string {
-  const options = (product.atributos || []).map(
-    (attribute) => selections[attribute.nome],
+  const options = (product.atributos || []).map((attribute) =>
+    Object.hasOwn(selections, attribute.nome)
+      ? selections[attribute.nome]
+      : undefined,
   );
   const base = cleanSku(product.sku, MAX_PRODUCT_SKU) || product.nome.trim();
-  if (options.some((option) => !option)) return base;
-  const override = options.length
-    ? product.skuPorCombinacao?.[options.join("|")]
-    : undefined;
+  const override =
+    options.length && options.every(Boolean)
+      ? product.skuPorCombinacao?.[options.join("|")]
+      : undefined;
   return (
     cleanSku(override, MAX_COMBINATION_SKU) ||
     [
       base,
-      ...(product.atributos || []).map(
-        (attribute, i) =>
-          cleanSku(
-            attribute.configuracao?.[options[i]]?.sku,
-            MAX_VARIATION_SKU,
-          ) || options[i],
+      ...(product.atributos || []).flatMap((attribute, i) =>
+        options[i]
+          ? [
+              cleanSku(
+                attribute.configuracao?.[options[i]]?.sku,
+                MAX_VARIATION_SKU,
+              ) || options[i],
+            ]
+          : [],
       ),
     ]
       .join(" ")

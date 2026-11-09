@@ -12,6 +12,7 @@ import {
 import {
   MAX_COMBINATION_SKU,
   MAX_VARIATION_SKU,
+  optionReferenceImage,
   productSku,
   replaceProductOption,
   variationTypeName,
@@ -45,6 +46,7 @@ function OptionControls({
   onConfig,
   onUpload,
   additive,
+  showIndividualPrice,
   productionEditor,
 }: {
   key?: string;
@@ -52,6 +54,7 @@ function OptionControls({
   option: string;
   config: Option;
   additive: boolean;
+  showIndividualPrice: boolean;
   productionEditor: React.ReactNode;
   onRename: (value: string) => boolean;
   onRemove: () => void;
@@ -59,6 +62,11 @@ function OptionControls({
   onUpload: (file: File) => void;
 }) {
   const label = `${attribute.nome}: ${option}`;
+  const reference = optionReferenceImage(config);
+  const automaticReference = optionReferenceImage({
+    ...config,
+    referencia: undefined,
+  });
   return (
     <div className="space-y-3 rounded-xl border border-gray-800 bg-[#151515] p-3">
       <div className="flex items-center gap-2">
@@ -90,16 +98,18 @@ function OptionControls({
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {config.referencia && (
+        {reference && (
           <img
-            src={config.referencia}
+            src={reference}
+            loading="lazy"
+            decoding="async"
             alt={`Referência ${label}`}
             className="h-12 w-12 rounded border border-gray-700 object-cover"
           />
         )}
         <label className={button}>
           <ImagePlus size={15} />{" "}
-          {config.referencia ? "Trocar referência" : "Imagem de referência"}
+          {reference ? "Trocar referência" : "Imagem de referência"}
           <UploadInput
             type="file"
             accept="image/jpeg,image/png,image/webp"
@@ -118,8 +128,13 @@ function OptionControls({
             className="text-xs text-red-300"
             onClick={() => onConfig({ referencia: undefined })}
           >
-            Remover imagem
+            {automaticReference ? "Usar referência da base" : "Remover imagem"}
           </button>
+        )}
+        {!config.referencia && automaticReference && (
+          <span className="text-xs text-gray-400">
+            Referência da arte de produção
+          </span>
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -145,6 +160,21 @@ function OptionControls({
               placeholder="0,00"
               onChange={(event) =>
                 onConfig({ adicional: event.target.value || undefined })
+              }
+            />
+          </label>
+        )}
+        {showIndividualPrice && (
+          <label className="text-xs text-gray-400">
+            Preço desta opção avulsa
+            <input
+              className={field + " mt-1"}
+              aria-label={`Preço avulso ${label}`}
+              inputMode="decimal"
+              value={config.precoIndividual ?? ""}
+              placeholder="Ex.: 20,00"
+              onChange={(event) =>
+                onConfig({ precoIndividual: event.target.value || undefined })
               }
             />
           </label>
@@ -372,6 +402,9 @@ function VariationGroup({
             option={option}
             config={attribute.configuracao?.[option] || {}}
             additive={product.precificacao === "adicionais"}
+            showIndividualPrice={
+              product.precificacao !== "adicionais" && attributes.length > 1
+            }
             productionEditor={
               <ProductProductionEditor
                 {...production}
@@ -580,8 +613,9 @@ export default function ProductOptionEditor({
     <fieldset disabled={busy || savingType} className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-400">
-          Combine até dois tipos de variação. As imagens aqui representam as
-          opções na loja. Se duas opções selecionadas tiverem arte própria, vale
+          O cliente pode escolher até uma opção de cada variação. Em produtos
+          com preço por combinação, preencha o preço avulso para vender uma
+          opção sozinha. Se duas opções selecionadas tiverem arte própria, vale
           a da primeira variação cadastrada.
         </p>
         {attributes.length < 2 && !adding && (
@@ -782,6 +816,9 @@ export default function ProductOptionEditor({
               <tbody>
                 {keys.map((key, index) => {
                   const options = key.split("|");
+                  const references = options.map((option, i) =>
+                    optionReferenceImage(attributes[i].configuracao?.[option]),
+                  );
                   const selection = Object.fromEntries(
                     attributes.map((attribute, i) => [
                       attribute.nome,
@@ -807,13 +844,11 @@ export default function ProductOptionEditor({
                             rowSpan={i === 0 ? group : 1}
                             className="border-r border-gray-800 p-3"
                           >
-                            {attributes[i].configuracao?.[option]
-                              ?.referencia && (
+                            {references[i] && (
                               <img
-                                src={
-                                  attributes[i].configuracao?.[option]
-                                    ?.referencia
-                                }
+                                src={references[i]}
+                                loading="lazy"
+                                decoding="async"
                                 alt=""
                                 className="mb-2 h-10 w-10 rounded object-cover"
                               />

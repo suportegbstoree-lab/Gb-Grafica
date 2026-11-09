@@ -34,6 +34,12 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
 
+## 2026-11-09 — Compra da base, opções avulsas e referência automática
+
+- O cliente pode marcar e desmarcar cada variação de forma independente. A loja e o checkout aceitam a base sem opções ou uma opção avulsa, quando houver preço. O frete usa a embalagem padrão para seleções sem embalagem específica.
+- No modo por adicionais, o preço soma somente as opções escolhidas. No modo por combinação, o preço base numérico vende o produto sem opções e cada opção pode ter um preço avulso próprio.
+- No cadastro da opção, a referência automática é a imagem-base ou a primeira página do PDF vinculado. Uma referência enviada manualmente tem prioridade e pode ser retirada para voltar à automática.
+
 ## 2026-11-09 — Arte de produção por opção de produto
 
 - Cada opção de variação pode usar a arte padrão do produto, uma imagem-base própria ou um PDF com molde da oficina. Os controles de nome e imagem personalizada continuam disponíveis por opção.

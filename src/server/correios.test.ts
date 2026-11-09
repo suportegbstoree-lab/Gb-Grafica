@@ -165,6 +165,26 @@ test('não mistura produtos e considera perfil específico da combinação', asy
   await assert.rejects(shippingParcelsForCart([{ productId: 'p', selecoes: {}, quantidade: 1 }], async () => p), hasCode('SHIPPING_INVALID_CART'));
 });
 
+test('cota a base e opções avulsas com a embalagem padrão', async () => {
+  const atributos = [
+    { nome: 'Cor', opcoes: ['Azul'] },
+    { nome: 'Nome', opcoes: ['Sim'], configuracao: { Sim: { adicional: '2,00', precoIndividual: '18,00' } } },
+  ];
+  const catalog = { atributos, preco_base: '10,00', shipping: profile };
+  const items = [
+    { productId: 'p', selecoes: {}, quantidade: 1 },
+    { productId: 'p', selecoes: { Nome: 'Sim' }, quantidade: 1 },
+  ];
+  for (const precificacao of ['adicionais', 'combinacoes']) {
+    const parcels = await shippingParcelsForCart(items, async () => ({ ...catalog, precificacao }));
+    assert.deepEqual(parcels.map(parcel => parcel.weightGrams), [450, 450]);
+  }
+  await assert.rejects(
+    shippingParcelsForCart([{ ...items[1], selecoes: { Cor: 'Azul' } }], async () => catalog),
+    hasCode('SHIPPING_INVALID_CART'),
+  );
+});
+
 test('não inventa medidas para produto sem perfil e impede excesso de volumes', async () => {
   await assert.rejects(shippingParcelsForCart([{ productId: 'p', selecoes: {}, quantidade: 1 }], async () => ({})), hasCode('SHIPPING_PRODUCT_NOT_CONFIGURED'));
   await assert.rejects(shippingParcelsForCart([{ productId: 'p', selecoes: {}, quantidade: 999 }], async () => ({ shipping: profile })), hasCode('SHIPPING_TOO_MANY_PARCELS'));

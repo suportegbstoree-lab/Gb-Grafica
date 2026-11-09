@@ -835,38 +835,28 @@ async function normalizeCart(
 			return { name, options };
 		});
 
-		const rawSelections = isPlainRecord(item.selecoes) ? item.selecoes : {};
-		if (Object.keys(rawSelections).some(key => !attributeNames.includes(key))) {
-			throw new HttpError(422, `As opções de ${productName} estão inválidas.`);
-		}
+    const rawSelections = item.selecoes === undefined ? {} : item.selecoes;
+    if (!isPlainRecord(rawSelections) || Object.keys(rawSelections).some(key => !attributeNames.includes(key))) {
+      throw new HttpError(422, `As opções de ${productName} estão inválidas.`);
+    }
 
-		const selections: Record<string, string> = {};
-		for (const attribute of normalizedAttributes) {
-			const rawSelection = rawSelections[attribute.name];
-			const selection = typeof rawSelection === 'string'
-				? rawSelection.trim()
-				: '';
-			if (!selection || !attribute.options.includes(selection)) {
-				throw new HttpError(422, `Selecione todas as opções de ${productName}.`);
-			}
-			selections[attribute.name] = selection;
-		}
+    const selections = Object.fromEntries(normalizedAttributes.flatMap(({ name, options }) => {
+      if (!Object.hasOwn(rawSelections, name)) return [];
+      const rawSelection = rawSelections[name];
+      const selection = typeof rawSelection === 'string' ? rawSelection.trim() : '';
+      if (!options.includes(selection)) throw new HttpError(422, `As opções de ${productName} estão inválidas.`);
+      return [[name, selection]];
+    }));
 
 		const quantity = Number(item.quantidade);
 		if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
 			throw new HttpError(422, 'A quantidade de um item é inválida.');
 		}
 
-		const combinationKey = normalizedAttributes.map(attribute => selections[attribute.name]).join('|');
-		const combinations = isPlainRecord(product.combinacoes) ? product.combinacoes : {};
-		if (product.precificacao !== 'adicionais' && normalizedAttributes.length > 0 && !(combinationKey in combinations)) {
-			throw new HttpError(422, `A combinação escolhida de ${productName} está sem preço.`);
-		}
-		const originalUnitAmount = productPrice(product as unknown as Anuncio, selections);
-
-		if (originalUnitAmount === null || originalUnitAmount <= 0 || originalUnitAmount > 999999900) {
-			throw new HttpError(422, `O preço de ${productName} está inválido.`);
-		}
+    const originalUnitAmount = productPrice(product as unknown as Anuncio, selections);
+    if (originalUnitAmount === null) {
+      throw new HttpError(422, `A seleção de ${productName} está sem preço válido.`);
+    }
 
 		const productCategory = textValue(product.categoria, 100);
 		const appliedPromotion = componentMode ? null : promotionalPrice(

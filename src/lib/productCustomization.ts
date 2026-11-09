@@ -93,6 +93,14 @@ export function productCustomization(
       !selected.some((o) => o?.imagem === false),
   };
 }
+const MAX_PRODUCT_PRICE_CENTS = 999999900;
+function positivePrice(value: unknown): number | null {
+  const cents = parseMoneyToCents(value);
+  return cents !== null && cents > 0 && cents <= MAX_PRODUCT_PRICE_CENTS
+    ? cents
+    : null;
+}
+
 export function productPrice(
   product: Pick<
     Anuncio,
@@ -100,57 +108,76 @@ export function productPrice(
   >,
   selections: Record<string, string>,
 ): number | null {
+  const attributes = product.atributos || [];
+  const chosen = Object.entries(selections);
   if (
-    Object.keys(selections).some(
-      (key) => !(product.atributos || []).some((a) => a.nome === key),
-    ) ||
-    (product.atributos || []).some(
-      (a) => !a.opcoes.includes(selections[a.nome]),
+    chosen.some(
+      ([name, option]) =>
+        !attributes.some((a) => a.nome === name && a.opcoes.includes(option)),
     )
   )
     return null;
-  if (product.precificacao !== "adicionais")
-    return parseMoneyToCents(
-      (product.atributos || []).length
-        ? product.combinacoes[
-            (product.atributos || []).map((a) => selections[a.nome]).join("|")
-          ]
-        : product.preco_base,
-    );
-  let total = parseMoneyToCents(product.preco_base);
-  if (total === null || total <= 0) return null;
-  for (const attr of product.atributos || []) {
+  if (chosen.length === 0) {
+    // Older combination products may have a marketing label in the base price field.
+    if (
+      attributes.length &&
+      product.precificacao !== "adicionais" &&
+      !/^(?:R\$\s*)?\d[\d.,\s]*$/i.test(String(product.preco_base).trim())
+    )
+      return null;
+    return positivePrice(product.preco_base);
+  }
+
+  if (product.precificacao !== "adicionais") {
+    if (chosen.length === attributes.length) {
+      const key = attributes.map((a) => selections[a.nome]).join("|");
+      return positivePrice(product.combinacoes?.[key]);
+    }
+    if (chosen.length === 1) {
+      const [[name, option]] = chosen;
+      return positivePrice(
+        attributes.find((a) => a.nome === name)?.configuracao?.[option]
+          ?.precoIndividual,
+      );
+    }
+    return null;
+  }
+
+  let total = positivePrice(product.preco_base);
+  if (total === null) return null;
+  for (const attr of attributes) {
+    if (!Object.hasOwn(selections, attr.nome)) continue;
     const extra = parseMoneyToCents(
       attr.configuracao?.[selections[attr.nome]]?.adicional ?? "0",
     );
     if (extra === null || extra < 0) return null;
     total += extra;
   }
-  return Number.isSafeInteger(total) && total <= 999999900 ? total : null;
+  return Number.isSafeInteger(total) && total <= MAX_PRODUCT_PRICE_CENTS
+    ? total
+    : null;
 }
+
 export function productMinimum(product: Anuncio): number | null {
-  if (product.precificacao === "adicionais") {
-    const selection = Object.fromEntries(
-      (product.atributos || []).map((a) => [
-        a.nome,
-        [...a.opcoes].sort(
-          (x, y) =>
-            (parseMoneyToCents(a.configuracao?.[x]?.adicional ?? "0") ??
-              Infinity) -
-            (parseMoneyToCents(a.configuracao?.[y]?.adicional ?? "0") ??
-              Infinity),
-        )[0],
-      ]),
-    );
-    return productPrice(product, selection);
-  }
-  const prices = (
-    (product.atributos || []).length
-      ? Object.values(product.combinacoes)
-      : [product.preco_base]
-  )
-    .map(parseMoneyToCents)
-    .filter((n): n is number => n !== null && n > 0);
+  const base = productPrice(product, {});
+  const attributes = product.atributos || [];
+  if (product.precificacao === "adicionais" || attributes.length === 0)
+    return base;
+
+  const fullPrices = Object.values(product.combinacoes || {}).map(
+    positivePrice,
+  );
+  const singlePrices =
+    attributes.length > 1
+      ? attributes.flatMap((attr) =>
+          attr.opcoes.map((option) =>
+            productPrice(product, { [attr.nome]: option }),
+          ),
+        )
+      : [];
+  const prices = [base, ...fullPrices, ...singlePrices].filter(
+    (n): n is number => n !== null,
+  );
   return prices.length ? Math.min(...prices) : null;
 }
 export function bindingValid(

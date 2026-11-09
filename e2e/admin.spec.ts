@@ -167,7 +167,7 @@ test('valida duplicidade, cria e exclui produto com confirmação', async ({ pag
   const editor = page.getByRole('dialog', { name: 'Novo Produto' });
   await editor.getByLabel('Nome do Produto').fill('Carimbo');
   await editor.getByLabel('Descrição').fill('Produto criado pelo teste de navegador.');
-  await editor.getByLabel('Preço Base (Texto)').fill('19,90');
+  await editor.getByLabel('Preço base sem opções').fill('19,90');
   await editor.getByLabel('Imagem Principal (URL)').fill('/logo.png');
   await editor.getByRole('button', { name: 'Salvar Produto' }).click();
   await expect(page.getByRole('alert')).toContainText('Já existe um produto com esse nome.');

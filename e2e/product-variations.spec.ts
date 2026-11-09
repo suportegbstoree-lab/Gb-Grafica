@@ -478,6 +478,14 @@ test("o admin troca o molde de uma opção por imagem-base e salva sem alterar a
   page,
 }) => {
   const image = await readFile("e2e/fixtures/editor-cover.png");
+  const uploads: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/__e2e/uploads/")
+    )
+      uploads.push(request.url());
+  });
   await page.route(
     "https://firebasestorage.googleapis.com/v0/b/demo-sales.firebasestorage.app/**",
     (route) => route.fulfill({ contentType: "image/png", body: image }),
@@ -527,22 +535,42 @@ test("o admin troca o molde de uma opção por imagem-base e salva sem alterar a
     .getByRole("button", { name: "Vincular / atualizar molde" })
     .click();
   await expect(option.locator("summary")).toContainText("Álbum.pdf");
+  const reference = editor.getByAltText("Referência Imagem: Própria", {
+    exact: true,
+  });
+  await expect(reference).toHaveAttribute("src", "/__e2e/cover.png");
   await upload.setInputFiles({
     name: "ref-producao.png",
     mimeType: "image/png",
     buffer: image,
   });
   await expect(option.locator("summary")).toContainText("Imagem-base própria");
+  const baseReference = await option
+    .getByAltText("Imagem-base de impressão")
+    .getAttribute("src");
+  expect(baseReference).toBeTruthy();
+  await expect(reference).toHaveAttribute("src", baseReference!);
+  expect(uploads).toHaveLength(1);
+  await editor
+    .getByLabel("Enviar referência Imagem: Própria", { exact: true })
+    .setInputFiles({
+      name: "ref-personalizada.png",
+      mimeType: "image/png",
+      buffer: image,
+    });
+  await expect(reference).not.toHaveAttribute("src", baseReference!);
+  await editor
+    .getByRole("button", { name: "Usar referência da base", exact: true })
+    .click();
+  await expect(reference).toHaveAttribute("src", baseReference!);
   await expect(
     option.getByText("Vinculado: Álbum.pdf · 1 páginas"),
   ).toHaveCount(0);
-  const standard = editor
-    .locator("details")
-    .filter({
-      has: page.getByLabel("Enviar imagem-base de Imagem: Padrão", {
-        exact: true,
-      }),
-    });
+  const standard = editor.locator("details").filter({
+    has: page.getByLabel("Enviar imagem-base de Imagem: Padrão", {
+      exact: true,
+    }),
+  });
   await expect(standard.locator("summary")).toContainText(
     "Usar arte do produto",
   );
@@ -555,4 +583,67 @@ test("o admin troca o molde de uma opção por imagem-base e salva sem alterar a
   await expect(standard.locator("summary")).toContainText(
     "Usar arte do produto",
   );
+});
+
+test("o cliente pode desmarcar grupos e comprar a base ou apenas uma opção", async ({
+  page,
+}) => {
+  await page.route("**/__e2e/option-cover.png", (route) =>
+    route.fulfill({
+      path: "e2e/fixtures/editor-cover.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto("/produto/caderneta-azul?variations=partial");
+  const card = page.locator("article#produto-caderneta-azul");
+  const image = card.getByRole("button", { name: /^Com imagem/ });
+  const text = card.getByRole("button", { name: /^Com nome/ });
+  await expect(card).toContainText("20,00");
+  await text.click();
+  await expect(card).toContainText("22,00");
+  await image.click();
+  await expect(card).toContainText("32,00");
+  await text.click();
+  await expect(text).toHaveAttribute("aria-pressed", "false");
+  await expect(image).toHaveAttribute("aria-pressed", "true");
+  await expect(card).toContainText("30,00");
+  await expect(image.locator("img")).toHaveAttribute(
+    "src",
+    "/__e2e/option-cover.png",
+  );
+
+  async function addWithoutText() {
+    await card
+      .getByRole("button", { name: "Personalizar e conferir modelo" })
+      .click();
+    const modal = page.getByRole("dialog", {
+      name: "Personalizar produto",
+      exact: true,
+    });
+    await expect(modal.getByRole("textbox")).toHaveCount(0);
+    await modal
+      .getByRole("button", { name: "Confirmar personalização" })
+      .click();
+    await page
+      .getByRole("button", { name: "Fechar visualização do modelo" })
+      .click();
+    await card.getByRole("button", { name: "Adicionar ao Carrinho" }).click();
+  }
+  await addWithoutText();
+  await expect(image).toHaveAttribute("aria-pressed", "true");
+  await image.click();
+  await expect(image).toHaveAttribute("aria-pressed", "false");
+  await expect(card).toContainText("20,00");
+  await addWithoutText();
+  const items = JSON.parse(
+    (await page.getByTestId("e2e-cart").textContent()) || "[]",
+  );
+  expect(items).toMatchObject([
+    {
+      selecoes: { Imagem: "Com imagem" },
+      preco: "30.00",
+      moldeRevisao: "6".repeat(32),
+    },
+    { selecoes: {}, preco: "20.00", moldeRevisao: "a".repeat(32) },
+  ]);
 });

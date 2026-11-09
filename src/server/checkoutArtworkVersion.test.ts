@@ -614,3 +614,40 @@ test('checkout accepts the option image instead of the product PDF', async () =>
  assert.ok(copies.some(copy => copy.generation === 41));
  assert.ok(!copies.some(copy => copy.generation === 22));
 });
+
+for (const [label, selections, cents, revision, sku] of [
+  ['base', {}, 2000, 'c', 'Produto Teste'],
+  ['uma variação', { Imagem: 'Com' }, 3000, '8', 'Produto Teste Com'],
+] as const) test(`checkout aceita ${label} e conserva o molde correspondente`, async () => {
+ const { input } = optionProductionProduct();
+ const response = await checkout({
+   ...input, selecoes: selections, expectedUnitAmountCents: cents, moldeRevisao: revision.repeat(32),
+ });
+ assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+ assert.equal(providerPayload.items[0].unit_amount, cents);
+ const item = ([...docs].find(([path]) => path.startsWith('orders/'))![1] as any).itens[0];
+ assert.equal(item.moldeRevisao, revision.repeat(32));
+ assert.equal(item.sku, sku);
+ assert.deepEqual(item.selecoes, selections);
+});
+
+test('checkout aceita opção avulsa com seu preço cadastrado em modo por combinação', async () => {
+ docs.set('anuncios/produto', {
+   ...docs.get('anuncios/produto'), tipoInput: 'nenhum', precificacao: 'combinacoes',
+   atributos: [
+     { nome: 'Cor', opcoes: ['Azul'] },
+     { nome: 'Nome', opcoes: ['Sim'], configuracao: { Sim: { precoIndividual: '18,00' } } },
+   ],
+   combinacoes: { 'Azul|Sim': '30,00' },
+ });
+ const response = await checkout({ arquivoPath: '', selecoes: { Nome: 'Sim' }, expectedUnitAmountCents: 1800 });
+ assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+ assert.equal(providerPayload.items[0].unit_amount, 1800);
+});
+
+test('checkout não confunde uma seleção explícita inválida com a base', async () => {
+ const { input } = optionProductionProduct();
+ const response = await checkout({ ...input, selecoes: { Imagem: '' }, expectedUnitAmountCents: 2000 });
+ assert.equal(response.status, 422);
+ assert.equal(providerCalls, 0);
+});

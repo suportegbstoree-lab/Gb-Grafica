@@ -10,7 +10,7 @@ test('designer only sees permitted areas and has a product editor without commer
   await expect(page.getByRole('button', { name: 'Excluir Carimbo', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Editar Carimbo', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Editar arte do produto', exact: true });
-  for (const field of ['Nome do Produto', 'Descrição', 'Categoria', 'Preço Base (Texto)']) await expect(editor.getByLabel(field, { exact: true })).toHaveCount(0);
+  for (const field of ['Nome do Produto', 'Descrição', 'Categoria', 'Preço base sem opções']) await expect(editor.getByLabel(field, { exact: true })).toHaveCount(0);
   await editor.getByLabel('Enviar imagem principal', { exact: true }).setInputFiles({ name: 'capa.png', mimeType: 'image/png', buffer: await readFile('e2e/fixtures/editor-cover.png') });
   await editor.getByLabel('Tipo de personalização', { exact: true }).selectOption('texto_arte');
   await editor.getByLabel('Rótulo do texto', { exact: true }).fill('Seu nome');
@@ -39,7 +39,7 @@ test('product manager has the full product form and promotion/category areas wit
   await page.getByRole('button', { name: 'Editar Carimbo', exact: true }).click();
   const editor = page.getByRole('dialog', { name: 'Editar Produto', exact: true });
   await expect(editor.getByLabel('Nome do Produto', { exact: true })).toBeVisible();
-  await expect(editor.getByLabel('Preço Base (Texto)', { exact: true })).toBeVisible();
+  await expect(editor.getByLabel('Preço base sem opções', { exact: true })).toBeVisible();
 });
 
 test('administrator assigns registered email, edits role permissions and sees pending email status', async ({ page }) => {

@@ -1,3 +1,4 @@
+import { optionReferenceImage } from '../lib/productSales';
 import { quoteCoupon } from '../services/salesService';
 import { COUPON_CODE_MAX_LENGTH, type AppliedCoupon } from '../lib/salesCoupons';
 import CatalogProductCard from '../components/CatalogProductCard';
@@ -80,11 +81,6 @@ interface HomeSlide {
   link: string;
   targetType?: Promocao['alvoTipo'];
   targetName?: string;
-}
-
-function productPriceForSelections(product: Anuncio, selections: Record<string, string>): number | null {
-  if (!product.atributos.every(attribute => selections[attribute.nome])) return null;
-  return productPrice(product,selections);
 }
 
 function openExternal(url: string) {
@@ -2024,16 +2020,12 @@ function ProductCard({
   React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; for(const file of [uploadedModel,uploadedBack,...extraModels])if(file)void personalizationModelStorage.deleteModel(file.path).catch(()=>undefined); setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null);setExtraModels([]); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
   const handleSelect = (attrName: string, option: string) => {
-    if(lockSelections) return;
-    if(product.precificacao==='adicionais'){setSelections(previous=>({...previous,[attrName]:option}));return;}
-    const attributeIndex = product.atributos.findIndex(attribute => attribute.nome === attrName);
+    if (lockSelections) return;
     setSelections(previous => {
-      const nextSelections: Record<string, string> = {};
-      product.atributos.slice(0, Math.max(attributeIndex, 0)).forEach(attribute => {
-        if (previous[attribute.nome]) nextSelections[attribute.nome] = previous[attribute.nome];
-      });
-      nextSelections[attrName] = option;
-      return nextSelections;
+      if (previous[attrName] !== option) return { ...previous, [attrName]: option };
+      const next = { ...previous };
+      delete next[attrName];
+      return next;
     });
   };
 
@@ -2101,14 +2093,10 @@ function ProductCard({
     setTextCustomization(null);
   };
 
-  const isFullySelected = product.atributos.every(attr => selections[attr.nome]);
-
-  const currentPrice = () => { const amount=productPrice(product,selections);return amount===null?null:(amount/100).toFixed(2); };
-  const rawPrice = currentPrice();
-  const originalPriceCents = parseMoneyToCents(rawPrice);
+  const originalPriceCents = productPrice(product, selections);
   const discount = originalPriceCents === null ? null : promotionalPrice(originalPriceCents, product, promotions);
   const priceCents = discount?.finalCents ?? originalPriceCents;
-  const price = priceCents === null ? rawPrice : (priceCents / 100).toFixed(2);
+  const price = priceCents === null ? null : (priceCents / 100).toFixed(2);
   const customizationReady = (!requiresArtwork || Boolean(uploadedArtwork || template || baseImage || binding)) &&
     (!requiresText || Boolean(binding ? moldText && uploadedModel : textCustomization && uploadedModel)) && (!mustCompose || Boolean(uploadedModel));
 
@@ -2133,7 +2121,7 @@ function ProductCard({
   };
 
   const handleAdd = () => {
-    if (!isFullySelected || !price || priceCents === null || priceCents <= 0) return;
+    if (priceCents === null || priceCents <= 0) return;
     if (requiresArtwork && !uploadedArtwork && !template && !baseImage && !binding) {
       onNotify({ type: 'error', message: 'Envie a arte antes de adicionar este produto ao carrinho.' });
       return;
@@ -2264,39 +2252,36 @@ function ProductCard({
         <p className="text-sm text-gray-500 mb-8 leading-relaxed max-w-2xl font-medium">{product.desc}</p>
 
         <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-6 mb-10">
-          {product.atributos.map((attr, idx) => {
-            const isEnabled = product.precificacao==='adicionais' || idx === 0 || product.atributos.slice(0, idx).every(a => selections[a.nome]);
-
-            return (
-              <div key={attr.nome} className={cn("min-w-0 flex flex-col transition-all", !isEnabled && "opacity-20 pointer-events-none grayscale")}>
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{attr.nome}</span>
-                <div className="flex flex-col gap-2">
-                  {attr.opcoes.map(option => (
-                    <button
-                      type="button"
-                      key={option}
-                      disabled={lockSelections}
-                      onClick={() => handleSelect(attr.nome, option)}
-                      aria-pressed={selections[attr.nome] === option}
-                      className={cn(
-                        "flex items-center gap-2 text-left px-4 py-3 rounded-xl border text-xs font-bold transition-all",
-                        selections[attr.nome] === option
-                          ? "bg-gradient-to-r from-pink-400 to-purple-500 border-transparent text-white shadow-lg shadow-pink-100"
-                          : "bg-gray-50 border-gray-100 text-gray-500 hover:border-pink-200 hover:text-pink-600"
-                      )}
-                    >
-                      {attr.configuracao?.[option]?.referencia && <img src={attr.configuracao[option].referencia} alt=""
-                        className="h-8 w-8 shrink-0 rounded object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
-                      <span className="min-w-0 break-words">
-                        {option}{product.precificacao === 'adicionais' && attr.configuracao?.[option]?.adicional &&
-                          <span className="ml-2 opacity-80">+ {formatMoney(attr.configuracao[option].adicional)}</span>}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+          {product.atributos.map(attr => (
+            <div key={attr.nome} className="min-w-0 flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{attr.nome}</span>
+              <div className="flex flex-col gap-2">
+                {attr.opcoes.map(option => {
+                  const reference = optionReferenceImage(attr.configuracao?.[option]);
+                  return <button
+                    type="button"
+                    key={option}
+                    disabled={lockSelections}
+                    onClick={() => handleSelect(attr.nome, option)}
+                    aria-pressed={selections[attr.nome] === option}
+                    className={cn(
+                      "flex items-center gap-2 text-left px-4 py-3 rounded-xl border text-xs font-bold transition-all",
+                      selections[attr.nome] === option
+                        ? "bg-gradient-to-r from-pink-400 to-purple-500 border-transparent text-white shadow-lg shadow-pink-100"
+                        : "bg-gray-50 border-gray-100 text-gray-500 hover:border-pink-200 hover:text-pink-600"
+                    )}
+                  >
+                    {reference && <img src={reference} alt=""
+                      className="h-8 w-8 shrink-0 rounded object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
+                    <span className="min-w-0 break-words">
+                      {option}{product.precificacao === 'adicionais' && attr.configuracao?.[option]?.adicional &&
+                        <span className="ml-2 opacity-80">+ {formatMoney(attr.configuracao[option].adicional)}</span>}
+                    </span>
+                  </button>;
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
 
           {/* Personalization Section */}
           <div className="col-span-full flex min-w-0 flex-col gap-6">
@@ -2401,7 +2386,7 @@ function ProductCard({
                   </div>
                 ) : (
                   <span className="text-sm text-pink-500 font-bold uppercase tracking-widest animate-pulse">
-                    {isFullySelected ? 'Preço não configurado' : (product.preco_base || 'Selecione as opções')}
+                    {Object.keys(selections).length ? 'Preço não configurado para esta seleção' : (product.preco_base || 'Selecione as opções')}
                   </span>
                 )}
               </div>
@@ -2413,10 +2398,10 @@ function ProductCard({
           <button
             type="button"
             onClick={handleAdd}
-            disabled={!isFullySelected || priceCents === null || priceCents <= 0 || !customizationReady || isUploadingArtwork}
+            disabled={priceCents === null || priceCents <= 0 || !customizationReady || isUploadingArtwork}
             className={cn(
               "w-full min-w-0 max-w-full flex items-center justify-center gap-3 px-4 sm:px-6 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all",
-              isFullySelected && priceCents !== null && priceCents > 0 && customizationReady && !isUploadingArtwork
+              priceCents !== null && priceCents > 0 && customizationReady && !isUploadingArtwork
                 ? "bg-gray-900 text-white hover:bg-[#d14d8c] shadow-xl hover:shadow-pink-100 active:scale-95 cursor-pointer"
                 : "bg-gray-100 text-gray-400 cursor-not-allowed opacity-60"
             )}

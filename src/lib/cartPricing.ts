@@ -17,7 +17,6 @@ export function repriceCart(items: CartItem[], products: Anuncio[], promotions: 
         changed=true; return {...item,preco:(amount/100).toFixed(2),bundleItems:children};
       } catch {return item;}
     }
-    const key = product.atributos.map(attribute => item.selecoes[attribute.nome] || '').join('|');
     const amount = selectedPrice(product, item.selecoes);
     if (amount === null || amount <= 0) return item;
     const price = promotionalPrice(amount, product, promotions, now);

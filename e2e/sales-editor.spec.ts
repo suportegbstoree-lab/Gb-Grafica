@@ -58,6 +58,9 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
   };
   await addType("Cor", ["Floral 1", "Floral 2"]);
   await addType("Customização", ["Normal", "Nome", "Imagem"], true);
+  await editor
+    .getByLabel("Preço avulso Cor: Floral 1", { exact: true })
+    .fill("24,90");
   await expect(
     editor.getByRole("button", { name: "Adicionar variação", exact: true }),
   ).toHaveCount(0);
@@ -106,6 +109,9 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
   await expect(
     editor.getByLabel("Preço da combinação Floral 1 + Nome", { exact: true }),
   ).toHaveValue("30");
+  await expect(
+    editor.getByLabel("Preço avulso Cor: Floral 1", { exact: true }),
+  ).toHaveValue("24,90");
   await expect(
     editor.getByLabel("SKU da combinação Floral 1 + Nome", { exact: true }),
   ).toHaveValue("AGENDA-FL1-NOME");

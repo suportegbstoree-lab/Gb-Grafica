@@ -1,3 +1,5 @@
+import type { Anuncio } from '../types.js';
+import { productPrice } from '../lib/productCustomization.js';
 import { isRecord, parseShippingProfile, parcelsForProfile, type ShippingParcel } from '../lib/shipping.js';
 import { CorreiosError } from './correios.js';
 
@@ -28,13 +30,14 @@ export async function shippingParcelsForCart(
       if (!isRecord(attribute) || typeof attribute.nome !== 'string' || names.has(attribute.nome)
         || !Array.isArray(attribute.opcoes)) throw invalidCart();
       names.add(attribute.nome);
+      if (!Object.hasOwn(item.selecoes, attribute.nome)) { values.push(''); continue; }
       const value = item.selecoes[attribute.nome];
       if (typeof value !== 'string' || !attribute.opcoes.includes(value)) throw invalidCart();
       values.push(value);
     }
     if (Object.keys(item.selecoes).some(name => !names.has(name))) throw invalidCart();
     const combination = values.join('|');
-    if (attributes.length && (!isRecord(product.combinacoes) || !Object.hasOwn(product.combinacoes, combination))) throw invalidCart();
+    if (attributes.length && productPrice(product as unknown as Anuncio, item.selecoes as Record<string, string>) === null) throw invalidCart();
     const key = JSON.stringify([item.productId, combination]);
     const group = groups.get(key);
     if (group) group.quantity += Number(item.quantidade);

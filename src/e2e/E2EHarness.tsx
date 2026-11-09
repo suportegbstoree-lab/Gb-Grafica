@@ -122,8 +122,10 @@ FIXTURE_PRODUCTS.push({ id: 'caderno', nome: 'Caderno Personalizado', desc: 'Cad
 if(new URLSearchParams(window.location.search).has('variations')) {
  const id='caderneta-azul';
  FIXTURE_PRODUCTS.push({id,nome:'Caderneta Azul',desc:'Base e divulgação independentes',categoria:'Personalizados',imagem:FIXTURE_IMAGE,imagens:['/logo.png'],preco_base:'20.00',precificacao:'adicionais',tipoInput:'texto_arte',labelTexto:'Nome',combinacoes:{},atributos:[{nome:'Imagem',opcoes:['Com imagem','Sem imagem'],configuracao:{'Com imagem':{adicional:'10.00',imagem:true},'Sem imagem':{adicional:'5.00',imagem:false}}},{nome:'Nome',opcoes:['Com nome','Sem nome'],configuracao:{'Com nome':{adicional:'2.00',texto:true},'Sem nome':{adicional:'0',texto:false}}}],moldePdf:{revision:'a'.repeat(32),baseId:'b'.repeat(32),baseRevision:'c'.repeat(32),layoutId:'d'.repeat(32),layoutRevision:'e'.repeat(32),fonts:[],layout:{...defaultPdfLayout(),pos_x:100,pos_y:200,max_width_pixels:600,max_height_pixels:200,font_size:80,pos_x_landscape:100,pos_y_landscape:200,max_width_pixels_landscape:600,max_height_pixels_landscape:200},pdf:{id:'f'.repeat(32),path:`catalog/templates/${id}/${'f'.repeat(32)}.pdf`,name:'Caderneta.pdf',pages:Array.from({length:new URLSearchParams(window.location.search).get('variations')==='4'?4:2},()=>'/__e2e/cover.png')}}});
- if (new URLSearchParams(window.location.search).get('variations') === 'option') {
+ const variationFixture = new URLSearchParams(window.location.search).get('variations');
+ if (variationFixture === 'option' || variationFixture === 'partial') {
    const product = FIXTURE_PRODUCTS.at(-1)!;
+   if (variationFixture === 'partial') product.tipoInput = 'nenhum';
    const binding = product.moldePdf!;
    product.atributos[0].configuracao!['Com imagem'].moldePdf = {
      ...binding, revision: '6'.repeat(32), layout: { ...binding.layout, font_size: 120 },

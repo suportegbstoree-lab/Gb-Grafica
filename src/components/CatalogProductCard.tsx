@@ -23,7 +23,8 @@ export default function CatalogProductCard({
 }) {
   const price = displayPrice(product, products, promotions, Date.now()),
     configurable =
-      !!product.pacote || product.atributos.length > 0 || (product.tipoInput && product.tipoInput !== 'nenhum');
+      !!product.pacote || product.atributos.length > 0 || !!product.moldePdf || !!product.imagemBase ||
+      (product.tipoInput && product.tipoInput !== 'nenhum');
   return (
     <article
       id={`produto-${product.id}`}
@@ -60,7 +61,7 @@ export default function CatalogProductCard({
             ? `${product.pacote.components.length} produtos · composição definida pela loja`
             : product.atributos.length
               ? 'Escolha as opções na página do produto'
-              : product.tipoInput && product.tipoInput !== 'nenhum'
+              : configurable
                 ? 'Personalize na página do produto'
                 : 'Pronto para adicionar ao carrinho'}
         </p>

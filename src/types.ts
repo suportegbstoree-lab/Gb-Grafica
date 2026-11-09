@@ -8,6 +8,7 @@ export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationF
 
 export interface ProductOptionConfig extends ProductProductionAssets {
   adicional?: string;
+  precoIndividual?: string;
   texto?: boolean;
   imagem?: boolean;
   sku?: string;

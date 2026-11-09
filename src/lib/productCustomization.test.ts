@@ -48,8 +48,8 @@ const choices = { Arte: "Com imagem", Nome: "Com nome" };
 test("additive selections, minimum, bundle pricing and cart reprice agree in integer cents", () => {
   assert.equal(productPrice(product, choices), 3200);
   assert.equal(selectedPrice(product, choices), 3200);
-  assert.equal(productMinimum(product), 2500);
-  assert.equal(minimumPrice(product), 2500);
+  assert.equal(productMinimum(product), 2000);
+  assert.equal(minimumPrice(product), 2000);
   const [item] = repriceCart(
     [
       {
@@ -74,7 +74,7 @@ test("additive selections, minimum, bundle pricing and cart reprice agree in int
 });
 test("invalid selections and negative or oversized additions never produce a price", () => {
   assert.equal(productPrice(product, { ...choices, Extra: "x" }), null);
-  assert.equal(productPrice(product, { Arte: "Com imagem" }), null);
+  assert.equal(productPrice(product, { Arte: "Inválida" }), null);
   const copy = structuredClone(product);
   copy.atributos[0].configuracao!["Com imagem"].adicional = "-1";
   assert.equal(productPrice(copy, choices), null);
@@ -106,7 +106,12 @@ test("legacy combination prices keep their original meaning", () => {
     combinacoes: { "Com imagem|Com nome": "35.00" },
   };
   assert.equal(productPrice(old, choices), 3500);
-  assert.equal(productMinimum(old), 3500);
+  assert.equal(productMinimum(old), 2000);
+  assert.equal(productPrice(old, { Arte: "Com imagem" }), null);
+  assert.equal(
+    productPrice({ ...old, preco_base: "A partir de R$ 35" }, {}),
+    null,
+  );
 });
 test("product validation preserves optional controls and rejects invalid pricing settings", () => {
   const categories = [{ id: "cat", nome: "Cadernetas", icon: "", ordem: 0 }];
@@ -191,4 +196,28 @@ test("own option artwork takes precedence in attribute order and falls back to t
     "https://example.com/first.png",
     "https://example.com/second.png",
   ]);
+});
+
+test("base and single selections use their own price without changing complete combinations", () => {
+  assert.equal(productPrice(product, {}), 2000);
+  assert.equal(productPrice(product, { Nome: "Com nome" }), 2200);
+  assert.equal(productPrice(product, { Arte: "Com imagem" }), 3000);
+
+  const exact = structuredClone(product);
+  exact.precificacao = "combinacoes";
+  exact.combinacoes = {
+    "Com imagem|Com nome": "35.00",
+    "Com imagem|Sem nome": "33.00",
+    "Sem imagem|Com nome": "27.00",
+    "Sem imagem|Sem nome": "25.00",
+  };
+  exact.atributos[1].configuracao!["Com nome"].precoIndividual = "18,50";
+  assert.equal(productPrice(exact, {}), 2000);
+  assert.equal(productPrice(exact, { Nome: "Com nome" }), 1850);
+  assert.equal(productPrice(exact, choices), 3500);
+  assert.equal(productMinimum(exact), 1850);
+  const categories = [{ id: "cat", nome: "Cadernetas", icon: "", ordem: 0 }];
+  assert.ok(validateProductDraft(exact, categories, []).ok);
+  exact.atributos[1].configuracao!["Com nome"].precoIndividual = "0";
+  assert.equal(validateProductDraft(exact, categories, []).ok, false);
 });

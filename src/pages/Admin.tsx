@@ -1822,13 +1822,13 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                       </select>
                     </div>
                     <div className="space-y-2">
-                      <label htmlFor="product-base-price" className="text-xs font-bold text-gray-500 uppercase">Preço Base (Texto)</label>
+                      <label htmlFor="product-base-price" className="text-xs font-bold text-gray-500 uppercase">Preço base sem opções</label>
                       <input
                         id="product-base-price"
                         value={editingProduct.preco_base}
                         inputMode="decimal"
                         onChange={e => setEditingProduct({...editingProduct, preco_base: e.target.value})}
-                        placeholder="Ex: A partir de R$ 50"
+                        placeholder="Ex.: 50,00"
                         className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
                       />
                     </div>

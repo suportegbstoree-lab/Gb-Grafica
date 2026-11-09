@@ -45,7 +45,7 @@ for (const width of [320, 390, 768, 1024, 1280, 1600]) {
     const productEditor = page.getByRole('dialog', { name: 'Editar Produto', exact: true });
     await productEditor.getByLabel('Nome do Produto', { exact: true }).fill(`Caderno-${'ProdutoSemEspacos'.repeat(6)}`);
     await productEditor.getByLabel('Descrição', { exact: true }).fill('DescricaoSemEspacos'.repeat(10));
-    await productEditor.getByLabel('Preço Base (Texto)', { exact: true }).fill('12345,67');
+    await productEditor.getByLabel('Preço base sem opções', { exact: true }).fill('12345,67');
     await productEditor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
     await expect(productEditor).toHaveCount(0);
     await page.getByRole('link', { name: 'Voltar para a Loja' }).click();

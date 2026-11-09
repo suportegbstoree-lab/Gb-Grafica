@@ -166,13 +166,18 @@ export function validateProductDraft(
       return { ok: false, message: 'Revise a configuração de cada opção.' };
     for (const [key, option] of Object.entries(attr.configuracao)) {
       if (!attr.opcoes.includes(key) || !option || typeof option !== 'object' || Array.isArray(option) ||
-        Object.keys(option).some(k => !['adicional', 'texto', 'imagem', 'sku', 'referencia', 'imagemBase', 'moldePdf'].includes(k)) ||
+        Object.keys(option).some(k => !['adicional', 'texto', 'imagem', 'sku', 'referencia', 'imagemBase', 'moldePdf', 'precoIndividual'].includes(k)) ||
         cleanSku(option.sku, MAX_VARIATION_SKU) === null ||
         (option.referencia !== undefined && (typeof option.referencia !== 'string' || !isSafeAdminUrl(option.referencia))) ||
         (option.texto !== undefined && typeof option.texto !== 'boolean') ||
         (option.imagem !== undefined && typeof option.imagem !== 'boolean') ||
         (option.adicional !== undefined && (parseMoneyToCents(option.adicional) === null || parseMoneyToCents(option.adicional)! < 0)))
         return { ok: false, message: 'Revise os adicionais e a personalização de cada opção.' };
+      if (option.precoIndividual !== undefined) {
+        const cents = parseMoneyToCents(option.precoIndividual);
+        if (typeof option.precoIndividual !== 'string' || cents === null || cents <= 0 || cents > 999999900)
+          return { ok: false, message: `Informe um preço avulso válido para a opção “${key}”.` };
+      }
       if ((option.imagemBase !== undefined && (typeof option.imagemBase !== 'string' || !option.imagemBase || !isSafeAdminUrl(option.imagemBase))) ||
         (option.moldePdf !== undefined && (!bindingValid(option.moldePdf, draft.id || '') || option.imagemBase !== undefined)))
         return { ok: false, message: `Revise a arte de produção da opção “${key}”. Escolha uma imagem-base ou um vínculo de PDF e molde.` };
