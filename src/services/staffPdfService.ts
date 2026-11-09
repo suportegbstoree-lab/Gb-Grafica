@@ -1,3 +1,4 @@
+import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { staffPdfBatchApi } from "./staffPdfBatchService";
 import type { StaffPdfBatchApi } from "../lib/staffPdfBatch";
 import { ref, uploadBytesResumable } from "firebase/storage";
@@ -27,6 +28,14 @@ export interface StaffPdfApi {
   batches?: StaffPdfBatchApi;
   list(): Promise<StaffPdfLibrary>;
   baseFile(id: string): Promise<Blob>;
+  prepareProductCopy(
+    productId: string,
+    base: Pick<StaffPdfBase, "id" | "revision">,
+  ): Promise<{
+    template: ProductPdfTemplate;
+    assets: Array<{ path: string; url: string }>;
+    sourceUrl?: string;
+  }>;
   uploadBase(
     file: File,
     requestId: string,
@@ -61,6 +70,11 @@ export const staffPdfApi: StaffPdfApi = {
     readStaffPdf(
       (await staffPdfRequest(`/bases/${encodeURIComponent(id)}/file`)).url,
     ),
+  prepareProductCopy: (productId, base) =>
+    staffPdfRequest(`/bases/${encodeURIComponent(base.id)}/product-copy`, {
+      productId,
+      baseRevision: base.revision,
+    }),
   uploadBase: async (file, requestId, replacement, category) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");

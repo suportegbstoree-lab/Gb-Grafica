@@ -18,10 +18,32 @@ test("linked product uses its own base, calculates R$32 and keeps the preview in
     name: "Personalizar produto",
     exact: true,
   });
-  await editor.getByLabel("Nome ou texto do molde").fill("ANA\nMARIA");
+  const cover = editor.getByRole("img", {
+    name: "Prévia da capa personalizada",
+  });
+  await expect(cover).toBeVisible();
   await expect(
-    editor.getByAltText("Prévia da capa personalizada"),
+    editor.getByRole("img", { name: "Prévia da contracapa" }),
   ).toBeVisible();
+  const sourceRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/__e2e/cover.png"))
+      sourceRequests.push(request.url());
+  });
+  const before = await cover.evaluate((canvas: HTMLCanvasElement) =>
+    canvas.toDataURL(),
+  );
+  await editor.getByLabel("Nome ou texto do molde").fill("ANA\nMARIA");
+  await expect(cover).toBeVisible();
+  await expect
+    .poll(() =>
+      cover.evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL()),
+    )
+    .not.toBe(before);
+  expect(sourceRequests).toHaveLength(0);
+  await expect(
+    editor.getByRole("button", { name: "Confirmar personalização" }),
+  ).toBeEnabled();
   await expect(editor.getByRole("combobox")).toHaveCount(0);
   await page.screenshot({
     path: "test-results/product-linked-editor.png",
@@ -292,13 +314,21 @@ test("admin keeps the advertising image while adding a separate production base 
   await expect(editor.getByLabel("Imagem Principal (URL)")).toHaveValue(
     advertising,
   );
-  await editor.getByRole('button', { name: 'Adicionar variação', exact: true }).click();
-  await editor.getByLabel('Tipo de variação', { exact: true }).selectOption({ label: 'Imagem' });
-  await editor.getByLabel('Nova opção de Imagem').fill('Com imagem');
-  await editor.getByRole('button', { name: 'Adicionar opção', exact: true }).click();
-  await editor.getByLabel('Nova opção de Imagem').fill('Sem imagem');
-  await editor.getByRole('button', { name: 'Adicionar opção', exact: true }).click();
-  await editor.getByLabel('Modo de preço').selectOption('adicionais');
+  await editor
+    .getByRole("button", { name: "Adicionar variação", exact: true })
+    .click();
+  await editor
+    .getByLabel("Tipo de variação", { exact: true })
+    .selectOption({ label: "Imagem" });
+  await editor.getByLabel("Nova opção de Imagem").fill("Com imagem");
+  await editor
+    .getByRole("button", { name: "Adicionar opção", exact: true })
+    .click();
+  await editor.getByLabel("Nova opção de Imagem").fill("Sem imagem");
+  await editor
+    .getByRole("button", { name: "Adicionar opção", exact: true })
+    .click();
+  await editor.getByLabel("Modo de preço").selectOption("adicionais");
   await editor
     .getByLabel("Adicional Imagem: Com imagem", { exact: true })
     .fill("10");
@@ -314,4 +344,73 @@ test("admin keeps the advertising image while adding a separate production base 
   await expect(editor.getByLabel("Imagem Principal (URL)")).toHaveValue(
     advertising,
   );
+});
+
+test("base e molde têm busca independente, correspondência inicial e reaproveitamento da cópia", async ({
+  page,
+}) => {
+  const copies: unknown[] = [];
+  await page.route("**/__e2e/product-pdf-copy", async (route) => {
+    copies.push(route.request().postDataJSON());
+    const id = "f".repeat(32);
+    const path = `catalog/templates/1yi50l93z/${id}.pdf`;
+    await route.fulfill({
+      json: {
+        template: { id, path, name: "Álbum.pdf", pages: ["/__e2e/cover.png"] },
+        assets: [{ path, url: path }],
+      },
+    });
+  });
+  await page.goto("/__e2e/admin?pdf-binding=1");
+  await page
+    .getByRole("button", { name: "Editar Carimbo", exact: true })
+    .click();
+  const editor = page.getByRole("dialog", { name: "Editar Produto" });
+  await editor
+    .getByRole("button", { name: "Carregar bases e moldes da oficina" })
+    .click();
+  const base = editor.getByLabel("Base PDF do produto");
+  const layout = editor.getByLabel("Molde de edição do produto");
+  await expect(base.locator("option")).toHaveText([
+    "Selecione",
+    "Álbum.pdf",
+    "Zebra.pdf",
+  ]);
+  await expect(layout.locator("option")).toHaveText([
+    "Selecione",
+    "Álbum_template",
+    "Zebra_template",
+  ]);
+  await editor
+    .getByRole("button", { name: "Buscar base pdf", exact: true })
+    .click();
+  await editor
+    .getByRole("searchbox", { name: "Filtrar base pdf pelo nome" })
+    .fill("album");
+  await expect(base.locator("option")).toHaveText(["Selecione", "Álbum.pdf"]);
+  await base.selectOption({ label: "Álbum.pdf" });
+  await expect(layout).toHaveValue("e".repeat(32));
+  await editor
+    .getByRole("button", { name: "Buscar molde de edição", exact: true })
+    .click();
+  await editor
+    .getByRole("searchbox", { name: "Filtrar molde de edição pelo nome" })
+    .fill("zeb");
+  await layout.selectOption({ label: "Zebra_template" });
+  await expect(base).toHaveValue("b".repeat(32));
+  await editor
+    .getByRole("button", { name: "Vincular / atualizar molde" })
+    .click();
+  await expect(
+    editor.getByText("Vinculado: Álbum.pdf · 1 páginas"),
+  ).toBeVisible();
+  expect(copies).toHaveLength(1);
+  await layout.selectOption({ label: "Álbum_template" });
+  await editor
+    .getByRole("button", { name: "Vincular / atualizar molde" })
+    .click();
+  await expect(
+    editor.getByRole("button", { name: "Vincular / atualizar molde" }),
+  ).toBeEnabled();
+  expect(copies).toHaveLength(1);
 });

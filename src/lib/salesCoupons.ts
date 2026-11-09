@@ -1,6 +1,13 @@
 import { parseMoneyToCents } from "./commerce.js";
 
+export const COUPON_CODE_IN_USE = "Código de cupom em uso";
+export const COUPON_CODE_MAX_LENGTH = 40;
+export const validCouponCode = (code: string) =>
+  /^[A-Z0-9_-]{3,40}$/.test(code) && /[A-Z0-9]/.test(code);
+export const normalizeCouponCode = (code: string) => code.trim().toUpperCase();
+
 export interface CouponDraft {
+  code?: string;
   description: string;
   kind: "percent" | "fixed";
   value: string;
@@ -17,6 +24,7 @@ export interface SalesCoupon extends Omit<CouponDraft, "value"> {
   amount: number;
   used: number;
   revision: string;
+  instanceId?: string;
 }
 
 export interface AppliedCoupon {
@@ -35,7 +43,7 @@ export interface CouponLine {
 
 export function normalizeCouponDraft(
   input: unknown,
-): Omit<SalesCoupon, "code" | "used" | "revision"> {
+): Omit<SalesCoupon, "code" | "used" | "revision" | "instanceId"> {
   const value = input as Partial<CouponDraft> | null;
   if (
     !value ||

@@ -5,15 +5,107 @@ import {
   type StaffPdfApi,
   type StaffPdfLibrary,
 } from "../services/staffPdfService";
-import { uploadCatalogPdf } from "../services/catalogPdfService";
+import { Search } from "lucide-react";
+import { readStaffPdf } from "../services/staffPdfRequest";
+import { pdfPreviewPages } from "../services/pdfPreview";
+import { uploadBatch } from "../lib/uploadBatch";
+import { retireCatalogAsset } from "../services/catalogRetentionService";
 import {
   uploadCatalogImage,
   type UploadedCatalogImage,
 } from "../services/catalogImageService";
-import { layoutFont } from "../lib/staffPdf";
+import { layoutFont, matchPdfLayout } from "../lib/staffPdf";
 import UploadInput from "./UploadInput";
 const field =
   "mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2 text-sm";
+const compareNames = new Intl.Collator("pt-BR", {
+  sensitivity: "base",
+  numeric: true,
+});
+const searchableName = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+function LibrarySelect({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { id: string; name: string }[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [searching, setSearching] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const filterId = React.useId();
+  const search = searchableName(query.trim());
+  const visible = options
+    .filter(
+      (row) => row.id === value || searchableName(row.name).includes(search),
+    )
+    .sort((a, b) => compareNames.compare(a.name, b.name));
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end gap-2">
+        <label className="min-w-0 flex-1 text-sm">
+          {label}
+          <select
+            aria-label={`${label} do produto`}
+            className={field}
+            value={value}
+            onChange={(event) => {
+              onChange(event.target.value);
+              setQuery("");
+              setSearching(false);
+            }}
+          >
+            <option value="">Selecione</option>
+            {visible.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          aria-label={`Buscar ${label.toLowerCase()}`}
+          aria-expanded={searching}
+          aria-controls={filterId}
+          className="rounded-lg border border-gray-700 p-2"
+          onClick={() => {
+            setSearching(!searching);
+            setQuery("");
+          }}
+        >
+          <Search size={18} aria-hidden="true" />
+        </button>
+      </div>
+      {searching && (
+        <input
+          id={filterId}
+          autoFocus
+          type="search"
+          aria-label={`Filtrar ${label.toLowerCase()} pelo nome`}
+          placeholder="Filtrar por nome"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault();
+          }}
+          className={field}
+        />
+      )}
+      {searching &&
+        search &&
+        !visible.some((row) => searchableName(row.name).includes(search)) && (
+          <p className="text-xs text-gray-400">Nenhum resultado.</p>
+        )}
+    </div>
+  );
+}
+
 /** No advertisement URL is ever silently adopted as a new production base. */
 export default function ProductProductionEditor({
   product,
@@ -22,9 +114,9 @@ export default function ProductProductionEditor({
   onUploaded,
   onBusy,
   uploadImage = uploadCatalogImage,
-  uploadPdf = uploadCatalogPdf,
   api = staffPdfApi,
   canBind = true,
+  disabled = false,
 }: {
   product: Partial<Anuncio>;
   fonts?: PersonalizationFont[];
@@ -32,10 +124,12 @@ export default function ProductProductionEditor({
   onUploaded: (files: Array<{ path: string; url: string }>) => void;
   onBusy: (busy: boolean) => void;
   uploadImage?: (id: string, f: File) => Promise<UploadedCatalogImage>;
-  uploadPdf?: typeof uploadCatalogPdf;
   api?: StaffPdfApi;
   canBind?: boolean;
+  disabled?: boolean;
 }) {
+  const latestProduct = React.useRef(product);
+  latestProduct.current = product;
   const [library, setLibrary] = React.useState<StaffPdfLibrary>();
   const [baseId, setBase] = React.useState(product.moldePdf?.baseId || ""),
     [layoutId, setLayout] = React.useState(product.moldePdf?.layoutId || "");
@@ -56,7 +150,7 @@ export default function ProductProductionEditor({
   };
   return (
     <fieldset
-      disabled={busy}
+      disabled={disabled || busy}
       className="space-y-4 rounded-xl border border-gray-700 p-4 md:col-span-2"
     >
       <legend className="px-2 font-bold">Arte de produção</legend>
@@ -80,7 +174,7 @@ export default function ProductProductionEditor({
                 if (!product.id) throw new Error("Produto inválido.");
                 const file = await uploadImage(product.id, f);
                 onUploaded([file]);
-                onChange({ ...product, imagemBase: file.url });
+                onChange({ ...latestProduct.current, imagemBase: file.url });
               });
           }}
         />
@@ -115,38 +209,31 @@ export default function ProductProductionEditor({
           </button>
           {library && (
             <>
-              <label className="block text-sm">
-                Base PDF
-                <select
-                  aria-label="Base PDF do produto"
-                  className={field}
-                  value={baseId}
-                  onChange={(e) => setBase(e.target.value)}
-                >
-                  <option value="">Selecione</option>
-                  {library.bases.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm">
-                Molde de edição
-                <select
-                  aria-label="Molde de edição do produto"
-                  className={field}
-                  value={layoutId}
-                  onChange={(e) => setLayout(e.target.value)}
-                >
-                  <option value="">Selecione</option>
-                  {library.layouts.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <LibrarySelect
+                label="Base PDF"
+                options={library.bases}
+                value={baseId}
+                onChange={(id) => {
+                  setBase(id);
+                  const base = library.bases.find((row) => row.id === id);
+                  setLayout(
+                    base
+                      ? matchPdfLayout(
+                          base.name,
+                          base.pageCount,
+                          library.layouts,
+                          id,
+                        )?.id || ""
+                      : "",
+                  );
+                }}
+              />
+              <LibrarySelect
+                label="Molde de edição"
+                options={library.layouts}
+                value={layoutId}
+                onChange={setLayout}
+              />
               <button
                 type="button"
                 disabled={!baseId || !layoutId}
@@ -162,51 +249,38 @@ export default function ProductProductionEditor({
                       throw new Error(
                         "Cadastre a fonte do molde antes de vincular.",
                       );
-                    const original = await api.baseFile(base.id),
-                      result = await uploadPdf(
+                    const previous = product.moldePdf;
+                    let template =
+                      previous?.baseId === base.id &&
+                      previous.baseRevision === base.revision
+                        ? previous.pdf
+                        : undefined;
+                    if (!template) {
+                      const prepared = await api.prepareProductCopy(
                         product.id,
-                        new File(
-                          [original],
-                          /\.pdf$/i.test(base.name)
-                            ? base.name
-                            : base.name + ".pdf",
-                          { type: "application/pdf" },
-                        ),
-                        16,
+                        base,
                       );
-                    onUploaded([
-                      ...result.images,
-                      { path: result.template.path, url: result.template.path },
-                    ]);
-                    if (base.initialLetters?.length) {
-                      const letters: Record<
-                        string,
-                        { path: string; url: string }
-                      > = {};
-                      let sizePercent = 60;
-                      for (const letter of base.initialLetters) {
-                        const initial = await api.initial(base.id, letter);
-                        if (!initial || !(initial.source instanceof Blob))
-                          throw new Error(
-                            "A inicial mudou. Carregue a biblioteca novamente.",
-                          );
-                        const image = await uploadImage(
-                          product.id,
-                          new File([initial.source], letter + ".png", {
-                            type: "image/png",
-                          }),
+                      onUploaded(prepared.assets);
+                      template = prepared.template;
+                      if (prepared.sourceUrl) {
+                        const pdf = await readStaffPdf(prepared.sourceUrl);
+                        const pages = await pdfPreviewPages(pdf, 16);
+                        const images = await uploadBatch(
+                          pages,
+                          (page) => uploadImage(product.id!, page),
+                          {
+                            rollback: (file) => retireCatalogAsset(file.path),
+                          },
                         );
-                        onUploaded([image]);
-                        letters[letter] = { path: image.path, url: image.url };
-                        sizePercent = initial.sizePercent;
+                        onUploaded(images);
+                        template = {
+                          ...template,
+                          pages: images.map((image) => image.url),
+                        };
                       }
-                      result.template.alphabet = {
-                        folderName: base.name.replace(/\.pdf$/i, ""),
-                        sizePercent,
-                        letters,
-                      };
                     }
-                    const { printProfile, ...productionProduct } = product;
+                    const { printProfile, ...productionProduct } =
+                      latestProduct.current;
                     onChange({
                       ...productionProduct,
                       moldePdf: {
@@ -217,7 +291,7 @@ export default function ProductProductionEditor({
                         layoutRevision: layout.revision,
                         layout: layout.layout,
                         fonts: font ? [font] : [],
-                        pdf: result.template,
+                        pdf: template,
                       },
                     });
                   })

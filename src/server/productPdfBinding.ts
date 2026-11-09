@@ -7,6 +7,7 @@ import { retainedAssetPath } from "../lib/catalogRetention.js";
 import { layoutFont, normalizePdfLayout } from "../lib/staffPdf.js";
 import { normalizePersonalizationFonts } from "../lib/textCustomization.js";
 import { resolveStaffPdfBase } from "./staffPdfLibrary.js";
+import { uploadBatch } from "../lib/uploadBatch.js";
 import { OperationsError } from "../lib/operations.js";
 import type { getAdminServices } from "./firebaseAdmin.js";
 import type { Transaction } from "firebase-admin/firestore";
@@ -64,18 +65,22 @@ export async function verifyProductPdfBinding(
     (base.alphabet && b.pdf.alphabet?.sizePercent !== base.alphabet.sizePercent)
   )
     throw new OperationsError("O alfabeto mudou. Atualize o vínculo.", 409);
-  for (const letter of Object.keys(oldLetters)) {
-    const [[original], [published]] = await Promise.all([
-      services.bucket.file(oldLetters[letter].path).getMetadata(),
-      services.bucket.file(newLetters[letter].path).getMetadata(),
-    ]);
-    if (
-      !original.md5Hash ||
-      original.md5Hash !== published.md5Hash ||
-      String(original.size) !== String(published.size)
-    )
-      throw new OperationsError("A inicial publicada difere da base.");
-  }
+  await uploadBatch(
+    Object.keys(oldLetters),
+    async (letter) => {
+      const [[original], [published]] = await Promise.all([
+        services.bucket.file(oldLetters[letter].path).getMetadata(),
+        services.bucket.file(newLetters[letter].path).getMetadata(),
+      ]);
+      if (
+        !original.md5Hash ||
+        original.md5Hash !== published.md5Hash ||
+        String(original.size) !== String(published.size)
+      )
+        throw new OperationsError("A inicial publicada difere da base.");
+    },
+    { concurrency: 6, rollback: async () => undefined },
+  );
   const [[source], [copy]] = await Promise.all([
     services.bucket
       .file(

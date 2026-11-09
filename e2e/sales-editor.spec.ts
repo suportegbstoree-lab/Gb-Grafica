@@ -5,16 +5,6 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
   page,
 }) => {
   await page.goto("/__e2e/admin");
-  await page
-    .getByRole("button", { name: "Tipos de variação", exact: true })
-    .click();
-  await page.getByLabel("Nome do tipo", { exact: true }).fill("Customização");
-  await page
-    .getByRole("button", { name: "Cadastrar tipo", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Editar tipo Customização" }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "Produtos", exact: true }).click();
   await page
     .getByRole("button", { name: "Editar Carimbo", exact: true })
@@ -32,13 +22,22 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
   await navigation
     .getByRole("button", { name: "Variações", exact: true })
     .click();
-  const addType = async (name: string, options: string[]) => {
+  const addType = async (name: string, options: string[], create = false) => {
     await editor
       .getByRole("button", { name: "Adicionar variação", exact: true })
       .click();
-    await editor
-      .getByLabel("Tipo de variação", { exact: true })
-      .selectOption({ label: name });
+    if (create) {
+      await editor
+        .getByLabel("Novo tipo de variação", { exact: true })
+        .fill(name);
+      await editor
+        .getByRole("button", { name: "Cadastrar e adicionar", exact: true })
+        .click();
+    } else {
+      await editor
+        .getByLabel("Tipo de variação", { exact: true })
+        .selectOption({ label: name });
+    }
     const group = editor
       .locator("section")
       .filter({
@@ -58,7 +57,7 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
     }
   };
   await addType("Cor", ["Floral 1", "Floral 2"]);
-  await addType("Customização", ["Normal", "Nome", "Imagem"]);
+  await addType("Customização", ["Normal", "Nome", "Imagem"], true);
   await expect(
     editor.getByRole("button", { name: "Adicionar variação", exact: true }),
   ).toHaveCount(0);
@@ -121,15 +120,17 @@ test("cupom pode ser cadastrado, aplicado automaticamente e enviado no total con
   await page.goto("/__e2e/admin");
   await page.getByRole("button", { name: "Cupons", exact: true }).click();
   await page.getByRole("button", { name: "Novo cupom", exact: true }).click();
+  await page.getByLabel("Código do cupom").fill("grafica10");
   await page.getByLabel("Descrição do cupom").fill("Boas-vindas da gráfica");
   await page.getByLabel("Desconto (%)", { exact: true }).fill("10");
   await page.getByLabel("Válido até", { exact: true }).fill("2099-12-31");
   await page.getByLabel("Limite de usos", { exact: true }).fill("4");
   await page.getByLabel("Aplicar automaticamente na primeira compra").check();
-  await page.getByRole("button", { name: "Gerar cupom", exact: true }).click();
+  await page.getByRole("button", { name: "Salvar cupom", exact: true }).click();
   const row = page.locator("li").filter({ hasText: "Boas-vindas da gráfica" });
   await expect(row).toContainText("0/4 usos e reservas");
-  const code = (await row.getByText(/^GB-[A-F0-9]{12}$/).textContent())!;
+  const code = "GRAFICA10";
+  await expect(row.getByText(code, { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Voltar para a Loja" }).click();
   await page.goto("/produto/1yi50l93z");
   const card = page.locator("#produto-1yi50l93z");
@@ -169,6 +170,15 @@ test("cupom pode ser cadastrado, aplicado automaticamente e enviado no total con
   await page.getByLabel("Cupom ativo", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Salvar cupom", exact: true }).click();
   await expect(row).toContainText("Inativo");
+  await page.getByRole("button", { name: "Novo cupom", exact: true }).click();
+  await page.getByLabel("Código do cupom").fill("grafica10");
+  await page.getByLabel("Descrição do cupom").fill("Duplicado");
+  await page.getByLabel("Desconto (%)", { exact: true }).fill("10");
+  await page.getByLabel("Válido até", { exact: true }).fill("2099-12-31");
+  await page.getByRole("button", { name: "Salvar cupom", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Código de cupom em uso");
+  await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+
   await page.getByRole("button", { name: `Excluir cupom ${code}` }).click();
   await page
     .getByRole("alertdialog")

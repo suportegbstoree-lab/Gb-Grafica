@@ -2008,7 +2008,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                 <section id="product-variacoes" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-variacoes-title">
                   <h4 id="product-variacoes-title" className="text-lg font-bold">Variações</h4>
                   <ProductOptionEditor product={editingProduct} onChange={setEditingProduct} api={salesApi}
-                    busy={isSaving || isUploadingCatalogImages} onUpload={uploadVariationReference} />
+                    busy={isSaving || isUploadingCatalogImages} onBusy={setIsSaving} onUpload={uploadVariationReference} />
                   <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
                 </section>
                 <section id="product-producao" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-producao-title">
@@ -2042,7 +2042,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                     )}
                   </div>
                 <PdfTemplatesEditor templates={editingProduct.modelosPdf || []} onChange={modelosPdf => setEditingProduct(current => current ? { ...current, id: productStorageId, modelosPdf } : current)} upload={file => catalogImageStorage.uploadImage(productStorageId!, file)} remove={catalogImageStorage.deleteImage} onUploaded={images => setSessionCatalogUploads(current => [...current, ...images])} onBusy={setIsUploadingCatalogImages} />
-                <ProductProductionEditor product={{...editingProduct,id:productStorageId!}} fonts={config.fontes_personalizacao||[]} onChange={setEditingProduct} onUploaded={images=>setSessionCatalogUploads(current=>[...current,...images])} onBusy={setIsUploadingCatalogImages} uploadImage={catalogImageStorage.uploadImage} uploadPdf={catalogImageStorage.uploadPdf} api={pdfLibraryApi} canBind={can('documents.generate') || can('documents.templates.manage')} />
+                <ProductProductionEditor product={{...editingProduct,id:productStorageId!}} fonts={config.fontes_personalizacao||[]} onChange={setEditingProduct} onUploaded={images=>setSessionCatalogUploads(current=>[...current,...images])} onBusy={setIsUploadingCatalogImages} uploadImage={catalogImageStorage.uploadImage} api={pdfLibraryApi} disabled={isSaving || isUploadingCatalogImages} canBind={can('documents.generate') || can('documents.templates.manage')} />
                 {!editingProduct.moldePdf ? <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} /> : <p className="text-xs text-gray-400">O formato de impressão segue as medidas da base PDF vinculada.</p>}
                 </section>
                 <section id="product-entrega" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-entrega-title">

@@ -1,7 +1,12 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import express from "express";
 import { OperationsError } from "../lib/operations.js";
-import { normalizeCouponDraft } from "../lib/salesCoupons.js";
+import {
+  COUPON_CODE_IN_USE,
+  normalizeCouponCode,
+  normalizeCouponDraft,
+  validCouponCode,
+} from "../lib/salesCoupons.js";
 import { variationTypeName } from "../lib/productSales.js";
 import type { StaffPermission } from "../lib/staffAccess.js";
 import type { getAdminServices } from "./firebaseAdmin.js";
@@ -65,16 +70,26 @@ export function createSalesAdminRouter(deps: {
         (remove && !id) ||
         (id !== undefined &&
           (typeof id !== "string" ||
-            !(coupons ? /^GB-[A-F0-9]{12}$/ : /^[a-f0-9]{32}$/).test(id)))
+            !(coupons ? validCouponCode(id) : /^[a-f0-9]{32}$/.test(id))))
       ) {
         throw new OperationsError("Identificador inválido.");
+      }
+      let code = "";
+      if (coupons && !id && draft?.code !== undefined) {
+        if (typeof draft.code !== "string")
+          throw new OperationsError("Código de cupom inválido.");
+        code = normalizeCouponCode(draft.code);
+        if (code && !validCouponCode(code))
+          throw new OperationsError(
+            "Use de 3 a 40 caracteres no código do cupom, com letras, números, hífen ou sublinhado.",
+          );
       }
       const ref = db
         .collection(resource.collection)
         .doc(
           id ??
             (coupons
-              ? "GB-" + randomBytes(6).toString("hex").toUpperCase()
+              ? code || "GB-" + randomBytes(6).toString("hex").toUpperCase()
               : randomUUID().replaceAll("-", "")),
         );
       let input: Record<string, unknown> = {};
@@ -87,7 +102,7 @@ export function createSalesAdminRouter(deps: {
           throw new OperationsError((error as Error).message);
         }
       }
-      const result = await db.runTransaction(async (tx) => {
+      const transaction = db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data();
         if (id && (!current || current.revision !== revision)) {
           throw new OperationsError(
@@ -95,6 +110,8 @@ export function createSalesAdminRouter(deps: {
             409,
           );
         }
+        if (coupons && !id && current)
+          throw new OperationsError(COUPON_CODE_IN_USE, 409);
         if (remove) {
           const retain = await prepareCatalogRetention(
             db,
@@ -135,13 +152,33 @@ export function createSalesAdminRouter(deps: {
         const row = {
           ...input,
           ...(coupons
-            ? { code: ref.id, used: current?.used ?? 0 }
+            ? {
+                code: ref.id,
+                used: current?.used ?? 0,
+                ...(!id
+                  ? { instanceId: randomUUID() }
+                  : current?.instanceId
+                    ? { instanceId: current.instanceId }
+                    : {}),
+              }
             : { id: ref.id }),
           revision: randomUUID().replaceAll("-", ""),
         };
         if (id) tx.set(ref, row);
         else tx.create(ref, row);
         return row;
+      });
+      const result = await transaction.catch((error: unknown) => {
+        // Firestore may report an existing document at commit if two creates race.
+        if (
+          coupons &&
+          !id &&
+          error instanceof Error &&
+          "code" in error &&
+          error.code === 6
+        )
+          throw new OperationsError(COUPON_CODE_IN_USE, 409);
+        throw error;
       });
       res.json({ row: result });
     })().catch(next);

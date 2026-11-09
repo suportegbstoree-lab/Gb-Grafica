@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { formatMoney } from "../lib/commerce";
 import {
   couponAvailable,
+  COUPON_CODE_IN_USE,
+  COUPON_CODE_MAX_LENGTH,
   type CouponDraft,
   type SalesCoupon,
 } from "../lib/salesCoupons";
@@ -196,8 +198,12 @@ export function CouponsPanel({
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [truncated, setTruncated] = useState(false);
-  const change = (patch: Partial<CouponDraft>) =>
+  const codeInUse = Boolean(draft && !previous && error === COUPON_CODE_IN_USE);
+  const codeErrorId = React.useId();
+  const change = (patch: Partial<CouponDraft>) => {
+    if (codeInUse && patch.code !== undefined) setError("");
     setDraft((current) => (current ? { ...current, ...patch } : undefined));
+  };
 
   async function load() {
     const result = await api.coupons();
@@ -259,7 +265,7 @@ export function CouponsPanel({
           Novo cupom
         </button>
       </div>
-      {error && (
+      {error && !codeInUse && (
         <p role="alert" className="text-sm text-red-300">
           {error}{" "}
           <button
@@ -289,6 +295,34 @@ export function CouponsPanel({
             {previous ? `Editar ${previous.code}` : "Novo cupom"}
           </h3>
           <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
+            {!previous && (
+              <label className="text-sm sm:col-span-2">
+                Código do cupom
+                <input
+                  className={field}
+                  maxLength={COUPON_CODE_MAX_LENGTH}
+                  value={draft.code ?? ""}
+                  onChange={(event) => change({ code: event.target.value })}
+                  placeholder="Ex.: GRAFICA10"
+                  aria-invalid={codeInUse}
+                  aria-describedby={codeInUse ? codeErrorId : undefined}
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                />
+                {codeInUse && (
+                  <span
+                    id={codeErrorId}
+                    role="alert"
+                    className="mt-1 block text-xs text-red-300"
+                  >
+                    {error}
+                  </span>
+                )}
+                <span className="mt-1 block text-xs text-gray-400">
+                  Deixe em branco para gerar um código automaticamente.
+                </span>
+              </label>
+            )}
             <label className="text-sm sm:col-span-2">
               Descrição do cupom
               <input
@@ -417,7 +451,10 @@ export function CouponsPanel({
               type="button"
               className={secondary}
               disabled={busy}
-              onClick={() => setDraft(undefined)}
+              onClick={() => {
+                setDraft(undefined);
+                setError("");
+              }}
             >
               Cancelar
             </button>
@@ -427,7 +464,7 @@ export function CouponsPanel({
                 busy || (draft.scope !== "cart" && !draft.targets.length)
               }
             >
-              {previous ? "Salvar cupom" : "Gerar cupom"}
+              Salvar cupom
             </button>
           </div>
         </form>

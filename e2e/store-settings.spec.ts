@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 test('produtos podem entrar e sair dos destaques e o banner acompanha a seleção', async ({ page }) => {
+  await page.route('**/logo.png', route => route.fulfill({
+    path: 'e2e/fixtures/editor-cover.png',
+    contentType: 'image/png',
+  }));
   await page.goto('/__e2e/admin');
   await page.getByRole('button', { name: 'Adicionar a destaque', exact: true }).first().click();
   await expect(page.getByRole('button', { name: 'Remover de destaque', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -13,6 +17,8 @@ test('produtos podem entrar e sair dos destaques e o banner acompanha a seleçã
   await page.getByRole('link', { name: 'Voltar para a Loja' }).click();
   const banner = page.getByRole('region', { name: 'Destaques', exact: true });
   await expect(banner.getByRole('button', { name: 'Mostrar Carimbo', exact: true })).toBeVisible();
+  await banner.getByRole('button', { name: 'Mostrar Impressão com Amor e Cuidado', exact: true }).click();
+  await expect(banner.getByRole('img', { name: 'Impressão com Amor e Cuidado', exact: true })).toHaveAttribute('src', '/logo.png');
   await banner.getByRole('button', { name: 'Mostrar Livro de Receitas Personalizado', exact: true }).click();
   await expect(banner.getByRole('heading', { name: 'Livro de Receitas Personalizado', exact: true })).toBeVisible();
   await banner.getByRole('button', { name: 'Ver produto', exact: true }).click();

@@ -1,5 +1,5 @@
 import { quoteCoupon } from '../services/salesService';
-import type { AppliedCoupon } from '../lib/salesCoupons';
+import { COUPON_CODE_MAX_LENGTH, type AppliedCoupon } from '../lib/salesCoupons';
 import CatalogProductCard from '../components/CatalogProductCard';
 import BundleConfigurator from '../components/BundleConfigurator';
 import CustomerProfile from '../components/CustomerProfile';
@@ -72,6 +72,7 @@ import type { ShippingQuoteResponse } from '../lib/shipping';
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
 interface HomeSlide {
+  branding?: boolean;
   productId?: string;
   subtitle?: string;
   image?: string;
@@ -313,7 +314,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   const slides = useMemo<HomeSlide[]>(() => {
     const highlighted = featuredProducts(products).map(product => ({ productId: product.id, image: product.imagem, title: product.nome, subtitle: product.desc, link: '' }));
     const availableSlides: HomeSlide[] = [
-      ...(highlighted.length ? highlighted : [{ image: config.banner_principal, title: config.banner_titulo, link: '' }]),
+      { branding: true, image: config.banner_principal, title: config.banner_titulo, subtitle: config.banner_subtitulo, link: '' },
+      ...highlighted,
       ...promotions.filter(promotion => promotionActiveAt(promotion, promotionNow)).map(promotion => ({
         image: promotion.imagem,
         title: promotion.titulo,
@@ -326,7 +328,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     return availableSlides.length > 0
       ? availableSlides
       : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
-  }, [config.banner_principal, config.banner_titulo, promotions, products, promotionNow]);
+  }, [config.banner_principal, config.banner_titulo, config.banner_subtitulo, promotions, products, promotionNow]);
 
   const visibleProducts = useMemo(() => ((categoryId || query.get('categoria')) && !routeCategory) ? [] : filterCatalog(products, promotions, ratings, { section, category: routeCategory?.nome, query: searchTerm, min: query.get('min') ? parseMoneyToCents(query.get('min')) ?? undefined : undefined, max: query.get('max') ? parseMoneyToCents(query.get('max')) ?? undefined : undefined, rating: Number(query.get('avaliacao')) || undefined }, promotionNow), [products,promotions,ratings,section,routeCategory,categoryId,searchTerm,location.search,promotionNow]);
 
@@ -714,6 +716,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   };
 
   const activeSlide = slides[currentSlide] || slides[0];
+  const imageOnlyBanner = activeSlide.branding && !activeSlide.title?.trim() && !activeSlide.subtitle?.trim() && !config.banner_botao?.trim();
   const handleBannerAction = () => {
     if (activeSlide.productId) {
       navigate(`/produto/${encodeURIComponent(activeSlide.productId)}`);
@@ -957,8 +960,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
           >
             <img
               src={activeSlide.image}
-              alt={activeSlide.title || `Destaque ${currentSlide + 1}`}
-              className={activeSlide.productId ? "h-full w-full bg-gray-50 object-contain" : "w-full h-full object-cover"}
+              alt={activeSlide.title || (activeSlide.branding ? "Banner da GB Gráfica" : `Destaque ${currentSlide + 1}`)}
+              className={activeSlide.productId || activeSlide.branding ? "h-full w-full bg-gray-50 object-contain" : "w-full h-full object-cover"}
               referrerPolicy="no-referrer"
               fetchPriority="high"
               decoding="async"
@@ -971,11 +974,11 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                 }
               }}
             />
-            <div className="absolute inset-0 bg-black/60"></div>
+            {!imageOnlyBanner && <div className="absolute inset-0 bg-black/60" />}
           </motion.div>
         </AnimatePresence>
 
-        <div className="absolute inset-0 flex items-center justify-center">
+        {!imageOnlyBanner && <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center space-y-6 px-4 max-w-4xl">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
@@ -1022,7 +1025,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
               </button>
             </motion.div>
           </div>
-        </div>
+        </div>}
 
         {/* Carousel Indicators */}
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
@@ -1042,7 +1045,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
               type="button"
               key={idx}
               onClick={() => setCurrentSlide(idx)}
-              aria-label={`Mostrar ${slide.title || `destaque ${idx + 1}`}`}
+              aria-label={`Mostrar ${slide.title || (slide.branding ? "banner da loja" : `destaque ${idx + 1}`)}`}
               aria-current={currentSlide === idx}
               className={cn(
                 "h-1.5 transition-all duration-500 rounded-full",
@@ -1600,7 +1603,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
                   {user && <section className="space-y-2 rounded-xl border border-gray-200 p-3" aria-label="Cupom de desconto">
                     <label className="block text-sm font-bold text-gray-700">Cupom de desconto
-                      <input className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={couponInput} maxLength={15}
+                      <input className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={couponInput} maxLength={COUPON_CODE_MAX_LENGTH}
                         onChange={event => setCouponInput(event.target.value.toUpperCase())} placeholder="Digite o código"
                         onKeyDown={event => {
                           if (event.key === 'Enter' && couponInput.trim() && !isCheckingOut) {

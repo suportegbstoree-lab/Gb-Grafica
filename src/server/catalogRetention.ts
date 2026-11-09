@@ -95,24 +95,37 @@ export async function prepareCatalogRetention(
   };
 }
 
-export async function scheduleCatalogAssetRemoval(
+export function scheduleCatalogAssetRemoval(
   db: Firestore,
   path: string,
   now = Date.now(),
 ) {
-  if (!isRetainedAssetPath(path))
+  return scheduleCatalogAssetsRemoval(db, [path], now);
+}
+
+export async function scheduleCatalogAssetsRemoval(
+  db: Firestore,
+  paths: string[],
+  now = Date.now(),
+) {
+  if (paths.some((path) => !isRetainedAssetPath(path)))
     throw new OperationsError("Caminho de arquivo inválido.");
-  const ref = assetRef(db, path);
+  const assets = [...new Set(paths)].map((path) => ({
+    path,
+    ref: assetRef(db, path),
+  }));
   await db.runTransaction(async (tx) => {
-    const old = (await tx.get(ref)).data();
-    // Duplicate browser cleanup requests do not extend the original deadline.
-    if (!old)
-      tx.create(ref, {
-        path,
-        removedAt: now,
-        cleanupAt: now + CATALOG_RETENTION_MS,
-        state: "pending",
-      });
+    const jobs = await Promise.all(assets.map(({ ref }) => tx.get(ref)));
+    // Duplicate cleanup requests do not extend the original deadline.
+    assets.forEach(({ path, ref }, index) => {
+      if (!jobs[index].exists)
+        tx.create(ref, {
+          path,
+          removedAt: now,
+          cleanupAt: now + CATALOG_RETENTION_MS,
+          state: "pending",
+        });
+    });
   });
 }
 

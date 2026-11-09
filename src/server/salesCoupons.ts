@@ -3,6 +3,8 @@ import type { Firestore, Transaction } from "firebase-admin/firestore";
 import {
   allocateCoupon,
   couponAvailable,
+  normalizeCouponCode,
+  validCouponCode,
   type AppliedCoupon,
   type CouponLine,
   type SalesCoupon,
@@ -59,11 +61,11 @@ export async function selectCoupon(
 ): Promise<CouponSelection | null> {
   if (requested !== undefined && typeof requested !== "string")
     throw new CouponError("Código de cupom inválido.");
-  const code = (requested as string | undefined)?.trim().toUpperCase() || "";
+  const code = normalizeCouponCode((requested as string | undefined) ?? "");
   const coupons = db.collection(COUPONS);
   let candidates: SalesCoupon[];
   if (code) {
-    if (!/^GB-[A-F0-9]{12}$/.test(code))
+    if (!validCouponCode(code))
       throw new CouponError("Código de cupom inválido.");
     const ref = coupons.doc(code);
     const data = (await (tx ? tx.get(ref) : ref.get())).data() as
@@ -169,6 +171,7 @@ export function reserveCoupon(
   tx.create(db.collection(COUPON_HOLDS).doc(orderId), {
     code: coupon.code,
     buyerKeys,
+    ...(coupon.instanceId ? { instanceId: coupon.instanceId } : {}),
     expiresAt: Date.parse(expiresAt),
     providerAttempted: false,
     reviewAt: Date.parse(expiresAt) + 10 * 60_000,
@@ -214,7 +217,7 @@ export async function settleCoupon(
         db.collection(FIRST_PURCHASES).doc(key),
       );
       const claims = await Promise.all(keys.map((ref) => tx.get(ref)));
-      if (coupon && coupon.used > 0)
+      if (coupon && coupon.used > 0 && coupon.instanceId === hold.instanceId)
         tx.update(couponRef, { used: coupon.used - 1 });
       claims.forEach((claim, i) => {
         if (claim.data()?.orderId === orderId) tx.delete(keys[i]);

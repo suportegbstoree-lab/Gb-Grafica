@@ -1,10 +1,23 @@
 {
-	"name": "GB Gráfica - Loja Online",
-	"description": "Loja online de produtos gráficos, como cartões de visita, flyers, banners e outros materiais promocionais. A loja oferece uma variedade de opções de personalização e impressão de alta qualidade para atender às necessidades dos clientes.",
-	"version": "1.0.0",
-	"author": "Belagamba. Eduardo",
-	"contact": {
-		"email": "belagamba@pm.me"
+	"author": {
+		"name": "Eduardo Belagamba",
+		"email": "belagamba@pm.me",
+		"url": "https://github.com/Hendo3"
 	},
-	"requestFramePermissions": []
+	"service": "GB Gráfica",
+	"description": {
+		"pt-BR": "GB Gráfica é uma empresa especializada em impressão digital e offset, oferecendo serviços de alta qualidade para atender às necessidades de seus clientes.",
+		"en-US": "GB Gráfica is a company specialized in digital and offset printing, offering high-quality services to meet the needs of its clients."
+	},
+	"website": {
+		"name": "GB Gráfica",
+		"url": "www.gblgrafica.com.br"
+	},
+	"logo": {
+		"url": "https://postimg.cc/Cdz5p7Kd",
+		"alt": "GB Gráfica Logo"
+	},
+	"category": "Printing Services",
+	"tags": ["printing", "digital printing", "offset printing", "graphic design", "branding", "marketing materials", "custom printing", "business cards", "flyers", "brochures", "posters", "banners", "signage", "promotional products", "packaging", "labels", "stationery", "large format printing", "photo printing", "canvas printing"],
+	"version": "0.1.6-beta"
 }

@@ -2,6 +2,7 @@ import { createSalesAdminApi } from '../services/salesService';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
 import StaffPdfFixture from './StaffPdfFixture';
+import type { StaffPdfApi } from '../services/staffPdfService';
 import { currentWorkTask } from '../services/workContext';
 import { EMPTY_PROFILE } from '../lib/customerProfile';
 import type { CustomerApi } from '../services/customerService';
@@ -28,6 +29,30 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
 import Home, { type PersonalizationModelStorage } from '../pages/Home';
 import Admin, { type AdminAssetStorage, type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
+
+const productPdfLibraryFixture: StaffPdfApi = {
+  ...emptyPdfLibrary,
+  list: async () => ({
+    bases: [
+      { id: 'z'.repeat(32), name: 'Zebra.pdf', revision: 'a'.repeat(32), pageCount: 1, pages: [] },
+      { id: 'b'.repeat(32), name: 'Álbum.pdf', revision: 'a'.repeat(32), pageCount: 1, pages: [] },
+    ],
+    layouts: [
+      { id: 'c'.repeat(32), name: 'Zebra_template', revision: 'd'.repeat(32), layout: defaultPdfLayout() },
+      { id: 'e'.repeat(32), name: 'Álbum_template', revision: 'd'.repeat(32), layout: defaultPdfLayout() },
+    ],
+    truncated: false,
+  }),
+  prepareProductCopy: async (productId, base) => {
+    const response = await fetch('/__e2e/product-pdf-copy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId, base }),
+    });
+    if (!response.ok) throw new Error('Falha na fixture de vínculo.');
+    return response.json();
+  },
+};
 
 const FIXTURE_CONFIG: SiteConfig = {
   logo_url: '/logo.png',
@@ -366,7 +391,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         salesApi={salesApi}
         workClient={workClient}
         documentApi={documentApi}
-        pdfLibraryApi={emptyPdfLibrary}
+        pdfLibraryApi={new URLSearchParams(window.location.search).has('pdf-binding') ? productPdfLibraryFixture : emptyPdfLibrary}
         emailApi={fixtureEmailApi}
         activityApi={activityApi}
         operationsClient={operationsFixtureClient}

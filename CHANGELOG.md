@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-08
+## Última atualização: 2026-11-09
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -43,6 +43,15 @@ R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a S
 R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+
+## 2026-11-09 — Prévia de PDF, cadastro de produtos, banner e cupons
+
+- A personalização do cliente atualiza a prévia enquanto ele digita, usando o mesmo desenho da oficina. As páginas em resolução integral são geradas na confirmação.
+- O cadastro de produtos permite escolher um tipo de variação existente ou cadastrar e adicionar um novo na mesma tela.
+- Bases e moldes aparecem em ordem alfabética e podem ser filtrados pela lupa. Ao escolher a base, o painel sugere o molde correspondente e permite trocar o molde separadamente.
+- O vínculo copia o PDF e as letras no Storage em uma única chamada do editor. As prévias já cadastradas são reaproveitadas. Bases sem prévias precisam de uma leitura do PDF para gerá-las. Ao trocar apenas o molde, o editor reutiliza os arquivos da base vinculada.
+- O banner da identidade visual alterna no mesmo carrossel que os produtos em destaque e as promoções.
+- O administrador pode escolher o código do cupom ou deixar o sistema gerar um. A conferência ignora maiúsculas e minúsculas e recusa códigos cadastrados, inclusive de cupons inativos.
 
 ## 2026-11-08 — Cadastro de vendas, variações com SKU e cupons
 

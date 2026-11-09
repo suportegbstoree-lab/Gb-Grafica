@@ -93,6 +93,8 @@ async function scenario(run: (s: any) => Promise<void>) {
       ],
     ]),
     objects = new Map<string, { bytes: Buffer; meta: any }>();
+  const downloads: string[] = [],
+    signatures: string[] = [];
   let gen = 1,
     revoked = false,
     clock = Date.now();
@@ -107,6 +109,7 @@ async function scenario(run: (s: any) => Promise<void>) {
         return [v.meta];
       },
       download: async (range?: any) => {
+        downloads.push(name);
         const v = objects.get(name);
         if (!v) throw Object.assign(new Error("missing"), { code: 404 });
         if (opts?.generation && opts.generation !== v.meta.generation)
@@ -132,7 +135,25 @@ async function scenario(run: (s: any) => Promise<void>) {
         if (!objects.delete(name))
           throw Object.assign(new Error("missing"), { code: 404 });
       },
-      getSignedUrl: async () => [`https://signed.example.test/${name}`],
+      copy: async (destination: { name: string }, options: any) => {
+        const source = objects.get(name);
+        assert.ok(source);
+        assert.equal(opts?.generation, source.meta.generation);
+        assert.equal(options.preconditionOpts?.ifGenerationMatch, 0);
+        assert.ok(!objects.has(destination.name));
+        objects.set(destination.name, {
+          bytes: source.bytes,
+          meta: {
+            ...options,
+            size: source.bytes.length,
+            generation: String(++gen),
+          },
+        });
+      },
+      getSignedUrl: async () => {
+        signatures.push(name);
+        return [`https://signed.example.test/${name}`];
+      },
     }),
   };
   const authorize = async (req: express.Request) => {
@@ -177,6 +198,8 @@ async function scenario(run: (s: any) => Promise<void>) {
     await run({
       ...memory,
       objects,
+      downloads,
+      signatures,
       request,
       services,
       advance: (ms: number) => {
@@ -231,7 +254,7 @@ test("JSON imports preserve existing molds, malformed maps have no writes, edits
     });
     assert.equal(response.status, 200);
     assert.equal(docs.has(`_staffPdfLayouts/${id}`), false);
-    assert.ok([...docs.keys()].some(key => key.startsWith('_catalogTrash/')));
+    assert.ok([...docs.keys()].some((key) => key.startsWith("_catalogTrash/")));
     const before = docs.size;
     await request("/library/layouts/import", "manager", {
       templates: { good: defaultPdfLayout(), bad: { color: "red" } },
@@ -811,3 +834,89 @@ test("PDF categories isolate identical filenames and retain the original categor
     assert.equal((await create("Cadernetas", "f")).status, 201);
     assert.equal(docs.get(`_staffPdfBases/${b.id}`).status, "ready");
   }));
+
+test("product binding copies catalog PDF, previews and initials without client downloads", async () =>
+  scenario(
+    async ({ request, docs, objects, services, downloads, signatures }) => {
+      const id = "b".repeat(32);
+      const pdfPath = `catalog/templates/source/${id}.pdf`;
+      const pagePath = `catalog/products/source/${"c".repeat(32)}.webp`;
+      const letterPath = `catalog/products/source/${"d".repeat(32)}.png`;
+      const url = (path: string) =>
+        `https://firebasestorage.googleapis.com/v0/b/${services.bucket.name}/o/${encodeURIComponent(path)}?alt=media`;
+      const file = await pdf(1);
+      for (const [path, type, bytes] of [
+        [pdfPath, "application/pdf", file],
+        [pagePath, "image/webp", Buffer.from("cover")],
+        [letterPath, "image/png", Buffer.from("initial")],
+      ] as const)
+        objects.set(path, {
+          bytes,
+          meta: {
+            generation: "25",
+            contentType: type,
+            size: bytes.length,
+            metadata: { firebaseStorageDownloadTokens: "old-token" },
+          },
+        });
+      docs.set("anuncios/source", {
+        modelosPdf: [
+          {
+            id,
+            path: pdfPath,
+            name: "Flores.pdf",
+            pages: [url(pagePath)],
+            alphabet: {
+              folderName: "Flores",
+              sizePercent: 70,
+              letters: { A: { path: letterPath, url: url(letterPath) } },
+            },
+          },
+        ],
+      });
+      const base = await resolveStaffPdfBase(services, `catalog_source_${id}`);
+      const path = `/library/bases/${base.id}/product-copy`;
+      const body = { productId: "target", baseRevision: base.revision };
+      assert.equal((await request(path, "generator", body)).status, 403);
+      assert.equal(
+        (await request(path, "root", { ...body, baseRevision: "stale" }))
+          .status,
+        409,
+      );
+      assert.equal(objects.size, 3);
+      const response = await request(path, "root", body);
+      assert.equal(response.status, 200);
+      const { template, assets, sourceUrl } = await response.json();
+      assert.equal(sourceUrl, undefined);
+      assert.equal(template.pages.length, 1);
+      assert.match(
+        decodeURIComponent(template.pages[0]),
+        /catalog\/products\/target\//,
+      );
+      assert.equal(template.alphabet.sizePercent, 70);
+      assert.equal(assets.length, 3);
+      assert.equal(
+        [...docs.keys()].filter((key) =>
+          key.startsWith("_catalogAssetCleanup/"),
+        ).length,
+        3,
+      );
+      assert.deepEqual(objects.get(template.path).bytes, file);
+      assert.equal(
+        objects.get(template.path).meta.metadata.firebaseStorageDownloadTokens,
+        undefined,
+      );
+      assert.equal(
+        objects.get(template.alphabet.letters.A.path).bytes.toString(),
+        "initial",
+      );
+      assert.ok(
+        template.alphabet.letters.A.url.includes(
+          objects.get(template.alphabet.letters.A.path).meta.metadata
+            .firebaseStorageDownloadTokens,
+        ),
+      );
+      assert.deepEqual(downloads, []);
+      assert.deepEqual(signatures, []);
+    },
+  ));

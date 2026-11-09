@@ -33,7 +33,10 @@ async function request<T>(
 
 export interface SalesAdminApi {
   variationTypes(): Promise<{ rows: VariationType[]; truncated: boolean }>;
-  saveVariationType(name: string, previous?: VariationType): Promise<void>;
+  saveVariationType(
+    name: string,
+    previous?: VariationType,
+  ): Promise<VariationType>;
   deleteVariationType(row: VariationType): Promise<void>;
   coupons(): Promise<{ rows: SalesCoupon[]; truncated: boolean }>;
   saveCoupon(draft: CouponDraft, previous?: SalesCoupon): Promise<void>;
@@ -48,11 +51,16 @@ export function createSalesAdminApi(
     variationTypes: async () =>
       request(prefix + "/variation-types", await token()),
     saveVariationType: async (name, previous) => {
-      await request(prefix + "/variation-types", await token(), {
-        id: previous?.id,
-        revision: previous?.revision,
-        draft: { name },
-      });
+      const { row } = await request<{ row: VariationType }>(
+        prefix + "/variation-types",
+        await token(),
+        {
+          id: previous?.id,
+          revision: previous?.revision,
+          draft: { name },
+        },
+      );
+      return row;
     },
     deleteVariationType: async (row) => {
       await request(prefix + "/variation-types", await token(), {

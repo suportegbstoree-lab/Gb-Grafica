@@ -11,6 +11,7 @@ import {
   MAX_VARIATION_SKU,
   productSku,
   replaceProductOption,
+  variationTypeName,
   type VariationType,
 } from "../lib/productSales";
 import type { Anuncio, ProductAttribute } from "../types";
@@ -403,18 +404,22 @@ export default function ProductOptionEditor({
   api,
   onUpload,
   busy,
+  onBusy,
 }: {
   product: Partial<Anuncio>;
   onChange: (value: Partial<Anuncio>) => void;
   api: SalesAdminApi;
   onUpload: (attribute: string, option: string, file: File) => void;
   busy: boolean;
+  onBusy: (busy: boolean) => void;
 }) {
   const [types, setTypes] = useState<VariationType[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const [typeName, setTypeName] = useState("");
+  const [savingType, setSavingType] = useState(false);
   const [bulkPrice, setBulkPrice] = useState("");
   const [reload, setReload] = useState(0);
   useEffect(() => {
@@ -439,6 +444,8 @@ export default function ProductOptionEditor({
       current = false;
     };
   }, [api, reload]);
+  const latestProduct = React.useRef(product);
+  latestProduct.current = product;
   const attributes = product.atributos || [];
   const choices = types.filter(
     (type) =>
@@ -449,6 +456,46 @@ export default function ProductOptionEditor({
             type.name.toLocaleLowerCase("pt-BR"),
       ),
   );
+  function addType(type: VariationType) {
+    const current = latestProduct.current;
+    onChange({
+      ...current,
+      atributos: [
+        ...(current.atributos || []),
+        { nome: type.name, tipoId: type.id, opcoes: [] },
+      ],
+    });
+    setAdding(false);
+    setTypeName("");
+  }
+  async function createType() {
+    setSavingType(true);
+    onBusy(true);
+    setError("");
+    try {
+      const name = variationTypeName(typeName);
+      if (
+        attributes.some(
+          (row) =>
+            row.nome.toLocaleLowerCase("pt-BR") ===
+            name.toLocaleLowerCase("pt-BR"),
+        )
+      )
+        throw new Error("Este produto já usa uma variação com esse nome.");
+      const type = await api.saveVariationType(name);
+      setTypes((current) =>
+        [...current, type].sort((a, b) =>
+          a.name.localeCompare(b.name, "pt-BR"),
+        ),
+      );
+      addType(type);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setSavingType(false);
+      onBusy(false);
+    }
+  }
   const keys = generateProductCombinations(attributes);
   const additive = product.precificacao === "adicionais";
   const view = {
@@ -457,7 +504,7 @@ export default function ProductOptionEditor({
     atributos: attributes,
   } as Anuncio;
   return (
-    <fieldset disabled={busy} className="min-w-0 space-y-4">
+    <fieldset disabled={busy || savingType} className="min-w-0 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-400">
           Combine até dois tipos de variação. As imagens aqui representam as
@@ -486,50 +533,76 @@ export default function ProductOptionEditor({
         </p>
       )}
       {adding && (
-        <div className="flex items-end gap-3">
-          <label className="min-w-0 flex-1 text-sm">
-            Tipo de variação
-            <select
-              aria-label="Tipo de variação"
-              className={field + " mt-1"}
-              value=""
-              disabled={loading || !choices.length}
-              onChange={(event) => {
-                const type = choices.find(
-                  (row) => row.id === event.target.value,
-                );
-                if (!type) return;
-                onChange({
-                  ...product,
-                  atributos: [
-                    ...attributes,
-                    { nome: type.name, tipoId: type.id, opcoes: [] },
-                  ],
-                });
+        <div className="space-y-3">
+          <div className="flex items-end gap-3">
+            <label className="min-w-0 flex-1 text-sm">
+              Tipo de variação
+              <select
+                aria-label="Tipo de variação"
+                className={field + " mt-1"}
+                value=""
+                disabled={loading || !choices.length}
+                onChange={(event) => {
+                  const type = choices.find(
+                    (row) => row.id === event.target.value,
+                  );
+                  if (type) {
+                    setError("");
+                    addType(type);
+                  }
+                }}
+              >
+                <option value="">
+                  {loading
+                    ? "Carregando tipos…"
+                    : choices.length
+                      ? "Selecione um tipo cadastrado"
+                      : "Nenhum tipo cadastrado disponível"}
+                </option>
+                {choices.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className={button}
+              onClick={() => {
                 setAdding(false);
+                setTypeName("");
+                setError("");
               }}
             >
-              <option value="">
-                {loading
-                  ? "Carregando tipos…"
-                  : choices.length
-                    ? "Selecione um tipo cadastrado"
-                    : "Cadastre um tipo em Tipos de variação"}
-              </option>
-              {choices.map((type) => (
-                <option key={type.id} value={type.id}>
-                  {type.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className={button}
-            onClick={() => setAdding(false)}
-          >
-            Cancelar
-          </button>
+              Cancelar
+            </button>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="min-w-40 flex-1 text-sm">
+              Novo tipo de variação
+              <input
+                className={field + " mt-1"}
+                value={typeName}
+                maxLength={80}
+                onChange={(event) => setTypeName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    if (!loading && typeName.trim()) void createType();
+                  }
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className={button}
+              disabled={loading || !typeName.trim()}
+              onClick={() => void createType()}
+            >
+              {savingType ? "Cadastrando…" : "Cadastrar e adicionar"}
+            </button>
+          </div>
         </div>
       )}
       {error && (

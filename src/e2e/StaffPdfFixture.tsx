@@ -63,6 +63,7 @@ export default function StaffPdfFixture() {
         layouts: structuredClone(layouts),
         truncated: false,
       }),
+      prepareProductCopy: async () => { throw new Error("Use o editor de produtos para vincular."); },
       baseFile: async (id) => {
         if (files.has(id)) return files.get(id)!;
         const d = await PDFDocument.create();

@@ -209,3 +209,35 @@ test("one verified email cannot reserve two simultaneous first purchases across 
     code,
   );
 });
+
+test("a hold from a deleted coupon cannot release a use on a new coupon with the same code", async () => {
+  const code = "GRAFICA_10";
+  const ref = `${COUPONS}/${code}`;
+  const { db, docs } = memoryFirestore([
+    [ref, { ...coupon, code, instanceId: "old" }],
+  ]);
+  await db.runTransaction(async (tx) => {
+    const selection = await selectCoupon(
+      db,
+      buyer,
+      lines,
+      "  grafica_10  ",
+      tx,
+    );
+    assert.equal(selection?.applied.code, code);
+    reserveCoupon(
+      db,
+      tx,
+      "old-order",
+      selection!,
+      new Date(Date.now() + 60_000).toISOString(),
+    );
+    tx.create(db.collection("orders").doc("old-order"), {
+      paymentStatus: "pendente",
+    });
+  });
+  docs.set(ref, { ...coupon, code, used: 1, instanceId: "new" });
+  await settleCoupon(db, "old-order", "release");
+  assert.equal(docs.get(ref)?.used, 1);
+  assert.ok(!docs.has(`${COUPON_HOLDS}/old-order`));
+});

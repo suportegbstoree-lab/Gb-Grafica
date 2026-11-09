@@ -1,6 +1,7 @@
 import {
   prepareCatalogRetention,
   scheduleCatalogAssetRemoval,
+  scheduleCatalogAssetsRemoval,
   scheduleRetiredCatalogDocument,
 } from "./catalogRetention.js";
 import express from "express";
@@ -28,10 +29,18 @@ import {
   staffPdfStoragePath,
   type StaffPdfBase,
 } from "../lib/staffPdf.js";
-import { isTemplatePath } from "../lib/pdfTemplate.js";
+import { isTemplatePath, type ProductPdfTemplate } from "../lib/pdfTemplate.js";
+import {
+  isAllowedCatalogImage,
+  isCatalogImagePath,
+  isSafeCatalogProductId,
+} from "../lib/catalogImage.js";
+import { retainedAssetPath } from "../lib/catalogRetention.js";
+import { uploadBatch } from "../lib/uploadBatch.js";
 import {
   firstInitial,
   matchingAlphabetName,
+  isAlphabetImagePath,
 } from "../lib/decorativeInitial.js";
 
 export const pdfLibraryId = (name: string) =>
@@ -64,7 +73,12 @@ export async function resolveStaffPdfBase(
   services: ReturnType<StaffDocumentDeps["services"]>,
   id: unknown,
 ): Promise<
-  StaffPdfBase & { path: string; generation?: string; alphabet?: any }
+  StaffPdfBase & {
+    path: string;
+    generation?: string;
+    alphabet?: any;
+    previewUrls?: string[];
+  }
 > {
   if (typeof id !== "string") throw new OperationsError("Base inválida.");
   const catalog = /^catalog_([A-Za-z0-9_-]{1,100})_([a-f0-9]{32})$/.exec(id);
@@ -79,6 +93,7 @@ export async function resolveStaffPdfBase(
       ...catalogPdfBase(catalog[1], t),
       path: t.path,
       alphabet: t.alphabet,
+      previewUrls: t.pages,
     };
   }
   if (!validDocumentId(id)) throw new OperationsError("Base inválida.");
@@ -287,6 +302,176 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         responseDisposition: "inline",
       });
       res.json({ url, base: { id: base.id, revision: base.revision } });
+    }),
+  );
+  router.post(
+    "/bases/:id/product-copy",
+    action(async (req, res) => {
+      const actor = res.locals.user as WorkActor;
+      const { productId, baseRevision } = req.body || {};
+      if (typeof productId !== "string" || !isSafeCatalogProductId(productId))
+        throw new OperationsError("Produto inválido.");
+      const storageServices = services();
+      const { db, bucket } = storageServices;
+      const permissions = actor.permissions || [];
+      if (!actor.admin && !permissions.includes("products.manage")) {
+        if (
+          !permissions.includes("products.images") ||
+          !permissions.includes("products.personalization") ||
+          !(await db.collection("anuncios").doc(productId).get()).exists
+        )
+          throw new OperationsError(
+            "Sua função não permite vincular bases ao produto.",
+            403,
+          );
+      }
+
+      const base = await resolveStaffPdfBase(storageServices, req.params.id);
+      if (base.revision !== baseRevision)
+        throw new OperationsError(
+          "A base mudou. Carregue a biblioteca novamente.",
+          409,
+        );
+      const source = bucket.file(
+        base.path,
+        base.generation ? { generation: base.generation } : undefined,
+      );
+      const [meta] = await source.getMetadata();
+      if (
+        meta.contentType !== "application/pdf" ||
+        !meta.generation ||
+        !Number.isFinite(Number(meta.size)) ||
+        Number(meta.size) < 8 ||
+        Number(meta.size) > STAFF_DOCUMENT_MAX_BYTES
+      )
+        throw new OperationsError("Base PDF inválida.");
+      const original = bucket.file(base.path, {
+        generation: String(meta.generation),
+      });
+
+      // Only reuse previews that already belong to this source product in this bucket.
+      const pagePaths = (base.previewUrls || []).map((url) =>
+        retainedAssetPath(url, bucket.name),
+      );
+      const reusablePages =
+        base.source === "catalog" &&
+        base.productId &&
+        pagePaths.length === base.pageCount &&
+        pagePaths.every(
+          (path) => path && isCatalogImagePath(path, base.productId),
+        )
+          ? (pagePaths as string[])
+          : [];
+      const [sourceUrl] = reusablePages.length
+        ? []
+        : await original.getSignedUrl({
+            action: "read",
+            expires: now() + 300000,
+            responseDisposition: "inline",
+          });
+      const alphabet = base.alphabet;
+      const letterPaths = Object.entries<{ path: string }>(
+        alphabet?.letters || {},
+      );
+      if (
+        alphabet &&
+        (!matchingAlphabetName(base.name, alphabet.folderName) ||
+          letterPaths.length > 26 ||
+          !letterPaths.every(
+            ([letter, value]) =>
+              /^[A-Z]$/.test(letter) &&
+              (base.source === "internal"
+                ? typeof value?.path === "string" &&
+                  new RegExp(
+                    `^staff-pdf-bases/${base.id}/letters/[a-f0-9]{32}[.]png$`,
+                  ).test(value.path)
+                : isAlphabetImagePath(value?.path, base.productId || "")),
+          ))
+      )
+        throw new OperationsError("Alfabeto da base inválido.");
+
+      const id = revision();
+      const path = `catalog/templates/${productId}/${id}.pdf`;
+      const name = base.name.replace(/[.]pdf$/i, "").slice(0, 116) + ".pdf";
+      if (alphabet && !matchingAlphabetName(name, alphabet.folderName))
+        throw new OperationsError(
+          "O nome da base com alfabeto deve ter até 120 caracteres.",
+        );
+      const images = [
+        ...reusablePages,
+        ...letterPaths.map(([, value]) => value.path),
+      ].map((sourcePath) => {
+        const extension = sourcePath.split(".").at(-1);
+        const contentType =
+          extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+        const path = `catalog/products/${productId}/${revision()}.${extension}`;
+        const token = randomUUID();
+        const url = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket.name)}/o/${encodeURIComponent(path)}?alt=media&token=${token}`;
+        return { sourcePath, contentType, path, token, url };
+      });
+      const assets = [
+        { path, url: path },
+        ...images.map(({ path, url }) => ({ path, url })),
+      ];
+      // Publishing removes these jobs. A lost response or a partial copy leaves only expiring assets.
+      await scheduleCatalogAssetsRemoval(
+        db,
+        assets.map((asset) => asset.path),
+        now(),
+      );
+      await original.copy(bucket.file(path), {
+        contentType: "application/pdf",
+        cacheControl: "private,no-store",
+        metadata: { uploadedBy: actor.uid, originalName: name },
+        preconditionOpts: { ifGenerationMatch: 0 },
+      });
+      await uploadBatch(
+        images,
+        async ({ sourcePath, contentType, path, token }) => {
+          const [info] = await bucket.file(sourcePath).getMetadata();
+          if (
+            !info.generation ||
+            info.contentType !== contentType ||
+            !isAllowedCatalogImage(contentType, Number(info.size))
+          )
+            throw new OperationsError("Imagem da base inválida.");
+          await bucket
+            .file(sourcePath, { generation: String(info.generation) })
+            .copy(bucket.file(path), {
+              contentType,
+              cacheControl: "public,max-age=31536000,immutable",
+              metadata: {
+                uploadedBy: actor.uid,
+                firebaseStorageDownloadTokens: token,
+              },
+              preconditionOpts: { ifGenerationMatch: 0 },
+            });
+        },
+        { concurrency: 6, rollback: async () => undefined },
+      );
+      const template: ProductPdfTemplate = {
+        id,
+        path,
+        name,
+        pages: assets
+          .slice(1, 1 + reusablePages.length)
+          .map((asset) => asset.url),
+        ...(letterPaths.length
+          ? {
+              alphabet: {
+                folderName: alphabet.folderName,
+                sizePercent: alphabet.sizePercent,
+                letters: Object.fromEntries(
+                  letterPaths.map(([letter], index) => [
+                    letter,
+                    assets[1 + reusablePages.length + index],
+                  ]),
+                ),
+              },
+            }
+          : {}),
+      };
+      res.json({ template, sourceUrl, assets });
     }),
   );
   router.post(
