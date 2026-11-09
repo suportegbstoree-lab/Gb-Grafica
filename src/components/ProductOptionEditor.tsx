@@ -5,7 +5,10 @@ import {
   generateProductCombinations,
 } from "../lib/adminValidation";
 import { formatMoney, parseMoneyToCents } from "../lib/commerce";
-import { productPrice } from "../lib/productCustomization";
+import {
+  productPrice,
+  type ProductProductionAssets,
+} from "../lib/productCustomization";
 import {
   MAX_COMBINATION_SKU,
   MAX_VARIATION_SKU,
@@ -17,6 +20,14 @@ import {
 import type { Anuncio, ProductAttribute } from "../types";
 import type { SalesAdminApi } from "../services/salesService";
 import UploadInput from "./UploadInput";
+import ProductProductionEditor, {
+  type ProductProductionEditorProps,
+} from "./ProductProductionEditor";
+
+type ProductionEditorSettings = Omit<
+  ProductProductionEditorProps,
+  "product" | "onChange" | "optionLabel"
+>;
 
 const field =
   "min-w-0 w-full rounded-lg border border-gray-700 bg-black px-3 py-2 text-sm";
@@ -34,12 +45,14 @@ function OptionControls({
   onConfig,
   onUpload,
   additive,
+  productionEditor,
 }: {
   key?: string;
   attribute: ProductAttribute;
   option: string;
   config: Option;
   additive: boolean;
+  productionEditor: React.ReactNode;
   onRename: (value: string) => boolean;
   onRemove: () => void;
   onConfig: (patch: Partial<Option>) => void;
@@ -159,6 +172,19 @@ function OptionControls({
           </label>
         ))}
       </div>
+      <details className="rounded-lg border border-gray-700 p-2 text-xs">
+        <summary className="cursor-pointer">
+          Arte de produção da opção
+          <span className="ml-2 text-gray-400">
+            {config.moldePdf
+              ? config.moldePdf.pdf.name
+              : config.imagemBase
+                ? "Imagem-base própria"
+                : "Usar arte do produto"}
+          </span>
+        </summary>
+        <div className="mt-3">{productionEditor}</div>
+      </details>
     </div>
   );
 }
@@ -172,6 +198,8 @@ function VariationGroup({
   onChange,
   onUpload,
   onError,
+  production,
+  onProductionChange,
 }: {
   key?: string;
   attribute: ProductAttribute;
@@ -182,6 +210,12 @@ function VariationGroup({
   onChange: (value: Partial<Anuncio>) => void;
   onUpload: (attribute: string, option: string, file: File) => void;
   onError: (error: string) => void;
+  production: ProductionEditorSettings;
+  onProductionChange: (
+    index: number,
+    option: string,
+    value: ProductProductionAssets,
+  ) => void;
 }) {
   const [name, setName] = useState("");
   const attributes = product.atributos || [];
@@ -338,6 +372,18 @@ function VariationGroup({
             option={option}
             config={attribute.configuracao?.[option] || {}}
             additive={product.precificacao === "adicionais"}
+            productionEditor={
+              <ProductProductionEditor
+                {...production}
+                product={{
+                  id: product.id,
+                  imagemBase: attribute.configuracao?.[option]?.imagemBase,
+                  moldePdf: attribute.configuracao?.[option]?.moldePdf,
+                }}
+                optionLabel={`${attribute.nome}: ${option}`}
+                onChange={(value) => onProductionChange(index, option, value)}
+              />
+            }
             onRename={(value) => {
               if (value === option) return true;
               const replacement = normalizedOption(value, option);
@@ -405,6 +451,7 @@ export default function ProductOptionEditor({
   onUpload,
   busy,
   onBusy,
+  production,
 }: {
   product: Partial<Anuncio>;
   onChange: (value: Partial<Anuncio>) => void;
@@ -412,6 +459,7 @@ export default function ProductOptionEditor({
   onUpload: (attribute: string, option: string, file: File) => void;
   busy: boolean;
   onBusy: (busy: boolean) => void;
+  production: ProductionEditorSettings;
 }) {
   const [types, setTypes] = useState<VariationType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -447,6 +495,31 @@ export default function ProductOptionEditor({
   const latestProduct = React.useRef(product);
   latestProduct.current = product;
   const attributes = product.atributos || [];
+  const changeProduction = (
+    index: number,
+    option: string,
+    { imagemBase, moldePdf }: ProductProductionAssets,
+  ) => {
+    const current = latestProduct.current;
+    const group = current.atributos?.[index];
+    if (!group?.opcoes.includes(option)) return;
+    const config = { ...group.configuracao?.[option] };
+    delete config.imagemBase;
+    delete config.moldePdf;
+    if (imagemBase) config.imagemBase = imagemBase;
+    if (moldePdf) config.moldePdf = moldePdf;
+    onChange({
+      ...current,
+      atributos: current.atributos!.map((attribute, i) =>
+        i === index
+          ? {
+              ...attribute,
+              configuracao: { ...attribute.configuracao, [option]: config },
+            }
+          : attribute,
+      ),
+    });
+  };
   const choices = types.filter(
     (type) =>
       !attributes.some(
@@ -508,7 +581,8 @@ export default function ProductOptionEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-400">
           Combine até dois tipos de variação. As imagens aqui representam as
-          opções na loja.
+          opções na loja. Se duas opções selecionadas tiverem arte própria, vale
+          a da primeira variação cadastrada.
         </p>
         {attributes.length < 2 && !adding && (
           <button
@@ -621,6 +695,8 @@ export default function ProductOptionEditor({
           onChange={onChange}
           onUpload={onUpload}
           onError={setError}
+          production={production}
+          onProductionChange={changeProduction}
         />
       ))}
       {attributes.length > 0 && (

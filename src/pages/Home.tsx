@@ -16,7 +16,7 @@ import OrderDocuments from '../components/OrderDocuments';
 import UploadInput from '../components/UploadInput';
 import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../lib/storePresentation';
 import ProductPdfEditor from '../components/ProductPdfEditor';
-import { productCustomization, productPrice } from '../lib/productCustomization';
+import { productCustomization, productPrice, resolveProductProduction } from '../lib/productCustomization';
 import React, { useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { StoreThemeControl } from '../components/StoreTheme';
@@ -533,6 +533,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
           ...(item.templateId ? { templateId: item.templateId } : {}),
           paginasModelo:item.paginasModelo,
           moldeRevisao:item.moldeRevisao, textoMolde:item.textoMolde, imagemClientePath:item.imagemClientePath,
+          imagemBaseReferencia: item.imagemBaseReferencia,
           expectedUnitAmountCents: parseMoneyToCents(item.preco),
           quantidade: item.quantidade,
           selecoes: item.selecoes,
@@ -1970,7 +1971,7 @@ function ProductCard({
   key?: string;
 }) {
   const [selections, setSelections] = useState<Record<string, string>>(initialSelections);
-  const [uploadedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
+  const [storedArtwork, setUploadedArtwork] = useState<UploadedArtwork | null>(null);
   const [artworkSourceFile, setArtworkSourceFile] = useState<File | null>(null);
   const [uploadedModel, setUploadedModel] = useState<UploadedArtwork | null>(null);
   const [uploadedBackOriginal, setUploadedBackOriginal] = useState<UploadedArtwork | null>(null);
@@ -1984,9 +1985,11 @@ function ProductCard({
   const [isTextDrawerOpen, setIsTextDrawerOpen] = useState(false);
   const [activeImage, setActiveImage] = useState(product.imagem);
 
-  const binding=product.moldePdf;
+  const { moldePdf: binding, imagemBase: baseImage } = resolveProductProduction(product, selections);
   const [moldText,setMoldText]=useState('');
-  const baseImage=product.imagemBase;
+  const incompatibleArtwork = !!binding && !!artworkSourceFile &&
+    !isComposablePersonalizationImage(artworkSourceFile.type, artworkSourceFile.size);
+  const uploadedArtwork = incompatibleArtwork ? null : storedArtwork;
   const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const legacySourceImage = allImages.includes(activeImage) ? activeImage : variantImage(product, selections, false);
   const template = !binding && !baseImage ? (product.modelosPdf || []).find(template => template.pages.includes(legacySourceImage)) : undefined;
@@ -1994,7 +1997,7 @@ function ProductCard({
   React.useEffect(() => { let cancelled = false; setPdfBack(undefined); if (artworkSourceFile?.type === 'application/pdf') void import('../services/pdfPreview').then(module => module.pdfPreviewPages(artworkSourceFile)).then(pages => { if (!cancelled) setPdfBack(pages[1]); }).catch(error => onNotify({ type: 'error', message: error.message })); return () => { cancelled = true; }; }, [artworkSourceFile]);
   const attributeSignature = JSON.stringify(product.atributos);
   const availableFonts = activePersonalizationFonts(fonts);
-  const printProfile = parsePrintProfile(product.printProfile) || undefined;
+  const printProfile = binding ? undefined : parsePrintProfile(product.printProfile) || undefined;
   const customization = productCustomization(product,selections);
   const requiresArtwork = customization.image;
   const requiresText = customization.text;
@@ -2016,7 +2019,7 @@ function ProductCard({
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
   }, [artworkPreviewUrl]);
 
-  const sourceKey = JSON.stringify([requiresArtwork?uploadedArtwork?.path:'', binding?.revision || baseImage || legacySourceImage, printProfileKey(printProfile),template?.alphabet||null, customization, selections]);
+  const sourceKey = JSON.stringify([requiresArtwork ? uploadedArtwork?.path : '', binding?.revision, binding?.pdf.path, baseImage || (!binding ? legacySourceImage : ''), printProfileKey(printProfile),template?.alphabet||null, customization, selections]);
   const previousSource = useRef(sourceKey);
   React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; for(const file of [uploadedModel,uploadedBack,...extraModels])if(file)void personalizationModelStorage.deleteModel(file.path).catch(()=>undefined); setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null);setExtraModels([]); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
@@ -2059,7 +2062,7 @@ function ProductCard({
     setIsUploadingArtwork(true);
     try {
       const nextArtwork = await personalizationModelStorage.uploadArtwork(file);
-      const previousArtwork = uploadedArtwork;
+      const previousArtwork = storedArtwork;
       const previousModel = uploadedModel;
       const previousBack = uploadedBack;
       setUploadedArtwork(nextArtwork);
@@ -2085,7 +2088,7 @@ function ProductCard({
   };
 
   const removeArtwork = () => {
-    if (uploadedArtwork) void removePendingArtwork(uploadedArtwork.path).catch(() => undefined);
+    if (storedArtwork) void removePendingArtwork(storedArtwork.path).catch(() => undefined);
     if (uploadedModel) void personalizationModelStorage.deleteModel(uploadedModel.path).catch(() => undefined);
     if (uploadedBack) void personalizationModelStorage.deleteModel(uploadedBack.path).catch(() => undefined);
     setUploadedBack(null);
@@ -2122,7 +2125,7 @@ function ProductCard({
       const loggedIn = await onRequireLogin();
       if (!loggedIn) return;
     }
-    if (artworkSourceFile?.type === 'application/pdf') {
+    if (!binding && artworkSourceFile?.type === 'application/pdf') {
       try { const pages = await (await import('../services/pdfPreview')).pdfPreviewPages(artworkSourceFile); setPdfBack(pages[1]); }
       catch (error) { onNotify({ type: 'error', message: error instanceof Error ? error.message : 'Não foi possível abrir o PDF.' }); return; }
     }
@@ -2169,6 +2172,7 @@ function ProductCard({
       selecoes: { ...selections },
       quantidade: 1,
       ...(printProfile ? { printProfile } : {}),
+      ...(!binding && baseImage ? { imagemBaseReferencia: baseImage } : {}),
       ...(binding ? {moldeRevisao:binding.revision,textoMolde:requiresText?moldText:'',textoPersonalizado:requiresText?moldText:undefined,inicialReferencia:initialReference(binding.pdf,requiresText?moldText:''),imagemClientePath:requiresArtwork?uploadedArtwork?.path:undefined} : {arquivoPath:requiresArtwork?uploadedArtwork?.path:undefined,arquivoNome:requiresArtwork?uploadedArtwork?.name:undefined}),
       ...(extraModels.length?{paginasModelo:extraModels.map(f=>f.path)}:{}),
       modeloPath: uploadedModel?.path,
@@ -2327,6 +2331,9 @@ function ProductCard({
                     />
                   </label>
                 )}
+                {incompatibleArtwork && <p className="mt-2 text-xs text-amber-700">
+                  Para usar seu arquivo nesta opção, envie uma imagem JPG, PNG ou WebP.
+                </p>}
                 <p className="mt-2 text-[9px] text-gray-400 leading-tight">
                   {binding?'PNG, JPG ou WebP':'PDF, PNG, JPG ou WebP'}, até 50 MB. O arquivo fica privado, vinculado ao pedido. {baseImage||binding||template?'Envio opcional: sem arquivo, será usada a base da loja.':'Envie a arte para concluir a compra.'}
                 </p>
@@ -2421,7 +2428,7 @@ function ProductCard({
       </div>
       </div>
     </motion.article>
-    {isTextDrawerOpen && binding && <ProductPdfEditor binding={binding} textEnabled={requiresText} initialText={moldText} image={requiresArtwork ? artworkSourceFile || baseImage : undefined} onClose={()=>setIsTextDrawerOpen(false)} onSave={async(text,document)=>{
+    {isTextDrawerOpen && binding && <ProductPdfEditor binding={binding} textEnabled={requiresText} initialText={moldText} image={requiresArtwork ? (uploadedArtwork && artworkSourceFile) || baseImage : undefined} onClose={()=>setIsTextDrawerOpen(false)} onSave={async(text,document)=>{
       const files:UploadedArtwork[]=[];
       try {
         for(const [i,page] of document.pages.entries()) {const bitmap=await createImageBitmap(page.blob);const model={blob:page.blob,width:bitmap.width,height:bitmap.height};bitmap.close();files.push(await personalizationModelStorage.uploadModel(model,personalizationModelName(product.nome,undefined,i===1)));}

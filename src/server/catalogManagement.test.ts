@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { createCatalogManagementRouter, type CatalogActor } from './catalogManagement';
 import { createOperationsRouter } from './operationsRouter';
 import { memoryFirestore } from '../../test/helpers/memoryFirestore';
+import { defaultPdfLayout } from '../lib/staffPdf';
 import { OperationsError } from '../lib/operations';
 
 const product = { id: 'product', nome: 'Caderno', desc: 'Caderno de teste', categoria: 'Cadernos', imagem: 'https://example.test/old.png', preco_base: '20.00', atributos: [], combinacoes: {}, tipoInput: 'nenhum' };
@@ -79,4 +80,44 @@ test('font managers can persist 400 fonts without truncation and cannot exceed t
   const excess = Array.from({ length: 501 }, (_, i) => ({ id: `f${i}`, nome: `Fonte ${i}`, cssFamily: 'sans-serif', ativo: true }));
   assert.equal((await context.call('config', 'main', 'patch', { fontes_personalizacao: excess })).status, 422);
   assert.equal(context.docs.get('config/main').fontes_personalizacao.length, 400);
+}));
+
+test('option artwork validates ownership and workshop access and retains replaced assets', async () => scenario(async ({ actor, services, docs, call }) => {
+  const bucket = 'option-test.firebasestorage.app';
+  const url = (path: string) => `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media`;
+  const imagePath = `catalog/products/product/${'1'.repeat(32)}.png`;
+  const pdfId = '2'.repeat(32), baseId = '3'.repeat(32), layoutId = '4'.repeat(32), revision = '5'.repeat(32);
+  const layout = defaultPdfLayout();
+  const binding = {
+    revision, baseId, baseRevision: revision, layoutId, layoutRevision: revision, layout, fonts: [],
+    pdf: { id: pdfId, path: `catalog/templates/product/${pdfId}.pdf`, name: 'Capa.pdf', pages: [url(imagePath)] },
+  };
+  services.bucket = { name: bucket, file: () => ({
+    getMetadata: async () => [{ contentType: 'application/pdf', md5Hash: 'matching', size: '100' }],
+  }) };
+  docs.set(`_staffPdfBases/${baseId}`, {
+    status: 'ready', path: `staff-pdf-bases/${baseId}/original.pdf`,
+    name: 'Capa.pdf', pageCount: 1, revision, pages: [],
+  });
+  docs.set(`_staffPdfLayouts/${layoutId}`, { enabled: true, revision, layout });
+  const save = (config: unknown) => call('anuncios', 'product', 'patch', {
+    precificacao: 'adicionais',
+    atributos: [{ nome: 'Capa', opcoes: ['Própria', 'Padrão'], configuracao: { 'Própria': config } }],
+  });
+
+  assert.equal((await save({ imagemBase: url(imagePath) })).status, 403);
+  actor.permissions = ['products.manage'];
+  assert.equal((await save({ imagemBase: url(imagePath.replace('/product/', '/other/')) })).status, 422);
+  assert.equal((await save({ moldePdf: binding })).status, 403);
+  const image = await save({ imagemBase: url(imagePath) });
+  assert.equal(image.status, 200, await image.text());
+  actor.permissions.push('documents.generate');
+  assert.equal((await save({ moldePdf: { ...binding, layout: { ...layout, pos_x: layout.pos_x + 1 } } })).status, 409);
+  assert.equal((await save({ imagemBase: url(imagePath), moldePdf: binding })).status, 422);
+  const linked = await save({ moldePdf: binding });
+  assert.equal(linked.status, 200, await linked.text());
+  assert.deepEqual(docs.get('anuncios/product').atributos[0].configuracao['Própria'].moldePdf, binding);
+  assert.equal((await save({})).status, 200);
+  const cleanup = [...docs].filter(([key]) => key.startsWith('_catalogAssetCleanup/')).map(([, record]) => record.path);
+  assert.deepEqual(cleanup.sort(), [imagePath, binding.pdf.path].sort());
 }));

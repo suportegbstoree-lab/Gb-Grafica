@@ -1,3 +1,4 @@
+import { optionProductionAssets } from '../lib/productCustomization.js';
 import { variationReferenceUrls } from '../lib/productSales.js';
 import { VARIATION_TYPES } from './salesAdmin.js';
 import { verifyProductPdfBinding } from './productPdfBinding.js';
@@ -88,8 +89,6 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
           await verifyProductPdfBinding(services,tx,id,next.moldePdf);
         }
       }
-      const retain = await prepareCatalogRetention(db, tx, `${collection}/${id}`, old, next, services.bucket?.name || '');
-      const audit=await prepareWorkActivity(db,who,action,id,tx);
       if (next) {
         if (next.id !== undefined && next.id !== id) fail('Identificador inconsistente.');
         const result = collection === 'anuncios' ? validateProductDraft({ ...next, id } as Anuncio, categories, products)
@@ -105,6 +104,18 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
           }
           if (keys.includes('atributos')) {
             next.atributos = (result as any).value.atributos;
+            const existingBindings = optionProductionAssets(old?.atributos)
+              .map(option => option.moldePdf).filter(Boolean);
+            for (const option of optionProductionAssets(next.atributos)) {
+              if (option.imagemBase && !retainedAssetPath(option.imagemBase, services.bucket.name)?.startsWith(`catalog/products/${id}/`))
+                fail('Envie a imagem-base da opção para o Storage deste produto.');
+              const binding = option.moldePdf;
+              if (!binding || existingBindings.some(previous => isDeepStrictEqual(previous, binding))) continue;
+              if (!can('documents.generate') && !can('documents.templates.manage'))
+                fail('Sua função não permite vincular bases da oficina.', 403);
+              await verifyProductPdfBinding(services, tx, id, binding);
+              existingBindings.push(binding);
+            }
             for (const url of variationReferenceUrls(next as Anuncio)) {
               if (!retainedAssetPath(url, services.bucket?.name || '')?.startsWith(`catalog/products/${id}/`)) {
                 fail('Envie as referências das variações para o Storage deste produto.');
@@ -121,9 +132,12 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
           }
           if (next.tags) next.tags = (result as any).value.tags;
         }
-        // Keep fields outside this patch intact; validators check the resulting document.
-        tx.set(target, collection === 'config' ? next : { ...next, id });
-      } else tx.delete(target);
+      }
+      const retain = await prepareCatalogRetention(db, tx, `${collection}/${id}`, old, next, services.bucket?.name || '');
+      const audit = await prepareWorkActivity(db, who, action, id, tx);
+      // Keep fields outside this patch intact; validators check the resulting document.
+      if (next) tx.set(target, collection === 'config' ? next : { ...next, id });
+      else tx.delete(target);
       retain();
       audit.write(tx);
     });

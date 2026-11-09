@@ -7,6 +7,8 @@ import {
   productMinimum,
   productPdfOrder,
   bindingValid,
+  resolveProductProduction,
+  productionAssetUrls,
 } from "./productCustomization";
 import { defaultPdfLayout } from "./staffPdf";
 import { selectedPrice, minimumPrice } from "./bundles";
@@ -162,4 +164,31 @@ test("a linked job fixes geometry and style from the workshop; suppressed text i
   assert.equal(productPdfOrder(binding, "hidden", false).job.lines[0].text, "");
   assert.throws(() => productPdfOrder(binding, "", true));
   assert.throws(() => productPdfOrder(binding, "a".repeat(201), true));
+});
+
+test("own option artwork takes precedence in attribute order and falls back to the product", () => {
+  const draft = structuredClone(product);
+  draft.imagemBase = "https://example.com/default.png";
+  draft.atributos[0].configuracao!["Com imagem"].imagemBase =
+    "https://example.com/first.png";
+  draft.atributos[1].configuracao!["Com nome"].imagemBase =
+    "https://example.com/second.png";
+  assert.equal(
+    resolveProductProduction(draft, choices).imagemBase,
+    "https://example.com/first.png",
+  );
+  assert.equal(
+    resolveProductProduction(draft, { ...choices, Arte: "Sem imagem" })
+      .imagemBase,
+    "https://example.com/second.png",
+  );
+  assert.equal(
+    resolveProductProduction(draft, {}).imagemBase,
+    draft.imagemBase,
+  );
+  assert.deepEqual(productionAssetUrls(draft), [
+    draft.imagemBase,
+    "https://example.com/first.png",
+    "https://example.com/second.png",
+  ]);
 });

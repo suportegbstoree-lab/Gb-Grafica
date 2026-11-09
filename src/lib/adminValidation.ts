@@ -160,8 +160,23 @@ export function validateProductDraft(
   if(draft.imagemBase && !isSafeAdminUrl(draft.imagemBase)) return {ok:false,message:'Arte-base inválida.'};
   if(draft.moldePdf && draft.printProfile) return {ok:false,message:'O formato de impressão segue a base PDF vinculada. Atualize o vínculo para usar suas medidas originais.'};
   if(draft.moldePdf !== undefined && !bindingValid(draft.moldePdf,draft.id||'')) return {ok:false,message:'Revise o vínculo com o molde PDF.'};
-  for(const attr of draft.atributos || []) {
-    if(attr.configuracao && (typeof attr.configuracao!=='object' || Array.isArray(attr.configuracao) || Object.entries(attr.configuracao).some(([key,option])=>!attr.opcoes.includes(key) || !option || typeof option!=='object' || Array.isArray(option) || Object.keys(option).some(k=>!['adicional','texto','imagem','sku','referencia'].includes(k)) || (cleanSku(option.sku, MAX_VARIATION_SKU) === null) || (option.referencia !== undefined && (typeof option.referencia !== 'string' || !isSafeAdminUrl(option.referencia))) || (option.texto!==undefined && typeof option.texto!=='boolean') || (option.imagem!==undefined && typeof option.imagem!=='boolean') || (option.adicional!==undefined && (parseMoneyToCents(option.adicional)===null || parseMoneyToCents(option.adicional)!<0))))) return {ok:false,message:'Revise os adicionais e a personalização de cada opção.'};
+  for (const attr of draft.atributos || []) {
+    if (attr.configuracao === undefined) continue;
+    if (!attr.configuracao || typeof attr.configuracao !== 'object' || Array.isArray(attr.configuracao))
+      return { ok: false, message: 'Revise a configuração de cada opção.' };
+    for (const [key, option] of Object.entries(attr.configuracao)) {
+      if (!attr.opcoes.includes(key) || !option || typeof option !== 'object' || Array.isArray(option) ||
+        Object.keys(option).some(k => !['adicional', 'texto', 'imagem', 'sku', 'referencia', 'imagemBase', 'moldePdf'].includes(k)) ||
+        cleanSku(option.sku, MAX_VARIATION_SKU) === null ||
+        (option.referencia !== undefined && (typeof option.referencia !== 'string' || !isSafeAdminUrl(option.referencia))) ||
+        (option.texto !== undefined && typeof option.texto !== 'boolean') ||
+        (option.imagem !== undefined && typeof option.imagem !== 'boolean') ||
+        (option.adicional !== undefined && (parseMoneyToCents(option.adicional) === null || parseMoneyToCents(option.adicional)! < 0)))
+        return { ok: false, message: 'Revise os adicionais e a personalização de cada opção.' };
+      if ((option.imagemBase !== undefined && (typeof option.imagemBase !== 'string' || !option.imagemBase || !isSafeAdminUrl(option.imagemBase))) ||
+        (option.moldePdf !== undefined && (!bindingValid(option.moldePdf, draft.id || '') || option.imagemBase !== undefined)))
+        return { ok: false, message: `Revise a arte de produção da opção “${key}”. Escolha uma imagem-base ou um vínculo de PDF e molde.` };
+    }
   }
   const atributos = (draft.atributos || []).map(attribute => ({
     ...(attribute.configuracao ? {configuracao:Object.fromEntries(Object.entries(attribute.configuracao).map(([key,value])=>[normalizedSpaces(key),value]))} : {}),

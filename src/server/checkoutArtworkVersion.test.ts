@@ -547,3 +547,70 @@ test('an altered expected coupon total is rejected before reserving a use or cal
   assert.equal(providerCalls, 0);
   assert.equal(docs.get('_salesCoupons/' + salesCouponCode)?.used, 0);
 });
+
+function optionProductionProduct() {
+ const input = linkedProduct();
+ const product = docs.get('anuncios/produto') as any;
+ const defaultBinding = product.moldePdf;
+ const id = '9'.repeat(32);
+ const binding = {
+   ...defaultBinding, revision: '8'.repeat(32), layout: { ...defaultBinding.layout, font_size: 120 },
+   pdf: { ...defaultBinding.pdf, id, path: `catalog/templates/produto/${id}.pdf`, name: 'Opção.pdf' },
+ };
+ const imagePath = `catalog/products/produto/${'6'.repeat(32)}.png`;
+ const image = `https://firebasestorage.googleapis.com/v0/b/${env.FIREBASE_STORAGE_BUCKET}/o/${encodeURIComponent(imagePath)}?alt=media`;
+ objects.set(binding.pdf.path, { generation: 40, bytes: Buffer.from('%PDF-1.7\noption base'), metadata: {} });
+ objects.set(imagePath, { ...objects.get(sourcePath)!, generation: 41, metadata: {} });
+ product.atributos[0].opcoes.push('Foto');
+ product.atributos[0].configuracao.Com.moldePdf = binding;
+ product.atributos[0].configuracao.Foto = { imagemBase: image, imagem: false, texto: false };
+ return { input, binding, image, defaultBinding };
+}
+
+test('checkout freezes the option PDF and layout even when the customer uploads an image', async () => {
+ const { input, binding } = optionProductionProduct();
+ const response = await checkout({ ...input, moldeRevisao: binding.revision, imagemClientePath: sourcePath });
+ assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+ const item = ([...docs].find(([path]) => path.startsWith('orders/'))![1] as any).itens[0];
+ assert.equal(item.moldePedido.job.lines[0].fontSize, 120);
+ assert.equal(item.arquivoNome, 'Opção.pdf');
+ assert.ok(copies.some(copy => copy.generation === 40));
+ assert.ok(copies.some(copy => copy.generation === 17));
+ assert.ok(!copies.some(copy => copy.generation === 22));
+});
+
+test('checkout rejects the default revision when the selected option has its own PDF', async () => {
+ const { input } = optionProductionProduct();
+ const response = await checkout(input);
+ assert.equal(response.status, 409);
+ assert.equal(providerCalls, 0);
+});
+
+test('checkout uses the default for an option without its own art', async () => {
+ const { input } = optionProductionProduct();
+ const response = await checkout({ ...input, selecoes: { Imagem: 'Sem', Nome: 'Com' }, expectedUnitAmountCents: 2700 });
+ assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+ assert.ok(copies.some(copy => copy.generation === 22));
+});
+
+test('checkout rejects an old image reference for the selected option', async () => {
+ const { input, image } = optionProductionProduct();
+ const response = await checkout({
+   ...input, selecoes: { Imagem: 'Foto', Nome: 'Com' }, moldeRevisao: undefined,
+   expectedUnitAmountCents: 2200, imagemBaseReferencia: image + '-old',
+ });
+ assert.equal(response.status, 409);
+ assert.equal(providerCalls, 0);
+});
+
+test('checkout accepts the option image instead of the product PDF', async () => {
+ const { input, image } = optionProductionProduct();
+ const photo = { ...input, selecoes: { Imagem: 'Foto', Nome: 'Com' }, moldeRevisao: undefined, expectedUnitAmountCents: 2200 };
+ const response = await checkout({ ...photo, imagemBaseReferencia: image });
+ assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+ const item = ([...docs].find(([path]) => path.startsWith('orders/'))![1] as any).itens[0];
+ assert.equal(item.baseImagemPedido, true);
+ assert.equal(item.moldePedido, undefined);
+ assert.ok(copies.some(copy => copy.generation === 41));
+ assert.ok(!copies.some(copy => copy.generation === 22));
+});

@@ -2008,11 +2008,20 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                 <section id="product-variacoes" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-variacoes-title">
                   <h4 id="product-variacoes-title" className="text-lg font-bold">Variações</h4>
                   <ProductOptionEditor product={editingProduct} onChange={setEditingProduct} api={salesApi}
-                    busy={isSaving || isUploadingCatalogImages} onBusy={setIsSaving} onUpload={uploadVariationReference} />
+                    busy={isSaving || isUploadingCatalogImages} onBusy={setIsSaving} onUpload={uploadVariationReference}
+                    production={{
+                      fonts: config.fontes_personalizacao || [],
+                      api: pdfLibraryApi,
+                      uploadImage: catalogImageStorage.uploadImage,
+                      onUploaded: images => setSessionCatalogUploads(current => [...current, ...images]),
+                      onBusy: setIsUploadingCatalogImages,
+                      canBind: can('documents.generate') || can('documents.templates.manage'),
+                    }} />
                   <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
                 </section>
                 <section id="product-producao" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-producao-title">
                   <h4 id="product-producao-title" className="text-lg font-bold">Arte e moldes PDF</h4>
+                  <p className="text-sm text-gray-400">Arte padrão para compras sem uma arte própria na opção selecionada.</p>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label htmlFor="product-customization-type" className="text-xs font-bold text-gray-500 uppercase">Tipo de Personalização</label>

@@ -34,15 +34,11 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
 
-**Valor Estimado: R$ 1.300,00 (Mil e Trezentos Reais)** - Valor referente a implementação das funcionalidades acima descritas, que ainda não foram cobradas. Incluindo as que foram iniciadas, mas ainda não finalizadas.
+## 2026-11-09 — Arte de produção por opção de produto
 
-### **Valor Restante:**
-
-R$ **460,00 (Quatrocentos e Sessenta Reais)** Das funcionalidades referentes a Segurança que ainda não fora quitado.
-
-R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
-
-Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
+- Cada opção de variação pode usar a arte padrão do produto, uma imagem-base própria ou um PDF com molde da oficina. Os controles de nome e imagem personalizada continuam disponíveis por opção.
+- A prévia, o carrinho e o checkout usam a mesma resolução da arte. Se houver mais de uma opção selecionada com arte própria, vale a da primeira variação na ordem do cadastro.
+- O pedido conserva a base e o molde efetivos da opção comprada. Mudanças de base invalidam modelos desatualizados no checkout e os arquivos substituídos seguem a retenção do catálogo.
 
 ## 2026-11-09 — Prévia de PDF, cadastro de produtos, banner e cupons
 

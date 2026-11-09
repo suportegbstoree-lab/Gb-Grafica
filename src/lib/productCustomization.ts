@@ -1,4 +1,4 @@
-import type { Anuncio } from "../types.js";
+import type { Anuncio, ProductAttribute } from "../types.js";
 import type { ProductPdfTemplate } from "./pdfTemplate.js";
 import { validAlphabet } from "./decorativeInitial.js";
 import { isTemplatePath } from "./pdfTemplate.js";
@@ -25,6 +25,48 @@ export interface ProductPdfBinding {
   layout: StaffPdfLayout;
   fonts: PersonalizationFont[];
   pdf: ProductPdfTemplate;
+}
+export interface ProductProductionAssets {
+  imagemBase?: string;
+  moldePdf?: ProductPdfBinding;
+}
+
+type ProductProduction = ProductProductionAssets & {
+  atributos?: ProductAttribute[];
+};
+
+export function optionProductionAssets(
+  atributos?: ProductAttribute[],
+): ProductProductionAssets[] {
+  return (atributos || []).flatMap((attribute) =>
+    attribute.opcoes.flatMap((option) => {
+      const config = attribute.configuracao?.[option];
+      return config?.moldePdf || config?.imagemBase ? [config] : [];
+    }),
+  );
+}
+
+/** The first selected option with its own production assets replaces the entire default. */
+export function resolveProductProduction(
+  product: ProductProduction,
+  selections: Record<string, string>,
+): ProductProductionAssets & { fromOption: boolean } {
+  for (const attribute of product.atributos || []) {
+    const value = selections[attribute.nome];
+    if (!attribute.opcoes.includes(value)) continue;
+    const config = attribute.configuracao?.[value];
+    if (config?.moldePdf || config?.imagemBase)
+      return {
+        moldePdf: config.moldePdf,
+        imagemBase: config.imagemBase,
+        fromOption: true,
+      };
+  }
+  return {
+    moldePdf: product.moldePdf,
+    imagemBase: product.imagemBase,
+    fromOption: false,
+  };
 }
 export interface ProductPdfOrder {
   job: StaffPdfJob;
@@ -121,7 +163,8 @@ export function bindingValid(
     return (
       !!b &&
       hex(b.revision) &&
-      typeof b.baseId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(b.baseId) &&
+      typeof b.baseId === "string" &&
+      /^[A-Za-z0-9_-]{1,160}$/.test(b.baseId) &&
       hex(b.baseRevision) &&
       hex(b.layoutId) &&
       hex(b.layoutRevision) &&
@@ -187,14 +230,17 @@ export function productPdfOrder(
 }
 
 export function productionAssetUrls(product: Partial<Anuncio>): string[] {
-  return [
-    product.imagemBase,
-    product.moldePdf?.pdf.path,
-    ...(product.moldePdf?.pdf.pages || []),
-    ...Object.values(product.moldePdf?.pdf.alphabet?.letters || {}).map(
-      (letter) => letter.url,
-    ),
-  ].filter((value): value is string => Boolean(value));
+  return [product, ...optionProductionAssets(product.atributos)].flatMap(
+    (source) =>
+      [
+        source.imagemBase,
+        source.moldePdf?.pdf.path,
+        ...(source.moldePdf?.pdf.pages || []),
+        ...Object.values(source.moldePdf?.pdf.alphabet?.letters || {}).map(
+          (letter) => letter.url,
+        ),
+      ].filter((value): value is string => Boolean(value)),
+  );
 }
 
 export function productMayRequireText(product: Partial<Anuncio>): boolean {

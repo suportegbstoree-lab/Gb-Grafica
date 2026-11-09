@@ -106,6 +106,19 @@ function LibrarySelect({
   );
 }
 
+export interface ProductProductionEditorProps {
+  product: Partial<Anuncio>;
+  fonts?: PersonalizationFont[];
+  onChange: (p: Partial<Anuncio>) => void;
+  onUploaded: (files: Array<{ path: string; url: string }>) => void;
+  onBusy: (busy: boolean) => void;
+  uploadImage?: (id: string, f: File) => Promise<UploadedCatalogImage>;
+  api?: StaffPdfApi;
+  canBind?: boolean;
+  disabled?: boolean;
+  optionLabel?: string;
+}
+
 /** No advertisement URL is ever silently adopted as a new production base. */
 export default function ProductProductionEditor({
   product,
@@ -117,17 +130,8 @@ export default function ProductProductionEditor({
   api = staffPdfApi,
   canBind = true,
   disabled = false,
-}: {
-  product: Partial<Anuncio>;
-  fonts?: PersonalizationFont[];
-  onChange: (p: Partial<Anuncio>) => void;
-  onUploaded: (files: Array<{ path: string; url: string }>) => void;
-  onBusy: (busy: boolean) => void;
-  uploadImage?: (id: string, f: File) => Promise<UploadedCatalogImage>;
-  api?: StaffPdfApi;
-  canBind?: boolean;
-  disabled?: boolean;
-}) {
+  optionLabel,
+}: ProductProductionEditorProps) {
   const latestProduct = React.useRef(product);
   latestProduct.current = product;
   const [library, setLibrary] = React.useState<StaffPdfLibrary>();
@@ -153,18 +157,24 @@ export default function ProductProductionEditor({
       disabled={disabled || busy}
       className="space-y-4 rounded-xl border border-gray-700 p-4 md:col-span-2"
     >
-      <legend className="px-2 font-bold">Arte de produção</legend>
+      <legend className="px-2 font-bold">
+        {optionLabel ? "Base desta opção" : "Arte de produção"}
+      </legend>
       <p className="text-xs text-gray-400">
-        As imagens do anúncio servem para divulgação. Escolha aqui a base usada
-        para imprimir. O envio de imagem pelo cliente é opcional quando há uma
-        base.
+        {optionLabel
+          ? "Envie uma imagem-base ou vincule um PDF com molde. Sem vínculo próprio, a opção usa a arte do produto."
+          : "As imagens do anúncio servem para divulgação. Escolha aqui a base usada para imprimir. O envio de imagem pelo cliente é opcional quando há uma base."}
       </p>
       <label className="inline-flex cursor-pointer rounded-lg border border-gray-600 px-4 py-3 text-sm">
         Enviar imagem-base
         <UploadInput
           className="sr-only"
           type="file"
-          aria-label="Enviar imagem-base"
+          aria-label={
+            optionLabel
+              ? `Enviar imagem-base de ${optionLabel}`
+              : "Enviar imagem-base"
+          }
           accept="image/png,image/jpeg,image/webp"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -174,7 +184,9 @@ export default function ProductProductionEditor({
                 if (!product.id) throw new Error("Produto inválido.");
                 const file = await uploadImage(product.id, f);
                 onUploaded([file]);
-                onChange({ ...latestProduct.current, imagemBase: file.url });
+                const next = { ...latestProduct.current, imagemBase: file.url };
+                if (optionLabel) delete next.moldePdf;
+                onChange(next);
               });
           }}
         />
@@ -184,6 +196,8 @@ export default function ProductProductionEditor({
           <img
             src={product.imagemBase}
             alt="Imagem-base de impressão"
+            loading="lazy"
+            decoding="async"
             className="h-28 w-28 object-contain"
           />
           <button
@@ -194,7 +208,7 @@ export default function ProductProductionEditor({
             }}
             className="text-sm text-red-300"
           >
-            Remover imagem-base
+            {optionLabel ? "Usar arte do produto" : "Remover imagem-base"}
           </button>
         </div>
       )}
@@ -281,6 +295,7 @@ export default function ProductProductionEditor({
                     }
                     const { printProfile, ...productionProduct } =
                       latestProduct.current;
+                    if (optionLabel) delete productionProduct.imagemBase;
                     onChange({
                       ...productionProduct,
                       moldePdf: {
@@ -322,7 +337,7 @@ export default function ProductProductionEditor({
               onChange(rest);
             }}
           >
-            Desvincular molde
+            {optionLabel ? "Usar arte do produto" : "Desvincular molde"}
           </button>
         </div>
       )}

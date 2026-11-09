@@ -9,7 +9,7 @@ import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
 import { pagBankEnvironment, pagBankBaseUrl, pagBankSignatureMode, pagBankPublicUrl, pagBankWebhookUrl, PAGBANK_WEBHOOK_HEALTH, PAGBANK_WEBHOOK_PATH } from './pagbankConfiguration.js';
 import { prepareWorkActivity } from './workTracking.js';
 import { createStaffDocumentRouters,cleanupStaffDocuments } from './staffDocuments.js';
-import { productPrice, productCustomization, productPdfOrder } from '../lib/productCustomization.js';
+import { productPrice, productCustomization, productPdfOrder, resolveProductProduction } from '../lib/productCustomization.js';
 import { retainedAssetPath } from '../lib/catalogRetention.js';
 import { defaultProductArtwork, productCustomerImage } from './pdfTemplates.js';
 import { cleanupStaffPdfBatches } from './staffPdfBatches.js';
@@ -909,7 +909,14 @@ async function normalizeCart(
       });
       continue;
     }
-		const printProfile = product.printProfile === undefined ? undefined : parsePrintProfile(product.printProfile);
+    const production = resolveProductProduction(product as unknown as Anuncio, selections);
+    const { moldePdf: binding, imagemBase: baseImage } = production;
+    const printProfile = binding || product.printProfile === undefined ? undefined : parsePrintProfile(product.printProfile);
+    const usesImageBase = !binding && Boolean(baseImage);
+    if ((!binding && item.moldeRevisao !== undefined) ||
+        ((item.imagemBaseReferencia !== undefined || (usesImageBase && production.fromOption)) &&
+          (!usesImageBase || item.imagemBaseReferencia !== baseImage)))
+      throw new HttpError(409, 'A arte-base mudou. Personalize o produto novamente.', 'DESIGN_CHANGED');
 		if (printProfile === null) throw new HttpError(422, `O formato de impressão de ${productName} está inválido. Entre em contato com a loja.`);
 		const submittedPrint = item.printProfile === undefined ? undefined : parsePrintProfile(item.printProfile);
 		if (submittedPrint === null || printProfileKey(submittedPrint) !== printProfileKey(printProfile)) {
@@ -919,7 +926,6 @@ async function normalizeCart(
 		const effectiveCustomization = productCustomization(product as unknown as Anuncio,selections);
     const requiresArtwork = effectiveCustomization.image;
     const requiresText = effectiveCustomization.text;
-    const binding = product.moldePdf as Anuncio['moldePdf'];
     let recipe: ReturnType<typeof productPdfOrder>|undefined;
     let customerImageVersion: ArtworkObjectVersion|undefined;
     if(binding) {
@@ -927,17 +933,20 @@ async function normalizeCart(
       try {recipe=productPdfOrder(binding,item.textoMolde,requiresText);
         if(item.arquivoPath || item.templateId) throw new Error('Gere a personalização com o molde vinculado.');
         customerImageVersion=requiresArtwork ? await productCustomerImage(bucket,userId,item.imagemClientePath) : undefined;
-        if(requiresArtwork && !customerImageVersion && product.imagemBase) customerImageVersion=await defaultProductArtwork(bucket,productId,{imagemBase:product.imagemBase});
+        if(requiresArtwork && !customerImageVersion && baseImage) customerImageVersion=await defaultProductArtwork(bucket,productId,{imagemBase:baseImage});
       }catch(e){throw new HttpError(422,(e as Error).message);}
     }
 		let templateVersion: ArtworkObjectVersion | undefined;
-		try { templateVersion = binding ? await defaultProductArtwork(bucket,productId,product) : await templateArtwork(bucket, productId, product, item.templateId);
-      if(!binding && !templateVersion && !item.arquivoPath && product.imagemBase ) templateVersion=await defaultProductArtwork(bucket,productId,product);
+		try {
+      if (usesImageBase && item.templateId) throw new Error('Gere a personalização com a imagem-base selecionada.');
+      templateVersion = binding || (usesImageBase && (!requiresArtwork || !item.arquivoPath))
+        ? await defaultProductArtwork(bucket, productId, production)
+        : await templateArtwork(bucket, productId, product, item.templateId);
     } catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Modelo PDF inválido.'); }
 		if (templateVersion && item.arquivoPath) throw new HttpError(422, 'Escolha um modelo da loja ou a sua própria arte.');
 		const artworkPath = templateVersion?.path || (requiresArtwork ? textValue(item.arquivoPath, 300) : '');
-		const modelPath = (binding || product.imagemBase || requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
-    if((binding || product.imagemBase) && !modelPath) throw new HttpError(422,'Confira e confirme a personalização antes de continuar.');
+		const modelPath = (binding || baseImage || requiresText || requiresArtwork) ? textValue(item.modeloPath, 300) : '';
+    if((binding || baseImage) && !modelPath) throw new HttpError(422,'Confira e confirme a personalização antes de continuar.');
 		const backModelPath = textValue(item.contracapaPath, 300);
 		const backMode = item.contracapaModo;
 		let backOriginalVersion: ArtworkObjectVersion | undefined;
@@ -1013,7 +1022,7 @@ async function normalizeCart(
 			if (!modelPath) throw new HttpError(422, `Gere o modelo composto de ${productName} antes de concluir o pedido.`);
 		}
     let initial: Awaited<ReturnType<typeof resolveOrderInitial>>;
-    try { initial = await resolveOrderInitial(bucket, productId, product, item.templateId, recipe?.job.lines[0].text || textCustomization?.texto || '', item.inicialReferencia); }
+    try { initial = await resolveOrderInitial(bucket, productId, { ...product, moldePdf: binding }, item.templateId, recipe?.job.lines[0].text || textCustomization?.texto || '', item.inicialReferencia); }
     catch (error) { throw new HttpError(422, error instanceof Error ? error.message : 'Inicial inválida. Gere o modelo novamente.'); }
     if (initial && !modelPath) throw new HttpError(422, 'Gere o modelo com a inicial antes de concluir o pedido.');
 		const validateModel = async (path: string, name: unknown): Promise<ArtworkObjectVersion> => {
@@ -1092,7 +1101,7 @@ async function normalizeCart(
 					descontoPercentual: appliedPromotion.percentage,
 				} : {}),
 				...(printProfile ? { printProfile } : {}),
-        ...(product.imagemBase && !binding ? {baseImagemPedido:true} : {}),
+        ...(usesImageBase ? {baseImagemPedido:true} : {}),
 				...(approval ? { aprovacaoArte: approval } : {}),
 				...(artworkPath ? { arquivoPath: artworkPath, arquivoNome: artworkName } : {}),
 				...(backOriginalVersion ? { contracapaOriginalPath: backOriginalVersion.path, contracapaOriginalNome: backOriginalVersion.originalName } : {}),

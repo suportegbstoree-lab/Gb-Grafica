@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PDFDocument, rgb } from "pdf-lib";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 
 test("linked product uses its own base, calculates R$32 and keeps the preview in the site", async ({
   page,
@@ -413,4 +413,146 @@ test("base e molde têm busca independente, correspondência inicial e reaprovei
     editor.getByRole("button", { name: "Vincular / atualizar molde" }),
   ).toBeEnabled();
   expect(copies).toHaveLength(1);
+});
+
+test("a opção usa sua própria capa na prévia e o carrinho recebe a revisão dela", async ({
+  page,
+}) => {
+  await page.route("**/__e2e/option-cover.png", (route) =>
+    route.fulfill({
+      path: "e2e/fixtures/editor-cover.png",
+      contentType: "image/png",
+    }),
+  );
+  await page.goto("/produto/caderneta-azul?variations=option");
+  const card = page.locator("article#produto-caderneta-azul");
+  await card.getByRole("button", { name: /^Com imagem/ }).click();
+  await card.getByRole("button", { name: /^Com nome/ }).click();
+  const open = card.getByRole("button", {
+    name: "Personalizar e conferir modelo",
+  });
+  const modal = page.getByRole("dialog", {
+    name: "Personalizar produto",
+    exact: true,
+  });
+  const optionCover = page.waitForRequest("**/__e2e/option-cover.png");
+  await open.click();
+  await optionCover;
+  await expect(
+    modal.getByRole("img", { name: "Prévia da capa personalizada" }),
+  ).toBeVisible();
+  await modal.getByLabel("Nome ou texto do molde").fill("Ana");
+  await modal.getByRole("button", { name: "Confirmar personalização" }).click();
+  await page
+    .getByRole("button", { name: "Fechar visualização do modelo" })
+    .click();
+  await card.getByRole("button", { name: "Adicionar ao Carrinho" }).click();
+  const [item] = JSON.parse(
+    (await page.getByTestId("e2e-cart").textContent()) || "[]",
+  );
+  expect(item.moldeRevisao).toBe("6".repeat(32));
+
+  await card.getByRole("button", { name: /^Sem imagem/ }).click();
+  await card.getByRole("button", { name: /^Com nome/ }).click();
+  await expect(
+    card.getByRole("button", { name: "Adicionar ao Carrinho" }),
+  ).toBeDisabled();
+  const defaultCover = page.waitForRequest("**/__e2e/cover.png");
+  await open.click();
+  await defaultCover;
+  await modal.getByLabel("Nome ou texto do molde").fill("Maria");
+  await modal.getByRole("button", { name: "Confirmar personalização" }).click();
+  await page
+    .getByRole("button", { name: "Fechar visualização do modelo" })
+    .click();
+  await card.getByRole("button", { name: "Adicionar ao Carrinho" }).click();
+  const items = JSON.parse(
+    (await page.getByTestId("e2e-cart").textContent()) || "[]",
+  );
+  expect(
+    items.map((row: { moldeRevisao: string }) => row.moldeRevisao),
+  ).toEqual(["6".repeat(32), "a".repeat(32)]);
+});
+
+test("o admin troca o molde de uma opção por imagem-base e salva sem alterar a outra opção", async ({
+  page,
+}) => {
+  const image = await readFile("e2e/fixtures/editor-cover.png");
+  await page.route(
+    "https://firebasestorage.googleapis.com/v0/b/demo-sales.firebasestorage.app/**",
+    (route) => route.fulfill({ contentType: "image/png", body: image }),
+  );
+  await page.route("**/__e2e/product-pdf-copy", (route) => {
+    const id = "f".repeat(32);
+    const path = `catalog/templates/1yi50l93z/${id}.pdf`;
+    return route.fulfill({
+      json: {
+        template: { id, path, name: "Álbum.pdf", pages: ["/__e2e/cover.png"] },
+        assets: [{ path, url: path }],
+      },
+    });
+  });
+  await page.goto("/__e2e/admin?pdf-binding=1");
+  const edit = page.getByRole("button", {
+    name: "Editar Carimbo",
+    exact: true,
+  });
+  await edit.click();
+  const editor = page.getByRole("dialog", { name: "Editar Produto" });
+  await editor
+    .getByRole("button", { name: "Adicionar variação", exact: true })
+    .click();
+  await editor
+    .getByLabel("Tipo de variação", { exact: true })
+    .selectOption({ label: "Imagem" });
+  for (const name of ["Própria", "Padrão"]) {
+    await editor.getByLabel("Nova opção de Imagem").fill(name);
+    await editor
+      .getByRole("button", { name: "Adicionar opção", exact: true })
+      .click();
+  }
+  await editor.getByLabel("Modo de preço").selectOption("adicionais");
+  const upload = page.getByLabel("Enviar imagem-base de Imagem: Própria", {
+    exact: true,
+  });
+  const option = editor.locator("details").filter({ has: upload });
+  await option.locator("summary").click();
+  await option
+    .getByRole("button", { name: "Carregar bases e moldes da oficina" })
+    .click();
+  await option
+    .getByLabel("Base PDF do produto")
+    .selectOption({ label: "Álbum.pdf" });
+  await option
+    .getByRole("button", { name: "Vincular / atualizar molde" })
+    .click();
+  await expect(option.locator("summary")).toContainText("Álbum.pdf");
+  await upload.setInputFiles({
+    name: "ref-producao.png",
+    mimeType: "image/png",
+    buffer: image,
+  });
+  await expect(option.locator("summary")).toContainText("Imagem-base própria");
+  await expect(
+    option.getByText("Vinculado: Álbum.pdf · 1 páginas"),
+  ).toHaveCount(0);
+  const standard = editor
+    .locator("details")
+    .filter({
+      has: page.getByLabel("Enviar imagem-base de Imagem: Padrão", {
+        exact: true,
+      }),
+    });
+  await expect(standard.locator("summary")).toContainText(
+    "Usar arte do produto",
+  );
+  await editor
+    .getByRole("button", { name: "Salvar Produto", exact: true })
+    .click();
+  await expect(editor).toHaveCount(0);
+  await edit.click();
+  await expect(option.locator("summary")).toContainText("Imagem-base própria");
+  await expect(standard.locator("summary")).toContainText(
+    "Usar arte do produto",
+  );
 });

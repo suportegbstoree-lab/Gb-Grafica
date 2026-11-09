@@ -1,3 +1,4 @@
+import type { ProductProductionAssets } from './lib/productCustomization';
 import type { PrintProfile, ArtworkApproval } from './lib/printProfile';
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
 import type { PersonalizationFont, ProductCustomizationType, TextCustomization } from './lib/textCustomization';
@@ -5,11 +6,19 @@ import type { ProductShippingProfile, ShippingOption, ShippingParcel } from './l
 
 export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationFont, ProductCustomizationType, TextCustomization };
 
+export interface ProductOptionConfig extends ProductProductionAssets {
+  adicional?: string;
+  texto?: boolean;
+  imagem?: boolean;
+  sku?: string;
+  referencia?: string;
+}
+
 export interface ProductAttribute {
   nome: string;
   opcoes: string[];
   tipoId?: string;
-  configuracao?: Record<string, { adicional?: string; texto?: boolean; imagem?: boolean; sku?: string; referencia?: string }>;
+  configuracao?: Record<string, ProductOptionConfig>;
 }
 
 export interface Anuncio {
@@ -47,6 +56,7 @@ export interface CartItem {
   moldePedido?: import('./lib/productCustomization').ProductPdfOrder;
   textoMolde?: string;
   moldeRevisao?: string;
+  imagemBaseReferencia?: string;
   imagemClientePath?: string;
   paginasModelo?: string[];
   baseImagemPedido?: boolean;
