@@ -1,3 +1,5 @@
+import { createSalesAdminRouter, VARIATION_TYPES } from '../src/server/salesAdmin.js';
+import { CouponError, selectCoupon } from '../src/server/salesCoupons.js';
 import { createWorkRouter } from '../src/server/workRouter.js';
 import { workRequestContext } from '../src/server/workTracking.js';
 import { mountE2EDocuments } from './e2e-documents.js';
@@ -13,7 +15,33 @@ import type { getAdminServices } from '../src/server/firebaseAdmin.js';
 export function mountE2EOperations(app: express.Express) {
   app.use(workRequestContext);
   const memory = memoryFirestore([['_adminAccess/e2e-user', { schemaVersion: 1, enabled: true, epoch: 'legacy' }]]);
-  const services = { db: memory.db, auth: { getUsers: async () => ({ users: [{ uid: 'e2e-user', email: 'cliente@example.com', displayName: 'Cliente Teste', customClaims: { admin: true } }] }) } } as unknown as ReturnType<typeof getAdminServices>;
+  for (const [index, name] of ['Cor', 'Imagem'].entries()) {
+    const id = String(index + 1).repeat(32);
+    memory.docs.set(`${VARIATION_TYPES}/${id}`, { id, name, revision: id });
+  }
+  const services = { db: memory.db, bucket: { name: 'demo-sales.firebasestorage.app' }, auth: { getUsers: async () => ({ users: [{ uid: 'e2e-user', email: 'cliente@example.com', displayName: 'Cliente Teste', customClaims: { admin: true } }] }) } } as unknown as ReturnType<typeof getAdminServices>;
+  app.use('/__e2e/sales', createSalesAdminRouter({ services: () => services, authorize: async (req, permission) => {
+    const role = req.get('authorization')?.replace(/^Bearer e2e-sales-/, '') || '';
+    if (role !== 'administrator' && !DEFAULT_ROLE_PERMISSIONS[role]?.includes(permission)) {
+      throw new OperationsError('Acesso negado.', 403);
+    }
+  } }));
+  app.post('/api/checkout/coupon', async (req, res) => {
+    if (req.get('authorization') !== 'Bearer e2e-id-token') {
+      res.status(401).json({ error: 'Sessão inválida.' });
+      return;
+    }
+    try {
+      const lines = (req.body.items || []).map((item: any) => ({
+        productId: item.productId, category: memory.docs.get('anuncios/' + item.productId)?.categoria || 'Personalizados',
+        quantity: item.quantidade, unitCents: item.expectedUnitAmountCents,
+      }));
+      const selected = await selectCoupon(memory.db, { uid: 'e2e-user', email: 'cliente@example.com', email_verified: true }, lines, req.body.couponCode);
+      res.json({ coupon: selected?.applied || null });
+    } catch (error) {
+      res.status(error instanceof CouponError ? error.status : 500).json({ error: (error as Error).message });
+    }
+  });
   app.use('/__e2e/catalog', (req, _res, next) => {
     const seed = req.body?.seed;
     if (seed) {

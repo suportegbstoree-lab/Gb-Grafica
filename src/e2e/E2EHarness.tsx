@@ -1,3 +1,4 @@
+import { createSalesAdminApi } from '../services/salesService';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
 import StaffPdfFixture from './StaffPdfFixture';
@@ -245,6 +246,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const activityApi = React.useMemo<import('../services/staffActivityService').AdminActivityApi>(() => ({ orders: async orderId => { await fetch('/api/admin/activity/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) }); }, exportArtwork: async (orderId, itemId, format) => { await fetch('/api/admin/activity/artwork', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId, itemId, format }) }); } }), []);
   const [selectedRole] = React.useState(() => new URLSearchParams(window.location.search).get('role'));
   const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
+  const salesApi = React.useMemo(() => createSalesAdminApi(async () => `e2e-sales-${permissionOverride === undefined ? fixtureRole : 'employee'}`, '/__e2e/sales'), [fixtureRole, permissionOverride]);
   const workClient = React.useMemo(()=>fixtureWorkApi(permissionOverride===undefined?fixtureRole:'employee'),[fixtureRole,permissionOverride]);
   const documentApi = React.useMemo(()=>fixtureDocumentApi(permissionOverride===undefined?fixtureRole:'employee'),[fixtureRole,permissionOverride]);
   const fixturePermissions = permissionOverride ?? (fixtureRole === 'administrator' ? [] : DEFAULT_ROLE_PERMISSIONS[fixtureRole]);
@@ -316,9 +318,11 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
     async uploadImage(productId, file) {
       const uploadId = crypto.randomUUID().replace(/-/g, '');
       const path = `catalog/products/${productId}/${uploadId}.png`;
+      const response = await fetch(`/__e2e/uploads/${uploadId}`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+      const local = (await response.json()).url;
       return {
         path,
-        url: await (await fetch(`/__e2e/uploads/${uploadId}`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })).json().then(value => value.url),
+        url: file.name.startsWith('ref-') ? `https://firebasestorage.googleapis.com/v0/b/demo-sales.firebasestorage.app/o/${encodeURIComponent(path)}?alt=media` : local,
         name: file.name,
       };
     },
@@ -359,6 +363,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   return (
     <div data-testid="e2e-admin">
       <Admin
+        salesApi={salesApi}
         workClient={workClient}
         documentApi={documentApi}
         pdfLibraryApi={emptyPdfLibrary}

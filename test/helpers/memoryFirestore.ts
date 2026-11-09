@@ -32,7 +32,7 @@ export function memoryFirestore(initial: Array<[string, Record<string, unknown>]
   const db = { collection, runTransaction(fn: (transaction: unknown) => Promise<unknown>) {
     const pending = tail.then(async () => {
       const staged = new Map(docs);
-      const result = await fn({ get: async (ref: Ref) => ({ exists: staged.has(ref.path), data: () => staged.get(ref.path) }),
+      const result = await fn({ get: async (ref: Ref | ReturnType<typeof collection>) => 'path' in ref ? ({ exists: staged.has(ref.path), data: () => staged.get(ref.path) }) : ref.get(),
         set: (ref: Ref, data: Record<string, unknown>, options?: { merge: boolean }) => put(staged, ref.path, data, options?.merge),
         update: (ref: Ref, data: Record<string, unknown>) => { if (!staged.has(ref.path)) throw new Error('missing'); put(staged, ref.path, data, true); },
         create: (ref: Ref, data: Record<string, unknown>) => { if (staged.has(ref.path)) throw Object.assign(new Error('exists'),{code:6}); put(staged, ref.path, data); }, delete: (ref: Ref) => staged.delete(ref.path),

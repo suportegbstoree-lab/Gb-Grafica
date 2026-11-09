@@ -292,15 +292,13 @@ test("admin keeps the advertising image while adding a separate production base 
   await expect(editor.getByLabel("Imagem Principal (URL)")).toHaveValue(
     advertising,
   );
-  await editor.getByLabel("Modo de preço").selectOption("adicionais");
-  await editor
-    .getByRole("button", { name: "+ Adicionar Atributo", exact: true })
-    .click();
-  await editor.getByLabel("Nome (ex: Tamanho)").fill("Imagem");
-  await editor
-    .getByLabel("Opções (separadas por vírgula)")
-    .fill("Com imagem, Sem imagem");
-  await editor.getByRole("button", { name: "Confirmar", exact: true }).click();
+  await editor.getByRole('button', { name: 'Adicionar variação', exact: true }).click();
+  await editor.getByLabel('Tipo de variação', { exact: true }).selectOption({ label: 'Imagem' });
+  await editor.getByLabel('Nova opção de Imagem').fill('Com imagem');
+  await editor.getByRole('button', { name: 'Adicionar opção', exact: true }).click();
+  await editor.getByLabel('Nova opção de Imagem').fill('Sem imagem');
+  await editor.getByRole('button', { name: 'Adicionar opção', exact: true }).click();
+  await editor.getByLabel('Modo de preço').selectOption('adicionais');
   await editor
     .getByLabel("Adicional Imagem: Com imagem", { exact: true })
     .fill("10");

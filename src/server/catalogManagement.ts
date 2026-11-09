@@ -1,3 +1,5 @@
+import { variationReferenceUrls } from '../lib/productSales.js';
+import { VARIATION_TYPES } from './salesAdmin.js';
 import { verifyProductPdfBinding } from './productPdfBinding.js';
 import { retainedAssetPath } from '../lib/catalogRetention.js';
 import { prepareWorkActivity } from './workTracking.js';
@@ -68,6 +70,18 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
       }
       if (collection === 'config') action = keys.every(key => FONTS_FIELDS.includes(key as any)) ? 'fonts.updated' : keys.every(key => BRANDING_FIELDS.includes(key as any)) ? 'branding.updated' : 'settings.updated';
       if(collection==='anuncios' && next) {
+        if (keys.includes('atributos') && Array.isArray(next.atributos)) {
+          if (next.atributos.length > Math.max(2, old?.atributos?.length || 0)) {
+            fail('Cadastre até duas variações por produto.');
+          }
+          for (const attribute of next.atributos) {
+            if (!attribute?.tipoId || (old?.atributos || []).some((previous: any) =>
+              previous.tipoId === attribute.tipoId && previous.nome === attribute.nome)) continue;
+            if (typeof attribute.tipoId !== 'string' || !/^[a-f0-9]{32}$/.test(attribute.tipoId)) fail('Tipo de variação inválido.');
+            const type = (await tx.get(db.collection(VARIATION_TYPES).doc(attribute.tipoId))).data();
+            if (type?.name !== attribute.nome) fail('O tipo de variação mudou. Atualize a lista e selecione novamente.', 409);
+          }
+        }
         if(next.imagemBase && !retainedAssetPath(next.imagemBase,services.bucket.name)?.startsWith(`catalog/products/${id}/`)) fail('Envie a arte-base para o Storage deste produto.');
         if(next.moldePdf && !isDeepStrictEqual(old?.moldePdf,next.moldePdf)) {
           if(!admin && !permissions.some(p=>['documents.generate','documents.templates.manage'].includes(p))) fail('Sua função não permite vincular bases da oficina.',403);
@@ -89,7 +103,22 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
             next.pacote = { ...parsed, revision: same ? previous.revision : randomUUID().replaceAll('-', '') };
             next.preco_base = (result as any).value.preco_base;
           }
-          if(keys.includes('atributos'))next.atributos=(result as any).value.atributos;
+          if (keys.includes('atributos')) {
+            next.atributos = (result as any).value.atributos;
+            for (const url of variationReferenceUrls(next as Anuncio)) {
+              if (!retainedAssetPath(url, services.bucket?.name || '')?.startsWith(`catalog/products/${id}/`)) {
+                fail('Envie as referências das variações para o Storage deste produto.');
+              }
+            }
+          }
+          if (keys.includes('sku')) {
+            delete next.sku;
+            if ((result as any).value.sku) next.sku = (result as any).value.sku;
+          }
+          if (keys.includes('skuPorCombinacao')) {
+            delete next.skuPorCombinacao;
+            if ((result as any).value.skuPorCombinacao) next.skuPorCombinacao = (result as any).value.skuPorCombinacao;
+          }
           if (next.tags) next.tags = (result as any).value.tags;
         }
         // Keep fields outside this patch intact; validators check the resulting document.

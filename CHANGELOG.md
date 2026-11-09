@@ -44,6 +44,15 @@ R$ **1.300,00 (Mil e Trezentos Reais)** Dessa ultima bateria de funcionalidades.
 
 Totalizando R$ **1.760,00 (Mil Setecentos e Sessenta Reais)** ao todo.
 
+## 2026-11-08 — Cadastro de vendas, variações com SKU e cupons
+
+- O cadastro de produtos reúne informações básicas, descrição, variações, arte e moldes PDF e embalagem na mesma tela, com menu para ir a cada seção.
+- O painel permite cadastrar, editar e excluir tipos de variação. Cada produto combina até dois tipos para gerar a tabela de preços e SKUs. As opções aceitam referências próprias, SKU e controles de personalização. A tabela permite preencher todos os preços de uma vez ou editar cada combinação.
+- O SKU combina o nome ou SKU principal do produto com os nomes ou SKUs das opções. Cada combinação aceita um código próprio. O pedido guarda o SKU conferido pelo servidor e o exibe no painel e na etiqueta interna de produção. As referências das variações ficam separadas da galeria e da arte usada para imprimir.
+- O painel de cupons gera códigos e permite listar, editar, ativar e excluir descontos fixos ou percentuais. Cada cupom tem validade até o fim da data em horário de Brasília, limite de usos e alcance por produto, categoria ou carrinho.
+- O carrinho consulta o desconto antes de pagar. Cupons de primeira compra são aplicados automaticamente pelo e-mail verificado da conta. O sistema consulta pedidos anteriores e reserva a primeira compra para evitar usos simultâneos.
+- Aplica-se um cupom por pedido, depois das promoções, sobre os produtos elegíveis. O valor do frete permanece separado. O servidor recalcula os valores em centavos, guarda o desconto no pedido e reserva o uso na mesma transação que cria o pedido. Falhas definitivas ou expiração confirmada sem cobrança liberam a reserva. Respostas ambíguas do PagBank mantêm a reserva enquanto a cobrança pode existir.
+
 ## 2026-11-08 — Arte de produção, vínculo com a oficina e variações de personalização
 
 - O cadastro separa a imagem-base de impressão das imagens de divulgação. Produtos com uma base podem usar a arte padrão sem exigir envio do cliente; trocar fotos da galeria não altera a produção configurada.

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import { FieldValue, type Firestore, type Transaction } from "firebase-admin/firestore";
 import type { Order } from "../types.js";
 import { createOrderLabel } from "./productionLabel.js";
 import { resendEmailContent } from "./resendEmailTemplates.js";
@@ -16,12 +16,14 @@ export async function createOrderWithDocuments(
   id: string,
   order: Order,
   merchantEmail: string,
+  reserve?: (transaction: Transaction) => Promise<void>,
 ) {
   const bytes = Buffer.from(await createOrderLabel(id, order));
   if (bytes.length > 750_000)
     throw new Error("A etiqueta excedeu o tamanho permitido.");
   const now = Date.now();
   await db.runTransaction(async (transaction) => {
+    await reserve?.(transaction);
     transaction.create(db.collection("orders").doc(id), {
       ...order,
       etiquetaCriada: true,

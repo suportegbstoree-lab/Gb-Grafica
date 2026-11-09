@@ -70,7 +70,12 @@ test('galeria recebe lote e a combinação troca imagem e preço no produto e no
   const image = await readFile('e2e/fixtures/editor-cover.png');
   await editor.getByLabel('Adicionar imagens do computador à galeria').setInputFiles([{ name: 'azul.png', mimeType: 'image/png', buffer: image }, { name: 'vermelho.png', mimeType: 'image/png', buffer: image }]);
   await expect(editor.locator('img[src^="/__e2e/uploads/"]')).toHaveCount(2);
-  await editor.getByRole('button', { name: '+ Adicionar Atributo', exact: true }).click(); await editor.getByLabel('Nome (ex: Tamanho)').fill('Cor'); await editor.getByLabel('Opções (separadas por vírgula)').fill('Azul,Vermelho'); await editor.getByRole('button', { name: 'Confirmar', exact: true }).click();
+  await editor.getByRole('button', { name: 'Adicionar variação', exact: true }).click();
+  await editor.getByLabel('Tipo de variação', { exact: true }).selectOption({ label: 'Cor' });
+  for (const option of ['Azul', 'Vermelho']) {
+    await editor.getByLabel('Nova opção de Cor').fill(option);
+    await editor.getByRole('button', { name: 'Adicionar opção', exact: true }).click();
+  }
   await editor.getByLabel('Preço da combinação Azul', { exact: true }).fill('25.00'); await editor.getByLabel('Preço da combinação Vermelho', { exact: true }).fill('10.00');
   await editor.getByLabel('Imagem da combinação Azul').selectOption({ label: 'Imagem 1 da galeria' }); const selectedImage = await editor.getByLabel('Imagem da combinação Azul').inputValue();
   await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click(); await expect(editor).toHaveCount(0); await page.getByRole('link', { name: 'Voltar para a Loja' }).click();

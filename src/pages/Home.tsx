@@ -1,3 +1,5 @@
+import { quoteCoupon } from '../services/salesService';
+import type { AppliedCoupon } from '../lib/salesCoupons';
 import CatalogProductCard from '../components/CatalogProductCard';
 import BundleConfigurator from '../components/BundleConfigurator';
 import CustomerProfile from '../components/CustomerProfile';
@@ -195,6 +197,39 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     return () => { viewerRequest.current += 1; };
   }, [user?.uid]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [couponInput, setCouponInput] = useState('');
+  const [couponCode, setCouponCode] = useState('');
+  const [couponRefresh, setCouponRefresh] = useState(0);
+  const [couponQuote, setCouponQuote] = useState<{ key: string; coupon: AppliedCoupon | null; error?: string }>();
+  const couponItems = JSON.stringify(cart.map(function quoteItem(item): unknown {
+    return {
+      productId: item.productId, selecoes: item.selecoes, quantidade: item.quantidade,
+      expectedUnitAmountCents: parseMoneyToCents(item.preco),
+      ...(item.bundleItems ? { bundleRevision: item.bundleRevision, bundleItems: item.bundleItems.map(quoteItem) } : {}),
+    };
+  }));
+  const couponKey = JSON.stringify([user?.uid, couponCode, couponItems, couponRefresh]);
+  const currentCouponQuote = couponQuote?.key === couponKey ? couponQuote : undefined;
+  const appliedCoupon = currentCouponQuote?.coupon;
+  const awaitingCoupon = Boolean(user && cart.length && !currentCouponQuote);
+  React.useEffect(() => {
+    setCouponInput('');
+    setCouponCode('');
+    setCouponQuote(undefined);
+  }, [user?.uid]);
+  React.useEffect(() => {
+    if (!isCartOpen || !user || couponItems === '[]') return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void user.getIdToken().then(token => quoteCoupon(token, JSON.parse(couponItems), couponCode, controller.signal))
+        .then(result => {
+          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: result.coupon });
+        }).catch(error => {
+          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: null, error: error.message });
+        });
+    }, 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [isCartOpen, user, couponKey, couponItems, couponCode]);
   const [isEmailPreferencesOpen, setIsEmailPreferencesOpen] = useState(false);
   React.useEffect(() => setIsEmailPreferencesOpen(false), [user?.uid]);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
@@ -300,7 +335,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     return unitAmount === null ? total : total + unitAmount * item.quantidade;
   }, 0), [cart]);
   const hasInvalidCartPrice = cart.some(item => parseMoneyToCents(item.preco) === null || (item.bundleItems && products.find(p=>p.id===item.productId)?.pacote?.revision !== item.bundleRevision));
-  const totalCents = subtotalCents + (deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : 0);
+  const totalCents = subtotalCents - (appliedCoupon?.discountCents || 0) + (deliveryMethod === 'entrega' ? Math.round((shippingInfo?.price || 0) * 100) : 0);
 
   React.useEffect(() => {
     shippingSequence.current += 1;
@@ -482,6 +517,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       return;
     }
 
+    if (!currentCouponQuote || currentCouponQuote.error) return;
+
     checkoutLock.current = true;
     setIsCheckingOut(true);
 
@@ -512,6 +549,9 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
           ...(item.modeloPath ? { aprovarArte: item.aprovarArte === true } : {}),
         }); }),
         requestId: crypto.randomUUID(),
+        ...(couponCode ? { couponCode } : {}),
+        expectedCouponCents: appliedCoupon?.discountCents ?? 0,
+        expectedCouponCode: appliedCoupon?.code ?? null,
         customerName: formResult.customerName,
         observacoes: orderNotes,
         cpf: formResult.cpf,
@@ -530,11 +570,14 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       if (checkoutResult.orderId) localStorage.setItem('gb_pending_order', checkoutResult.orderId);
       setCart([]);
       setAcceptedLegalTerms(false);
+      setCouponCode('');
+      setCouponInput('');
       setIsCartOpen(false);
       if (onCheckoutRedirect) onCheckoutRedirect(checkoutResult.initPoint);
       else window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
       if (error instanceof CheckoutApiError && error.code?.startsWith('SHIPPING_')) setShippingInfo(null);
+      if (error instanceof CheckoutApiError && error.code?.startsWith('COUPON_')) setCouponRefresh(value => value + 1);
       if (error instanceof CheckoutApiError && error.code === 'PRICE_CHANGED') {
         setCart(current => repriceCart(current, products, promotions, Date.now()));
       }
@@ -1555,11 +1598,43 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                     </div>
                   </div>
 
+                  {user && <section className="space-y-2 rounded-xl border border-gray-200 p-3" aria-label="Cupom de desconto">
+                    <label className="block text-sm font-bold text-gray-700">Cupom de desconto
+                      <input className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" value={couponInput} maxLength={15}
+                        onChange={event => setCouponInput(event.target.value.toUpperCase())} placeholder="Digite o código"
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' && couponInput.trim() && !isCheckingOut) {
+                            event.preventDefault();
+                            setCouponCode(couponInput.trim());
+                            setCouponRefresh(value => value + 1);
+                          }
+                        }} />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={!couponInput.trim() || isCheckingOut} className="rounded-lg border border-pink-200 px-3 py-2 text-sm font-bold text-pink-700 disabled:opacity-40"
+                        onClick={() => { setCouponCode(couponInput.trim()); setCouponRefresh(value => value + 1); }}>Aplicar cupom</button>
+                      {couponCode && <button type="button" disabled={isCheckingOut} className="px-3 py-2 text-sm text-gray-700"
+                        onClick={() => { setCouponInput(''); setCouponCode(''); }}>Remover cupom</button>}
+                    </div>
+                    <div aria-live="polite">
+                      {awaitingCoupon && <p className="text-xs text-gray-500">Verificando desconto…</p>}
+                      {appliedCoupon && <p className="text-sm font-medium text-green-700">
+                        {appliedCoupon.firstPurchase ? 'Primeira compra · ' : ''}{appliedCoupon.description} ({appliedCoupon.code})
+                      </p>}
+                      {currentCouponQuote?.error && <p className="text-sm text-red-700">{currentCouponQuote.error}{' '}
+                        <button type="button" className="underline" onClick={() => setCouponRefresh(value => value + 1)}>Tentar novamente</button>
+                      </p>}
+                    </div>
+                  </section>}
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-sm text-gray-500">
                       <span>Subtotal</span>
                       <span>{formatMoney(subtotalCents / 100)}</span>
                     </div>
+                    {appliedCoupon && <div className="flex justify-between items-center text-sm font-bold text-green-700">
+                      <span>Desconto do cupom</span>
+                      <span>− {formatMoney(appliedCoupon.discountCents / 100)}</span>
+                    </div>}
                     {deliveryMethod === 'entrega' && shippingInfo && (
                       <div className="flex justify-between items-center text-sm text-gray-500">
                         <span>Frete</span>
@@ -1584,7 +1659,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                   <button
                     type="button"
                     onClick={checkout}
-                    disabled={isCheckingOut || isCalculating}
+                    disabled={isCheckingOut || isCalculating || awaitingCoupon || Boolean(currentCouponQuote?.error)}
                     className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {isCheckingOut ? <><Loader2 className="animate-spin" size={18} /> REDIRECIONANDO...</> : "IR PARA O PAGBANK"}
@@ -1909,10 +1984,11 @@ function ProductCard({
   const binding=product.moldePdf;
   const [moldText,setMoldText]=useState('');
   const baseImage=product.imagemBase;
-  const template = !binding && !baseImage ? (product.modelosPdf || []).find(template => template.pages.includes(activeImage)) : undefined;
+  const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
+  const legacySourceImage = allImages.includes(activeImage) ? activeImage : variantImage(product, selections, false);
+  const template = !binding && !baseImage ? (product.modelosPdf || []).find(template => template.pages.includes(legacySourceImage)) : undefined;
   const [pdfBack, setPdfBack] = useState<Blob | undefined>();
   React.useEffect(() => { let cancelled = false; setPdfBack(undefined); if (artworkSourceFile?.type === 'application/pdf') void import('../services/pdfPreview').then(module => module.pdfPreviewPages(artworkSourceFile)).then(pages => { if (!cancelled) setPdfBack(pages[1]); }).catch(error => onNotify({ type: 'error', message: error.message })); return () => { cancelled = true; }; }, [artworkSourceFile]);
-  const allImages = Array.from(new Set([product.imagem, ...(product.imagens || [])].filter(Boolean)));
   const attributeSignature = JSON.stringify(product.atributos);
   const availableFonts = activePersonalizationFonts(fonts);
   const printProfile = parsePrintProfile(product.printProfile) || undefined;
@@ -1926,7 +2002,7 @@ function ProductCard({
     setActiveImage(product.imagem);
   }, [product.imagem]);
 
-  React.useEffect(() => { setActiveImage(variantImage(product, selections)); }, [product.imagensPorCombinacao, product.imagem, JSON.stringify(selections)]);
+  React.useEffect(() => { setActiveImage(variantImage(product, selections)); }, [product.imagensPorCombinacao, product.atributos, product.imagem, JSON.stringify(selections)]);
 
   React.useEffect(() => {
     setSelections(initialSelections);
@@ -1937,7 +2013,7 @@ function ProductCard({
     if (artworkPreviewUrl) URL.revokeObjectURL(artworkPreviewUrl);
   }, [artworkPreviewUrl]);
 
-  const sourceKey = JSON.stringify([requiresArtwork?uploadedArtwork?.path:'', binding?.revision || baseImage || activeImage, printProfileKey(printProfile),template?.alphabet||null, customization, selections]);
+  const sourceKey = JSON.stringify([requiresArtwork?uploadedArtwork?.path:'', binding?.revision || baseImage || legacySourceImage, printProfileKey(printProfile),template?.alphabet||null, customization, selections]);
   const previousSource = useRef(sourceKey);
   React.useEffect(() => { if (previousSource.current !== sourceKey) { previousSource.current = sourceKey; for(const file of [uploadedModel,uploadedBack,...extraModels])if(file)void personalizationModelStorage.deleteModel(file.path).catch(()=>undefined); setGeneratedDocument(null); setUploadedModel(null); setUploadedBack(null);setExtraModels([]); if (uploadedBackOriginal) void personalizationModelStorage.deleteModel(uploadedBackOriginal.path).catch(() => undefined); setUploadedBackOriginal(null); } }, [sourceKey]);
 
@@ -2196,13 +2272,18 @@ function ProductCard({
                       onClick={() => handleSelect(attr.nome, option)}
                       aria-pressed={selections[attr.nome] === option}
                       className={cn(
-                        "text-left px-4 py-3 rounded-xl border text-xs font-bold transition-all",
+                        "flex items-center gap-2 text-left px-4 py-3 rounded-xl border text-xs font-bold transition-all",
                         selections[attr.nome] === option
                           ? "bg-gradient-to-r from-pink-400 to-purple-500 border-transparent text-white shadow-lg shadow-pink-100"
                           : "bg-gray-50 border-gray-100 text-gray-500 hover:border-pink-200 hover:text-pink-600"
                       )}
                     >
-                      {option}{product.precificacao==='adicionais' && attr.configuracao?.[option]?.adicional && <span className="ml-2 opacity-80">+ {formatMoney(attr.configuracao[option].adicional)}</span>}
+                      {attr.configuracao?.[option]?.referencia && <img src={attr.configuracao[option].referencia} alt=""
+                        className="h-8 w-8 shrink-0 rounded object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />}
+                      <span className="min-w-0 break-words">
+                        {option}{product.precificacao === 'adicionais' && attr.configuracao?.[option]?.adicional &&
+                          <span className="ml-2 opacity-80">+ {formatMoney(attr.configuracao[option].adicional)}</span>}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -2352,7 +2433,7 @@ function ProductCard({
         productName={product.nome}
         template={!uploadedArtwork ? template : undefined}
         printProfile={printProfile}
-        previewImage={(requiresArtwork?artworkPreviewUrl:undefined) || baseImage || template?.pages[0] || activeImage || product.imagem || DEFAULT_LOGO_URL}
+        previewImage={(requiresArtwork?artworkPreviewUrl:undefined) || baseImage || template?.pages[0] || legacySourceImage || product.imagem || DEFAULT_LOGO_URL}
         previewSource={requiresArtwork?artworkSourceFile || undefined:undefined}
         fieldLabel={product.labelTexto || 'Texto da personalização'}
         initialValue={requiresText?textCustomization:null}

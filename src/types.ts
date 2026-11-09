@@ -8,10 +8,13 @@ export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationF
 export interface ProductAttribute {
   nome: string;
   opcoes: string[];
-  configuracao?: Record<string, { adicional?: string; texto?: boolean; imagem?: boolean }>;
+  tipoId?: string;
+  configuracao?: Record<string, { adicional?: string; texto?: boolean; imagem?: boolean; sku?: string; referencia?: string }>;
 }
 
 export interface Anuncio {
+  sku?: string;
+  skuPorCombinacao?: Record<string, string>;
   pacote?: import('./lib/bundles').BundleDefinition;
   tags?: string[];
   lancamento?: boolean;
@@ -40,6 +43,7 @@ export interface Anuncio {
 }
 
 export interface CartItem {
+  sku?: string;
   moldePedido?: import('./lib/productCustomization').ProductPdfOrder;
   textoMolde?: string;
   moldeRevisao?: string;
@@ -95,6 +99,8 @@ export interface DeliveryAddress {
 }
 
 export interface Order {
+  cupom?: import('./lib/salesCoupons').AppliedCoupon;
+  cupomLiberado?: boolean;
   etiquetaCriada?: boolean;
   observacoes?: string;
   tracking?: import('./lib/tracking').OrderTracking;

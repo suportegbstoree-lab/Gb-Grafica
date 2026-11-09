@@ -6,6 +6,8 @@ export const RETAINED_COLLECTIONS = [
   "config",
   "_staffPdfBases",
   "_staffPdfLayouts",
+  "_variationTypes",
+  "_salesCoupons",
 ] as const;
 export function isRetainedAssetPath(path: unknown): path is string {
   return (
@@ -51,6 +53,7 @@ export function retainedAssetPath(
 const assetKeys = new Set([
   "imagem",
   "imagemBase",
+  "referencia",
   "moldePdf",
   "imagens",
   "image",

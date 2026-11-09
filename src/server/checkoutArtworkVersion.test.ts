@@ -158,12 +158,12 @@ after(async () => {
   if (firebaseApp) await deleteApp(firebaseApp);
   for (const [key, value] of oldEnv) value === undefined ? delete process.env[key] : process.env[key] = value;
 });
-async function checkout(extraItem: Record<string, unknown> = {}) {
+async function checkout(extraItem: Record<string, unknown> = {}, extraOrder: Record<string, unknown> = {}) {
   return localFetch(`${baseUrl}/api/checkout`, {
     method: 'POST', headers: { authorization: 'Bearer usuario-teste', 'content-type': 'application/json' },
     body: JSON.stringify({
       requestId: randomUUID(), legalAcceptance: currentLegalAcceptance(), customerName: 'Cliente Teste',
-      cpf: '52998224725', phone: '11987654321', deliveryMethod: 'retirada',
+      cpf: '52998224725', phone: '11987654321', deliveryMethod: 'retirada', ...extraOrder,
       items: [{ productId: 'produto', selecoes: {}, quantidade: 1, arquivoPath: sourcePath, arquivoNome: 'arte.png', aprovarArte: true, ...extraItem }],
     }),
   });
@@ -496,4 +496,54 @@ test('four-page linked models copy every preview and serve only owned order page
 test('linked models reject an incomplete set of preview pages',async()=>{
  const input=linkedProduct(),p=docs.get('anuncios/produto') as any;p.moldePdf.pdf.pages=Array.from({length:4},(_,i)=>`https://example.com/p${i+1}.png`);
  const response=await checkout(input);assert.equal(response.status,422);assert.equal(providerCalls,0);
+});
+
+const salesCouponCode = 'GB-A1B2C3D4E5F6';
+function seedSalesCoupon() {
+  docs.set('_salesCoupons/' + salesCouponCode, {
+    code: salesCouponCode, description: 'Agendas', kind: 'fixed', amount: 301, limit: 1, used: 0,
+    scope: 'products', targets: ['produto'], expiresOn: '2099-12-31', firstPurchase: false, active: true, revision: 'rev1',
+  });
+}
+
+test('coupon quote skips artwork validation and checkout reserves one use with the exact discounted PagBank amount', async () => {
+  seedSalesCoupon();
+  const selecoes = { Estampa: 'Floral 1', Customização: 'Nome' };
+  docs.set('anuncios/produto', {
+    ...docs.get('anuncios/produto'), sku: 'AGENDA',
+    atributos: [{ nome: 'Estampa', opcoes: ['Floral 1'] }, { nome: 'Customização', opcoes: ['Nome'] }],
+    combinacoes: { 'Floral 1|Nome': '10.00' },
+    skuPorCombinacao: { 'Floral 1|Nome': 'AGENDA-FL1-NOME' },
+  });
+  const preview = await localFetch(`${baseUrl}/api/checkout/coupon`, {
+    method: 'POST', headers: { authorization: 'Bearer usuario-teste', 'content-type': 'application/json' },
+    body: JSON.stringify({ couponCode: salesCouponCode, items: [{ productId: 'produto', selecoes, quantidade: 2 }] }),
+  });
+  assert.equal(preview.status, 200, JSON.stringify(await preview.clone().json()));
+  assert.equal((await preview.json()).coupon.discountCents, 301);
+  assert.equal(docs.get('_salesCoupons/' + salesCouponCode)?.used, 0);
+  const response = await checkout({ quantidade: 2, selecoes, sku: 'IGNORAR-ESTE-VALOR' }, {
+    couponCode: salesCouponCode, expectedCouponCode: salesCouponCode, expectedCouponCents: 301,
+  });
+  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  assert.equal(providerPayload.items.reduce((sum: number, item: any) => sum + item.unit_amount * item.quantity, 0), 1699);
+  const order = [...docs].find(([path]) => path.startsWith('orders/'))![1] as any;
+  assert.equal(order.totalCents, 1699);
+  assert.equal(order.subtotal, '20.00');
+  assert.equal(order.itens[0].sku, 'AGENDA-FL1-NOME');
+  assert.equal(order.cupom.code, salesCouponCode);
+  assert.equal(order.cupom.discountCents, 301);
+  assert.equal(docs.get('_salesCoupons/' + salesCouponCode)?.used, 1);
+  assert.equal(docs.get('_salesCouponHolds/' + order.id)?.providerAttempted, true);
+});
+
+test('an altered expected coupon total is rejected before reserving a use or calling PagBank', async () => {
+  seedSalesCoupon();
+  const response = await checkout({}, {
+    couponCode: salesCouponCode, expectedCouponCode: salesCouponCode, expectedCouponCents: 999,
+  });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, 'COUPON_CHANGED');
+  assert.equal(providerCalls, 0);
+  assert.equal(docs.get('_salesCoupons/' + salesCouponCode)?.used, 0);
 });

@@ -7,7 +7,7 @@ import { printProfileLabel } from '../lib/printProfile.js';
 
 export function productionLabelFingerprint(order: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify({ itens: order.itens, clienteNome: order.clienteNome,
-    clienteEmail: order.clienteEmail, enderecoEntrega: order.enderecoEntrega, total: order.total, observacoes: order.observacoes, clienteTelefone: order.clienteTelefone, metodoEntrega: order.metodoEntrega, data: order.data })).digest('hex');
+    clienteEmail: order.clienteEmail, enderecoEntrega: order.enderecoEntrega, total: order.total, cupom: order.cupom, observacoes: order.observacoes, clienteTelefone: order.clienteTelefone, metodoEntrega: order.metodoEntrega, data: order.data })).digest('hex');
 }
 
 /** A6 internal work label. The PDF contains order data, never bearer URLs or payment credentials. */
@@ -47,6 +47,7 @@ export async function createOrderLabel(orderId: string, order: Order, production
   y -= 6;
   for (const item of orderItems(order.itens).filter(item=>!order.itens.some(root=>root.bundleItems && root.id===item.id))) {
     line(`${item.quantidade} x ${item.nome} - R$ ${item.preco} / unidade`, true, 11);
+    if (production && item.sku) line(`SKU: ${item.sku}`);
     for (const [key, value] of Object.entries(item.selecoes || {})) line(`${key}: ${value}`);
     line(item.printProfile ? printProfileLabel(item.printProfile) : 'Formato: conferir antes de produzir');
     const text = item.personalizacaoTexto?.texto || item.textoPersonalizado;
@@ -55,6 +56,7 @@ export async function createOrderLabel(orderId: string, order: Order, production
     line(item.aprovacaoArte ? 'Aprovação da arte registrada na compra' : 'Conferir aprovação da arte no painel');
     y -= 7;
   }
+  if (order.cupom) line(`Cupom ${order.cupom.code}: - R$ ${(order.cupom.discountCents / 100).toFixed(2)}`);
   line(`Total: R$ ${order.total}`, true, 12);
   if (order.observacoes) line(`Observações: ${order.observacoes}`);
   line('Confira os arquivos e a ficha no painel antes de produzir.', false, 8);

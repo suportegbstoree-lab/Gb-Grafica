@@ -1,3 +1,6 @@
+import { CouponsPanel, VariationTypesPanel } from '../components/SalesAdminPanels';
+import { salesAdminApi, type SalesAdminApi } from '../services/salesService';
+import { variationReferenceUrls, MAX_PRODUCT_SKU } from '../lib/productSales';
 import StaffDocuments from '../components/StaffDocuments';
 import type { StaffPdfApi } from '../services/staffPdfService';
 import WorkdayBar from '../components/WorkdayBar';
@@ -73,7 +76,6 @@ import {
   ADMIN_LIMITS,
   draftFingerprint,
   isSafeAdminUrl,
-  generateProductCombinations,
   validateCategoryDraft,
   validateProductDraft,
   validatePromotionDraft,
@@ -115,6 +117,7 @@ export interface AdminAssetStorage {
 }
 
 export interface AdminProps {
+  salesApi?: SalesAdminApi;
   workClient?:WorkApi;
   documentApi?:StaffDocumentApi;
   pdfLibraryApi?:StaffPdfApi;
@@ -195,7 +198,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
+export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
   fullAdmin = false, workClient=workApi, documentApi, pdfLibraryApi,
   permissions = [],
   staffApi = staffAdministrationApi,
@@ -232,10 +235,12 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     { id: 'operations' as const, label: 'Operações', icon: Layout },
     { id:'documents' as const,label:'Gerar PDF',icon:FileText },
     { id: 'products' as const, label: 'Produtos', icon: Layout },
+    { id: 'variation-types' as const, label: 'Tipos de variação', icon: List },
     { id: 'bundles' as const, label: 'Pacotes', icon: Package },
     { id: 'categories' as const, label: 'Categorias', icon: List },
     { id: 'orders' as const, label: 'Pedidos', icon: Package },
     { id: 'promotions' as const, label: 'Promoções', icon: Tag },
+    { id: 'coupons' as const, label: 'Cupons', icon: Tag },
     { id: 'branding' as const, label: 'Identidade Visual', icon: Image },
     { id: 'fonts' as const, label: 'Fontes', icon: Type },
     { id: 'config' as const, label: 'Configurações', icon: Settings },
@@ -309,8 +314,6 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
   React.useEffect(() => {
     if (!configDirty) setConfigDraft(structuredClone(config));
   }, [config]);
-  const [newAttr, setNewAttr] = useState({ nome: '', opcoes: '' });
-  const [showAttrForm, setShowAttrForm] = useState(false);
   const [showBulkImageForm, setShowBulkImageForm] = useState(false);
   const [bulkImages, setBulkImages] = useState('');
   const [showCustomAiPrompt, setShowCustomAiPrompt] = useState(false);
@@ -329,13 +332,11 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     setSessionCatalogUploads([]);
     setIsUploadingCatalogImages(false);
     originalProductImagesRef.current = null;
-    setShowAttrForm(false);
     setShowBulkImageForm(false);
     setShowCustomAiPrompt(false);
     setAiPreview(null);
     setBulkImages('');
     setCustomAiPrompt('');
-    setNewAttr({ nome: '', opcoes: '' });
   }, []);
 
   const deleteCatalogPaths = React.useCallback(async (paths: string[]) => {
@@ -1000,6 +1001,28 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     }
   };
 
+  const uploadVariationReference = async (attributeName: string, option: string, file: File) => {
+    if (!productStorageId || isUploadingCatalogImages) return;
+    setIsUploadingCatalogImages(true);
+    setErrorMessage(null);
+    try {
+      const uploaded = await catalogImageStorage.uploadImage(productStorageId, file);
+      setSessionCatalogUploads(current => [...current, uploaded]);
+      setEditingProduct(current => current ? {
+        ...current,
+        atributos: current.atributos?.map(attribute => attribute.nome === attributeName && attribute.opcoes.includes(option)
+          ? { ...attribute, configuracao: {
+            ...attribute.configuracao, [option]: { ...attribute.configuracao?.[option], referencia: uploaded.url },
+          } }
+          : attribute),
+      } : current);
+    } catch (error) {
+      setErrorMessage((error as Error).message);
+    } finally {
+      setIsUploadingCatalogImages(false);
+    }
+  };
+
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!can('products.manage') || !editingProduct || isSaving || isUploadingCatalogImages) return;
@@ -1019,7 +1042,7 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
     setIsSaving(true);
     try {
       await persistence.setDocument('anuncios', id, productToSave);
-      const finalUrls = new Set([...productionAssetUrls(productToSave), productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
+      const finalUrls = new Set([...variationReferenceUrls(productToSave), ...productionAssetUrls(productToSave), productToSave.imagem, ...(productToSave.imagens || []), ...(productToSave.modelosPdf || []).map(template => template.path), ...alphabetUrls(productToSave.modelosPdf)]);
       const unusedSessionPaths = sessionCatalogUploads
         .filter(upload => !finalUrls.has(upload.url))
         .map(upload => upload.path);
@@ -1326,6 +1349,16 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
         {activeTab === 'documents' && tabAllowed('documents') && <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} />}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
         {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} workClient={workClient} fullAdmin={fullAdmin} />}
+        {activeTab === 'variation-types' && tabAllowed('variation-types') && <VariationTypesPanel api={salesApi}
+          confirmDelete={(label, onConfirm) => setConfirmation({
+            title: 'Excluir tipo de variação', message: `Excluir “${label}” da lista de tipos disponíveis? Os produtos cadastrados mantêm suas opções.`,
+            confirmLabel: 'Excluir tipo', danger: true, onConfirm,
+          })} />}
+        {activeTab === 'coupons' && tabAllowed('coupons') && <CouponsPanel api={salesApi} products={products} categories={categories}
+          confirmDelete={(label, onConfirm) => setConfirmation({
+            title: 'Excluir cupom', message: `Excluir o cupom ${label} do cadastro?`,
+            confirmLabel: 'Excluir cupom', danger: true, onConfirm,
+          })} />}
         {activeTab === 'products' && tabAllowed('products') && (
           <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -1739,8 +1772,19 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                 <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} aria-label="Fechar editor de produto" className="disabled:opacity-50"><X size={24} /></button>
               </div>
 
-              <form onSubmit={handleSaveProduct} className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <div className="space-y-6">
+              <nav aria-label="Seções do produto" className="sticky top-0 z-20 mb-6 flex gap-2 overflow-x-auto border-b border-gray-800 bg-[#111111] py-3">
+                {[
+                  ['product-basicas', 'Informações básicas'],
+                  ['product-descricao', 'Descrição'],
+                  ['product-variacoes', 'Variações'],
+                  ['product-producao', 'Arte e moldes PDF'],
+                  ['product-entrega', 'Peso e embalagem'],
+                ].map(([id, label]) => <button key={id} type="button" className="shrink-0 rounded-lg px-3 py-2 text-sm font-bold text-gray-300 hover:bg-pink-500/15 hover:text-pink-300"
+                  onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>{label}</button>)}
+              </nav>
+              <form onSubmit={handleSaveProduct} className="space-y-5">
+                <section id="product-basicas" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-basicas-title">
+                  <h4 id="product-basicas-title" className="text-lg font-bold">Informações básicas</h4>
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <label htmlFor="product-name" className="text-xs font-bold text-gray-500 uppercase">Nome do Produto</label>
@@ -1760,45 +1804,6 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                       maxLength={199}
                       onChange={e => setEditingProduct({...editingProduct, nome: e.target.value})}
                       className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79]"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label htmlFor="product-description" className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
-                      <div className="flex gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setShowCustomAiPrompt(true)}
-                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
-                        >
-                          <Sparkles size={10} /> Comando IA
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAiAction('generate')}
-                          disabled={!can('ai.generate')}
-                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
-                        >
-                          <Sparkles size={10} /> Gerar da IA
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAiAction('improveDescription')}
-                          disabled={!can('ai.generate')}
-                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
-                        >
-                          <Sparkles size={10} /> Melhorar com IA
-                        </button>
-                      </div>
-                    </div>
-                    <textarea
-                      id="product-description"
-                      required
-                      value={editingProduct.desc}
-                      maxLength={999}
-                      onChange={e => setEditingProduct({...editingProduct, desc: e.target.value})}
-                      rows={4}
-                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79] resize-none"
                     />
                   </div>
                   <label className="block space-y-2 text-sm">Tags (separadas por vírgula)<input aria-label="Tags do produto" value={(editingProduct.tags || []).join(',')} onChange={e=>setEditingProduct({...editingProduct,tags:e.target.value.split(',')})} className="w-full rounded-lg border border-gray-800 bg-black px-4 py-3" /></label>
@@ -1951,6 +1956,63 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                     </div>
                   </div>
 
+                  <label className="block text-sm">SKU principal (opcional)
+                    <input aria-label="SKU principal (opcional)" maxLength={MAX_PRODUCT_SKU} value={editingProduct.sku || ''}
+                      placeholder={editingProduct.nome || 'Nome do produto'} onChange={e => setEditingProduct({ ...editingProduct, sku: e.target.value })}
+                      className="mt-2 w-full rounded-lg border border-gray-800 bg-black px-4 py-3" />
+                    <span className="mt-1 block text-xs text-gray-400">Em branco, o SKU usa o nome do produto.</span>
+                  </label>
+                </section>
+                <section id="product-descricao" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6">
+                  <h4 id="product-descricao-title" className="text-lg font-bold">Descrição</h4>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label htmlFor="product-description" className="text-xs font-bold text-gray-500 uppercase">Descrição</label>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowCustomAiPrompt(true)}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Comando IA
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiAction('generate')}
+                          disabled={!can('ai.generate')}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Gerar da IA
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAiAction('improveDescription')}
+                          disabled={!can('ai.generate')}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#ff4d79] hover:underline"
+                        >
+                          <Sparkles size={10} /> Melhorar com IA
+                        </button>
+                      </div>
+                    </div>
+                    <textarea
+                      id="product-description"
+                      required
+                      value={editingProduct.desc}
+                      maxLength={999}
+                      onChange={e => setEditingProduct({...editingProduct, desc: e.target.value})}
+                      rows={4}
+                      className="w-full bg-black border border-gray-800 rounded-lg px-4 py-3 outline-none focus:border-[#ff4d79] resize-none"
+                    />
+                  </div>
+                </section>
+                <section id="product-variacoes" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-variacoes-title">
+                  <h4 id="product-variacoes-title" className="text-lg font-bold">Variações</h4>
+                  <ProductOptionEditor product={editingProduct} onChange={setEditingProduct} api={salesApi}
+                    busy={isSaving || isUploadingCatalogImages} onUpload={uploadVariationReference} />
+                  <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
+                </section>
+                <section id="product-producao" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-producao-title">
+                  <h4 id="product-producao-title" className="text-lg font-bold">Arte e moldes PDF</h4>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label htmlFor="product-customization-type" className="text-xs font-bold text-gray-500 uppercase">Tipo de Personalização</label>
@@ -1979,146 +2041,15 @@ export default function Admin({ emailApi, activityApi = ADMIN_ACTIVITY_API, oper
                       </div>
                     )}
                   </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-bold text-gray-500 uppercase">Atributos e Preços</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowAttrForm(true)}
-                      className="text-[#ff4d79] text-xs font-bold hover:underline"
-                    >
-                      + Adicionar Atributo
-                    </button>
-                  </div>
-
-                  {showAttrForm && (
-                    <div className="bg-gray-900 p-4 rounded-lg border border-pink-500/30 space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label htmlFor="new-attribute-name" className="text-[10px] text-gray-400 uppercase">Nome (ex: Tamanho)</label>
-                          <input
-                            id="new-attribute-name"
-                            value={newAttr.nome}
-                            onChange={e => setNewAttr({...newAttr, nome: e.target.value})}
-                            className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label htmlFor="new-attribute-options" className="text-[10px] text-gray-400 uppercase">Opções (separadas por vírgula)</label>
-                          <input
-                            id="new-attribute-options"
-                            value={newAttr.opcoes}
-                            onChange={e => setNewAttr({...newAttr, opcoes: e.target.value})}
-                            placeholder="P, M, G"
-                            className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-sm"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const attrName = newAttr.nome.trim().replace(/\s+/g, ' ');
-                            const options = Array.from(new Set(newAttr.opcoes.split(',').map(s => s.trim().replace(/\s+/g, ' ')).filter(Boolean)));
-                            if (!attrName || options.length === 0) {
-                              setErrorMessage('Informe o nome e ao menos uma opção para o atributo.');
-                              return;
-                            }
-                            if ((editingProduct.atributos || []).length >= ADMIN_LIMITS.attributes) {
-                              setErrorMessage(`Use no máximo ${ADMIN_LIMITS.attributes} atributos por produto.`);
-                              return;
-                            }
-                            if (options.length > ADMIN_LIMITS.optionsPerAttribute) {
-                              setErrorMessage(`Cada atributo aceita no máximo ${ADMIN_LIMITS.optionsPerAttribute} opções.`);
-                              return;
-                            }
-                            if ((editingProduct.atributos || []).some(attribute => attribute.nome.toLocaleLowerCase('pt-BR') === attrName.toLocaleLowerCase('pt-BR'))) {
-                              setErrorMessage('Já existe um atributo com esse nome.');
-                              return;
-                            }
-                            const nextAttributes = [...(editingProduct.atributos || []), { nome: attrName, opcoes: options }];
-                            if (editingProduct.precificacao !== 'adicionais' && generateProductCombinations(nextAttributes).length > ADMIN_LIMITS.combinations) {
-                              setErrorMessage('Esse atributo geraria combinações demais. Reduza a quantidade de opções.');
-                              return;
-                            }
-                            setErrorMessage(null);
-                            setEditingProduct({ ...editingProduct, atributos: nextAttributes });
-                            setNewAttr({ nome: '', opcoes: '' });
-                            setShowAttrForm(false);
-                          }}
-                          className="bg-[#ff4d79] px-4 py-2 rounded text-xs font-bold"
-                        >
-                          Confirmar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowAttrForm(false)}
-                          className="bg-gray-800 px-4 py-2 rounded text-xs font-bold"
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-4">
-                    {editingProduct.atributos?.map((attr, idx) => (
-                      <div key={idx} className="bg-black p-4 rounded-lg border border-gray-800 flex justify-between items-center">
-                        <div>
-                          <div className="text-xs font-bold">{attr.nome}</div>
-                          <div className="text-[10px] text-gray-500">{attr.opcoes.join(', ')}</div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setEditingProduct({
-                            ...editingProduct,
-                            atributos: editingProduct.atributos?.filter((_, i) => i !== idx)
-                          })}
-                          className="text-red-500"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {editingProduct.precificacao !== 'adicionais' && editingProduct.atributos && editingProduct.atributos.length > 0 && (
-                    <div className="space-y-4 pt-4 border-t border-gray-800">
-                      <div className="text-[10px] text-gray-500 uppercase font-bold">Definir Preços das Combinações</div>
-                      <div className="max-h-48 overflow-y-auto space-y-2 pr-2">
-                        {generateProductCombinations(editingProduct.atributos).map(combo => (
-                          <div key={combo} className="flex items-center gap-3 bg-black/40 p-2 rounded border border-gray-800">
-                            <span className="text-[10px] flex-grow">{combo.replace(/\|/g, ' + ')}</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-gray-500">R$</span>
-                              <input
-                                aria-label={`Preço da combinação ${combo.replace(/\|/g, ' + ')}`}
-                                type="text"
-                                inputMode="decimal"
-                                value={editingProduct.combinacoes?.[combo] || ''}
-                                onChange={e => setEditingProduct({
-                                  ...editingProduct,
-                                  combinacoes: { ...editingProduct.combinacoes, [combo]: e.target.value }
-                                })}
-                                className="w-20 bg-black border border-gray-700 rounded px-2 py-1 text-xs"
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 <PdfTemplatesEditor templates={editingProduct.modelosPdf || []} onChange={modelosPdf => setEditingProduct(current => current ? { ...current, id: productStorageId, modelosPdf } : current)} upload={file => catalogImageStorage.uploadImage(productStorageId!, file)} remove={catalogImageStorage.deleteImage} onUploaded={images => setSessionCatalogUploads(current => [...current, ...images])} onBusy={setIsUploadingCatalogImages} />
-                <VariantImagesEditor product={editingProduct} onChange={setEditingProduct} />
-                <ProductOptionEditor product={editingProduct} onChange={setEditingProduct} />
                 <ProductProductionEditor product={{...editingProduct,id:productStorageId!}} fonts={config.fontes_personalizacao||[]} onChange={setEditingProduct} onUploaded={images=>setSessionCatalogUploads(current=>[...current,...images])} onBusy={setIsUploadingCatalogImages} uploadImage={catalogImageStorage.uploadImage} uploadPdf={catalogImageStorage.uploadPdf} api={pdfLibraryApi} canBind={can('documents.generate') || can('documents.templates.manage')} />
                 {!editingProduct.moldePdf ? <ProductPrintEditor product={editingProduct} onChange={setEditingProduct} /> : <p className="text-xs text-gray-400">O formato de impressão segue as medidas da base PDF vinculada.</p>}
+                </section>
+                <section id="product-entrega" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-entrega-title">
+                  <h4 id="product-entrega-title" className="text-lg font-bold">Peso e embalagem</h4>
                 <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
 
+                </section>
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
                   <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white disabled:opacity-50">Cancelar</button>
                   <button type="submit" disabled={isSaving || isUploadingCatalogImages} className="bg-[#ff4d79] px-12 py-3 rounded-full font-bold text-sm hover:bg-[#e6004c] flex items-center gap-2 disabled:opacity-50">
@@ -2648,6 +2579,7 @@ function OrderCard({
               <img src={item.imagem || DEFAULT_LOGO_URL} alt={item.nome} className="w-10 h-10 object-cover rounded" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
               <div className="min-w-0 flex-grow break-words">
                 <div className="text-xs font-bold">{item.nome}</div>
+                {item.sku && <div className="text-[10px] text-gray-400">SKU: {item.sku}</div>}
                 <div className="text-[10px] text-gray-500">
                   {item.quantidade}x - {Object.entries(item.selecoes).map(([k, v]) => `${k}: ${v}`).join(', ')}
                 </div>

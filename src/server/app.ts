@@ -1,3 +1,8 @@
+import { createSalesAdminRouter } from './salesAdmin.js';
+import { CouponError, couponChanged, selectCoupon, reserveCoupon, markCouponProviderAttempt, settleCoupon, reviewCouponHolds } from './salesCoupons.js';
+import { discountedCheckoutItems } from '../lib/salesCoupons.js';
+import { productSku } from '../lib/productSales.js';
+import { variantImage } from '../lib/variantImage.js';
 import { cleanupCatalog, scheduleCatalogAssetRemoval } from './catalogRetention.js';
 import { isRetainedAssetPath } from '../lib/catalogRetention.js';
 import { PagBankWebhookKeys } from './pagbankWebhookSignature.js';
@@ -164,6 +169,7 @@ interface NormalizedCartItem {
 	backModelVersion?: ArtworkObjectVersion;
 	backOriginalVersion?: ArtworkObjectVersion;
 	cartItem: {
+    sku?: string;
     imagemClientePath?: string;
     paginasModelo?: string[];
     baseImagemPedido?: boolean;
@@ -693,6 +699,7 @@ async function normalizeCart(
 	services: ReturnType<typeof getAdminServices>,
 	userId: string,
   componentMode = false,
+  pricingOnly = false,
 ): Promise<{
 	items: NormalizedCartItem[];
 	subtotalCents: number;
@@ -711,7 +718,7 @@ async function normalizeCart(
 	}
 
 	const [configSnapshot, promotionsSnapshot, snapshots] = await Promise.all([
-		db.collection('config').doc('main').get(),
+		pricingOnly ? null : db.collection('config').doc('main').get(),
 		db.collection('promocoes').get(),
 		Promise.all(itemInputs.map(async (item) => {
 			const productId = textValue(item.productId, 100);
@@ -721,7 +728,7 @@ async function normalizeCart(
 			return { item, productId, snapshot: await db.collection('anuncios').doc(productId).get() };
 		})),
 	]);
-	const configuredFonts = activePersonalizationFonts(configSnapshot.data()?.fontes_personalizacao);
+	const configuredFonts = activePersonalizationFonts(configSnapshot?.data()?.fontes_personalizacao);
 	const promotions = promotionsSnapshot.docs.map(snapshot => ({
 		id: snapshot.id,
 		...snapshot.data(),
@@ -752,7 +759,7 @@ async function normalizeCart(
       } catch (error) {
         throw new HttpError(422, (error as Error).message);
       }
-      const children = await normalizeCart(inputs, services, userId, true);
+      const children = await normalizeCart(inputs, services, userId, true, pricingOnly);
       // Scope component identifiers to this cart row so separate packages never collide when copying artwork.
       children.items.forEach((child) => {
         child.cartItem.id = createHash('sha256')
@@ -784,6 +791,7 @@ async function normalizeCart(
           id,
           productId,
           nome: name,
+          sku: productSku({ ...product, nome: String(product.nome || name) } as Anuncio, {}),
           imagem: httpUrl(product.imagem) || '',
           preco: (unitAmount / 100).toFixed(2),
           selecoes: {},
@@ -880,8 +888,27 @@ async function normalizeCart(
 			throw new HttpError(422, 'O valor do pedido excede o limite permitido.');
 		}
 
-		const productImage = httpUrl(product.imagem);
-		const productDescription = textValue(product.desc, 255) || productName;
+    const checkoutItem = {
+      reference_id: productId.slice(0, 64),
+      name: productName,
+      description: textValue(product.desc, 255) || productName,
+      quantity,
+      unit_amount: unitAmount,
+    };
+    const publicProduct = { ...product, atributos: attributes } as unknown as Anuncio;
+    const selectedImage = variantImage(publicProduct, selections);
+    const pricedItem = {
+      productId, nome: productName, sku: productSku(publicProduct, selections),
+      imagem: typeof selectedImage === 'string' && selectedImage.startsWith('/') && !selectedImage.startsWith('//') ? selectedImage : httpUrl(selectedImage) || '',
+      preco: (unitAmount / 100).toFixed(2), selecoes: selections, quantidade: quantity,
+    };
+    if (pricingOnly) {
+      normalizedItems.push({
+        cartItem: { ...pricedItem, id: createCartItemId(productId, selections, '', '') },
+        checkoutItem, amountCents: lineAmount,
+      });
+      continue;
+    }
 		const printProfile = product.printProfile === undefined ? undefined : parsePrintProfile(product.printProfile);
 		if (printProfile === null) throw new HttpError(422, `O formato de impressão de ${productName} está inválido. Entre em contato com a loja.`);
 		const submittedPrint = item.printProfile === undefined ? undefined : parsePrintProfile(item.printProfile);
@@ -1042,7 +1069,6 @@ async function normalizeCart(
 		const customText = recipe?.job.lines[0].text || textCustomization?.texto;
 		const customizationFingerprint = recipe ? JSON.stringify(recipe.job) : textCustomization ? textCustomizationFingerprint(textCustomization) : '';
 		const cartId = createCartItemId(productId, selections, customizationFingerprint, [artworkPath, modelPath, backModelPath, backOriginalVersion?.path].filter(Boolean).join('|'));
-		const price = (unitAmount / 100).toFixed(2);
 
 		normalizedItems.push({
 			...(artworkVersion ? { artworkVersion } : {}),
@@ -1053,23 +1079,18 @@ async function normalizeCart(
 			...(backModelVersion ? { backModelVersion } : {}),
 			...(backOriginalVersion ? { backOriginalVersion } : {}),
 			cartItem: {
+				...pricedItem,
 				id: cartId,
-				productId,
 				...(templateVersion && item.templateId ? { templateId: String(item.templateId) } : {}),
         ...(recipe ? {moldePedido:recipe,moldeRevisao:binding!.revision,textoMolde:recipe.job.lines[0].text,textoPersonalizado:recipe.job.lines[0].text} : {}),
         ...(customerImageVersion ? {imagemClientePath:customerImageVersion.path} : {}),
         ...(additionalModelVersions.length?{paginasModelo:additionalModelVersions.map(v=>v.path)}:{}),
         ...(initial ? { inicialPath: initial.version.path, inicialLetra: initial.letter, inicialTamanho: initial.sizePercent } : {}),
-				nome: productName,
-				imagem: isPlainRecord(product.imagensPorCombinacao) && typeof product.imagensPorCombinacao[combinationKey] === 'string' && [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].includes(product.imagensPorCombinacao[combinationKey]) ? String(product.imagensPorCombinacao[combinationKey]) : productImage || '',
-				preco: price,
 				...(appliedPromotion ? {
 					precoOriginal: (originalUnitAmount / 100).toFixed(2),
 					promocaoId: appliedPromotion.promotion.id,
 					descontoPercentual: appliedPromotion.percentage,
 				} : {}),
-				selecoes: selections,
-				quantidade: quantity,
 				...(printProfile ? { printProfile } : {}),
         ...(product.imagemBase && !binding ? {baseImagemPedido:true} : {}),
 				...(approval ? { aprovacaoArte: approval } : {}),
@@ -1082,13 +1103,7 @@ async function normalizeCart(
 					personalizacaoTexto: textCustomization,
 				} : {}),
 			},
-			checkoutItem: {
-				reference_id: productId.slice(0, 64),
-				name: productName,
-				description: productDescription,
-				quantity,
-				unit_amount: unitAmount,
-			},
+			checkoutItem,
 			amountCents: lineAmount,
 		});
 	}
@@ -1347,6 +1362,11 @@ async function reconcileStoredOrderPayment(
 	});
 
 	if (reconciled) await sendLatestOrderEmail(db, getAdminServices().auth, orderId).catch(() => undefined);
+  if (initialOrder.cupom && (paymentStatus === 'pago' ||
+    (lookup.checkoutStatus === 'EXPIRED' && lookup.providerOrderIds.length === 0))) {
+    await settleCoupon(db, orderId, paymentStatus === 'pago' ? 'paid' : 'release');
+  }
+
 	return { paymentStatus, pagbankStatus, reconciled, providerEvent: event };
 }
 
@@ -1506,7 +1526,7 @@ function sendError(res: express.Response, error: unknown) {
 	const requestId = responseRequestId(res);
 	res.setHeader('X-Request-Id', requestId);
 
-	if (error instanceof HttpError || error instanceof CorreiosError) {
+	if (error instanceof HttpError || error instanceof CorreiosError || error instanceof CouponError) {
 		const code = error.code || publicErrorCode(error.status);
 		const publicMessage = error instanceof HttpError ? error.publicMessage : error.message;
 		logEvent(error.status >= 500 ? 'error' : 'warn', 'api_request_rejected', {
@@ -1692,6 +1712,29 @@ app.post('/api/shipping-quote', requireAppCheck, async (req, res) => {
 	}
 });
 
+function couponLines(cart: Awaited<ReturnType<typeof normalizeCart>>) {
+  return cart.items.map(({ cartItem, checkoutItem }) => ({
+    productId: cartItem.productId,
+    category: textValue(cart.shippingProducts.get(cartItem.productId)?.categoria, 100),
+    unitCents: checkoutItem.unit_amount,
+    quantity: checkoutItem.quantity,
+  }));
+}
+
+app.post('/api/checkout/coupon', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requireFirebaseUser(req), services = getAdminServices();
+    enforceRateLimit(`coupon:${user.uid}`, 30, 60_000);
+    await enforceDistributedRateLimit(services.db, `coupon:${user.uid}`, 60, 60_000);
+    const cart = await normalizeCart(req.body?.items, services, user.uid, false, true);
+    const selection = await selectCoupon(services.db, user, couponLines(cart), req.body?.couponCode);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ coupon: selection?.applied ?? null });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 const checkoutHandler = async (req: express.Request, res: express.Response) => {
 	let orderRef: DocumentReference | null = null;
 	let requestRef: DocumentReference | null = null;
@@ -1775,7 +1818,18 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 				estado: shipping.state,
 			}
 			: null;
-		const totalCents = normalizedCart.subtotalCents + shipping.amountCents;
+    // Old clients without a coupon quote keep the total they already displayed.
+    const usesCouponQuote = body.expectedCouponCents !== undefined || body.couponCode !== undefined;
+    const lines = usesCouponQuote ? couponLines(normalizedCart) : [];
+    const selection = usesCouponQuote ? await selectCoupon(db, firebaseUser, lines, body.couponCode) : null;
+    const coupon = selection?.applied;
+    if (usesCouponQuote && (body.expectedCouponCents !== (coupon?.discountCents ?? 0) ||
+      (body.expectedCouponCode ?? null) !== (coupon?.code ?? null))) throw couponChanged();
+    const checkoutItems = discountedCheckoutItems(normalizedCart.items.map(item => item.checkoutItem), selection?.discounts || []);
+    if (selection && checkoutItems.length > 50) {
+      throw new CouponError('Reduza o número de itens no carrinho para aplicar este desconto.');
+    }
+    const totalCents = normalizedCart.subtotalCents - (coupon?.discountCents ?? 0) + shipping.amountCents;
 
 		if (totalCents <= 0 || totalCents > 8999999100) {
 			throw new HttpError(422, 'O valor do pedido é inválido.');
@@ -1833,6 +1887,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			data: new Date().toISOString(),
 			itens: normalizedCart.items.map(item => item.cartItem),
 			subtotal: (normalizedCart.subtotalCents / 100).toFixed(2),
+      ...(coupon ? { cupom: coupon } : {}),
 			frete: (shipping.amountCents / 100).toFixed(2),
 			...(shipping.selected ? { shipping: { ...shipping.selected, origin_cep: correiosConfig().originCep,
 				destination_cep: shipping.cep, quoted_at: shipping.quotedAt, parcels: shipping.parcels } } : {}),
@@ -1857,7 +1912,15 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			observacoes: textValue(body.observacoes, 1000),
 			legalAcceptance,
 		};
-		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '');
+		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '',
+      selection ? async tx => {
+        const current = await selectCoupon(db, firebaseUser, lines, body.couponCode, tx);
+        if (!current || current.coupon.revision !== selection.coupon.revision ||
+          current.applied.code !== coupon?.code || current.applied.discountCents !== coupon?.discountCents) {
+          throw couponChanged();
+        }
+        reserveCoupon(db, tx, orderId, current, checkoutExpiresAt);
+      } : undefined);
 		orderCreated = true;
 		await Promise.allSettled([sendOrderEmail(db, `${orderId}-customer`), sendOrderEmail(db, `${orderId}-merchant`)]);
 
@@ -1878,7 +1941,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 					} : {}),
 				},
 				customer_modifiable: true,
-				items: normalizedCart.items.map(item => item.checkoutItem),
+				items: checkoutItems,
 				payment_methods: [
 					{ type: 'CREDIT_CARD' },
 					{ type: 'BOLETO' },
@@ -1913,6 +1976,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 
 			const checkoutRequestUrl = `${pagbank.baseUrl}/checkouts`;
 			checkoutBodyForEvidence = checkoutBody;
+      if (selection) await markCouponProviderAttempt(db, orderId);
 			checkoutRequestSentAt = new Date().toISOString();
 			const response = await axios.post<PagBankCheckoutResponse>(
 				checkoutRequestUrl,
@@ -2030,6 +2094,13 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 					error: updateError,
 				});
 			});
+      // An ambiguous provider response may still have created a payable checkout.
+      if (selection && (!checkoutRequestSentAt || (axios.isAxiosError(error) &&
+        [400, 401, 403, 422].includes(error.response?.status || 0)))) {
+        await settleCoupon(db, orderId, 'release').catch(settlementError => {
+          logEvent('error', 'coupon_release_failed', { order_id: orderId, error: settlementError });
+        });
+      }
 			await requestRef.set({
 				status: 'failed',
 				failedAt: new Date().toISOString(),
@@ -2397,13 +2468,14 @@ app.get('/api/internal/maintenance', async (req, res) => {
     await enforceDistributedRateLimit(db, 'maintenance', 1, 60_000);
     const work = await Promise.allSettled([
       expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth), cleanupStaffDocuments(getAdminServices()), cleanupStaffPdfBatches(getAdminServices()), cleanupCatalog(getAdminServices()),
+      reviewCouponHolds(db, async (id, order) => { await reconcileStoredOrderPayment(db, id, order, getPagBankConfig()); }),
     ]);
     const cleanup = work[5];
     if (cleanup.status === 'fulfilled') logEvent(cleanup.value.failed || cleanup.value.scanDeferred ? 'warn' : 'info', 'catalog_cleanup_completed', { ...cleanup.value });
     const rejected = work.find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (rejected) throw rejected.reason;
-    const [expiredPromotions, tracking, customerEmails, staffDocuments, staffPdfBatches, catalogCleanup] = work.map(result => (result as PromiseFulfilledResult<any>).value);
-    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, catalogCleanup, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
+    const [expiredPromotions, tracking, customerEmails, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds] = work.map(result => (result as PromiseFulfilledResult<any>).value);
+    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 
@@ -2648,6 +2720,7 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 		const eventRef = orderRef.collection('pagbankEvents').doc(eventHash);
 		let duplicate = false;
 		let applied = false;
+    let couponPaid = false;
 
 		await db.runTransaction(async transaction => {
 			const orderSnapshot = await transaction.get(orderRef);
@@ -2689,10 +2762,14 @@ app.post('/api/webhook/pagbank', async (req: express.Request, res: express.Respo
 
 			if (!transition) return;
 			const update = paymentUpdateFromEvent(currentOrder, event, new Date().toISOString(), transition);
+      couponPaid = Boolean(currentOrder.cupom && transition.paymentStatus === 'pago');
 			transaction.set(orderRef, update, { merge: true });
 		queueOrderStatusEmail(transaction, db, event.referenceId, currentOrder, update);
 		});
 
+    if (couponPaid) await settleCoupon(db, event.referenceId, 'paid').catch(error => {
+      logEvent('error', 'coupon_settlement_failed', { order_id: event.referenceId, error });
+    });
 		if (applied) await sendLatestOrderEmail(db, getAdminServices().auth, event.referenceId).catch(() => undefined);
 		const webhookResponseBody = { received: true, duplicate, applied };
 		try {
@@ -2768,6 +2845,15 @@ app.use('/api/admin/pdf-library',requireAppCheck,createStaffPdfLibraryRouter({se
 // Explicitly shared documents use a short-lived, revocable bearer link, including outside signed-in sessions.
 app.use('/api/documents/shared',staffDocumentRouters.shared);
 app.use('/api/admin/work',requireAppCheck,createWorkRouter({db:()=>getAdminServices().db,authorize:requireWorkActor,limit:enforceRateLimit}));
+
+app.use('/api/admin/sales', requireAppCheck, createSalesAdminRouter({
+  services: getAdminServices,
+  authorize: async (req, permission) => {
+    const user = await requirePermissionUser(req, permission);
+    enforceRateLimit(`sales-admin:${user.uid}`, 120, 60_000);
+    return user;
+  },
+}));
 
 app.use('/api/admin/catalog', requireAppCheck, createCatalogManagementRouter({ services: getAdminServices, authorize: async req => {
   const user = await requireFirebaseUser(req), { db } = getAdminServices(), admin = await userIsAdmin(user, db);

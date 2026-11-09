@@ -1,3 +1,4 @@
+import { cleanSku, MAX_COMBINATION_SKU, MAX_PRODUCT_SKU, MAX_VARIATION_SKU } from './productSales.js';
 import { bindingValid, productMinimum } from './productCustomization.js';
 import { parseBundle, bundleMinimum } from './bundles.js';
 import { validPdfTemplates } from './pdfTemplate.js';
@@ -149,6 +150,9 @@ export function validateProductDraft(
     return { ok: false, message: 'A galeria contém uma URL inválida.' };
   }
 
+  const sku = cleanSku(draft.sku, MAX_PRODUCT_SKU);
+  if (sku === null) return { ok: false, message: 'Revise o SKU principal.' };
+  if (!Array.isArray(draft.atributos ?? []) || (draft.atributos || []).some(attr => !attr || !Array.isArray(attr.opcoes))) return { ok: false, message: 'Revise as variações do produto.' };
   if ((draft.atributos || []).length > ADMIN_LIMITS.attributes) {
     return { ok: false, message: `Use no máximo ${ADMIN_LIMITS.attributes} atributos por produto.` };
   }
@@ -157,10 +161,11 @@ export function validateProductDraft(
   if(draft.moldePdf && draft.printProfile) return {ok:false,message:'O formato de impressão segue a base PDF vinculada. Atualize o vínculo para usar suas medidas originais.'};
   if(draft.moldePdf !== undefined && !bindingValid(draft.moldePdf,draft.id||'')) return {ok:false,message:'Revise o vínculo com o molde PDF.'};
   for(const attr of draft.atributos || []) {
-    if(attr.configuracao && (typeof attr.configuracao!=='object' || Array.isArray(attr.configuracao) || Object.entries(attr.configuracao).some(([key,option])=>!attr.opcoes.includes(key) || !option || typeof option!=='object' || Array.isArray(option) || Object.keys(option).some(k=>!['adicional','texto','imagem'].includes(k)) || (option.texto!==undefined && typeof option.texto!=='boolean') || (option.imagem!==undefined && typeof option.imagem!=='boolean') || (option.adicional!==undefined && (parseMoneyToCents(option.adicional)===null || parseMoneyToCents(option.adicional)!<0))))) return {ok:false,message:'Revise os adicionais e a personalização de cada opção.'};
+    if(attr.configuracao && (typeof attr.configuracao!=='object' || Array.isArray(attr.configuracao) || Object.entries(attr.configuracao).some(([key,option])=>!attr.opcoes.includes(key) || !option || typeof option!=='object' || Array.isArray(option) || Object.keys(option).some(k=>!['adicional','texto','imagem','sku','referencia'].includes(k)) || (cleanSku(option.sku, MAX_VARIATION_SKU) === null) || (option.referencia !== undefined && (typeof option.referencia !== 'string' || !isSafeAdminUrl(option.referencia))) || (option.texto!==undefined && typeof option.texto!=='boolean') || (option.imagem!==undefined && typeof option.imagem!=='boolean') || (option.adicional!==undefined && (parseMoneyToCents(option.adicional)===null || parseMoneyToCents(option.adicional)!<0))))) return {ok:false,message:'Revise os adicionais e a personalização de cada opção.'};
   }
   const atributos = (draft.atributos || []).map(attribute => ({
     ...(attribute.configuracao ? {configuracao:Object.fromEntries(Object.entries(attribute.configuracao).map(([key,value])=>[normalizedSpaces(key),value]))} : {}),
+    ...(attribute.tipoId !== undefined ? { tipoId: attribute.tipoId } : {}),
     nome: normalizedSpaces(attribute.nome),
     opcoes: uniqueCaseInsensitive(attribute.opcoes.map(normalizedSpaces).filter(Boolean)),
   }));
@@ -174,7 +179,23 @@ export function validateProductDraft(
     return { ok: false, message: 'Cada atributo precisa ter um nome único.' };
   }
 
+  const typed = atributos.filter(attribute => attribute.tipoId !== undefined);
+  if (typed.some(attribute => typeof attribute.tipoId !== 'string' || !/^[a-f0-9]{32}$/.test(attribute.tipoId) ||
+    attribute.nome.length > 80 || Object.hasOwn(Object.prototype, attribute.nome) ||
+    attribute.opcoes.some(option => option.length > 80 || option.includes('|') || Object.hasOwn(Object.prototype, option))) ||
+    new Set(typed.map(attribute => attribute.tipoId)).size !== typed.length || (typed.length && atributos.length > 2)) {
+    return { ok: false, message: 'Selecione até dois tipos diferentes e opções de até 80 caracteres.' };
+  }
   const combinationKeys = generateProductCombinations(atributos);
+  const skus = draft.skuPorCombinacao ?? {};
+  if (typeof skus !== 'object' || Array.isArray(skus) ||
+    Object.entries(skus).some(([key, value]) => !combinationKeys.includes(key) || cleanSku(value, MAX_COMBINATION_SKU) === null)) {
+    return { ok: false, message: 'Revise os SKUs da lista de variações.' };
+  }
+  const skuPorCombinacao = Object.fromEntries(Object.entries(skus).flatMap(([key, value]) => {
+    const normalized = cleanSku(value, MAX_COMBINATION_SKU);
+    return normalized ? [[key, normalized]] : [];
+  }));
   if (draft.precificacao !== 'adicionais' && combinationKeys.length > ADMIN_LIMITS.combinations) {
     return { ok: false, message: 'Este produto gera combinações demais. Reduza a quantidade de atributos ou opções.' };
   }
@@ -221,6 +242,8 @@ export function validateProductDraft(
       ...(draft.lancamento !== undefined ? { lancamento: draft.lancamento } : {}),
       ...(draft.destaque !== undefined ? { destaque: draft.destaque === true } : {}),
       ...(Number.isSafeInteger(draft.destaqueOrdem) && draft.destaqueOrdem! >= 0 ? { destaqueOrdem: draft.destaqueOrdem } : {}),
+      ...(sku ? { sku } : {}),
+      ...(Object.keys(skuPorCombinacao).length ? { skuPorCombinacao } : {}),
       nome,
       desc,
       categoria,
