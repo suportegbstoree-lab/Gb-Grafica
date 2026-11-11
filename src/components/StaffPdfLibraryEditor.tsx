@@ -45,6 +45,7 @@ export default function StaffPdfLibraryEditor({
       status: "Importando..." | "Em andamento..." | "Finalizado!" | "Erro!";
       completed: number;
       total: number;
+      error?: string;
     }>(),
     [editBase, setEditBase] = React.useState<StaffPdfBase>();
   const busy = operationBusy || importBusy;
@@ -207,7 +208,12 @@ export default function StaffPdfLibraryEditor({
       } catch (error) {
         if (alive.current)
           setAlphabetUpload(
-            (previous) => previous && { ...previous, status: "Erro!" },
+            (previous) =>
+              previous && {
+                ...previous,
+                status: "Erro!",
+                error: (error as Error).message,
+              },
           );
         throw error;
       }
@@ -323,6 +329,11 @@ export default function StaffPdfLibraryEditor({
                             className="min-w-36 text-xs text-gray-300"
                           >
                             <p>{alphabetUpload.status}</p>
+                            {alphabetUpload.error && (
+                              <p className="mt-1 text-red-300">
+                                {alphabetUpload.error}
+                              </p>
+                            )}
                             {alphabetUpload.status === "Em andamento..." && (
                               <progress
                                 aria-label="Progresso da importação de letras"

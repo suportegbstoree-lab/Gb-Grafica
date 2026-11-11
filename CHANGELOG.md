@@ -34,6 +34,10 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
 
+## 2026-11-11 — Importação de pastas de PDFs e letras
+
+- A importação ignora arquivos auxiliares do sistema, como `Thumbs.db` e `desktop.ini`. O processamento da pasta segue para os outros PDFs quando um arquivo falha e mostra o resultado de cada envio.
+
 ## 2026-11-11 — Correções de CSV e gestão da fila de PDFs
 
 - A revisão e o download de XLSX usam a mesma seleção de colunas do CSV. Células vazias permanecem na posição da coluna selecionada.

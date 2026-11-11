@@ -26,6 +26,22 @@ test('importação recusa outra pasta, subpastas, letras repetidas e extensões 
   assert.deepEqual(readAlphabetFiles([file('B.png'), file('a.png')], template.name).letters.map(item => item.letter), ['A', 'B']);
   for (const files of [[file('A.png', 'Outra')], [file('A.png'), file('a.png')], [file('A.png', alphabet.folderName, 'sub/')], [file('A.jpg')], [file('AB.png')]]) assert.throws(() => readAlphabetFiles(files, template.name));
 });
+test('metadados do sistema são ignorados antes de identificar a pasta de letras', () => {
+  const input = [
+    file('._A.png', alphabet.folderName, '__MACOSX/'),
+    file('Thumbs.db'),
+    file('desktop.ini'),
+    file('A.png'),
+  ];
+  assert.deepEqual(readAlphabetFiles(input, template.name), {
+    folderName: alphabet.folderName,
+    letters: [{ letter: 'A', file: input[3] }],
+  });
+  assert.throws(
+    () => readAlphabetFiles([new File(['png'], 'A.png')], template.name),
+    /Selecione a pasta inteira/,
+  );
+});
 test('metadados rejeitam caminhos fora do produto, tamanhos inválidos e pastas sem correspondência', () => {
   assert.equal(validAlphabet(alphabet, template.name, 'product'), true);
   for (const invalid of [{ ...alphabet, sizePercent: 101 }, { ...alphabet, sizePercent: NaN }, { ...alphabet, folderName: 'Outra' }, { ...alphabet, letters: {} }, { ...alphabet, letters: { AA: alphabet.letters.A } }, { ...alphabet, letters: { A: { path: path.replace('/product/', '/other/'), url: alphabet.letters.A.url } } }]) assert.equal(validAlphabet(invalid, template.name, 'product'), false);

@@ -7,7 +7,11 @@ import {
 } from "../lib/staffPdfCategory";
 import type { StaffPdfBase } from "../lib/staffPdf";
 import type { StaffPdfApi } from "../services/staffPdfService";
-import { pdfBaseName, readAlphabetFiles } from "../lib/decorativeInitial";
+import {
+  isFolderMetadata,
+  pdfBaseName,
+  readAlphabetFiles,
+} from "../lib/decorativeInitial";
 
 interface ImportFiles {
   file: File;
@@ -122,11 +126,12 @@ export default function StaffPdfBaseImport({
   }
   function chooseFolder(files: File[]) {
     try {
-      const pdfs = files.filter((file) => /\.pdf$/i.test(file.name));
+      const contents = files.filter((file) => !isFolderMetadata(file));
+      const pdfs = contents.filter((file) => /\.pdf$/i.test(file.name));
       if (!pdfs.length) throw new Error("A pasta não possui PDFs.");
       if (pdfs.length > 500) throw new Error("Importe até 500 PDFs por vez.");
       const byFolder = new Map<string, File[]>();
-      for (const file of files) {
+      for (const file of contents) {
         const folder = file.webkitRelativePath
           .split("/")
           .slice(0, -1)
@@ -144,9 +149,7 @@ export default function StaffPdfBaseImport({
           const folder = [...relative.slice(0, -1), pdfBaseName(file.name)]
             .map((part) => part.normalize("NFC").trim())
             .join("/");
-          const alphabet = byFolder
-            .get(folder)
-            ?.filter((item) => !item.name.startsWith("."));
+          const alphabet = byFolder.get(folder);
           return {
             file,
             category: relative[0],
@@ -174,10 +177,12 @@ export default function StaffPdfBaseImport({
     onBusy(true);
     setError("");
     let count = 0;
+    let failures = 0;
     try {
       for (const row of pending) {
         if (!alive.current || stop.current) break;
-        if (count && count % 20 === 0) {
+        const attempted = count + failures;
+        if (attempted && attempted % 20 === 0) {
           setProgress("Aguardando para continuar a importação.");
           await new Promise<void>((resolve) => {
             const timer = window.setTimeout(resolve, 61000);
@@ -190,7 +195,7 @@ export default function StaffPdfBaseImport({
           if (!alive.current || stop.current) break;
         }
         setProgress(
-          `Enviando ${row.file.name} · ${count + 1} de ${pending.length}`,
+          `Enviando ${row.file.name} · ${attempted + 1} de ${pending.length}`,
         );
         let storedBaseId = row.storedBaseId;
         try {
@@ -221,6 +226,7 @@ export default function StaffPdfBaseImport({
               ),
             );
         } catch (e) {
+          failures++;
           if (alive.current)
             setRows((old) =>
               old?.map((item) =>
@@ -235,12 +241,11 @@ export default function StaffPdfBaseImport({
                   : item,
               ),
             );
-          throw e;
         }
       }
       if (alive.current)
         setProgress(
-          `${count} PDF(s) enviado(s).${stop.current ? " Importação pausada." : ""}`,
+          `${count} PDF(s) enviado(s).${failures ? ` ${failures} com erro.` : ""}${stop.current ? " Importação pausada." : ""}`,
         );
     } catch (e) {
       if (alive.current) setError((e as Error).message);

@@ -72,16 +72,23 @@ export function alphabetUrls(templates: { alphabet?: DecorativeAlphabet }[] = []
   return templates.flatMap(template => Object.values(template.alphabet?.letters || {}).map(image => image.url));
 }
 
+export function isFolderMetadata(file: File): boolean {
+  const subfolders = file.webkitRelativePath?.split('/').slice(1, -1) ?? [];
+  return [...subfolders, file.name].some(part =>
+    part.startsWith('.') || /^(?:__macosx|thumbs\.db|desktop\.ini)$/i.test(part));
+}
+
 export function readAlphabetFiles(files: File[], pdfName: string): { folderName: string; letters: Array<{ letter: string; file: File }> } {
-  if (!files.length) throw new Error('Selecione uma pasta com A.png até Z.png.');
-  const folder = files[0].webkitRelativePath.split('/').slice(0, -1);
+  const images = files.filter(file => !isFolderMetadata(file));
+  if (!images.length) throw new Error('Selecione uma pasta com A.png até Z.png.');
+  if (images.some(file => !file.webkitRelativePath?.includes('/')))
+    throw new Error('Selecione a pasta inteira pelo botão de importar letras.');
+  const folder = images[0].webkitRelativePath.split('/').slice(0, -1);
   const folderName = folder.at(-1);
   if (!folderName || !matchingAlphabetName(pdfName, folderName)) throw new Error(`A pasta deve se chamar “${pdfBaseName(pdfName)}”, exatamente como o PDF sem a extensão.`);
   const letters: Array<{ letter: string; file: File }> = [], used = new Set<string>();
-  for (const file of files) {
+  for (const file of images) {
     const parts = file.webkitRelativePath.split('/');
-    // OS metadata is not artwork. All other files must be unambiguous PNG letters.
-    if (file.name.startsWith('.')) continue;
     const match = /^([A-Z])\.png$/i.exec(file.name);
     if (parts.slice(0, -1).join('/') !== folder.join('/') || !match) throw new Error('Use somente A.png até Z.png diretamente dentro da pasta, sem subpastas.');
     const letter = match[1].toUpperCase();

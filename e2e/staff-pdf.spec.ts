@@ -532,6 +532,7 @@ test("folder import keeps the root category and attaches letters to the matching
     const pdf = await PDFDocument.create();
     pdf.addPage([595, 842]);
     const bytes = await pdf.save();
+    await writeFile(join(folder, "00-Danificado.pdf"), "PDF inválido");
     await writeFile(join(folder, "Adulto.pdf"), bytes);
     await writeFile(join(folder, "Infantil", "Crianca.pdf"), bytes);
     await writeFile(
@@ -539,6 +540,10 @@ test("folder import keeps the root category and attaches letters to the matching
       await readFile("e2e/fixtures/editor-cover.png"),
     );
     await writeFile(join(folder, "ignorar.txt"), "Este arquivo não é um PDF.");
+    await writeFile(
+      join(folder, "Infantil", "Crianca", "Thumbs.db"),
+      "Metadados",
+    );
     await page.goto("/__e2e/staff-pdf");
     await page
       .getByRole("button", { name: "Bases e moldes", exact: true })
@@ -547,14 +552,17 @@ test("folder import keeps the root category and attaches letters to the matching
       .getByLabel("Importar pasta de PDFs", { exact: true })
       .setInputFiles(folder);
     const upload = page.getByRole("dialog", { name: "Importar bases PDF" });
-    await expect(upload.getByText("Agendas", { exact: true })).toHaveCount(2);
+    await expect(upload.getByText("Agendas", { exact: true })).toHaveCount(3);
     await expect(
       upload.getByRole("row").filter({ hasText: "Crianca.pdf" }),
     ).toContainText("Pasta de letras encontrada");
     await upload
-      .getByRole("button", { name: "Enviar 2 PDF(s)", exact: true })
+      .getByRole("button", { name: "Enviar 3 PDF(s)", exact: true })
       .click();
     await expect(upload.getByText("Enviado", { exact: true })).toHaveCount(2);
+    await expect(upload.getByRole("status")).toContainText(
+      "2 PDF(s) enviado(s). 1 com erro.",
+    );
     await upload.getByRole("button", { name: "Concluir", exact: true }).click();
     const category = page.locator("details").filter({
       has: page.locator("summary").getByText("Agendas", { exact: true }),
