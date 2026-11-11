@@ -3,6 +3,10 @@ import {
   staffBarcodeCanvas,
   drawStaffBarcode,
 } from "../services/staffPdfBarcode";
+import {
+  STAFF_BARCODE_VERSION,
+  type StaffBarcodeSize,
+} from "../lib/staffPdfBarcode";
 import { staffPdfPreviewPage } from "../services/pdfPreview";
 import {
   drawStaffPdfText,
@@ -43,6 +47,7 @@ export default function StaffPdfPreview({
   fitMargin = 0.2,
   initial,
   barcode,
+  barcodeSize,
 }: {
   original: Blob;
   pageCount: number;
@@ -56,6 +61,7 @@ export default function StaffPdfPreview({
   fitMargin?: number;
   initial?: DecorativeInitial;
   barcode?: string;
+  barcodeSize?: StaffBarcodeSize;
 }) {
   const [page, setPage] = React.useState(1);
   const pageNumber = Math.max(1, Math.min(page, pageCount));
@@ -81,6 +87,7 @@ export default function StaffPdfPreview({
   const [readyFonts, setReadyFonts] = React.useState("");
   const [barcodeImage, setBarcodeImage] = React.useState<{
     code: string;
+    size?: StaffBarcodeSize;
     image: HTMLCanvasElement;
   }>();
   const [barcodeError, setBarcodeError] = React.useState("");
@@ -89,10 +96,11 @@ export default function StaffPdfPreview({
     let active = true,
       image: HTMLCanvasElement | undefined;
     setBarcodeError("");
-    void staffBarcodeCanvas(barcode)
+    void staffBarcodeCanvas(barcode, STAFF_BARCODE_VERSION, barcodeSize)
       .then((result) => {
         image = result;
-        if (active) setBarcodeImage({ code: barcode, image });
+        if (active)
+          setBarcodeImage({ code: barcode, size: barcodeSize, image });
         else image.width = image.height = 1;
       })
       .catch((error) => {
@@ -102,7 +110,7 @@ export default function StaffPdfPreview({
       active = false;
       if (image) image.width = image.height = 1;
     };
-  }, [barcode]);
+  }, [barcode, barcodeSize]);
   const canvas = React.useRef<HTMLCanvasElement>(null);
   const boxes = React.useRef(new Map<string, PdfTextBox>());
   const viewport = React.useRef<HTMLDivElement>(null);
@@ -239,9 +247,19 @@ export default function StaffPdfPreview({
       ctx.resetTransform();
       setDrawError((e as Error).message);
     }
-    if (barcode && barcodeImage?.code === barcode) {
+    if (
+      barcode &&
+      barcodeImage?.code === barcode &&
+      barcodeImage.size === barcodeSize
+    ) {
       try {
-        drawStaffBarcode(ctx, barcodeImage.image, barcode);
+        drawStaffBarcode(
+          ctx,
+          barcodeImage.image,
+          barcode,
+          STAFF_BARCODE_VERSION,
+          barcodeSize,
+        );
       } catch (error) {
         setDrawError((error as Error).message);
       }
@@ -285,6 +303,7 @@ export default function StaffPdfPreview({
     readyFonts,
     fontIds,
     barcode,
+    barcodeSize,
     barcodeImage,
   ]);
 

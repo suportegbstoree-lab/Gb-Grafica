@@ -2,13 +2,26 @@ import {
   STAFF_BARCODE_HEIGHT,
   STAFF_BARCODE_HORIZONTAL_SCALE,
   STAFF_BARCODE_MAX_WIDTH,
+  STAFF_BARCODE_VERSION,
+  staffBarcodeSizePixels,
   staffBarcodeImageWidth,
   normalizeStaffBarcode,
   staffBarcodeBoxes,
+  type StaffBarcodeSize,
+  type StaffBarcodeVersion,
 } from "../lib/staffPdfBarcode";
+import { STAFF_PDF_DPI } from "../lib/staffPdf";
 
-export async function staffBarcodeCanvas(value: string, version: 1 | 2 = 2) {
+export async function staffBarcodeCanvas(
+  value: string,
+  version: StaffBarcodeVersion = STAFF_BARCODE_VERSION,
+  size?: StaffBarcodeSize,
+) {
   const text = normalizeStaffBarcode(value);
+  const dimensions =
+    version === STAFF_BARCODE_VERSION
+      ? staffBarcodeSizePixels(text, size)
+      : undefined;
   const { default: bwip } = await import("bwip-js/browser");
   const source = document.createElement("canvas");
   const target = document.createElement("canvas");
@@ -24,17 +37,25 @@ export async function staffBarcodeCanvas(value: string, version: 1 | 2 = 2) {
       paddingwidth: version === 1 ? 10 : 0,
       paddingheight: 0,
     });
-    target.width = staffBarcodeImageWidth(text, version);
-    target.height = STAFF_BARCODE_HEIGHT;
+    target.width = Math.max(
+      staffBarcodeImageWidth(text, version),
+      Math.ceil(dimensions?.placedWidth ?? 0),
+    );
+    target.height = Math.round(dimensions?.height ?? STAFF_BARCODE_HEIGHT);
     const ctx = target.getContext("2d");
     if (!ctx) throw new Error("Não foi possível desenhar o código de barras.");
     ctx.imageSmoothingEnabled = false;
     const pad =
-      version === 1 ? 0 : Math.max(8, Math.round(STAFF_BARCODE_HEIGHT * 0.06));
-    const placedWidth = Math.min(
-      target.width * STAFF_BARCODE_HORIZONTAL_SCALE,
-      STAFF_BARCODE_MAX_WIDTH,
-    );
+      dimensions?.quietZone ??
+      (version === 1
+        ? 0
+        : Math.max(8, Math.round(STAFF_BARCODE_HEIGHT * 0.06)));
+    const placedWidth =
+      dimensions?.placedWidth ??
+      Math.min(
+        target.width * STAFF_BARCODE_HORIZONTAL_SCALE,
+        STAFF_BARCODE_MAX_WIDTH,
+      );
     const horizontalPad =
       version === 1
         ? 0
@@ -59,27 +80,36 @@ export function drawStaffBarcode(
   ctx: CanvasRenderingContext2D,
   image: HTMLCanvasElement,
   value: string,
-  version: 1 | 2 = 2,
+  version: StaffBarcodeVersion = STAFF_BARCODE_VERSION,
+  size?: StaffBarcodeSize,
 ) {
-  for (const box of staffBarcodeBoxes(
-    (ctx.canvas.width * 72) / 300,
-    (ctx.canvas.height * 72) / 300,
+  const boxes = staffBarcodeBoxes(
+    (ctx.canvas.width * 72) / STAFF_PDF_DPI,
+    (ctx.canvas.height * 72) / STAFF_PDF_DPI,
     value,
     version,
-  ))
-    ctx.drawImage(
-      image,
-      (box.x * 300) / 72,
-      ctx.canvas.height - ((box.y + box.height) * 300) / 72,
-      (box.width * 300) / 72,
-      (box.height * 300) / 72,
-    );
+    size,
+  );
+  ctx.save();
+  try {
+    if (version === STAFF_BARCODE_VERSION) ctx.imageSmoothingEnabled = false;
+    for (const box of boxes)
+      ctx.drawImage(
+        image,
+        (box.x * STAFF_PDF_DPI) / 72,
+        ctx.canvas.height - ((box.y + box.height) * STAFF_PDF_DPI) / 72,
+        (box.width * STAFF_PDF_DPI) / 72,
+        (box.height * STAFF_PDF_DPI) / 72,
+      );
+  } finally {
+    ctx.restore();
+  }
 }
 
 export async function stampStaffBarcode(
   original: Blob,
   value: string,
-  version: 1 | 2 = 2,
+  version: StaffBarcodeVersion = STAFF_BARCODE_VERSION,
 ) {
   const { PDFDocument } = await import("pdf-lib");
   const pdf = await PDFDocument.load(await original.arrayBuffer(), {

@@ -29,6 +29,14 @@ export interface StaffPdfCsvOrder {
 export interface StaffPdfCsvImportHandle {
   updateText(row: StaffPdfCsvOrder["csvRow"], text: string): void;
 }
+export interface StaffPdfCsvNamePaste {
+  column: number;
+  text: string;
+  mappedTextColumn: number;
+  textWarnings: (
+    column: number,
+  ) => NonNullable<StaffPdfCsvOrder["csvRow"]["textWarnings"]>;
+}
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
 
 function blankWarning(fields: string[]) {
@@ -64,6 +72,7 @@ export default function StaffPdfCsvImport({
   onReviseRow: (
     row: StaffPdfCsvOrder["csvRow"],
     replacement?: StaffPdfCsvOrder,
+    pastedName?: StaffPdfCsvNamePaste,
   ) => Promise<boolean>;
   reviewRequest: number;
 }) {
@@ -167,6 +176,18 @@ export default function StaffPdfCsvImport({
     (codes[index] ?? row[barcodeIndex] ?? "").trim();
   const lastPage = Math.max(0, Math.ceil(pending.length / 50) - 1);
   const pageIndex = Math.min(page, lastPage);
+  function rowWarnings(row: string[], barcode: string, textColumn: number) {
+    const missingFields = (blankText: boolean) =>
+      headers.filter((_, column) =>
+        column === textColumn
+          ? blankText
+          : !(column === barcodeIndex ? barcode : row[column]?.trim()),
+      );
+    return {
+      blank: blankWarning(missingFields(true)),
+      filled: blankWarning(missingFields(false)),
+    };
+  }
   function inspectRow(
     row: string[],
     index: number,
@@ -183,16 +204,7 @@ export default function StaffPdfCsvImport({
     const base = data.bases.find((base) => base.id === model?.baseId);
     const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
     const reference = row[columns.reference]?.trim() || String(index + 1);
-    const missingFields = (blankText: boolean) =>
-      headers.filter((_, column) =>
-        column === columns.text
-          ? blankText
-          : !(column === barcodeIndex ? barcode : row[column]?.trim()),
-      );
-    const textWarnings = {
-      blank: blankWarning(missingFields(true)),
-      filled: blankWarning(missingFields(false)),
-    };
+    const textWarnings = rowWarnings(row, barcode, columns.text);
     return {
       index,
       template,
@@ -244,37 +256,61 @@ export default function StaffPdfCsvImport({
       setError((error as Error).message);
     }
   }
-  async function reviseRow(index: number, cells: string[] | null) {
+  async function reviseRow(
+    index: number,
+    cells: string[] | null,
+    pastedColumn?: number,
+  ) {
     if (!source || block) throw new Error("Aguarde a operação atual.");
     const sameModel =
       cells &&
       cells[columns.template] === source.rows[index]?.[columns.template];
     const barcode =
       cells?.[barcodeIndex < 0 ? source.width : barcodeIndex]?.trim() || "";
-    const order = cells
-      ? inspectRow(
-          cells,
-          index,
-          barcode,
-          sameModel ? overrides[index] : undefined,
-        )
-      : undefined;
+    const pastedName =
+      cells && pastedColumn !== undefined
+        ? {
+            column: pastedColumn,
+            text: cells[pastedColumn],
+            mappedTextColumn: columns.text,
+            textWarnings: (column: number) =>
+              rowWarnings(cells, barcode, column),
+          }
+        : undefined;
+    const order =
+      cells && !pastedName
+        ? inspectRow(
+            cells,
+            index,
+            barcode,
+            sameModel ? overrides[index] : undefined,
+          )
+        : undefined;
     const updated = await onReviseRow(
       { sourceId: source.id, index },
       order && !order.issue ? order : undefined,
+      pastedName,
     );
     setSource({
       ...source,
-      rows: source.rows.map((row, i) =>
-        i === index ? (cells?.slice(0, source.width) ?? null) : row,
-      ),
+      rows: source.rows.map((row, i) => {
+        if (i !== index) return row;
+        if (pastedName && row) {
+          const next = [...row];
+          next[pastedName.column] = pastedName.text;
+          return next;
+        }
+        return cells?.slice(0, source.width) ?? null;
+      }),
     });
-    if (!sameModel) setOverrides(({ [index]: _, ...rest }) => rest);
-    setCodes(({ [index]: _, ...rest }) =>
-      cells && barcodeIndex < 0
-        ? { ...rest, [index]: cells[source.width] ?? "" }
-        : rest,
-    );
+    if (!pastedName) {
+      if (!sameModel) setOverrides(({ [index]: _, ...rest }) => rest);
+      setCodes(({ [index]: _, ...rest }) =>
+        cells && barcodeIndex < 0
+          ? { ...rest, [index]: cells[source.width] ?? "" }
+          : rest,
+      );
+    }
     setAdded((old) => {
       const next = new Set(old);
       if (updated) next.add(index);
@@ -626,6 +662,9 @@ export default function StaffPdfCsvImport({
           onClose={() => setTable(false)}
           headers={barcodeIndex < 0 ? [...headers, "Rastreio"] : headers}
           barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
+          nameColumn={headers.findIndex(
+            (header) => header.toLowerCase() === "nome",
+          )}
           onRevise={reviseRow}
           onDownload={downloadReviewed}
           rows={imported.map(({ row, index }) => {

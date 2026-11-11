@@ -2,7 +2,12 @@ import { test, expect } from "@playwright/test";
 import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PDFDocument } from "pdf-lib";
+import {
+  decodePDFRawStream,
+  PDFArray,
+  PDFDocument,
+  PDFRawStream,
+} from "pdf-lib";
 import { zipSync, strToU8 } from "fflate";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
@@ -133,7 +138,9 @@ test("lists bases in natural name order and links alphabet folders in bulk", asy
 
 test("editing a queued order synchronizes only the mapped name cell and its warning", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto("/__e2e/staff-pdf");
   await page
     .getByRole("button", { name: "Planilha e CSV", exact: true })
@@ -175,13 +182,13 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     table
       .getByRole("row")
       .filter({ hasText: "001" })
-      .getByRole("button", { name: "Érica", exact: true }),
+      .getByText("Érica", { exact: true }),
   ).toBeVisible();
   await expect(
     table
       .getByRole("row")
       .filter({ hasText: "002" })
-      .getByRole("button", { name: "Luísa", exact: true }),
+      .getByText("Luísa", { exact: true }),
   ).toBeVisible();
   const download = page.waitForEvent("download");
   await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
@@ -198,6 +205,36 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
   await expect(order).toContainText(
     "Campos em branco no CSV: nome, observacao.",
   );
+  await page
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Visualizar planilha importada" })
+    .click();
+  await table
+    .getByRole("button", { name: "BR2684621549924", exact: true })
+    .click();
+  await expect(table.getByRole("status")).toContainText("copiado");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "BR2684621549924",
+  );
+  await expect(
+    table.getByRole("button", { name: "Colar nome na linha 3" }),
+  ).toHaveCount(0);
+  await page.evaluate(() =>
+    navigator.clipboard.writeText("  Poliana Vitória\n"),
+  );
+  await table
+    .getByRole("button", { name: "Colar nome na linha 2", exact: true })
+    .click();
+  await expect(table.getByRole("status")).toHaveText("Nome colado e salvo.");
+  await expect(table.getByRole("row").filter({ hasText: "001" })).toContainText(
+    "Poliana Vitória",
+  );
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(order).toContainText("Poliana Vitória");
+  await expect(order).toContainText("Campos em branco no CSV: observacao.");
 });
 
 test("imports 30 PNG letters including accents from an existing mold", async ({
@@ -525,6 +562,11 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
     .getByLabel("Código de barras", { exact: true })
     .fill("BR2684621549924");
   await barcode
+    .getByLabel("Largura de referência (mm)", { exact: true })
+    .fill("60");
+  await barcode.getByLabel("Altura (mm)", { exact: true }).fill("14");
+  await barcode.getByLabel("Escala horizontal", { exact: true }).fill("0.9");
+  await barcode
     .getByRole("button", { name: "Aplicar código", exact: true })
     .click();
   await page
@@ -553,6 +595,22 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   expect(file.suggestedFilename()).toBe("Kit de teste ANA BR2684621549924.pdf");
   const pdf = await PDFDocument.load(await readFile((await file.path())!));
   expect(pdf.getPageCount()).toBe(4);
+  for (const index of [0, 2]) {
+    const streams = pdf.getPage(index).node.Contents() as PDFArray;
+    const commands = Array.from({ length: streams.size() }, (_, i) =>
+      Buffer.from(
+        decodePDFRawStream(streams.lookup(i, PDFRawStream)).decode(),
+      ).toString(),
+    ).join("\n");
+    const scales = [...commands.matchAll(/^([\d.]+) 0 0 ([\d.]+) 0 0 cm$/gm)];
+    expect(
+      scales.filter(
+        ([, w, h]) =>
+          Math.abs(Number(w) - (30 * 72) / 25.4) < 0.001 &&
+          Math.abs(Number(h) - (14 * 72) / 25.4) < 0.001,
+      ),
+    ).toHaveLength(2);
+  }
   await expect(
     page.getByRole("heading", { name: /Documentos salvos · teste/ }),
   ).toBeVisible();

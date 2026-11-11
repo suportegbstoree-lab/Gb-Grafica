@@ -3,7 +3,7 @@ import StaffPdfWorkspace from './StaffPdfWorkspace';
 import type { StaffPdfQueueProgressValue } from './StaffPdfQueueProgress';
 import { staffPdfApi, type StaffPdfApi } from '../services/staffPdfService';
 import { renderStaffPdfRecipe } from '../services/staffPdfBatchService';
-import { automaticStaffBarcode, staffPdfDefaultFilename } from '../lib/staffPdfBarcode';
+import { automaticStaffBarcode, staffPdfDefaultFilename, STAFF_BARCODE_VERSION } from '../lib/staffPdfBarcode';
 import type { Anuncio, PersonalizationFont } from "../types";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { selectedInitial } from "../lib/decorativeInitial";
@@ -351,7 +351,7 @@ export default function StaffDocuments({
               const barcode = automaticStaffBarcode(editor.requestId);
               const recipe = await batches.save(batch.id, {
                 kind: "simple", productId: editor.product.id, templateId: editor.template.id,
-                customization: value, barcode, barcodeVersion: 2,
+                customization: value, barcode, barcodeVersion: STAFF_BARCODE_VERSION,
                 outputName: staffPdfDefaultFilename(editor.template.name, value.texto, barcode),
               }, editor.requestId);
               await renderStaffPdfRecipe(recipe);

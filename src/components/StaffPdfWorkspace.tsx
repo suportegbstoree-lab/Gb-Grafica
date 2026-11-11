@@ -1,8 +1,13 @@
 import React from "react";
 import {
   automaticStaffBarcode,
+  DEFAULT_STAFF_BARCODE_SIZE,
   normalizeStaffBarcode,
+  normalizeStaffBarcodeSize,
+  staffBarcodeBoxes,
   staffPdfDefaultFilename,
+  STAFF_BARCODE_VERSION,
+  type StaffBarcodeSize,
 } from "../lib/staffPdfBarcode";
 import { renderStaffPdfRecipe } from "../services/staffPdfBatchService";
 import StaffPdfBatches from "./StaffPdfBatches";
@@ -47,6 +52,7 @@ import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
 import StaffPdfCsvImport, {
   type StaffPdfCsvOrder,
   type StaffPdfCsvImportHandle,
+  type StaffPdfCsvNamePaste,
 } from "./StaffPdfCsvImport";
 import ConfirmDialog from "./ConfirmDialog";
 import EditorModal from "./EditorModal";
@@ -125,8 +131,14 @@ export default function StaffPdfWorkspace({
     [mainFormatting, setMainFormatting] = React.useState(false),
     [selected, setSelected] = React.useState<string>(),
     [barcode, setBarcode] = React.useState(""),
+    [barcodeSize, setBarcodeSize] = React.useState<StaffBarcodeSize>(
+      DEFAULT_STAFF_BARCODE_SIZE,
+    ),
     [barcodeEditor, setBarcodeEditor] = React.useState(false),
     [barcodeDraft, setBarcodeDraft] = React.useState(""),
+    [barcodeSizeDraft, setBarcodeSizeDraft] = React.useState<StaffBarcodeSize>(
+      DEFAULT_STAFF_BARCODE_SIZE,
+    ),
     [batchRevision, setBatchRevision] = React.useState(0),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
@@ -247,6 +259,7 @@ export default function StaffPdfWorkspace({
     id: string = crypto.randomUUID(),
     code = barcode,
     allowEmptyText = false,
+    size = DEFAULT_STAFF_BARCODE_SIZE,
   ): QueueItem {
     const resolvedCode = normalizeStaffBarcode(
       code || automaticStaffBarcode(id),
@@ -263,7 +276,8 @@ export default function StaffPdfWorkspace({
         schemaVersion: 1,
         ...(allowEmptyText ? { allowEmptyText: true } : {}),
         barcode: resolvedCode,
-        barcodeVersion: 2,
+        barcodeVersion: STAFF_BARCODE_VERSION,
+        barcodeSize: size,
         baseId: source.base.id,
         baseRevision: source.base.revision,
         layoutId: layout.id,
@@ -340,6 +354,7 @@ export default function StaffPdfWorkspace({
             replacing?.id || crypto.randomUUID(),
             order.barcode,
             !line.text,
+            replacing?.job.barcodeSize,
           ),
           csvRow: order.csvRow,
           csvWarning: order.csvWarning,
@@ -366,6 +381,7 @@ export default function StaffPdfWorkspace({
   async function reviseCsvRow(
     row: StaffPdfCsvOrder["csvRow"],
     replacement?: StaffPdfCsvOrder,
+    pastedName?: StaffPdfCsvNamePaste,
   ) {
     const key = csvRowKey(row);
     const existing = queue.find(
@@ -381,6 +397,46 @@ export default function StaffPdfWorkspace({
         "Esta linha já pertence a um lote em processamento ou concluído.",
       );
     if (!existing) return false;
+    if (pastedName) {
+      const textColumn =
+        existing.csvRow?.textColumn ?? pastedName.mappedTextColumn;
+      const [main, ...extras] = existing.job.lines;
+      const text =
+        textColumn === pastedName.column ? pastedName.text : main.text;
+      const textWarnings = pastedName.textWarnings(textColumn);
+      const csvRow = {
+        ...row,
+        ...(textColumn >= 0 ? { textColumn } : {}),
+        textWarnings,
+      };
+      const csvWarning = textWarnings[text.trim() ? "filled" : "blank"];
+      let job = existing.job;
+      if (text !== main.text) {
+        const name = data.layouts.find(
+          (layout) => layout.id === job.layoutId,
+        )?.name;
+        const code = job.barcode;
+        const outputName =
+          name &&
+          code &&
+          job.outputName === staffPdfDefaultFilename(name, main.text, code)
+            ? staffPdfDefaultFilename(name, text, code)
+            : job.outputName;
+        job = {
+          ...job,
+          lines: [{ ...main, text }, ...extras],
+          outputName,
+          allowEmptyText: undefined,
+        };
+      }
+      setQueue((old) =>
+        old.map((item) =>
+          item.id === existing.id ? { ...item, job, csvRow, csvWarning } : item,
+        ),
+      );
+      if (editingId === existing.id) setEditingId(null);
+      return true;
+    }
     if (replacement) await importOrders([replacement], existing);
     else setQueue((old) => old.filter((item) => item.id !== existing.id));
     if (editingId === existing.id) setEditingId(null);
@@ -522,6 +578,7 @@ export default function StaffPdfWorkspace({
     setEditingId(null);
     setOutputName("");
     setBarcode("");
+    setBarcodeSize(DEFAULT_STAFF_BARCODE_SIZE);
     setError("");
     setMessage("");
     setBusy(true);
@@ -550,6 +607,7 @@ export default function StaffPdfWorkspace({
         setBarcode(
           item?.job.barcode || automaticStaffBarcode(crypto.randomUUID()),
         );
+        if (item?.job.barcodeSize) setBarcodeSize(item.job.barcodeSize);
         setLayoutId(layout?.id || "");
         loadLines(
           layout
@@ -673,14 +731,11 @@ export default function StaffPdfWorkspace({
           let reference: string;
           if (api.batches) {
             const job = item.job.barcode
-              ? {
-                  ...item.job,
-                  ...(!item.batchId ? { barcodeVersion: 2 as const } : {}),
-                }
+              ? item.job
               : {
                   ...item.job,
                   barcode: automaticStaffBarcode(item.requestId),
-                  barcodeVersion: 2 as const,
+                  barcodeVersion: STAFF_BARCODE_VERSION,
                   outputName: staffPdfDefaultFilename(
                     t?.name || item.base.name,
                     item.job.lines[0]?.text || "",
@@ -783,6 +838,7 @@ export default function StaffPdfWorkspace({
         barcode,
         !!(editingItem?.csvRow || editingItem?.job.allowEmptyText) &&
           !lines.some((line) => line.text.trim()),
+        barcodeSize,
       );
       if (editingItem?.csvRow) {
         const csvRow = editingItem.csvRow;
@@ -809,6 +865,7 @@ export default function StaffPdfWorkspace({
       loadLines([mainFrom(mold)]);
       setOutputName("");
       setBarcode(automaticStaffBarcode(crypto.randomUUID()));
+      setBarcodeSize(DEFAULT_STAFF_BARCODE_SIZE);
       setEditingId(null);
       setMessage(
         editingId
@@ -1153,6 +1210,8 @@ export default function StaffPdfWorkspace({
                 className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
                 onClick={() => {
                   setBarcodeDraft(barcode);
+                  setBarcodeSizeDraft(barcodeSize);
+                  setError("");
                   setBarcodeEditor(true);
                 }}
               >
@@ -1330,6 +1389,7 @@ export default function StaffPdfWorkspace({
                   fitMargin={mold?.layout.fit_margin}
                   initial={initial}
                   barcode={barcode || undefined}
+                  barcodeSize={barcodeSize}
                 />
               ) : (
                 <p className="grid min-h-56 place-items-center text-sm text-gray-400">
@@ -1452,12 +1512,63 @@ export default function StaffPdfWorkspace({
               onChange={(e) => setBarcodeDraft(e.target.value)}
             />
           </label>
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            {(
+              [
+                ["widthMm", "Largura de referência (mm)"],
+                ["heightMm", "Altura (mm)"],
+                ["horizontalScale", "Escala horizontal"],
+              ] as const
+            ).map(([field, label]) => (
+              <label key={field} className="block text-sm">
+                {label}
+                <input
+                  type="number"
+                  step="any"
+                  className={input}
+                  value={
+                    Number.isFinite(barcodeSizeDraft[field])
+                      ? barcodeSizeDraft[field]
+                      : ""
+                  }
+                  onChange={(e) =>
+                    setBarcodeSizeDraft({
+                      ...barcodeSizeDraft,
+                      [field]: e.currentTarget.valueAsNumber,
+                    })
+                  }
+                />
+              </label>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-gray-400">
+            Com escala de 1,8×, a largura de referência vale até 15 caracteres.
+            Códigos maiores crescem até o limite de 1.170 px a 300 DPI.
+          </p>
           <button
             type="button"
             className="mt-3 rounded-lg bg-pink-600 px-4 py-2"
             onClick={() => {
               try {
-                setBarcode(normalizeStaffBarcode(barcodeDraft));
+                const code = normalizeStaffBarcode(barcodeDraft);
+                const size = normalizeStaffBarcodeSize(barcodeSizeDraft);
+                for (const [index, page] of (
+                  loaded?.base.pages ?? []
+                ).entries()) {
+                  if (
+                    index === 0 ||
+                    (loaded?.base.pageCount === 4 && index === 2)
+                  )
+                    staffBarcodeBoxes(
+                      page.width,
+                      page.height,
+                      code,
+                      STAFF_BARCODE_VERSION,
+                      size,
+                    );
+                }
+                setBarcode(code);
+                setBarcodeSize(size);
                 setError("");
                 setBarcodeEditor(false);
               } catch (e) {

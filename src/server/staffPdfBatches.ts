@@ -19,8 +19,11 @@ import {
   type StaffPdfBatchJob,
 } from "../lib/staffPdfBatch.js";
 import { staffPdfOutputName } from "../lib/staffPdf.js";
-import { normalizeStaffBarcode } from "../lib/staffPdfBarcode.js";
-import { STAFF_BATCH_TTL_MS } from "../lib/staffPdfBarcode.js";
+import {
+  isStaffBarcodeVersion,
+  normalizeStaffBarcode,
+  STAFF_BATCH_TTL_MS,
+} from "../lib/staffPdfBarcode.js";
 import {
   findAlphabetLetter,
   matchingAlphabetName,
@@ -320,7 +323,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         }
         if (
           input.barcodeVersion !== undefined &&
-          ![1, 2].includes(input.barcodeVersion)
+          !isStaffBarcodeVersion(input.barcodeVersion)
         )
           throw new OperationsError("Versão do código de barras inválida.");
         job = {

@@ -1,4 +1,11 @@
-import { normalizeStaffBarcode } from "./staffPdfBarcode.js";
+import {
+  isStaffBarcodeVersion,
+  normalizeStaffBarcode,
+  normalizeStaffBarcodeSize,
+  STAFF_BARCODE_VERSION,
+  type StaffBarcodeSize,
+  type StaffBarcodeVersion,
+} from "./staffPdfBarcode.js";
 import type { PersonalizationFont } from "./textCustomization.js";
 
 export const STAFF_PDF_MAX_PAGES = 16;
@@ -164,7 +171,8 @@ export interface StaffPdfJob {
   schemaVersion: 1;
   allowEmptyText?: true;
   barcode?: string;
-  barcodeVersion?: 1 | 2;
+  barcodeVersion?: StaffBarcodeVersion;
+  barcodeSize?: StaffBarcodeSize;
   baseId: string;
   baseRevision: string;
   layoutId: string;
@@ -450,7 +458,9 @@ export function normalizeStaffPdfJob(
     value.schemaVersion !== 1 ||
     (value.allowEmptyText !== undefined && value.allowEmptyText !== true) ||
     (value.barcodeVersion !== undefined &&
-      ![1, 2].includes(value.barcodeVersion)) ||
+      !isStaffBarcodeVersion(value.barcodeVersion)) ||
+    (value.barcodeSize !== undefined &&
+      value.barcodeVersion !== STAFF_BARCODE_VERSION) ||
     typeof value.baseId !== "string" ||
     !/^[A-Za-z0-9_-]{1,160}$/.test(value.baseId) ||
     !/^[a-f0-9]{32}$/.test(value.baseRevision) ||
@@ -524,6 +534,9 @@ export function normalizeStaffPdfJob(
     ...(value.barcodeVersion === undefined
       ? {}
       : { barcodeVersion: value.barcodeVersion }),
+    ...(value.barcodeSize === undefined
+      ? {}
+      : { barcodeSize: normalizeStaffBarcodeSize(value.barcodeSize) }),
     ...(value.barcode === undefined
       ? {}
       : { barcode: normalizeStaffBarcode(value.barcode) }),

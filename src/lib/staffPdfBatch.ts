@@ -1,4 +1,5 @@
 import type { StaffPdfJob } from "./staffPdf.js";
+import type { StaffBarcodeVersion } from "./staffPdfBarcode.js";
 
 export const STAFF_PDF_BATCH_MAX_ITEMS = 50;
 import type { PrintProfile } from "./printProfile.js";
@@ -10,7 +11,7 @@ export interface StaffPdfSimpleJob {
   templateId: string;
   customization: TextCustomization;
   barcode: string;
-  barcodeVersion?: 1 | 2;
+  barcodeVersion?: StaffBarcodeVersion;
   outputName: string;
 }
 export type StaffPdfBatchJob = StaffPdfJob | StaffPdfSimpleJob;

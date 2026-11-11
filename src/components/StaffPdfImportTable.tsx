@@ -6,6 +6,7 @@ export default function StaffPdfImportTable({
   headers,
   rows,
   barcodeColumn,
+  nameColumn,
   onRevise,
   onDownload,
   onClose,
@@ -14,7 +15,12 @@ export default function StaffPdfImportTable({
   headers: string[];
   rows: { index: number; cells: string[] }[];
   barcodeColumn: number;
-  onRevise: (index: number, cells: string[] | null) => Promise<void>;
+  nameColumn: number;
+  onRevise: (
+    index: number,
+    cells: string[] | null,
+    pastedColumn?: number,
+  ) => Promise<void>;
   onDownload: () => void;
   onClose: () => void;
 }) {
@@ -27,6 +33,7 @@ export default function StaffPdfImportTable({
   const [removing, setRemoving] = React.useState<number>();
   const [notice, setNotice] = React.useState("");
   const [applying, setApplying] = React.useState(false);
+  const applyingRef = React.useRef(false);
   const counts = React.useMemo(() => {
     const map = new Map<string, number>();
     for (const { cells } of rows) {
@@ -52,10 +59,36 @@ export default function StaffPdfImportTable({
       setNotice("O navegador bloqueou a cópia da célula.");
     }
   }
-  async function apply(index: number, cells: string[] | null) {
+  async function apply(
+    index: number,
+    cells: string[] | null,
+    pasteName = false,
+  ) {
+    if (applyingRef.current) return;
+    applyingRef.current = true;
     setApplying(true);
+    setNotice("");
     try {
-      await onRevise(index, cells);
+      if (pasteName && cells) {
+        let text: string;
+        try {
+          text = (await navigator.clipboard.readText())
+            .trim()
+            .replace(/\r\n?/g, "\n");
+        } catch {
+          throw new Error(
+            "O navegador bloqueou a leitura da área de transferência. Permita o acesso ou use Editar linha.",
+          );
+        }
+        if (!text) throw new Error("A área de transferência está vazia.");
+        if (text.length > 500 || /[\x00-\x08\x0b-\x1f\x7f]/.test(text))
+          throw new Error(
+            "O nome copiado precisa ter até 500 caracteres de texto.",
+          );
+        cells = [...cells];
+        cells[nameColumn] = text;
+      }
+      await onRevise(index, cells, pasteName ? nameColumn : undefined);
       setEditing(undefined);
       setRemoving(undefined);
       if (!cells)
@@ -65,10 +98,17 @@ export default function StaffPdfImportTable({
             Math.max(0, Math.ceil((rows.length - 1) / 50) - 1),
           ),
         );
-      setNotice(cells ? "Linha atualizada." : "Linha excluída.");
+      setNotice(
+        pasteName
+          ? "Nome colado e salvo."
+          : cells
+            ? "Linha atualizada."
+            : "Linha excluída.",
+      );
     } catch (error) {
       setNotice((error as Error).message);
     } finally {
+      applyingRef.current = false;
       setApplying(false);
     }
   }
@@ -85,7 +125,7 @@ export default function StaffPdfImportTable({
         <button
           type="button"
           className={button}
-          disabled={!!editing || removing !== undefined}
+          disabled={applying || !!editing || removing !== undefined}
           onClick={() => {
             try {
               onDownload();
@@ -162,10 +202,30 @@ export default function StaffPdfImportTable({
                                 setEditing({ index, cells: next });
                               }}
                             />
+                          ) : position === nameColumn ? (
+                            value.trim() ? (
+                              value
+                            ) : (
+                              <button
+                                type="button"
+                                title="Colar nome da área de transferência"
+                                aria-label={`Colar nome na linha ${index + 1}`}
+                                disabled={
+                                  applying ||
+                                  !!editing ||
+                                  removing !== undefined
+                                }
+                                className="cursor-pointer text-amber-300 hover:underline disabled:opacity-40"
+                                onClick={() => void apply(index, cells, true)}
+                              >
+                                Em branco
+                              </button>
+                            )
                           ) : value ? (
                             <button
                               type="button"
                               title={`Copiar ${header}`}
+                              disabled={applying}
                               className="max-w-full cursor-copy whitespace-pre-wrap break-words text-left hover:underline"
                               onClick={() => void copy(value, header)}
                             >
@@ -230,7 +290,9 @@ export default function StaffPdfImportTable({
                           <button
                             type="button"
                             className={button}
-                            disabled={!!editing || removing !== undefined}
+                            disabled={
+                              applying || !!editing || removing !== undefined
+                            }
                             onClick={() => {
                               setNotice("");
                               setEditing({ index, cells: cells.slice() });
@@ -241,7 +303,9 @@ export default function StaffPdfImportTable({
                           <button
                             type="button"
                             className={button}
-                            disabled={!!editing || removing !== undefined}
+                            disabled={
+                              applying || !!editing || removing !== undefined
+                            }
                             onClick={() => {
                               setNotice("");
                               setRemoving(index);
@@ -262,7 +326,9 @@ export default function StaffPdfImportTable({
         <button
           type="button"
           className={button}
-          disabled={!currentPage || !!editing || removing !== undefined}
+          disabled={
+            applying || !currentPage || !!editing || removing !== undefined
+          }
           onClick={() => setPage(currentPage - 1)}
         >
           Linhas anteriores
@@ -274,7 +340,10 @@ export default function StaffPdfImportTable({
           type="button"
           className={button}
           disabled={
-            currentPage + 1 >= pages || !!editing || removing !== undefined
+            applying ||
+            currentPage + 1 >= pages ||
+            !!editing ||
+            removing !== undefined
           }
           onClick={() => setPage(currentPage + 1)}
         >
@@ -285,7 +354,7 @@ export default function StaffPdfImportTable({
             <button
               type="button"
               className={button}
-              disabled={!columnPage}
+              disabled={applying || !columnPage}
               onClick={() => setColumnPage(columnPage - 1)}
             >
               Colunas anteriores
@@ -297,7 +366,7 @@ export default function StaffPdfImportTable({
             <button
               type="button"
               className={button}
-              disabled={columnPage + 1 >= columnPages}
+              disabled={applying || columnPage + 1 >= columnPages}
               onClick={() => setColumnPage(columnPage + 1)}
             >
               Próximas colunas

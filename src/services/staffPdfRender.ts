@@ -367,6 +367,7 @@ export async function exportStaffPdf(
       const canvas = await staffBarcodeCanvas(
         job.barcode,
         job.barcodeVersion ?? 1,
+        job.barcodeSize,
       );
       try {
         const blob = await new Promise<Blob>((resolve, reject) =>
@@ -478,6 +479,7 @@ export async function exportStaffPdf(
           height,
           job.barcode,
           job.barcodeVersion ?? 1,
+          job.barcodeSize,
         ))
           sheet.drawImage(barcode, box);
     }
