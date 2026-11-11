@@ -22,7 +22,7 @@ import { staffPdfOutputName } from "../lib/staffPdf.js";
 import { normalizeStaffBarcode } from "../lib/staffPdfBarcode.js";
 import { STAFF_BATCH_TTL_MS } from "../lib/staffPdfBarcode.js";
 import {
-  firstInitial,
+  findAlphabetLetter,
   matchingAlphabetName,
 } from "../lib/decorativeInitial.js";
 import { adminAssetPathFromUrl, isAdminFontPath } from "../lib/adminAsset.js";
@@ -402,10 +402,11 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         } else recipeFonts.push(safe);
       }
       let initial: { asset: string; sizePercent: number } | undefined;
-      const letter = firstInitial(
+      const alphabet = base.alphabet;
+      const letter = findAlphabetLetter(
+        alphabet?.letters,
         isStaffPdfSimpleJob(job) ? job.customization.texto : job.lines[0].text,
       );
-      const alphabet = (base as any).alphabet;
       const path = letter && alphabet?.letters?.[letter]?.path;
       if (path && matchingAlphabetName(base.name, alphabet.folderName)) {
         const valid =

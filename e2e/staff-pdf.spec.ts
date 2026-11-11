@@ -4,6 +4,63 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PDFDocument } from "pdf-lib";
 import { zipSync, strToU8 } from "fflate";
+import { defaultPdfLayout } from "../src/lib/staffPdf";
+
+test("imports 30 PNG letters including accents from an existing mold", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "gb-png-letters-"));
+  const folder = join(root, "Kit de teste");
+  const wrong = join(root, "Outro kit");
+  try {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    for (const path of [folder, wrong]) {
+      await mkdir(path);
+    }
+    await writeFile(join(wrong, "A.png"), png);
+    await Promise.all(
+      [..."ABCDEFGHIJKLMNOPQRSTUVWXYZÁÇÉÓ"].map((letter) =>
+        writeFile(join(folder, `${letter}.png`), png),
+      ),
+    );
+    await page.goto("/__e2e/staff-pdf");
+    await page
+      .getByRole("button", { name: "Bases e moldes", exact: true })
+      .click();
+    const moldName = "Kit de teste_template__4p";
+    await page.getByLabel("Importar ou soltar JSON").setInputFiles({
+      name: "templates.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify({ [moldName]: defaultPdfLayout() })),
+    });
+    await page.getByLabel("Buscar molde", { exact: true }).fill(moldName);
+    await page
+      .getByRole("button", { name: "Editar molde", exact: true })
+      .click();
+    const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
+    const picker = mold.getByLabel("Importar pasta de letras", { exact: true });
+    await expect(picker).toBeEnabled();
+    await picker.setInputFiles(wrong);
+    await expect(
+      mold.getByRole("status").filter({ hasText: "Erro!" }),
+    ).toContainText("Kit de teste");
+    await picker.setInputFiles(folder);
+    await expect(mold.getByText("Finalizado!", { exact: true })).toBeVisible();
+    await expect(
+      mold.getByText("Pasta vinculada · Kit de teste", { exact: true }),
+    ).toBeVisible();
+    await mold.getByRole("button", { name: "Fechar editor de molde" }).click();
+    await page.getByText("Sem categoria", { exact: true }).click();
+    await expect(page.getByText(/^Letras cadastradas/)).toContainText(
+      "Á, Ç, É, Ó",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("staff queue snapshots independent lines, supports revision and exports four original-size pages", async ({
   page,
@@ -467,10 +524,14 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toHaveCount(2);
   await expect(
-    page.getByRole("article").filter({ hasText: "ANA" }),
+    page
+      .getByRole("article")
+      .filter({ has: page.getByText("ANA", { exact: true }) }),
   ).toHaveCount(1);
   await expect(
-    page.getByRole("article").filter({ hasText: "BIA" }),
+    page
+      .getByRole("article")
+      .filter({ has: page.getByText("BIA", { exact: true }) }),
   ).toHaveCount(0);
   await process.click();
   await confirmation.getByRole("button", { name: "Gerar mesmo assim" }).click();

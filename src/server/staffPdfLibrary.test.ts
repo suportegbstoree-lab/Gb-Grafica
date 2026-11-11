@@ -416,13 +416,14 @@ test("replacing a PDF validates first, preserves its identity and rejects stale 
     assert.equal(objects.has(after.path), true);
   }));
 
-test("decorative letters require exact folder names and owned PNGs, and active letters cannot be removed as temporary uploads", async () =>
+test("decorative letters use the folder stem of an imported template and preserve the uploaded PNG", async () =>
   scenario(async ({ request, docs, objects }) => {
     const id = "a".repeat(32),
       revision = "b".repeat(32),
-      path = `staff-pdf-bases/${id}/letters/${"c".repeat(32)}.png`;
+      path = `staff-pdf-bases/${id}/letters/${"c".repeat(32)}.png`,
+      accentedPath = `staff-pdf-bases/${id}/letters/${"d".repeat(32)}.png`;
     docs.set(`_staffPdfBases/${id}`, {
-      name: "Alfabeto.pdf",
+      name: "Alfabeto_template__2p.pdf",
       path: `staff-pdf-bases/${id}/original.pdf`,
       status: "ready",
       revision,
@@ -442,6 +443,7 @@ test("decorative letters require exact folder names and owned PNGs, and active l
         metadata: { uploadedBy: "manager" },
       },
     });
+    objects.set(accentedPath, objects.get(path)!);
     assert.equal(
       (
         await request(`/library/bases/${id}/alphabet`, "generator", {
@@ -473,16 +475,28 @@ test("decorative letters require exact folder names and owned PNGs, and active l
       (
         await request(`/library/bases/${id}/alphabet`, "manager", {
           folderName: "Alfabeto",
-          letters: { A: { path } },
+          letters: { A: { path }, É: { path: accentedPath }, E: { path } },
         })
       ).status,
       200,
     );
-    assert.equal(
-      (await request(`/library/bases/${id}/initial?letter=A`, "generator"))
-        .status,
-      200,
-    );
+    for (const [letter, expectedPath] of [
+      ["A", path],
+      ["E", path],
+      ["e\u0301", accentedPath],
+      ["Ê", path],
+    ]) {
+      const initial = await request(
+        `/library/bases/${id}/initial?letter=${encodeURIComponent(letter)}`,
+        "generator",
+      );
+      assert.equal(initial.status, 200);
+      assert.equal(
+        (await initial.json()).url,
+        `https://signed.example.test/${expectedPath}`,
+      );
+    }
+    assert.deepEqual(objects.get(accentedPath).bytes, png);
     assert.equal(
       (
         await (
@@ -711,7 +725,7 @@ test("batch recipes freeze font files and decorative initials instead of linking
       alphabet: {
         folderName: "Kit",
         sizePercent: 65,
-        letters: { A: { path: initialPath } },
+        letters: { Á: { path: initialPath } },
       },
     });
     const layout = { ...defaultPdfLayout(), font_name: "FreeMono" };
@@ -726,7 +740,7 @@ test("batch recipes freeze font files and decorative initials instead of linking
       })
     ).json();
     const line = newPdfLine(layout, [font]);
-    line.text = "ANA";
+    line.text = "Ágata";
     const body = {
       requestId: "f".repeat(36),
       job: {
@@ -880,7 +894,7 @@ test("product binding copies catalog PDF, previews and initials without client d
             alphabet: {
               folderName: "Flores",
               sizePercent: 70,
-              letters: { A: { path: letterPath, url: url(letterPath) } },
+              letters: { É: { path: letterPath, url: url(letterPath) } },
             },
           },
         ],
@@ -926,7 +940,7 @@ test("product binding copies catalog PDF, previews and initials without client d
       const resized = await resolveStaffPdfBase(services, base.id);
       assert.equal(resized.alphabet.sizePercent, 48);
       assert.equal(resized.initialFolderName, "Flores");
-      assert.equal(resized.alphabet.letters.A.path, letterPath);
+      assert.equal(resized.alphabet.letters.É.path, letterPath);
       const path = `/library/bases/${base.id}/product-copy`;
       const body = { productId: "target", baseRevision: resized.revision };
       assert.equal((await request(path, "generator", body)).status, 403);
@@ -959,12 +973,12 @@ test("product binding copies catalog PDF, previews and initials without client d
         undefined,
       );
       assert.equal(
-        objects.get(template.alphabet.letters.A.path).bytes.toString(),
+        objects.get(template.alphabet.letters.É.path).bytes.toString(),
         "initial",
       );
       assert.ok(
-        template.alphabet.letters.A.url.includes(
-          objects.get(template.alphabet.letters.A.path).meta.metadata
+        template.alphabet.letters.É.url.includes(
+          objects.get(template.alphabet.letters.É.path).meta.metadata
             .firebaseStorageDownloadTokens,
         ),
       );

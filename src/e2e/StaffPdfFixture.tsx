@@ -7,7 +7,10 @@ import {
   type StaffPdfRecipe,
 } from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
-import { readAlphabetFiles } from "../lib/decorativeInitial";
+import {
+  findAlphabetLetter,
+  readAlphabetFiles,
+} from "../lib/decorativeInitial";
 import {
   defaultPdfLayout,
   normalizePdfLayout,
@@ -68,7 +71,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         },
       ];
     const files = new Map<string, Blob>(),
-      alphabets = new Map<string, Map<string, File>>(),
+      alphabets = new Map<string, Record<string, File>>(),
       saved = new Map<string, StaffDocumentView>();
     const value: StaffPdfApi = {
       list: async () => ({
@@ -106,8 +109,10 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         files.set(id, blob);
         return blob;
       },
-      initial: async (id, letter) => {
-        const source = alphabets.get(id)?.get(letter);
+      initial: async (id, text) => {
+        const alphabet = alphabets.get(id);
+        const letter = findAlphabetLetter(alphabet, text);
+        const source = letter ? alphabet?.[letter] : undefined;
         return source ? { source, sizePercent: 60 } : undefined;
       },
       uploadAlphabet: async ({ id, name }, files, progress) => {
@@ -115,7 +120,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         progress?.(0, letters.length);
         alphabets.set(
           id,
-          new Map(letters.map(({ letter, file }) => [letter, file])),
+          Object.fromEntries(letters.map(({ letter, file }) => [letter, file])),
         );
         bases = bases.map((base) =>
           base.id === id

@@ -2,10 +2,11 @@ import { uploadBatch } from "../lib/uploadBatch";
 import React from "react";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import {
+  alphabetFolderName,
   readAlphabetFiles,
+  validDecorativePngHeader,
   type DecorativeAlphabet,
 } from "../lib/decorativeInitial";
-import { matchesArtworkSignature } from "../lib/artwork";
 import type { UploadedCatalogImage } from "../services/catalogImageService";
 
 export default function PdfTemplatesEditor({
@@ -44,23 +45,8 @@ export default function PdfTemplatesEditor({
       const parsed = readAlphabetFiles(files, template.name);
       // Validate the whole folder before starting any network write.
       for (const { file } of parsed.letters) {
-        if (
-          !matchesArtworkSignature(
-            "image/png",
-            new Uint8Array(await file.slice(0, 16).arrayBuffer()),
-          )
-        )
-          throw new Error(`“${file.name}” não contém um PNG válido.`);
-        const header = new DataView(await file.slice(0, 33).arrayBuffer());
-        if (
-          header.byteLength < 33 ||
-          header.getUint32(12) !== 0x49484452 ||
-          header.getUint32(16) === 0 ||
-          header.getUint32(20) === 0 ||
-          header.getUint32(16) > 16384 ||
-          header.getUint32(20) > 16384 ||
-          header.getUint32(16) * header.getUint32(20) > 64_000_000
-        )
+        const header = new Uint8Array(await file.slice(0, 33).arrayBuffer());
+        if (!validDecorativePngHeader(header))
           throw new Error(
             `“${file.name}” excede as dimensões permitidas ou não possui cabeçalho PNG válido.`,
           );
@@ -132,8 +118,8 @@ export default function PdfTemplatesEditor({
           </legend>
           <p className="text-xs text-gray-400">
             {template.pages.length} página(s). A inicial aparece somente na
-            capa. Importe a pasta com o mesmo nome do PDF, contendo A.png até
-            Z.png.
+            capa. Importe a pasta “{alphabetFolderName(template.name)}” com as
+            letras em PNG, como A.png e É.png.
           </p>
           <label className="inline-flex cursor-pointer rounded-lg border border-gray-600 px-3 py-2 text-xs font-bold">
             {busy

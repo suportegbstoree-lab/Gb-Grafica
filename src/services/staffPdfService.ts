@@ -15,7 +15,9 @@ import type {
 } from "../lib/staffPdf";
 import type { StaffDocumentView } from "./staffDocumentService";
 import {
+  firstInitial,
   readAlphabetFiles,
+  validDecorativePngHeader,
   type DecorativeInitial,
 } from "../lib/decorativeInitial";
 export interface StaffPdfLibrary {
@@ -137,10 +139,11 @@ export const staffPdfApi: StaffPdfApi = {
   importLayouts: (templates) =>
     staffPdfRequest("/layouts/import", { templates }),
   initial: async (id, text) => {
-    const letter = [...text.trimStart()][0] || "",
-      data = await staffPdfRequest(
-        `/bases/${encodeURIComponent(id)}/initial?letter=${encodeURIComponent(letter)}`,
-      );
+    const letter = firstInitial(text);
+    if (!letter) return undefined;
+    const data = await staffPdfRequest(
+      `/bases/${encodeURIComponent(id)}/initial?letter=${encodeURIComponent(letter)}`,
+    );
     if (!data.url) return undefined;
     const response = await fetch(data.url, {
       credentials: "omit",
@@ -179,18 +182,12 @@ export const staffPdfApi: StaffPdfApi = {
     if (!user) throw new Error("Entre novamente.");
     const parsed = readAlphabetFiles(files, base.name),
       letters: Record<string, { path: string }> = {};
-    for (const { file, letter } of parsed.letters) {
-      const h = new DataView(await file.slice(0, 33).arrayBuffer());
-      if (
-        h.byteLength < 33 ||
-        h.getUint32(0) !== 0x89504e47 ||
-        h.getUint32(4) !== 0x0d0a1a0a ||
-        h.getUint32(12) !== 0x49484452 ||
-        !h.getUint32(16) ||
-        !h.getUint32(20) ||
-        h.getUint32(16) * h.getUint32(20) > 64000000
-      )
-        throw new Error(`PNG inválido: ${file.name}.`);
+    for (const { file } of parsed.letters) {
+      const header = new Uint8Array(await file.slice(0, 33).arrayBuffer());
+      if (!validDecorativePngHeader(header))
+        throw new Error(
+          `“${file.name}” tem cabeçalho PNG inválido ou excede as dimensões permitidas.`,
+        );
     }
     const { uploadBatch } = await import("../lib/uploadBatch");
     const rollback = (path: string) =>
@@ -200,10 +197,17 @@ export const staffPdfApi: StaffPdfApi = {
       parsed.letters,
       async ({ file, letter }) => {
         const path = `staff-pdf-bases/${base.id}/letters/${crypto.randomUUID().replaceAll("-", "")}.png`;
-        await uploadBytesResumable(ref(storage, path), file, {
-          contentType: "image/png",
-          customMetadata: { uploadedBy: user.uid },
-        });
+        try {
+          await uploadBytesResumable(ref(storage, path), file, {
+            contentType: "image/png",
+            customMetadata: { uploadedBy: user.uid },
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Falha ao enviar “${file.name}” ao Storage. ${detail}`,
+          );
+        }
         letters[letter] = { path };
         return path;
       },

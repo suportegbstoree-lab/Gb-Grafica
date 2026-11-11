@@ -4,6 +4,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import StaffPdfBaseImport from "./StaffPdfBaseImport";
 import StaffPdfPicker from "./StaffPdfPicker";
 import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
+import { alphabetFolderName } from "../lib/decorativeInitial";
 import StaffPdfPreview from "./StaffPdfPreview";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
@@ -219,6 +220,46 @@ export default function StaffPdfLibraryEditor({
       }
     });
   }
+  function alphabetPicker(target: StaffPdfBase) {
+    return (
+      <>
+        <label className="inline-flex cursor-pointer rounded-lg border border-gray-700 p-2 text-sm">
+          Importar pasta de letras
+          <input
+            type="file"
+            multiple
+            accept="image/png"
+            ref={(el) => {
+              el?.setAttribute("webkitdirectory", "");
+            }}
+            disabled={busy}
+            className="sr-only"
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []) as File[];
+              e.target.value = "";
+              if (files.length) void importAlphabet(target, files);
+            }}
+          />
+        </label>
+        {alphabetUpload?.id === target.id && (
+          <div role="status" className="min-w-36 text-xs text-gray-300">
+            <p>{alphabetUpload.status}</p>
+            {alphabetUpload.error && (
+              <p className="mt-1 text-red-300">{alphabetUpload.error}</p>
+            )}
+            {alphabetUpload.status === "Em andamento..." && (
+              <progress
+                aria-label="Progresso da importação de letras"
+                value={alphabetUpload.completed}
+                max={alphabetUpload.total}
+                className="block w-full accent-pink-500"
+              />
+            )}
+          </div>
+        )}
+      </>
+    );
+  }
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-gray-800 p-5">
@@ -303,47 +344,7 @@ export default function StaffPdfLibraryEditor({
                         >
                           Editar {b.name}
                         </button>
-                        <label className="cursor-pointer rounded-lg border border-gray-700 p-2 text-sm">
-                          Importar pasta de letras
-                          <input
-                            type="file"
-                            multiple
-                            accept="image/png"
-                            ref={(el) => {
-                              el?.setAttribute("webkitdirectory", "");
-                            }}
-                            disabled={busy}
-                            className="sr-only"
-                            onChange={(e) => {
-                              const files = Array.from(
-                                e.target.files || [],
-                              ) as File[];
-                              e.target.value = "";
-                              if (files.length) void importAlphabet(b, files);
-                            }}
-                          />
-                        </label>
-                        {alphabetUpload?.id === b.id && (
-                          <div
-                            role="status"
-                            className="min-w-36 text-xs text-gray-300"
-                          >
-                            <p>{alphabetUpload.status}</p>
-                            {alphabetUpload.error && (
-                              <p className="mt-1 text-red-300">
-                                {alphabetUpload.error}
-                              </p>
-                            )}
-                            {alphabetUpload.status === "Em andamento..." && (
-                              <progress
-                                aria-label="Progresso da importação de letras"
-                                value={alphabetUpload.completed}
-                                max={alphabetUpload.total}
-                                className="block w-full accent-pink-500"
-                              />
-                            )}
-                          </div>
-                        )}
+                        {alphabetPicker(b)}
                         <button
                           disabled={busy}
                           onClick={() =>
@@ -781,6 +782,15 @@ export default function StaffPdfLibraryEditor({
                   ))}
                 </select>
               </label>
+              {base?.source === "internal" && (
+                <div className="space-y-2 text-sm">
+                  <p className="text-xs text-gray-300">
+                    Pasta de letras da base “{alphabetFolderName(base.name)}”.
+                    Use arquivos PNG como A.png e É.png.
+                  </p>
+                  {alphabetPicker(base)}
+                </div>
+              )}
               <label className="block">
                 Texto de exemplo
                 <input

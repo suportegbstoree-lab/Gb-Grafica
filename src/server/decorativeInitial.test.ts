@@ -25,6 +25,19 @@ test('sem pasta ou sem PNG da primeira letra não lê nem substitui imagens', as
   assert.equal(await resolveOrderInitial(bucket, 'product', product, id, 'Beatriz', 'null'), undefined);
   assert.equal(calls.length, 0);
 });
+test('checkout preserva a referência da letra acentuada aprovada', async () => {
+  const { bucket } = fakeBucket();
+  const accentedPath = `catalog/products/product/${'c'.repeat(32)}.png`;
+  const withAccent = { ...template, alphabet: { ...template.alphabet, letters: {
+    ...template.alphabet.letters,
+    Á: { path: accentedPath, url: 'https://example.test/accent.png' },
+  } } };
+  const updated = { ...product, modelosPdf: [withAccent] };
+  const result = await resolveOrderInitial(bucket, 'product', updated, id, 'Ágata', initialReference(withAccent, 'Ágata'));
+  assert.equal(result?.letter, 'Á');
+  assert.equal(result?.version.path, accentedPath);
+  await assert.rejects(resolveOrderInitial(bucket, 'product', updated, id, 'Ágata', initialReference(template, 'Ágata')), /Gere o modelo/);
+});
 test('alterações no alfabeto ou referência recusam a aprovação antiga', async () => {
   const { bucket } = fakeBucket();
   await assert.rejects(resolveOrderInitial(bucket, 'product', product, id, 'Ana', undefined), /Gere o modelo/);

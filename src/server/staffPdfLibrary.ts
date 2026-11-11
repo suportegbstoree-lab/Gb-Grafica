@@ -38,9 +38,13 @@ import {
 import { retainedAssetPath } from "../lib/catalogRetention.js";
 import { uploadBatch } from "../lib/uploadBatch.js";
 import {
-  firstInitial,
+  alphabetFolderName,
+  findAlphabetLetter,
+  isAlphabetLetter,
   matchingAlphabetName,
   isAlphabetImagePath,
+  MAX_ALPHABET_LETTERS,
+  validDecorativePngHeader,
 } from "../lib/decorativeInitial.js";
 
 export const pdfLibraryId = (name: string) =>
@@ -380,10 +384,10 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       if (
         alphabet &&
         (!matchingAlphabetName(base.name, alphabet.folderName) ||
-          letterPaths.length > 26 ||
+          letterPaths.length > MAX_ALPHABET_LETTERS ||
           !letterPaths.every(
             ([letter, value]) =>
-              /^[A-Z]$/.test(letter) &&
+              isAlphabetLetter(letter) &&
               (base.source === "internal"
                 ? typeof value?.path === "string" &&
                   new RegExp(
@@ -578,13 +582,15 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     "/bases/:id/initial",
     action(async (req, res) => {
       const base = await resolveStaffPdfBase(services(), req.params.id),
-        letter = firstInitial(String(req.query.letter || "")),
-        alphabet = base.alphabet;
+        alphabet = base.alphabet,
+        letter = findAlphabetLetter(
+          alphabet?.letters,
+          String(req.query.letter || ""),
+        );
       if (
         !letter ||
         !alphabet ||
-        !matchingAlphabetName(base.name, alphabet.folderName) ||
-        !Object.hasOwn(alphabet.letters || {}, letter)
+        !matchingAlphabetName(base.name, alphabet.folderName)
       ) {
         res.json({ url: null });
         return;
@@ -621,58 +627,62 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         } = req.body || {};
       if (
         base.source !== "internal" ||
-        typeof folderName !== "string" ||
-        !matchingAlphabetName(base.name, folderName) ||
         !letters ||
         typeof letters !== "object" ||
         Array.isArray(letters) ||
         Object.keys(letters).length < 1 ||
-        Object.keys(letters).length > 26 ||
+        Object.keys(letters).length > MAX_ALPHABET_LETTERS ||
         typeof sizePercent !== "number" ||
         !Number.isFinite(sizePercent) ||
         sizePercent < 5 ||
         sizePercent > 100
       )
         throw new OperationsError(
-          "Use uma pasta com o mesmo nome do PDF e letras A.png até Z.png.",
+          `Escolha uma base da equipe e uma pasta com até ${MAX_ALPHABET_LETTERS} letras PNG, como A.png e É.png.`,
         );
-      const canonical: Record<string, { path: string }> = {};
-      for (const [letter, entry] of Object.entries(letters)) {
-        const path = (entry as any)?.path;
-        if (
-          !/^[A-Z]$/.test(letter) ||
-          typeof path !== "string" ||
-          !new RegExp(
-            `^staff-pdf-bases/${base.id}/letters/[a-f0-9]{32}\\.png$`,
-          ).test(path)
-        )
-          throw new OperationsError("Caminho da inicial inválido.");
-        const file = services().bucket.file(path),
-          [meta] = await file.getMetadata();
-        if (
-          meta.contentType !== "image/png" ||
-          Number(meta.size) > STAFF_DOCUMENT_MAX_BYTES ||
-          meta.metadata?.uploadedBy !== actor.uid ||
-          !/^[1-9][0-9]*$/.test(String(meta.generation))
-        )
-          throw new OperationsError("Inicial não autorizada.");
-        const [head] = await services()
-          .bucket.file(path, { generation: String(meta.generation) })
-          .download({ start: 0, end: 32 });
-        if (
-          head.length < 26 ||
-          !head
-            .subarray(0, 8)
-            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
-          head.readUInt32BE(12) !== 0x49484452 ||
-          head.readUInt32BE(16) * head.readUInt32BE(20) > 64000000 ||
-          !head.readUInt32BE(16) ||
-          !head.readUInt32BE(20) ||
-          Math.max(head.readUInt32BE(16), head.readUInt32BE(20)) > 16384
-        )
-          throw new OperationsError("PNG da inicial inválido.");
-        canonical[letter] = { path };
-      }
+      if (
+        typeof folderName !== "string" ||
+        !matchingAlphabetName(base.name, folderName)
+      )
+        throw new OperationsError(
+          `Selecione a pasta “${alphabetFolderName(base.name)}” para a base “${base.name}”.`,
+        );
+      const bucket = services().bucket;
+      const canonical = Object.fromEntries(
+        await uploadBatch(
+          Object.entries(letters),
+          async ([letter, entry]) => {
+            const path = (entry as { path?: unknown } | null)?.path;
+            if (
+              !isAlphabetLetter(letter) ||
+              typeof path !== "string" ||
+              !new RegExp(
+                `^staff-pdf-bases/${base.id}/letters/[a-f0-9]{32}\\.png$`,
+              ).test(path)
+            )
+              throw new OperationsError("Caminho da inicial inválido.");
+            const [meta] = await bucket.file(path).getMetadata();
+            if (
+              meta.contentType !== "image/png" ||
+              !isAllowedCatalogImage("image/png", Number(meta.size)) ||
+              meta.metadata?.uploadedBy !== actor.uid ||
+              !/^[1-9][0-9]*$/.test(String(meta.generation))
+            )
+              throw new OperationsError(
+                `O arquivo ${letter}.png não está autorizado.`,
+              );
+            const [head] = await bucket
+              .file(path, { generation: String(meta.generation) })
+              .download({ start: 0, end: 32 });
+            if (!validDecorativePngHeader(head))
+              throw new OperationsError(
+                `Cabeçalho ou dimensões inválidas em ${letter}.png.`,
+              );
+            return [letter, { path }] as const;
+          },
+          { concurrency: 6, rollback: async () => undefined },
+        ),
+      );
       const ref = services().db.collection("_staffPdfBases").doc(base.id);
       await services().db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data();
