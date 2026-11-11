@@ -1,5 +1,6 @@
 import React from "react";
 import StaffPdfWorkspace from './StaffPdfWorkspace';
+import type { StaffPdfQueueProgressValue } from './StaffPdfQueueProgress';
 import { staffPdfApi, type StaffPdfApi } from '../services/staffPdfService';
 import { renderStaffPdfRecipe } from '../services/staffPdfBatchService';
 import { automaticStaffBarcode, staffPdfDefaultFilename } from '../lib/staffPdfBarcode';
@@ -28,6 +29,8 @@ export default function StaffDocuments({
   canGenerate = true,
   canManageTemplates = false,
   libraryApi,
+  visible = true,
+  onProgress,
 }: {
   products: Anuncio[];
   fonts: PersonalizationFont[];
@@ -36,6 +39,8 @@ export default function StaffDocuments({
   canGenerate?: boolean;
   canManageTemplates?: boolean;
   libraryApi?: StaffPdfApi;
+  visible?: boolean;
+  onProgress?: (value: StaffPdfQueueProgressValue) => void;
 }) {
   const [batchRevision, setBatchRevision] = React.useState(0);
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
@@ -84,8 +89,8 @@ export default function StaffDocuments({
     };
   }, [load]);
   React.useEffect(() => {
-    if (editor) return beginWorkTask("document", "", timingApi);
-  }, [Boolean(editor), timingApi]);
+    if (visible && editor) return beginWorkTask("document", "", timingApi);
+  }, [visible, Boolean(editor), timingApi]);
   React.useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview.url);
@@ -162,7 +167,7 @@ export default function StaffDocuments({
           Biblioteca, edição e lotes da equipe. Os novos lotes ficam disponíveis por três dias.
         </p>
       </header>
-      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} externalBatchRevision={batchRevision} onGenerated={load} timingApi={timingApi} api={libraryApi}/>
+      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} externalBatchRevision={batchRevision} onGenerated={load} timingApi={timingApi} api={libraryApi} visible={visible} onProgress={onProgress}/>
       {error && (
         <p role="alert" className="rounded-xl bg-red-950 p-4 text-red-200">
           {error}
@@ -324,7 +329,7 @@ export default function StaffDocuments({
           Nenhum documento salvo disponível.
         </p>
       )}
-      {editor && (
+      {visible && editor && (
         <TextCustomizationDrawer
           productName={editor.template.name}
           template={editor.template}
@@ -397,7 +402,7 @@ export default function StaffDocuments({
           }}
         />
       )}
-      {preview && (
+      {visible && preview && (
         <EditorModal
           title={preview.title}
           onClose={() => setPreview(null)}
@@ -412,7 +417,7 @@ export default function StaffDocuments({
           />
         </EditorModal>
       )}
-      {share && (
+      {visible && share && (
         <EditorModal
           title="Compartilhar PDF"
           onClose={() => setShare(null)}
@@ -443,7 +448,7 @@ export default function StaffDocuments({
           </div>
         </EditorModal>
       )}
-      {email && (
+      {visible && email && (
         <EditorModal
           title={`Enviar ${email.doc.reference} por e-mail`}
           busy={busy}

@@ -2,6 +2,7 @@ import { CouponsPanel, VariationTypesPanel } from '../components/SalesAdminPanel
 import { salesAdminApi, type SalesAdminApi } from '../services/salesService';
 import { variationReferenceUrls, MAX_PRODUCT_SKU } from '../lib/productSales';
 import StaffDocuments from '../components/StaffDocuments';
+import StaffPdfQueueProgress, { type StaffPdfQueueProgressValue } from '../components/StaffPdfQueueProgress';
 import type { StaffPdfApi } from '../services/staffPdfService';
 import WorkdayBar from '../components/WorkdayBar';
 import { beginWorkTask,workApi,type WorkApi } from '../services/workService';
@@ -225,6 +226,8 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const adminLocation = useLocation();
   const navigate = useNavigate();
   const activeTab = (/^\/admin\/([^/]+)/.exec(adminLocation.pathname)?.[1] || 'products') as AdminTab;
+  const [pdfOpened, setPdfOpened] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<StaffPdfQueueProgressValue>();
   const setActiveTab = (tab: AdminTab) => navigate(`/admin/${tab}${adminLocation.search}`, { replace: false });
   const effectivePermissions = fullAdmin ? ALL_STAFF_PERMISSIONS : permissions;
   const can = (permission: StaffPermission) => effectivePermissions.includes(permission);
@@ -251,6 +254,8 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const tabAllowed = (tab: AdminTab) => allowedTabs.some(item => item.id === tab);
   const accessKey = `${fullAdmin}:${effectivePermissions.join(',')}`;
   React.useEffect(() => {
+    if (activeTab === 'documents' && tabAllowed('documents')) setPdfOpened(true);
+    if (!can('documents.generate')) setPdfProgress(undefined);
     if (!tabAllowed(activeTab)) {
       setActiveTab(allowedTabs[0]?.id || 'products'); setEditingProduct(null); setEditingPromotion(null);
       setIsFontsEditorOpen(false);
@@ -1346,7 +1351,11 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
           )}
         </AnimatePresence>
         <WorkdayBar api={workClient} />
-        {activeTab === 'documents' && tabAllowed('documents') && <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} />}
+        {(activeTab === 'documents' || pdfOpened) && tabAllowed('documents') && (
+          <div hidden={activeTab !== 'documents'}>
+            <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
+          </div>
+        )}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
         {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} workClient={workClient} fullAdmin={fullAdmin} />}
         {activeTab === 'variation-types' && tabAllowed('variation-types') && <VariationTypesPanel api={salesApi}
@@ -1505,6 +1514,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
               <p className="mt-2 text-sm text-gray-500">As filas seguem a prioridade operacional. Clique no título para minimizar uma etapa.</p>
             </div>
+            {can('documents.generate') && pdfProgress && <StaffPdfQueueProgress value={pdfProgress} />}
             {!ordersReady && <div role="status" className="text-sm text-gray-400 flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Carregando pedidos...</div>}
             {ordersError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{ordersError}</div>}
             {ORDER_QUEUE_ORDER.map(queue => {

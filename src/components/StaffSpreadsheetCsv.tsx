@@ -24,17 +24,7 @@ export default function StaffSpreadsheetCsv({
   onUseCsv,
   layouts,
 }: {
-  onUseCsv: (
-    csv: string,
-    name: string,
-    separator: string,
-    mapping: {
-      reference: number;
-      template: number;
-      text: number;
-      barcode: number;
-    },
-  ) => void;
+  onUseCsv: (csv: string, name: string, separator: string) => void;
   layouts: StaffPdfLayoutView[];
 }) {
   const [book, setBook] = React.useState<StaffWorkbook | null>(null);
@@ -67,7 +57,7 @@ export default function StaffSpreadsheetCsv({
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_|_$/g, "");
           const found = header.findIndex((value) =>
-            aliases.some((alias) => alias === normalize(value)),
+            aliases.some((alias) => alias === normalize(value ?? "")),
           );
           return [key, found < 0 ? "" : excelColumn(found)];
         }),
@@ -93,7 +83,7 @@ export default function StaffSpreadsheetCsv({
     }
   }
 
-  function convert(mode: "review" | "selected" | "all") {
+  function convert(review: boolean) {
     if (!current) return;
     try {
       if (!Number.isInteger(start) || start < 1 || start > current.rows.length)
@@ -133,7 +123,6 @@ export default function StaffSpreadsheetCsv({
         reference: orderIndex,
         template: columns.af_clean,
         text: columns.nome,
-        barcode: columns.barcode,
       };
       const data = staffSheetOrders(
         current.rows.slice(start - 1),
@@ -142,29 +131,23 @@ export default function StaffSpreadsheetCsv({
       );
       if (!data.length)
         throw new Error("Nenhum pedido encontrado nas linhas selecionadas.");
-      const allColumns = mode !== "selected";
-      const indexes = allColumns
-        ? Array.from({ length: current.columns }, (_, i) => i)
-        : headers.map((_, i) => i);
-      if (indexes.length * data.length > 10 * 1024 * 1024)
-        throw new Error("Divida a planilha em arquivos menores para exportar.");
-      const output = allColumns
-        ? [header, ...data]
-        : [
-            headers,
-            ...data.map((row) =>
-              [
-                orderIndex,
-                columns.barcode,
-                columns.af_clean,
-                columns.nome,
-                ...optional.map((key) => columns[key]),
-              ].map((index) => row[index] || ""),
-            ),
-          ];
-      const csv = selectedColumnsCsv(output, indexes, ",");
+      const sourceColumns = [
+        orderIndex,
+        columns.barcode,
+        columns.af_clean,
+        columns.nome,
+        ...optional.map((key) => columns[key]),
+      ];
+      const csv = selectedColumnsCsv(
+        [
+          headers,
+          ...data.map((row) => sourceColumns.map((index) => row[index] ?? "")),
+        ],
+        headers.map((_, i) => i),
+        ",",
+      );
       const filename = `${name}-${current.name}.csv`;
-      if (mode === "review") onUseCsv(csv, filename, ",", fields);
+      if (review) onUseCsv(csv, filename, ",");
       else
         downloadPersonalization(
           new Blob([csv], { type: "text/csv;charset=utf-8" }),
@@ -250,21 +233,15 @@ export default function StaffSpreadsheetCsv({
           <div className="flex flex-wrap gap-3">
             <button
               className="rounded-xl bg-pink-500 px-5 py-3 font-bold"
-              onClick={() => convert("review")}
+              onClick={() => convert(true)}
             >
               Converter e revisar pedidos
             </button>
             <button
               className="rounded-xl border border-gray-700 px-5 py-3"
-              onClick={() => convert("selected")}
+              onClick={() => convert(false)}
             >
               Baixar CSV selecionado
-            </button>
-            <button
-              className="rounded-xl border border-gray-700 px-5 py-3"
-              onClick={() => convert("all")}
-            >
-              Baixar CSV com todas as colunas
             </button>
           </div>
         </>

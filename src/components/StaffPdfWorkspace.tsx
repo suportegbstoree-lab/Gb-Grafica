@@ -6,11 +6,16 @@ import {
 } from "../lib/staffPdfBarcode";
 import { renderStaffPdfRecipe } from "../services/staffPdfBatchService";
 import StaffPdfBatches from "./StaffPdfBatches";
+import StaffPdfQueueProgress, {
+  type StaffPdfQueueProgressValue,
+} from "./StaffPdfQueueProgress";
+import { STAFF_PDF_BATCH_MAX_ITEMS } from "../lib/staffPdfBatch";
 import { Search } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import {
   matchPdfLayout,
+  staffPdfInitialSize,
   newPdfLine,
   normalizeStaffPdfJob,
   layoutFont,
@@ -43,7 +48,7 @@ import ConfirmDialog from "./ConfirmDialog";
 import EditorModal from "./EditorModal";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import { beginWorkTask, workApi, type WorkApi } from "../services/workService";
-const QUEUE_LIMIT = 50;
+const QUEUE_PAGE_SIZE = 50;
 interface QueueItem {
   id: string;
   requestId: string;
@@ -70,6 +75,8 @@ export default function StaffPdfWorkspace({
   api = staffPdfApi,
   onGenerated,
   timingApi = workApi,
+  visible = true,
+  onProgress,
 }: {
   fonts: PersonalizationFont[];
   externalBatchRevision?: number;
@@ -78,6 +85,8 @@ export default function StaffPdfWorkspace({
   api?: StaffPdfApi;
   onGenerated: () => Promise<void>;
   timingApi?: WorkApi;
+  visible?: boolean;
+  onProgress?: (value: StaffPdfQueueProgressValue) => void;
 }) {
   const [data, setData] = React.useState<StaffPdfLibrary>({
       bases: [],
@@ -105,11 +114,13 @@ export default function StaffPdfWorkspace({
     [batchRevision, setBatchRevision] = React.useState(0),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
+    [progress, setProgress] = React.useState<StaffPdfQueueProgressValue>(),
     [stopRequested, setStopRequested] = React.useState(false),
     [csvOpened, setCsvOpened] = React.useState(false),
     [csvReview, setCsvReview] = React.useState(0),
     [confirmBlanks, setConfirmBlanks] = React.useState(false),
     [queue, setQueue] = React.useState<QueueItem[]>([]),
+    [queuePage, setQueuePage] = React.useState(0),
     [editingId, setEditingId] = React.useState<string | null>(null),
     [removeId, setRemoveId] = React.useState<string | null>(null);
   const alive = React.useRef(true),
@@ -119,15 +130,22 @@ export default function StaffPdfWorkspace({
     attempts = React.useRef<number[]>([]),
     revision = React.useRef(0);
   const lockedCsvRows = React.useRef(new Set<string>());
+  const generationAllowed = React.useRef(canGenerate);
+  generationAllowed.current = canGenerate;
   const pendingBlanks = queue.filter(
     (item) =>
       (item.status === "queued" || item.status === "error") &&
       (item.csvWarning || item.job.allowEmptyText),
   ).length;
   const editingItem = queue.find((item) => item.id === editingId);
+  const lastQueuePage = Math.max(
+    0,
+    Math.ceil(queue.length / QUEUE_PAGE_SIZE) - 1,
+  );
+  const visibleQueuePage = Math.min(queuePage, lastQueuePage);
   React.useEffect(() => {
-    if (loaded) return beginWorkTask("document", "", timingApi);
-  }, [Boolean(loaded), timingApi]);
+    if (visible && loaded) return beginWorkTask("document", "", timingApi);
+  }, [visible, Boolean(loaded), timingApi]);
   const reload = React.useCallback(async () => {
     const result = await api.list();
     if (alive.current) setData(result);
@@ -176,7 +194,8 @@ export default function StaffPdfWorkspace({
     api,
     loaded?.base.id || "",
     lines[0]?.text || "",
-    mold?.layout.imagem_full_page,
+    staffPdfInitialSize(mold?.layout),
+    loaded?.base.revision,
   );
   const mainFrom = (mold: StaffPdfLayoutView) =>
     fixedStaffPdfMain(mold.layout, newPdfLine(mold.layout, fonts));
@@ -257,11 +276,7 @@ export default function StaffPdfWorkspace({
     orders: StaffPdfCsvOrder[],
     replacing?: QueueItem,
   ) {
-    if (
-      running.current ||
-      orders.length > QUEUE_LIMIT - queue.length + (replacing ? 1 : 0)
-    )
-      throw new Error("Confira as vagas na fila antes de importar.");
+    if (running.current) throw new Error("Aguarde a operação atual.");
     running.current = true;
     setBusy(true);
     try {
@@ -377,14 +392,10 @@ export default function StaffPdfWorkspace({
     setBusy(true);
     setError("");
     try {
-      if (file.size > 5 * 1024 * 1024)
-        throw new Error("Envie um JSON de fila de até 5 MB.");
+      if (file.size > 50 * 1024 * 1024)
+        throw new Error("Envie um JSON de fila de até 50 MB.");
       const value = JSON.parse(await file.text());
-      if (
-        value?.schemaVersion !== 1 ||
-        !Array.isArray(value.items) ||
-        value.items.length > QUEUE_LIMIT
-      )
+      if (value?.schemaVersion !== 1 || !Array.isArray(value.items))
         throw new Error("Selecione um JSON de fila salvo na oficina.");
       const seen = new Set(queue.map((item) => item.requestId));
       const seenRows = new Set(
@@ -428,8 +439,6 @@ export default function StaffPdfWorkspace({
           job: normalizeStaffPdfJob(item.job, fonts),
         });
       }
-      if (incoming.length > QUEUE_LIMIT - queue.length)
-        throw new Error("O JSON possui mais pedidos do que vagas na fila.");
       const library = await api.list();
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
@@ -563,6 +572,10 @@ export default function StaffPdfWorkspace({
   }
   async function process() {
     if (running.current) return;
+    const pending = queue.filter(
+      (item) => item.status === "queued" || item.status === "error",
+    );
+    if (!pending.length) return;
     running.current = true;
     stop.current = false;
     setStopRequested(false);
@@ -570,18 +583,30 @@ export default function StaffPdfWorkspace({
     setBusy(true);
     setError("");
     let successes = 0;
+    let failures = 0;
+    const report = (status: StaffPdfQueueProgressValue["status"]) => {
+      if (!alive.current) return;
+      const value = {
+        status,
+        total: pending.length,
+        completed: successes,
+        failed: failures,
+      };
+      setProgress(value);
+      onProgress?.(value);
+    };
+    report("processing");
     try {
       const current = await api.list();
       if (alive.current) setData(current);
-      let createdBatch: string | undefined;
-      for (const item of queue.filter(
-        (q) => q.status === "queued" || q.status === "error",
-      )) {
-        if (!alive.current || stop.current) break;
+      let batch = { requestId: crypto.randomUUID(), id: "", count: 0 };
+      for (const item of pending) {
+        if (!alive.current || stop.current || !generationAllowed.current) break;
         attempts.current = attempts.current.filter(
           (time) => Date.now() - time < 61000,
         );
         if (attempts.current.length >= 20) {
+          report("waiting");
           setMessage("Aguardando o limite de geração para continuar a fila.");
           await new Promise<void>((resolve) => {
             const timer = window.setTimeout(
@@ -594,9 +619,11 @@ export default function StaffPdfWorkspace({
             };
           });
           wakeProcessing.current = undefined;
-          if (!alive.current || stop.current) break;
+          if (!alive.current || stop.current || !generationAllowed.current)
+            break;
           attempts.current.shift();
           setMessage("");
+          report("processing");
         }
         setQueue((old) =>
           old.map((q) =>
@@ -637,9 +664,11 @@ export default function StaffPdfWorkspace({
                 };
             let batchId = item.batchId;
             if (!batchId) {
-              createdBatch ||= (await api.batches.create(crypto.randomUUID()))
-                .id;
-              batchId = createdBatch;
+              if (batch.count === STAFF_PDF_BATCH_MAX_ITEMS)
+                batch = { requestId: crypto.randomUUID(), id: "", count: 0 };
+              batch.id ||= (await api.batches.create(batch.requestId)).id;
+              batchId = batch.id;
+              batch.count++;
               if (item.csvRow)
                 lockedCsvRows.current.add(csvRowKey(item.csvRow));
               if (alive.current)
@@ -661,8 +690,9 @@ export default function StaffPdfWorkspace({
               item.job.baseId,
               item.job.lines[0]?.text || "",
             );
-            if (initial && t?.layout.imagem_full_page)
-              initial.sizePercent = 100;
+            if (initial)
+              initial.sizePercent =
+                staffPdfInitialSize(t?.layout) ?? initial.sizePercent;
             const blob = await exportStaffPdf(
               item.original,
               item.job,
@@ -683,6 +713,7 @@ export default function StaffPdfWorkspace({
               ),
             );
         } catch (e) {
+          failures++;
           if (alive.current)
             setQueue((old) =>
               old.map((q) =>
@@ -692,15 +723,20 @@ export default function StaffPdfWorkspace({
               ),
             );
         }
+        report("processing");
       }
       if (alive.current) {
         setBatchRevision((old) => old + 1);
+        report(
+          stop.current || !generationAllowed.current ? "paused" : "completed",
+        );
         await onGenerated();
         setMessage(
           `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Lotes anteriores.`,
         );
       }
     } catch (e) {
+      report("error");
       if (alive.current) setError((e as Error).message);
     } finally {
       running.current = false;
@@ -713,10 +749,6 @@ export default function StaffPdfWorkspace({
   function add() {
     try {
       if (!loaded || !mold) throw new Error("Escolha uma base e um molde.");
-      if (!editingId && queue.length >= QUEUE_LIMIT)
-        throw new Error(
-          "Remova itens da fila antes de adicionar novos pedidos.",
-        );
       const item = queueItem(
         loaded,
         mold,
@@ -887,7 +919,8 @@ export default function StaffPdfWorkspace({
           adicionar mais itens.
         </p>
       )}
-      {tab === "library" && canManage && (
+      {progress && <StaffPdfQueueProgress value={progress} />}
+      {visible && tab === "library" && canManage && (
         <StaffPdfLibraryEditor
           data={data}
           api={api}
@@ -901,7 +934,7 @@ export default function StaffPdfWorkspace({
             data={data}
             fonts={fonts}
             busy={busy}
-            available={QUEUE_LIMIT - queue.length}
+            visible={visible && tab === "csv"}
             fallback={{ baseId: loaded?.base.id || "", layoutId }}
             onAdd={importOrders}
             onReviewQueue={() => setTab("edit")}
@@ -910,7 +943,7 @@ export default function StaffPdfWorkspace({
           />
         </div>
       )}
-      {tab === "edit" && canGenerate && (
+      {visible && tab === "edit" && canGenerate && (
         <>
           <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(17rem,1fr)_minmax(0,2fr)]">
             <div className="min-w-0 space-y-4 rounded-xl border border-gray-800 p-4 lg:max-h-[75vh] lg:overflow-y-auto">
@@ -1129,60 +1162,88 @@ export default function StaffPdfWorkspace({
                     Nenhum arquivo na fila.
                   </p>
                 )}
-                {queue.map((item) => (
-                  <article
-                    key={item.id}
-                    className="space-y-2 rounded-xl border border-gray-800 p-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <h5 className="break-words font-bold">
-                        {item.job.outputName || item.base.name}
-                      </h5>
-                      <span className="text-xs text-gray-400">
-                        {
+                {lastQueuePage > 0 && (
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <button
+                      type="button"
+                      disabled={visibleQueuePage === 0}
+                      onClick={() => setQueuePage(visibleQueuePage - 1)}
+                    >
+                      Página anterior da fila
+                    </button>
+                    <span>
+                      Página {visibleQueuePage + 1} de {lastQueuePage + 1}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={visibleQueuePage === lastQueuePage}
+                      onClick={() => setQueuePage(visibleQueuePage + 1)}
+                    >
+                      Próxima página da fila
+                    </button>
+                  </div>
+                )}
+                {queue
+                  .slice(
+                    visibleQueuePage * QUEUE_PAGE_SIZE,
+                    (visibleQueuePage + 1) * QUEUE_PAGE_SIZE,
+                  )
+                  .map((item) => (
+                    <article
+                      key={item.id}
+                      className="space-y-2 rounded-xl border border-gray-800 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h5 className="break-words font-bold">
+                          {item.job.outputName || item.base.name}
+                        </h5>
+                        <span className="text-xs text-gray-400">
                           {
-                            queued: "Na fila",
-                            processing: "Processando",
-                            ready: "Concluído",
-                            error: "Precisa de ajuste",
-                          }[item.status]
-                        }
-                      </span>
-                    </div>
-                    <p className="break-words text-sm">
-                      {item.job.lines.map((l) => l.text).join(" / ")}
-                    </p>
-                    {(item.csvWarning || item.job.allowEmptyText) && (
-                      <p className="break-words text-xs text-amber-300">
-                        Campos em branco no CSV: {item.csvWarning || "Nome"}.
+                            {
+                              queued: "Na fila",
+                              processing: "Processando",
+                              ready: "Concluído",
+                              error: "Precisa de ajuste",
+                            }[item.status]
+                          }
+                        </span>
+                      </div>
+                      <p className="break-words text-sm">
+                        {item.job.lines.map((l) => l.text).join(" / ")}
                       </p>
-                    )}
-                    {item.error && (
-                      <p role="alert" className="text-sm text-red-300">
-                        {item.error}
-                      </p>
-                    )}
-                    {item.reference && (
-                      <p className="text-sm text-green-300">{item.reference}</p>
-                    )}
-                    <div className="flex gap-4">
-                      <button
-                        disabled={busy || item.status === "ready"}
-                        onClick={() => void choose(item.job.baseId, item)}
-                        className="text-sm disabled:opacity-40"
-                      >
-                        Editar item da fila
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() => setRemoveId(item.id)}
-                        className="text-sm text-red-300 disabled:opacity-40"
-                      >
-                        Excluir da fila
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                      {(item.csvWarning || item.job.allowEmptyText) && (
+                        <p className="break-words text-xs text-amber-300">
+                          Campos em branco no CSV: {item.csvWarning || "Nome"}.
+                        </p>
+                      )}
+                      {item.error && (
+                        <p role="alert" className="text-sm text-red-300">
+                          {item.error}
+                        </p>
+                      )}
+                      {item.reference && (
+                        <p className="text-sm text-green-300">
+                          {item.reference}
+                        </p>
+                      )}
+                      <div className="flex gap-4">
+                        <button
+                          disabled={busy || item.status === "ready"}
+                          onClick={() => void choose(item.job.baseId, item)}
+                          className="text-sm disabled:opacity-40"
+                        >
+                          Editar item da fila
+                        </button>
+                        <button
+                          disabled={busy}
+                          onClick={() => setRemoveId(item.id)}
+                          className="text-sm text-red-300 disabled:opacity-40"
+                        >
+                          Excluir da fila
+                        </button>
+                      </div>
+                    </article>
+                  ))}
               </section>
             </div>
             <div className="min-w-0 space-y-3 rounded-xl border border-gray-800 p-3">
@@ -1328,13 +1389,13 @@ export default function StaffPdfWorkspace({
           </div>
         </>
       )}
-      {api.batches && canGenerate && (
+      {visible && api.batches && canGenerate && (
         <StaffPdfBatches
           api={api.batches}
           revision={batchRevision + externalBatchRevision}
         />
       )}
-      {barcodeEditor && (
+      {visible && barcodeEditor && (
         <EditorModal
           title="Código de barras do pedido"
           onClose={() => setBarcodeEditor(false)}
@@ -1373,7 +1434,7 @@ export default function StaffPdfWorkspace({
           )}
         </EditorModal>
       )}
-      {mainFormatting && mold && lines.length === 1 && (
+      {visible && mainFormatting && mold && lines.length === 1 && (
         <EditorModal
           title="Fonte e tamanho do texto principal"
           onClose={() => setMainFormatting(false)}
@@ -1391,7 +1452,7 @@ export default function StaffPdfWorkspace({
           />
         </EditorModal>
       )}
-      {picker && (
+      {visible && picker && (
         <StaffPdfPicker
           title={picker === "base" ? "Buscar base PDF" : "Buscar molde PDF"}
           options={
@@ -1409,7 +1470,7 @@ export default function StaffPdfWorkspace({
           }
         />
       )}
-      {removeId && (
+      {visible && removeId && (
         <ConfirmDialog
           title="Excluir item da fila?"
           message="O item sairá apenas da fila. A base PDF e os documentos já gerados serão preservados."
@@ -1422,7 +1483,7 @@ export default function StaffPdfWorkspace({
           }}
         />
       )}
-      {confirmBlanks && (
+      {visible && confirmBlanks && (
         <ConfirmDialog
           title="Gerar lote com campos em branco?"
           message={`${pendingBlanks} pedido(s) têm campos em branco no CSV. Confira os avisos da fila ou volte à planilha para corrigir as linhas antes de gerar.`}

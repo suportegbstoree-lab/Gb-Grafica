@@ -62,7 +62,11 @@ function LivePdfPage({
   const extra = usePreviewImage(index === 0 ? image : undefined);
   const initial =
     index === 0
-      ? selectedInitial(binding.pdf, recipe?.job.lines[0]?.text || "")
+      ? selectedInitial(
+          binding.pdf,
+          recipe?.job.lines[0]?.text || "",
+          binding.layout.initial_size_percent,
+        )
       : undefined;
   const letter = usePreviewImage(initial?.url);
   const [drawError, setDrawError] = React.useState("");

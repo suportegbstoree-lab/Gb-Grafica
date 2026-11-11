@@ -1,4 +1,4 @@
-import { bindingValid } from '../lib/productCustomization.js';
+import { bindingValid, type ProductPdfBinding } from '../lib/productCustomization.js';
 import { initialReference, selectedInitial } from '../lib/decorativeInitial.js';
 import { validPdfTemplates } from '../lib/pdfTemplate.js';
 import { matchesArtworkSignature, isAllowedArtwork } from '../lib/artwork.js';
@@ -11,14 +11,16 @@ export async function resolveOrderInitial(bucket: ArtworkBucket, productId: stri
   if(!product.moldePdf && (typeof templateId !== 'string' || !templateId)) return undefined;
   const gallery = [product.imagem, ...(Array.isArray(product.imagens) ? product.imagens : [])].filter((url): url is string => typeof url === 'string');
   if (product.moldePdf ? !bindingValid(product.moldePdf,productId) : !validPdfTemplates(product.modelosPdf, productId, gallery)) throw new Error('Modelos PDF ou alfabetos inválidos. Atualize o produto.');
-  const template = product.moldePdf ? (product.moldePdf as import('../lib/productCustomization.js').ProductPdfBinding).pdf : (product.modelosPdf as import('../lib/pdfTemplate.js').ProductPdfTemplate[]).find(item => item.id === templateId);
+  const binding = product.moldePdf as ProductPdfBinding | undefined;
+  const template = binding ? binding.pdf : (product.modelosPdf as import('../lib/pdfTemplate.js').ProductPdfTemplate[]).find(item => item.id === templateId);
   if (!template) throw new Error('O modelo PDF não está mais disponível.');
   if (!template.alphabet) {
     if (reference !== undefined && reference !== 'null') throw new Error('O alfabeto foi removido. Gere o modelo novamente.');
     return undefined;
   }
-  if (reference !== initialReference(template, text)) throw new Error('O alfabeto ou o tamanho da inicial mudou. Gere o modelo novamente.');
-  const initial = selectedInitial(template, text);
+  const sizePercent = binding?.layout.initial_size_percent;
+  if (reference !== initialReference(template, text, sizePercent)) throw new Error('O alfabeto ou o tamanho da inicial mudou. Gere o modelo novamente.');
+  const initial = selectedInitial(template, text, sizePercent);
   if (!initial) return undefined;
   const [metadata] = await bucket.file(initial.path).getMetadata();
   const generation = parseArtworkObjectGeneration(metadata.generation);

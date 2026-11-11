@@ -3,7 +3,7 @@ import type { StaffDocumentApi } from "../services/staffDocumentService";
 import { currentWorkTask } from "../services/workContext";
 import type { StaffPdfApi } from '../services/staffPdfService';
 const unavailable=async():Promise<never>=>{throw new Error('Use a fixture dedicada da oficina PDF.');};
-export const emptyPdfLibrary:StaffPdfApi={list:async()=>({bases:[],layouts:[],truncated:false}),baseFile:unavailable,prepareProductCopy:unavailable,uploadBase:unavailable,deleteBase:unavailable,saveLayout:unavailable,deleteLayout:unavailable,importLayouts:unavailable,generate:unavailable,initial:async()=>undefined,uploadAlphabet:unavailable};
+export const emptyPdfLibrary:StaffPdfApi={list:async()=>({bases:[],layouts:[],truncated:false}),baseFile:unavailable,prepareProductCopy:unavailable,uploadBase:unavailable,deleteBase:unavailable,saveLayout:unavailable,deleteLayout:unavailable,importLayouts:unavailable,generate:unavailable,initial:async()=>undefined,uploadAlphabet:unavailable,saveCatalogInitialSize:unavailable};
 export function fixtureWorkApi(role: string): WorkApi {
   const request = async (path: string, body?: unknown) => {
     const response = await fetch(`/api/admin/work${path}`, {

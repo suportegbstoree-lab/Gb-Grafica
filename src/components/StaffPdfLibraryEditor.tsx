@@ -8,6 +8,7 @@ import StaffPdfPreview from "./StaffPdfPreview";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
   baseForPdfLayout,
+  staffPdfInitialSize,
   defaultPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
@@ -38,6 +39,13 @@ export default function StaffPdfLibraryEditor({
     [message, setMessage] = React.useState(""),
     [query, setQuery] = React.useState(""),
     [importBusy, setImportBusy] = React.useState(false),
+    [catalogBaseId, setCatalogBaseId] = React.useState(""),
+    [alphabetUpload, setAlphabetUpload] = React.useState<{
+      id: string;
+      status: "Importando..." | "Em andamento..." | "Finalizado!" | "Erro!";
+      completed: number;
+      total: number;
+    }>(),
     [editBase, setEditBase] = React.useState<StaffPdfBase>();
   const busy = operationBusy || importBusy;
   const [editing, setEditing] = React.useState<{
@@ -158,12 +166,53 @@ export default function StaffPdfLibraryEditor({
       old ? { ...old, layout: { ...old.layout, ...value } } : old,
     );
   const base = data.bases.find((b) => b.id === baseId);
+  const catalogAlphabets = data.bases.filter(
+    (item) => item.source === "catalog" && item.initialFolderName,
+  );
+  const catalogBase = catalogAlphabets.find(
+    (item) => item.id === catalogBaseId,
+  );
   const { initial, initialError } = useStaffPdfInitial(
     api,
     editing && original && base?.initialLetters?.length ? base.id : "",
     sample,
-    editing?.layout.imagem_full_page,
+    staffPdfInitialSize(editing?.layout),
+    base?.revision,
   );
+  async function importAlphabet(base: StaffPdfBase, files: File[]) {
+    await run(async () => {
+      setAlphabetUpload({
+        id: base.id,
+        status: "Importando...",
+        completed: 0,
+        total: 0,
+      });
+      try {
+        await api.uploadAlphabet(base, files, (completed, total) => {
+          if (alive.current)
+            setAlphabetUpload({
+              id: base.id,
+              status: "Em andamento...",
+              completed,
+              total,
+            });
+        });
+        await reload();
+        if (alive.current) {
+          setAlphabetUpload(
+            (previous) => previous && { ...previous, status: "Finalizado!" },
+          );
+          setMessage("Pasta de letras associada à base.");
+        }
+      } catch (error) {
+        if (alive.current)
+          setAlphabetUpload(
+            (previous) => previous && { ...previous, status: "Erro!" },
+          );
+        throw error;
+      }
+    });
+  }
   return (
     <section className="space-y-6">
       <div className="rounded-2xl border border-gray-800 p-5">
@@ -228,6 +277,11 @@ export default function StaffPdfLibraryEditor({
                       >
                         <span className="min-w-0 break-words">
                           {b.name} · {b.pageCount} páginas
+                          {b.initialFolderName && (
+                            <span className="block text-xs text-gray-300">
+                              Pasta vinculada · {b.initialFolderName}
+                            </span>
+                          )}
                           {!!b.initialLetters?.length && (
                             <span className="block text-xs text-gray-400">
                               Letras cadastradas ·{" "}
@@ -259,17 +313,26 @@ export default function StaffPdfLibraryEditor({
                                 e.target.files || [],
                               ) as File[];
                               e.target.value = "";
-                              if (files.length)
-                                void run(async () => {
-                                  await api.uploadAlphabet(b, files);
-                                  await reload();
-                                  setMessage(
-                                    "Pasta de letras associada à base.",
-                                  );
-                                });
+                              if (files.length) void importAlphabet(b, files);
                             }}
                           />
                         </label>
+                        {alphabetUpload?.id === b.id && (
+                          <div
+                            role="status"
+                            className="min-w-36 text-xs text-gray-300"
+                          >
+                            <p>{alphabetUpload.status}</p>
+                            {alphabetUpload.status === "Em andamento..." && (
+                              <progress
+                                aria-label="Progresso da importação de letras"
+                                value={alphabetUpload.completed}
+                                max={alphabetUpload.total}
+                                className="block w-full accent-pink-500"
+                              />
+                            )}
+                          </div>
+                        )}
                         <button
                           disabled={busy}
                           onClick={() =>
@@ -286,6 +349,71 @@ export default function StaffPdfLibraryEditor({
             ))}
         </div>
       </div>
+      {!!catalogAlphabets.length && (
+        <details className="space-y-3 rounded-2xl border border-gray-800 p-5">
+          <summary className="cursor-pointer font-bold">
+            Iniciais dos modelos de produtos
+          </summary>
+          <label className="block text-sm">
+            Modelo de produto com letras
+            <select
+              className={input}
+              disabled={busy}
+              value={catalogBaseId}
+              onChange={(event) => setCatalogBaseId(event.target.value)}
+            >
+              <option value="">Selecione um PDF</option>
+              {catalogAlphabets.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {item.productId}
+                </option>
+              ))}
+            </select>
+          </label>
+          {catalogBase && (
+            <form
+              key={catalogBase.revision}
+              className="space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const size = Number(
+                  new FormData(event.currentTarget).get("initialSize"),
+                );
+                void run(async () => {
+                  await api.saveCatalogInitialSize(catalogBase, size);
+                  await reload();
+                  setMessage("Tamanho da inicial salvo no modelo de produto.");
+                });
+              }}
+            >
+              <p className="text-xs text-gray-300">
+                Pasta vinculada · {catalogBase.initialFolderName}
+              </p>
+              <label className="block max-w-xs text-sm">
+                Tamanho da inicial do modelo (% da página)
+                <input
+                  className={input}
+                  type="number"
+                  name="initialSize"
+                  min={5}
+                  max={100}
+                  step="any"
+                  defaultValue={catalogBase.initialSizePercent ?? 60}
+                  required
+                  disabled={busy}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={busy}
+                className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
+              >
+                Salvar tamanho no modelo de produto
+              </button>
+            </form>
+          )}
+        </details>
+      )}
       <div className="space-y-4 rounded-2xl border border-gray-800 p-5">
         <h3 className="font-bold">Moldes de edição · templates.json</h3>
         <p className="text-sm text-gray-400">
@@ -579,6 +707,35 @@ export default function StaffPdfLibraryEditor({
                 />
                 Inicial em página inteira (compatibilidade do molde)
               </label>
+              <label className="block">
+                Tamanho da inicial no molde (% da página)
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  step="any"
+                  placeholder={String(
+                    editing.layout.imagem_full_page
+                      ? 100
+                      : (base?.initialSizePercent ?? 60),
+                  )}
+                  value={editing.layout.initial_size_percent ?? ""}
+                  onChange={(event) =>
+                    patch({
+                      initial_size_percent:
+                        event.target.value === ""
+                          ? undefined
+                          : Number(event.target.value),
+                    })
+                  }
+                  className={input}
+                />
+              </label>
+              {base?.initialFolderName && (
+                <p className="text-xs text-gray-300">
+                  Pasta vinculada · {base.initialFolderName}
+                </p>
+              )}
               <label className="block">
                 Base para associar e testar
                 <select

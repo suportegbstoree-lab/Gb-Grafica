@@ -97,7 +97,11 @@ export async function productPdfPreview(
       const canvas = document.createElement("canvas");
       const initial =
         index === 0
-          ? selectedInitial(binding.pdf, textEnabled ? text : "")
+          ? selectedInitial(
+              binding.pdf,
+              textEnabled ? text : "",
+              binding.layout.initial_size_percent,
+            )
           : undefined;
       let extra: DecodedImage | undefined;
       let letter: DecodedImage | undefined;

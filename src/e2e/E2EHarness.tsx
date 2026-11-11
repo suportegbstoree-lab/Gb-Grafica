@@ -1,7 +1,7 @@
 import { createSalesAdminApi } from '../services/salesService';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
-import StaffPdfFixture from './StaffPdfFixture';
+import StaffPdfFixture, { useStaffPdfFixture } from './StaffPdfFixture';
 import type { StaffPdfApi } from '../services/staffPdfService';
 import { currentWorkTask } from '../services/workContext';
 import { EMPTY_PROFILE } from '../lib/customerProfile';
@@ -128,7 +128,7 @@ if(new URLSearchParams(window.location.search).has('variations')) {
    if (variationFixture === 'partial') product.tipoInput = 'nenhum';
    const binding = product.moldePdf!;
    product.atributos[0].configuracao!['Com imagem'].moldePdf = {
-     ...binding, revision: '6'.repeat(32), layout: { ...binding.layout, font_size: 120 },
+     ...binding, revision: '6'.repeat(32), layout: { ...binding.layout, font_size: 120, initial_size_percent: 45 },
      pdf: {
        ...binding.pdf, name: 'Capa da opção.pdf', pages: ['/__e2e/option-cover.png', '/__e2e/cover.png'],
        alphabet: {
@@ -285,6 +285,8 @@ function StoreFixture({ panelAccess, panelAccessNeedsCheck = false }: { panelAcc
 }
 
 function AdminFixture({ permissionOverride }: { permissionOverride?: import('../lib/staffAccess').StaffPermission[] }) {
+  const queueFixture = new URLSearchParams(window.location.search).has('pdf-queue');
+  const { api: pdfQueueApi } = useStaffPdfFixture(queueFixture, true);
   const activityApi = React.useMemo<import('../services/staffActivityService').AdminActivityApi>(() => ({ orders: async orderId => { await fetch('/api/admin/activity/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId }) }); }, exportArtwork: async (orderId, itemId, format) => { await fetch('/api/admin/activity/artwork', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId, itemId, format }) }); } }), []);
   const [selectedRole] = React.useState(() => new URLSearchParams(window.location.search).get('role'));
   const fixtureRole = selectedRole === 'designer' || selectedRole === 'product-manager' ? selectedRole : 'administrator';
@@ -408,7 +410,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         salesApi={salesApi}
         workClient={workClient}
         documentApi={documentApi}
-        pdfLibraryApi={new URLSearchParams(window.location.search).has('pdf-binding') ? productPdfLibraryFixture : emptyPdfLibrary}
+        pdfLibraryApi={queueFixture ? pdfQueueApi : new URLSearchParams(window.location.search).has('pdf-binding') ? productPdfLibraryFixture : emptyPdfLibrary}
         emailApi={fixtureEmailApi}
         activityApi={activityApi}
         operationsClient={operationsFixtureClient}

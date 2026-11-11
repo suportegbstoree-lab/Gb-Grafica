@@ -58,6 +58,8 @@ export function catalogPdfBase(productId: string, t: any): StaffPdfBase {
     id: `catalog_${productId}_${t.id}`,
     name: t.name,
     initialLetters: Object.keys(t.alphabet?.letters || {}),
+    initialFolderName: t.alphabet?.folderName,
+    initialSizePercent: t.alphabet?.sizePercent,
     pageCount: t.pages.length,
     pages: [],
     source: "catalog",
@@ -243,6 +245,8 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           id: d.id,
           name: b.name,
           initialLetters: Object.keys(b.alphabet?.letters || {}),
+          initialFolderName: b.alphabet?.folderName,
+          initialSizePercent: b.alphabet?.sizePercent,
           category: b.category || UNCATEGORIZED_PDFS,
           pageCount: b.pageCount,
           pages: b.pages,
@@ -610,7 +614,11 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     action(async (req, res) => {
       const actor = manage(res),
         base = await resolveStaffPdfBase(services(), req.params.id),
-        { folderName, letters, sizePercent = 60 } = req.body || {};
+        {
+          folderName,
+          letters,
+          sizePercent = base.alphabet?.sizePercent ?? 60,
+        } = req.body || {};
       if (
         base.source !== "internal" ||
         typeof folderName !== "string" ||
@@ -686,6 +694,51 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         tx.update(ref, {
           alphabet: { folderName, letters: canonical, sizePercent },
           revision: revision(),
+        });
+      });
+      res.json({ saved: true });
+    }),
+  );
+  router.post(
+    "/bases/:id/initial-size",
+    action(async (req, res) => {
+      manage(res);
+      const base = await resolveStaffPdfBase(services(), req.params.id);
+      const { sizePercent, baseRevision } = req.body || {};
+      if (
+        base.source !== "catalog" ||
+        !base.productId ||
+        !base.templateId ||
+        !base.alphabet ||
+        typeof sizePercent !== "number" ||
+        !Number.isFinite(sizePercent) ||
+        sizePercent < 5 ||
+        sizePercent > 100
+      )
+        throw new OperationsError(
+          "Escolha um modelo de produto com letras e informe um tamanho de 5% a 100%.",
+        );
+      const productId = base.productId;
+      const ref = services().db.collection("anuncios").doc(productId);
+      await services().db.runTransaction(async (tx) => {
+        const product = (await tx.get(ref)).data();
+        const templates: ProductPdfTemplate[] = product?.modelosPdf || [];
+        const template = templates.find((item) => item.id === base.templateId);
+        if (
+          !template?.alphabet ||
+          !isTemplatePath(template.path, productId) ||
+          catalogPdfBase(productId, template).revision !== baseRevision
+        )
+          throw new OperationsError(
+            "O modelo mudou. Atualize a biblioteca antes de salvar.",
+            409,
+          );
+        tx.update(ref, {
+          modelosPdf: templates.map((item) =>
+            item.id === template.id
+              ? { ...template, alphabet: { ...template.alphabet, sizePercent } }
+              : item,
+          ),
         });
       });
       res.json({ saved: true });

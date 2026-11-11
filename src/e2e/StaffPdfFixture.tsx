@@ -1,7 +1,11 @@
 import React from "react";
 import { PDFDocument, rgb } from "pdf-lib";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
-import type { StaffPdfRecipe } from "../lib/staffPdfBatch";
+import {
+  STAFF_PDF_BATCH_MAX_ITEMS,
+  type StaffPdfBatchView,
+  type StaffPdfRecipe,
+} from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
 import { readAlphabetFiles } from "../lib/decorativeInitial";
 import {
@@ -19,20 +23,19 @@ const timing: WorkApi = {
   post: async () => ({ taskId: "f".repeat(32) }),
   csv: async () => new Blob(),
 };
-export default function StaffPdfFixture() {
+export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
   const [documents, setDocuments] = React.useState<
     Array<{ doc: StaffDocumentView; blob: Blob }>
   >([]);
-  const params = new URLSearchParams(location.search),
-    canManage = params.get("permission") !== "generate",
-    canGenerate = params.get("permission") !== "templates";
   const api = React.useMemo(() => {
     let bases: StaffPdfBase[] = [
         {
           id: "a".repeat(32),
           name: "Kit de teste.pdf",
-          pageCount: 4,
-          pages: Array.from({ length: 4 }, () => ({ width: 595, height: 842 })),
+          pageCount: smallPdf ? 1 : 4,
+          pages: smallPdf
+            ? [{ width: 240, height: 240 }]
+            : Array.from({ length: 4 }, () => ({ width: 595, height: 842 })),
           revision: "a".repeat(32),
           source: "internal",
         },
@@ -53,6 +56,14 @@ export default function StaffPdfFixture() {
             pos_y_landscape: 600,
             max_width_pixels_landscape: 2000,
             max_height_pixels_landscape: 300,
+            ...(smallPdf
+              ? {
+                  pos_x: 80,
+                  pos_y: 380,
+                  max_width_pixels: 840,
+                  max_height_pixels: 220,
+                }
+              : {}),
           },
         },
       ];
@@ -71,7 +82,8 @@ export default function StaffPdfFixture() {
       baseFile: async (id) => {
         if (files.has(id)) return files.get(id)!;
         const d = await PDFDocument.create();
-        for (let i = 0; i < 4; i++) {
+        if (smallPdf) d.addPage([240, 240]);
+        for (let i = 0; !smallPdf && i < 4; i++) {
           const p = d.addPage([595, 842]);
           p.drawRectangle({
             x: 0,
@@ -98,16 +110,27 @@ export default function StaffPdfFixture() {
         const source = alphabets.get(id)?.get(letter);
         return source ? { source, sizePercent: 60 } : undefined;
       },
-      uploadAlphabet: async ({ id, name }, files) => {
-        const { letters } = readAlphabetFiles(files, name);
+      uploadAlphabet: async ({ id, name }, files, progress) => {
+        const { folderName, letters } = readAlphabetFiles(files, name);
+        progress?.(0, letters.length);
         alphabets.set(
           id,
           new Map(letters.map(({ letter, file }) => [letter, file])),
         );
         bases = bases.map((base) =>
           base.id === id
-            ? { ...base, initialLetters: letters.map(({ letter }) => letter) }
+            ? {
+                ...base,
+                initialFolderName: folderName,
+                initialLetters: letters.map(({ letter }) => letter),
+              }
             : base,
+        );
+        progress?.(letters.length, letters.length);
+      },
+      saveCatalogInitialSize: async ({ id }, initialSizePercent) => {
+        bases = bases.map((base) =>
+          base.id === id ? { ...base, initialSizePercent } : base,
         );
       },
       uploadBase: async (file, _requestId, replacement, category) => {
@@ -184,27 +207,49 @@ export default function StaffPdfFixture() {
         return doc;
       },
     };
-    if (params.has("batches")) {
-      const records = new Map<string, StaffPdfRecipe>();
-      const batch = {
-        id: "e".repeat(32),
-        reference: "LOTE-TESTE",
-        createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
-        ownerName: "Equipe de teste",
-        count: 0,
-      };
+    if (batchesEnabled) {
+      const batches = new Map<
+        string,
+        { view: StaffPdfBatchView; records: Map<string, StaffPdfRecipe> }
+      >();
       value.batches = {
         list: async () => ({
-          batches: records.size ? [{ ...batch, count: records.size }] : [],
+          batches: [...batches.values()].map(({ view, records }) => ({
+            ...view,
+            count: records.size,
+          })),
         }),
-        create: async () => batch,
-        items: async () => ({
-          items: [...records.values()].map((recipe) => recipe.item),
+        create: async (requestId) => {
+          const id = requestId.replaceAll("-", "");
+          const existing = batches.get(id);
+          if (existing) return existing.view;
+          const view = {
+            id,
+            reference: batches.size
+              ? `LOTE-TESTE-${batches.size + 1}`
+              : "LOTE-TESTE",
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+            ownerName: "Equipe de teste",
+            count: 0,
+          };
+          batches.set(id, { view, records: new Map() });
+          return view;
+        },
+        items: async (batchId) => ({
+          items: [...batches.get(batchId)!.records.values()].map(
+            (recipe) => recipe.item,
+          ),
         }),
-        save: async (_batchId, job, requestId) => {
+        save: async (batchId, job, requestId) => {
           if ("kind" in job)
             throw new Error("Este cenário usa o editor da oficina.");
+          const { records } = batches.get(batchId)!;
+          if (
+            !records.has(requestId) &&
+            records.size >= STAFF_PDF_BATCH_MAX_ITEMS
+          )
+            throw new Error("Este lote já possui 50 pedidos.");
           if (!records.has(requestId))
             records.set(requestId, {
               rendererVersion: 1,
@@ -230,14 +275,16 @@ export default function StaffPdfFixture() {
             });
           return records.get(requestId)!;
         },
-        recipe: async (_batchId, itemId) => {
+        recipe: async (batchId, itemId) => {
+          const { records } = batches.get(batchId)!;
           const record = [...records.values()].find(
             (recipe) => recipe.item.id === itemId,
           );
           if (!record) throw new Error("Item não encontrado.");
           return record;
         },
-        complete: async (_batchId, itemId) => {
+        complete: async (batchId, itemId) => {
+          const { records } = batches.get(batchId)!;
           const record = [...records.values()].find(
             (recipe) => recipe.item.id === itemId,
           )!;
@@ -246,7 +293,13 @@ export default function StaffPdfFixture() {
       };
     }
     return value;
-  }, []);
+  }, [batchesEnabled, smallPdf]);
+  return { api, documents };
+}
+
+export default function StaffPdfFixture() {
+  const params = new URLSearchParams(location.search);
+  const { api, documents } = useStaffPdfFixture(params.has("batches"));
   return (
     <main className="min-h-screen bg-[#111] p-3 text-white sm:p-8">
       <div className="mx-auto max-w-6xl">
@@ -260,8 +313,8 @@ export default function StaffPdfFixture() {
             },
             { id: "serif", nome: "Serif", cssFamily: "serif", ativo: true },
           ]}
-          canManage={canManage}
-          canGenerate={canGenerate}
+          canManage={params.get("permission") !== "generate"}
+          canGenerate={params.get("permission") !== "templates"}
           api={api}
           timingApi={timing}
           onGenerated={async () => {}}

@@ -14,6 +14,7 @@ export interface PdfTextBox {
 }
 /** Desktop templates use top-left pixels at 300 DPI, including landscape coordinates. */
 export interface StaffPdfLayout {
+  initial_size_percent?: number;
   base_pdf_name?: string;
   base_id?: string;
   pos_x: number;
@@ -34,6 +35,8 @@ export interface StaffPdfLayout {
 }
 export interface StaffPdfBase {
   initialLetters?: string[];
+  initialFolderName?: string;
+  initialSizePercent?: number;
   category?: string;
   id: string;
   name: string;
@@ -276,7 +279,18 @@ export function normalizePdfLayout(value: unknown): StaffPdfLayout {
   )
     throw new Error("Opção de imagem inválida.");
   output.imagem_full_page = value.imagem_full_page ?? false;
+  if (value.initial_size_percent !== undefined) {
+    if (!number(value.initial_size_percent, 5, 100))
+      throw new Error("Informe um tamanho de inicial entre 5% e 100%.");
+    output.initial_size_percent = value.initial_size_percent;
+  }
   return output;
+}
+
+export function staffPdfInitialSize(layout?: StaffPdfLayout) {
+  return (
+    layout?.initial_size_percent ?? (layout?.imagem_full_page ? 100 : undefined)
+  );
 }
 export function parsePdfLayoutMap(
   value: unknown,

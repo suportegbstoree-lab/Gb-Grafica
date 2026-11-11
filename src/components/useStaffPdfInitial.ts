@@ -5,7 +5,8 @@ export function useStaffPdfInitial(
   api: StaffPdfApi,
   baseId: string,
   text: string,
-  fullPage = false,
+  sizePercent?: number,
+  baseRevision?: string,
 ) {
   const [initial, setInitial] = React.useState<DecorativeInitial | undefined>(),
     [error, setError] = React.useState("");
@@ -18,12 +19,7 @@ export function useStaffPdfInitial(
       void api
         .initial(baseId, letter)
         .then((value) => {
-          if (active)
-            setInitial(
-              value
-                ? { ...value, sizePercent: fullPage ? 100 : value.sizePercent }
-                : undefined,
-            );
+          if (active) setInitial(value);
         })
         .catch((e) => {
           if (active) setError((e as Error).message);
@@ -31,6 +27,16 @@ export function useStaffPdfInitial(
     return () => {
       active = false;
     };
-  }, [api, baseId, letter, fullPage]);
-  return { initial, initialError: error };
+  }, [api, baseId, letter, baseRevision]);
+  const sized = React.useMemo(
+    () =>
+      initial &&
+      sizePercent !== undefined &&
+      sizePercent >= 5 &&
+      sizePercent <= 100
+        ? { ...initial, sizePercent }
+        : initial,
+    [initial, sizePercent],
+  );
+  return { initial: sized, initialError: error };
 }

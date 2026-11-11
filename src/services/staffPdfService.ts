@@ -56,6 +56,11 @@ export interface StaffPdfApi {
   uploadAlphabet(
     base: Pick<StaffPdfBase, "id" | "name">,
     files: File[],
+    progress?: (completed: number, total: number) => void,
+  ): Promise<void>;
+  saveCatalogInitialSize(
+    base: StaffPdfBase,
+    sizePercent: number,
   ): Promise<void>;
   generate(
     job: StaffPdfJob,
@@ -169,7 +174,7 @@ export const staffPdfApi: StaffPdfApi = {
       sizePercent: data.sizePercent,
     };
   },
-  uploadAlphabet: async (base, files) => {
+  uploadAlphabet: async (base, files, progress) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
     const parsed = readAlphabetFiles(files, base.name),
@@ -190,6 +195,7 @@ export const staffPdfApi: StaffPdfApi = {
     const { uploadBatch } = await import("../lib/uploadBatch");
     const rollback = (path: string) =>
       staffPdfRequest(`/bases/${base.id}/alphabet-upload/delete`, { path });
+    progress?.(0, parsed.letters.length);
     const uploaded = await uploadBatch(
       parsed.letters,
       async ({ file, letter }) => {
@@ -201,7 +207,7 @@ export const staffPdfApi: StaffPdfApi = {
         letters[letter] = { path };
         return path;
       },
-      { concurrency: 3, rollback },
+      { concurrency: 3, rollback, progress },
     );
     try {
       await staffPdfRequest(`/bases/${base.id}/alphabet`, {
@@ -212,6 +218,15 @@ export const staffPdfApi: StaffPdfApi = {
       await Promise.allSettled(uploaded.map(rollback));
       throw e;
     }
+  },
+  saveCatalogInitialSize: async (base, sizePercent) => {
+    await staffPdfRequest(
+      `/bases/${encodeURIComponent(base.id)}/initial-size`,
+      {
+        baseRevision: base.revision,
+        sizePercent,
+      },
+    );
   },
   generate: async (staffJob, pdf, requestId) => {
     const user = auth.currentUser;

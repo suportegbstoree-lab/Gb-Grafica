@@ -21,14 +21,13 @@ export interface StaffPdfCsvOrder {
   csvRow: { sourceId: string; index: number };
   csvWarning: string;
 }
-type Columns = ReturnType<typeof defaultStaffPdfCsvColumns>;
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
 
 export default function StaffPdfCsvImport({
   data,
   fonts,
-  available,
   busy,
+  visible,
   fallback,
   onAdd,
   onReviewQueue,
@@ -37,8 +36,8 @@ export default function StaffPdfCsvImport({
 }: {
   data: StaffPdfLibrary;
   fonts: PersonalizationFont[];
-  available: number;
   busy: boolean;
+  visible: boolean;
   fallback: { baseId: string; layoutId: string };
   onAdd: (orders: StaffPdfCsvOrder[]) => Promise<void>;
   onReviewQueue: () => void;
@@ -54,7 +53,6 @@ export default function StaffPdfCsvImport({
       rows: (string[] | null)[];
       width: number;
       separator: string;
-      mappedBarcode?: number;
     }>(),
     [table, setTable] = React.useState(false),
     [hasHeader, setHasHeader] = React.useState(true),
@@ -80,32 +78,18 @@ export default function StaffPdfCsvImport({
     }
   }, [reviewRequest, source]);
   const block = busy || reading;
-  function useCsv(
-    csv: string,
-    name: string,
-    separator?: string,
-    mapping?: Columns & { barcode: number },
-  ) {
+  function useCsv(csv: string, name: string, separator?: string) {
     const parsed = readStaffPdfCsv(csv, separator);
     const { rows } = parsed;
-    const columns = mapping
-      ? {
-          text: mapping.text,
-          template: mapping.template,
-          reference: mapping.reference,
-        }
-      : defaultStaffPdfCsvColumns(rows[0]);
+    const columns = defaultStaffPdfCsvColumns(rows[0]);
     setSource({
       id: crypto.randomUUID(),
       name,
       rows,
       width: Math.max(...rows.map((row) => row.length)),
       separator: parsed.separator,
-      mappedBarcode: mapping?.barcode,
     });
-    setHasHeader(
-      !!mapping || Object.values(columns).some((value) => value >= 0),
-    );
+    setHasHeader(Object.values(columns).some((value) => value >= 0));
     setColumns(columns);
     setAdded(new Set());
     setCodes({});
@@ -129,7 +113,6 @@ export default function StaffPdfCsvImport({
     ) ?? [];
   const pending = imported.filter(({ index }) => !added.has(index));
   const barcodeIndex =
-    source?.mappedBarcode ??
     (hasHeader
       ? source?.rows[headerIndex]?.findIndex((header) =>
           /^(barcode|rastreio|numero.?de.?rastreio|n[oº°]?.?de.?rastreio|tracking)$/i.test(
@@ -140,8 +123,7 @@ export default function StaffPdfCsvImport({
               .replace(/[ _]+/g, ""),
           ),
         )
-      : -1) ??
-    -1;
+      : -1) ?? -1;
   const getBarcode = (row: string[], index: number) =>
     (codes[index] ?? row[barcodeIndex] ?? "").trim();
   const lastPage = Math.max(0, Math.ceil(pending.length / 50) - 1);
@@ -203,7 +185,21 @@ export default function StaffPdfCsvImport({
     .map(({ row, index }) =>
       inspectRow(row, index, getBarcode(row, index), overrides[index]),
     );
-  const ready = preview.filter((row) => !row.issue).slice(0, available);
+  const ready = preview.filter((row) => !row.issue);
+  async function addOrders(orders: typeof ready) {
+    setError("");
+    if (!orders.length) {
+      setError("Revise os pedidos pendentes antes de adicionar à fila.");
+      return;
+    }
+    try {
+      await onAdd(orders);
+      setAdded((old) => new Set([...old, ...orders.map((row) => row.index)]));
+      setMessage(`${orders.length} pedido(s) adicionado(s) à fila principal.`);
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  }
   async function reviseRow(index: number, cells: string[] | null) {
     if (!source || block) throw new Error("Aguarde a operação atual.");
     const sameModel =
@@ -515,9 +511,7 @@ export default function StaffPdfCsvImport({
               </div>
             )}
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span>
-                {pending.length} pendente(s) · {available} vaga(s) na fila
-              </span>
+              <span>{pending.length} pendente(s)</span>
               {lastPage > 0 && (
                 <>
                   <button
@@ -545,24 +539,32 @@ export default function StaffPdfCsvImport({
                 type="button"
                 disabled={!ready.length}
                 className="rounded-lg bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"
-                onClick={async () => {
-                  setError("");
-                  try {
-                    await onAdd(ready);
-                    setAdded(
-                      (old) =>
-                        new Set([...old, ...ready.map((row) => row.index)]),
-                    );
-                    setMessage(
-                      `${ready.length} pedido(s) adicionado(s) à fila principal.`,
-                    );
-                  } catch (e) {
-                    setError((e as Error).message);
-                  }
-                }}
+                onClick={() => void addOrders(ready)}
               >
                 Adicionar {ready.length} pedido(s) da página à fila
               </button>
+              {lastPage > 0 && (
+                <button
+                  type="button"
+                  className="rounded-lg border border-gray-700 px-4 py-2"
+                  onClick={() =>
+                    void addOrders(
+                      pending
+                        .map(({ row, index }) =>
+                          inspectRow(
+                            row,
+                            index,
+                            getBarcode(row, index),
+                            overrides[index],
+                          ),
+                        )
+                        .filter((row) => !row.issue),
+                    )
+                  }
+                >
+                  Adicionar todos os pedidos válidos à fila
+                </button>
+              )}
               <button
                 type="button"
                 className="rounded-lg border border-gray-700 px-4 py-2"
@@ -574,7 +576,7 @@ export default function StaffPdfCsvImport({
           </fieldset>
         )}
       </section>
-      {table && source && (
+      {visible && table && source && (
         <StaffPdfImportTable
           name={source.name}
           onClose={() => setTable(false)}

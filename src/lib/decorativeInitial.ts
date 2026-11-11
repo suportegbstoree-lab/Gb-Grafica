@@ -46,17 +46,17 @@ export function validAlphabet(value: unknown, pdfName: string, productId: string
     /^(https?:\/\/|\/[^/])/.test(image.url));
 }
 
-export function selectedInitial(template: { name: string; alphabet?: DecorativeAlphabet } | undefined, text: string) {
+export function selectedInitial(template: { name: string; alphabet?: DecorativeAlphabet } | undefined, text: string, sizePercent?: number) {
   const alphabet = template?.alphabet;
   const letter = firstInitial(text);
   if (!template || !alphabet || !matchingAlphabetName(template.name, alphabet.folderName) || !letter) return undefined;
   const image = Object.hasOwn(alphabet.letters, letter) ? alphabet.letters[letter] : undefined;
-  return image ? { ...image, letter, sizePercent: alphabet.sizePercent } : undefined;
+  return image ? { ...image, letter, sizePercent: sizePercent ?? alphabet.sizePercent } : undefined;
 }
 
 /** Binds the approved preview to the canonical catalog selection, including the absence of a letter. */
-export function initialReference(template: { name: string; alphabet?: DecorativeAlphabet } | undefined, text: string): string {
-  const initial = selectedInitial(template, text);
+export function initialReference(template: { name: string; alphabet?: DecorativeAlphabet } | undefined, text: string, sizePercent?: number): string {
+  const initial = selectedInitial(template, text, sizePercent);
   return JSON.stringify(initial ? [initial.letter, initial.path, initial.sizePercent] : null);
 }
 

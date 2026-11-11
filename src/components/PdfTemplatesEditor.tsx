@@ -161,35 +161,8 @@ export default function PdfTemplatesEditor({
                 Pasta: {template.alphabet.folderName} · Letras:{" "}
                 {Object.keys(template.alphabet.letters).sort().join(", ")}
               </p>
-              <label className="block text-xs">
-                Tamanho máximo da inicial (% da página)
-                <input
-                  type="number"
-                  min={5}
-                  max={100}
-                  step={1}
-                  value={template.alphabet.sizePercent}
-                  onChange={(event) =>
-                    onChange(
-                      templates.map((item) =>
-                        item.id === template.id
-                          ? {
-                              ...item,
-                              alphabet: {
-                                ...template.alphabet!,
-                                sizePercent: Number(event.target.value),
-                              },
-                            }
-                          : item,
-                      ),
-                    )
-                  }
-                  className="ml-2 w-20 rounded border border-gray-600 bg-black p-2"
-                />
-              </label>
               <p className="text-xs text-gray-400">
-                A imagem completa fica centralizada, sem cortar margens
-                transparentes ou distorcer a proporção.
+                Ajuste o tamanho da inicial em Gerar PDF → Bases e moldes.
               </p>
               <button
                 type="button"

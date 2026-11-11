@@ -1,4 +1,6 @@
 import type { StaffPdfJob } from "./staffPdf.js";
+
+export const STAFF_PDF_BATCH_MAX_ITEMS = 50;
 import type { PrintProfile } from "./printProfile.js";
 import type { TextCustomization } from "./textCustomization.js";
 import type { PersonalizationFont } from "./textCustomization.js";

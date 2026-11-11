@@ -499,7 +499,7 @@ test("a opção usa sua capa e inicial decorativa na prévia e no carrinho", asy
   expect(JSON.parse(item.inicialReferencia)).toEqual([
     "A",
     `catalog/products/caderneta-azul/${"7".repeat(32)}.png`,
-    60,
+    45,
   ]);
 
   await card.getByRole("button", { name: /^Sem imagem/ }).click();

@@ -7,6 +7,7 @@ import {
 import {
   fixedStaffPdfMain,
   normalizeStaffPdfJob,
+  staffPdfInitialSize,
   STAFF_PDF_SYSTEM_FONT,
   staffPdfFont,
   type StaffPdfJob,
@@ -14,6 +15,7 @@ import {
 import { parsePrintProfile } from "../lib/printProfile.js";
 import {
   isStaffPdfSimpleJob,
+  STAFF_PDF_BATCH_MAX_ITEMS,
   type StaffPdfBatchJob,
 } from "../lib/staffPdfBatch.js";
 import { staffPdfOutputName } from "../lib/staffPdf.js";
@@ -241,7 +243,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const rows = await services()
         .db.collection("_staffPdfBatchItems")
         .where("batchId", "==", req.params.batchId)
-        .limit(50)
+        .limit(STAFF_PDF_BATCH_MAX_ITEMS)
         .get();
       res.json({ items: rows.docs.map((row) => itemView(row.id, row.data())) });
     }),
@@ -276,7 +278,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       let job: StaffPdfBatchJob;
       let base;
       let fitMargin = 0.2;
-      let fullPage = false;
+      let initialSize: number | undefined;
       let printProfile;
       if (req.body?.job?.kind === "simple") {
         const input = req.body.job;
@@ -363,7 +365,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         )
           throw new OperationsError("A área principal deve seguir o molde.");
         fitMargin = layout.layout.fit_margin;
-        fullPage = Boolean(layout.layout.imagem_full_page);
+        initialSize = staffPdfInitialSize(layout.layout);
       }
       const original = await snapshot(
         batchId,
@@ -417,7 +419,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         if (!valid) throw new OperationsError("Inicial inválida.");
         initial = {
           asset: await snapshot(batchId, path, STAFF_DOCUMENT_MAX_BYTES),
-          sizePercent: fullPage ? 100 : alphabet.sizePercent || 60,
+          sizePercent: initialSize ?? (alphabet.sizePercent || 60),
         };
       }
       const current = await deps.authorize(req);
@@ -456,8 +458,10 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
             throw new OperationsError("O pedido mudou durante a geração.", 409);
           return;
         }
-        if (parent.itemIds.length >= 50)
-          throw new OperationsError("Este lote já possui 50 pedidos.");
+        if (parent.itemIds.length >= STAFF_PDF_BATCH_MAX_ITEMS)
+          throw new OperationsError(
+            `Este lote já possui ${STAFF_PDF_BATCH_MAX_ITEMS} pedidos.`,
+          );
         tx.create(itemRef, value);
         tx.set(batchRef, { itemIds: [...parent.itemIds, id] }, { merge: true });
       });

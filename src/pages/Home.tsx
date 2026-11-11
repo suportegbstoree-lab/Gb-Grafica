@@ -2161,7 +2161,7 @@ function ProductCard({
       quantidade: 1,
       ...(printProfile ? { printProfile } : {}),
       ...(!binding && baseImage ? { imagemBaseReferencia: baseImage } : {}),
-      ...(binding ? {moldeRevisao:binding.revision,textoMolde:requiresText?moldText:'',textoPersonalizado:requiresText?moldText:undefined,inicialReferencia:initialReference(binding.pdf,requiresText?moldText:''),imagemClientePath:requiresArtwork?uploadedArtwork?.path:undefined} : {arquivoPath:requiresArtwork?uploadedArtwork?.path:undefined,arquivoNome:requiresArtwork?uploadedArtwork?.name:undefined}),
+      ...(binding ? {moldeRevisao:binding.revision,textoMolde:requiresText?moldText:'',textoPersonalizado:requiresText?moldText:undefined,inicialReferencia:initialReference(binding.pdf,requiresText?moldText:'',binding.layout.initial_size_percent),imagemClientePath:requiresArtwork?uploadedArtwork?.path:undefined} : {arquivoPath:requiresArtwork?uploadedArtwork?.path:undefined,arquivoNome:requiresArtwork?uploadedArtwork?.name:undefined}),
       ...(extraModels.length?{paginasModelo:extraModels.map(f=>f.path)}:{}),
       modeloPath: uploadedModel?.path,
       modeloNome: uploadedModel?.name,

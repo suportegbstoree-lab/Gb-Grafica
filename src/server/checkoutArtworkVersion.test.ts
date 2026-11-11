@@ -588,6 +588,7 @@ test('checkout rejects the default revision when the selected option has its own
 
 test('checkout copies the selected option alphabet letter into the order', async () => {
   const { input, binding } = optionProductionProduct();
+  binding.layout.initial_size_percent = 45;
   const path = `catalog/products/produto/${'7'.repeat(32)}.png`;
   binding.pdf.alphabet = {
     folderName: 'Opção', sizePercent: 60,
@@ -596,7 +597,7 @@ test('checkout copies the selected option alphabet letter into the order', async
   objects.set(path, { ...objects.get(sourcePath)!, generation: 42, metadata: {} });
   const response = await checkout({
     ...input, moldeRevisao: binding.revision,
-    inicialReferencia: initialReference(binding.pdf, input.textoMolde),
+    inicialReferencia: initialReference(binding.pdf, input.textoMolde, 45),
   });
   assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
   const order = [...docs].find(([key]) => key.startsWith('orders/'))![1] as any;
@@ -605,6 +606,7 @@ test('checkout copies the selected option alphabet letter into the order', async
   assert.ok(letter);
   assert.equal(item.inicialPath, letter.path);
   assert.equal(item.inicialLetra, 'A');
+  assert.equal(item.inicialTamanho, 45);
   assert.equal(objects.has(path), true);
 });
 

@@ -748,6 +748,17 @@ test("batch recipes freeze font files and decorative initials instead of linking
     assert.equal(saved.status, 201);
     const recipe = await saved.json();
     assert.equal(recipe.initial.sizePercent, 65);
+    docs.get(`_staffPdfLayouts/${layoutId}`).layout.initial_size_percent = 42;
+    const resized = await request(
+      `/library/batches/${batch.id}/items`,
+      "generator",
+      {
+        ...body,
+        requestId: "1".repeat(36),
+      },
+    );
+    assert.equal(resized.status, 201);
+    assert.equal((await resized.json()).initial.sizePercent, 42);
     assert.match(recipe.fonts[0].arquivoUrl, /staff-pdf-batches/);
     assert.match(recipe.initial.url, /staff-pdf-batches/);
     const snapshot = docs.get(`_staffPdfBatchItems/${recipe.item.id}`);
@@ -875,8 +886,49 @@ test("product binding copies catalog PDF, previews and initials without client d
         ],
       });
       const base = await resolveStaffPdfBase(services, `catalog_source_${id}`);
+      const sizePath = `/library/bases/${base.id}/initial-size`;
+      assert.equal(
+        (
+          await request(sizePath, "generator", {
+            sizePercent: 48,
+            baseRevision: base.revision,
+          })
+        ).status,
+        403,
+      );
+      assert.equal(
+        (
+          await request(sizePath, "root", {
+            sizePercent: 104,
+            baseRevision: base.revision,
+          })
+        ).status,
+        422,
+      );
+      assert.equal(
+        (
+          await request(sizePath, "root", {
+            sizePercent: 48,
+            baseRevision: "stale",
+          })
+        ).status,
+        409,
+      );
+      assert.equal(
+        (
+          await request(sizePath, "root", {
+            sizePercent: 48,
+            baseRevision: base.revision,
+          })
+        ).status,
+        200,
+      );
+      const resized = await resolveStaffPdfBase(services, base.id);
+      assert.equal(resized.alphabet.sizePercent, 48);
+      assert.equal(resized.initialFolderName, "Flores");
+      assert.equal(resized.alphabet.letters.A.path, letterPath);
       const path = `/library/bases/${base.id}/product-copy`;
-      const body = { productId: "target", baseRevision: base.revision };
+      const body = { productId: "target", baseRevision: resized.revision };
       assert.equal((await request(path, "generator", body)).status, 403);
       assert.equal(
         (await request(path, "root", { ...body, baseRevision: "stale" }))
@@ -893,7 +945,7 @@ test("product binding copies catalog PDF, previews and initials without client d
         decodeURIComponent(template.pages[0]),
         /catalog\/products\/target\//,
       );
-      assert.equal(template.alphabet.sizePercent, 70);
+      assert.equal(template.alphabet.sizePercent, 48);
       assert.equal(assets.length, 3);
       assert.equal(
         [...docs.keys()].filter((key) =>

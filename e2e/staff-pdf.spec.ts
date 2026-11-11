@@ -122,7 +122,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><dimension ref="A1:F2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="D1" t="inlineStr"><is><t>Ignorar</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2</v></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf");
@@ -143,25 +143,41 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   const file = await downloading;
   const csv = await readFile((await file.path())!, "utf8");
   expect(csv).toContain("00123");
-  expect(csv).toContain('"pedido_plataforma","barcode","af_clean","nome"');
-  expect(csv).toContain('"Kit de teste"');
+  expect(csv).toContain(
+    '"pedido_plataforma","barcode","af_clean","nome","prazo_envio","quantidade_itens"',
+  );
+  expect(csv).toContain('"00123",,"Kit de teste","Ana",,"2"');
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
 
-  const allColumns = page.waitForEvent("download");
-  await page
-    .getByRole("button", { name: "Baixar CSV com todas as colunas" })
-    .click();
-  const fullCsv = await readFile((await (await allColumns).path())!, "utf8");
-  expect(fullCsv).toContain('"Ignorar",,\r\n');
-  expect(fullCsv).toContain('"Fora",,\r\n');
+  await expect(
+    page.getByRole("button", { name: "Baixar CSV com todas as colunas" }),
+  ).toHaveCount(0);
 
   await page
     .getByRole("button", { name: "Converter e revisar pedidos" })
     .click();
   const record = page.getByRole("row").filter({ hasText: "00123" });
   await expect(record).toContainText("Ana");
-  await expect(record).toContainText("Campos em branco: Coluna E, Coluna F.");
+  await expect(record).toContainText("Campos em branco: barcode, prazo_envio.");
+  await page
+    .getByRole("button", { name: "Visualizar planilha importada" })
+    .click();
+  const review = page.getByRole("dialog", {
+    name: "Planilha dos pedidos importados",
+  });
+  await expect(review.getByRole("columnheader")).toHaveText([
+    "Linha",
+    "pedido_plataforma",
+    "barcode",
+    "af_clean",
+    "nome",
+    "prazo_envio",
+    "quantidade_itens",
+    "Entrega",
+    "Ações",
+  ]);
+  await review.getByRole("button", { name: "Fechar", exact: true }).click();
   await record.getByLabel("Rastreio do registro 2").fill("BR2684621549924");
   await record.getByLabel("Base do registro 2").selectOption("a".repeat(32));
   await expect(record.getByLabel("Molde do registro 2")).toHaveValue(
@@ -289,6 +305,56 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await expect(
     page.getByRole("heading", { name: /Documentos salvos · teste/ }),
   ).toBeVisible();
+});
+
+test("admin keeps 51 PDFs processing across sections and splits them into batches of 50", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.goto("/__e2e/admin?pdf-queue=1");
+  await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
+    .click();
+  const rows = Array.from(
+    { length: 51 },
+    (_, index) => `PED-${index + 1},BR${100000 + index},Kit de teste,ANA`,
+  );
+  await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
+    name: "lote.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      ["pedido_plataforma,barcode,af_clean,nome", ...rows].join("\n"),
+    ),
+  });
+  await page
+    .getByRole("button", { name: "Adicionar todos os pedidos válidos à fila" })
+    .click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Fila principal · 51" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Processar fila", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Pedidos", exact: true }).click();
+  const progress = page.getByRole("region", {
+    name: "Processamento da fila de PDFs",
+  });
+  await expect(progress.getByRole("progressbar")).toHaveAttribute("max", "51");
+  for (const count of [20, 40]) {
+    await expect(progress.getByRole("status")).toContainText(
+      `Aguardando o limite de geração · ${count} de 51`,
+    );
+    await page.clock.fastForward(62000);
+  }
+  await expect(progress.getByRole("status")).toHaveText(
+    "Processamento de PDFs concluído · 51 de 51 processado(s)",
+  );
+  await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
+  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
+  await expect(page.getByText(/^LOTE-TESTE ·.*50 arquivo/)).toBeVisible();
+  await expect(page.getByText(/^LOTE-TESTE-2 ·.*1 arquivo/)).toBeVisible();
 });
 
 test("equal tracking codes remain separate orders and are highlighted in the import table", async ({
@@ -505,6 +571,32 @@ test("folder import keeps the root category and attaches letters to the matching
     await expect(
       category.getByText("Letras cadastradas · T", { exact: true }),
     ).toBeVisible();
+    const base = category
+      .locator("div.rounded-lg")
+      .filter({ hasText: "Crianca.pdf" });
+    await expect(
+      base.getByText("Pasta vinculada · Crianca", { exact: true }),
+    ).toBeVisible();
+    await base
+      .getByLabel("Importar pasta de letras")
+      .setInputFiles(join(folder, "Infantil", "Crianca"));
+    await expect(base.getByText("Finalizado!", { exact: true })).toBeVisible();
+    await base
+      .getByRole("button", { name: "Editar Crianca.pdf", exact: true })
+      .click();
+    const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
+    await mold
+      .getByLabel("Tamanho da inicial no molde (% da página)")
+      .fill("45");
+    await mold
+      .getByRole("button", { name: "Salvar molde", exact: true })
+      .click();
+    await base
+      .getByRole("button", { name: "Editar Crianca.pdf", exact: true })
+      .click();
+    await expect(
+      mold.getByLabel("Tamanho da inicial no molde (% da página)"),
+    ).toHaveValue("45");
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

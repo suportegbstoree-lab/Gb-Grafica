@@ -34,6 +34,12 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
 
+## 2026-11-11 — Correções de CSV e gestão da fila de PDFs
+
+- A revisão e o download de XLSX usam a mesma seleção de colunas do CSV. Células vazias permanecem na posição da coluna selecionada.
+- Bases e moldes mostra a pasta de letras vinculada e o progresso da importação. O tamanho da inicial é configurado na oficina, no molde ou no modelo PDF de produto.
+- A fila aceita mais de 50 pedidos e gera lotes de até 50. A geração continua ao trocar de seção no painel, com acompanhamento em Pedidos.
+
 ## 2026-11-11 — Revisão de planilhas e lotes da oficina de PDFs
 
 - A conversão de XLSX preserva as posições das colunas vazias na revisão e na exportação de todas as colunas. Quando o número de pedido e o SKU se repetem, as linhas seguintes do mesmo par ficam com o nome em branco.

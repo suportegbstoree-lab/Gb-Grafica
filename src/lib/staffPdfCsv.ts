@@ -238,7 +238,12 @@ export const STAFF_SHEET_FIELDS = [
   {
     key: "quantidade_itens",
     label: "Quantidade de itens",
-    aliases: ["quantidade_de_itens", "quantidade_itens", "quantidade"],
+    aliases: [
+      "quantidade_de_itens",
+      "quantidade_itens",
+      "qtd_do_produto",
+      "quantidade",
+    ],
   },
 ] as const;
 export type StaffSheetField = (typeof STAFF_SHEET_FIELDS)[number]["key"];
