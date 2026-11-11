@@ -19,8 +19,9 @@ function readRows(csv: string, separator: string, limit: number): string[][] {
     closed = false;
   }
   function record() {
+    const explicit = row.length > 0 || closed;
     field();
-    if (row.some((value) => value.trim())) rows.push(row);
+    if (explicit || row[0].trim()) rows.push(row);
     row = [];
   }
   for (let i = 0; i < csv.length && rows.length < limit; i++) {
@@ -47,7 +48,7 @@ function readRows(csv: string, separator: string, limit: number): string[][] {
   return rows;
 }
 
-export function parseStaffPdfCsv(input: string, separator?: string) {
+export function readStaffPdfCsv(input: string, separator?: string) {
   const csv = input.replace(/^\ufeff/, "");
   if (csv.length > 10 * 1024 * 1024)
     throw new Error("Envie um CSV de até 10 MB.");
@@ -70,7 +71,11 @@ export function parseStaffPdfCsv(input: string, separator?: string) {
   const rows = readRows(csv, separator, 10002);
   if (rows.length > 10001) throw new Error("O CSV excede 10.000 registros.");
   if (!rows.length) throw new Error("O CSV está vazio.");
-  return rows;
+  return { rows, separator };
+}
+
+export function parseStaffPdfCsv(input: string, separator?: string) {
+  return readStaffPdfCsv(input, separator).rows;
 }
 
 function key(value: string) {
@@ -94,6 +99,9 @@ const orderHeaders = [
   "n_do_pedido",
   "no_do_pedido",
   "numero_do_pedido",
+  "n_pedido",
+  "no_pedido",
+  "numero_pedido",
   "id_do_pedido",
   "pedido",
   "order",
@@ -130,6 +138,8 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
       "tema",
       "ae",
       "sku",
+      "modelo_do_sku",
+      "sku_do_produto",
       "af_clean",
       "af",
       "arte",
@@ -140,6 +150,28 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
         ? staffOrderColumn(headers)
         : find(["codigo", "serial", "rastreio", "barcode", "tracking"]),
   };
+}
+
+export function staffSheetOrders(
+  rows: string[][],
+  columns: { reference: number; template: number; text: number },
+  matchSku: (sku: string) => string,
+) {
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => row.some((cell) => cell.trim()))
+    .map((row) => {
+      const result = row.slice();
+      const reference = row[columns.reference]?.trim();
+      const sku = row[columns.template]?.trim() || "";
+      if (reference && sku) {
+        const key = JSON.stringify([reference, sku]);
+        if (seen.has(key)) result[columns.text] = "";
+        seen.add(key);
+      }
+      result[columns.template] = matchSku(sku);
+      return result;
+    });
 }
 
 const modelStem = (name: string) =>
@@ -179,7 +211,7 @@ export const STAFF_SHEET_FIELDS = [
   {
     key: "af_clean",
     label: "SKU",
-    aliases: ["sku", "af_clean", "sku_do_produto"],
+    aliases: ["sku", "af_clean", "sku_do_produto", "modelo_do_sku"],
   },
   {
     key: "nome",

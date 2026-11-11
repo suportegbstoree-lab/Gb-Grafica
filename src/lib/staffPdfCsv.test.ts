@@ -5,9 +5,11 @@ import {
   createStaffSkuMatcher,
   staffOrderColumn,
   staffSheetColumn,
+  staffSheetOrders,
   parseStaffPdfCsv,
   resolveStaffPdfCsvModel,
 } from "./staffPdfCsv.js";
+import { selectedColumnsCsv } from "./spreadsheetCsv.js";
 import { defaultPdfLayout, type StaffPdfBase } from "./staffPdf.js";
 
 test("the office CSV accepts its desktop header, quoted delimiters and multiline names", () => {
@@ -70,6 +72,39 @@ test("CSV model association honors four-page templates and leaves ambiguous base
     resolveStaffPdfCsvModel("Desconhecido", [base], layouts),
     undefined,
   );
+});
+
+test("CSV retains empty cells and XLSX only blanks subsequent names for the exact order and SKU", () => {
+  const input = [
+    ["001", "", "Floral azul", "Ana"],
+    ["001", "", "Floral azul", "Ana"],
+    ["001", "", "Floral rosa", "Bia"],
+    ["002", "", "Floral azul", "Lia"],
+    ["", "", "Floral azul", "Eva"],
+  ];
+  const rows = staffSheetOrders(
+    input,
+    { reference: 0, template: 2, text: 3 },
+    () => "Floral",
+  );
+  const csv = selectedColumnsCsv(rows, [0, 1, 2, 3, 4], ",");
+  assert.ok(csv.includes('"001",,"Floral",,\r\n'));
+  assert.deepEqual(
+    parseStaffPdfCsv(csv).map((row) => [row[1], row[3], row[4]]),
+    [
+      ["", "Ana", ""],
+      ["", "", ""],
+      ["", "Bia", ""],
+      ["", "Lia", ""],
+      ["", "Eva", ""],
+    ],
+  );
+  assert.deepEqual(parseStaffPdfCsv("A,B,C\n,,\n1,,3\n"), [
+    ["A", "B", "C"],
+    ["", "", ""],
+    ["1", "", "3"],
+  ]);
+  assert.equal(input[1][3], "Ana");
 });
 
 test("staff workbook mapping uses explicit letters or headers and cleans SKUs against known molds", () => {

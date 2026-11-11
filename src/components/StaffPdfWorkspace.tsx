@@ -52,12 +52,16 @@ interface QueueItem {
   original: Blob;
   fitMargin: number;
   batchId?: string;
+  csvRow?: StaffPdfCsvOrder["csvRow"];
+  csvWarning?: string;
   status: "queued" | "processing" | "ready" | "error";
   error?: string;
   reference?: string;
 }
 const input =
   "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-3";
+const csvRowKey = ({ sourceId, index }: StaffPdfCsvOrder["csvRow"]) =>
+  `${sourceId}:${index}`;
 export default function StaffPdfWorkspace({
   fonts,
   externalBatchRevision = 0,
@@ -103,6 +107,8 @@ export default function StaffPdfWorkspace({
     [processing, setProcessing] = React.useState(false),
     [stopRequested, setStopRequested] = React.useState(false),
     [csvOpened, setCsvOpened] = React.useState(false),
+    [csvReview, setCsvReview] = React.useState(0),
+    [confirmBlanks, setConfirmBlanks] = React.useState(false),
     [queue, setQueue] = React.useState<QueueItem[]>([]),
     [editingId, setEditingId] = React.useState<string | null>(null),
     [removeId, setRemoveId] = React.useState<string | null>(null);
@@ -112,6 +118,13 @@ export default function StaffPdfWorkspace({
     wakeProcessing = React.useRef<() => void>(),
     attempts = React.useRef<number[]>([]),
     revision = React.useRef(0);
+  const lockedCsvRows = React.useRef(new Set<string>());
+  const pendingBlanks = queue.filter(
+    (item) =>
+      (item.status === "queued" || item.status === "error") &&
+      (item.csvWarning || item.job.allowEmptyText),
+  ).length;
+  const editingItem = queue.find((item) => item.id === editingId);
   React.useEffect(() => {
     if (loaded) return beginWorkTask("document", "", timingApi);
   }, [Boolean(loaded), timingApi]);
@@ -195,8 +208,9 @@ export default function StaffPdfWorkspace({
     layout: StaffPdfLayoutView,
     textLines: StaffPdfLine[],
     name: string,
-    id = crypto.randomUUID(),
+    id: string = crypto.randomUUID(),
     code = barcode,
+    allowEmptyText = false,
   ): QueueItem {
     const resolvedCode = normalizeStaffBarcode(
       code || automaticStaffBarcode(id),
@@ -211,6 +225,7 @@ export default function StaffPdfWorkspace({
     const job = normalizeStaffPdfJob(
       {
         schemaVersion: 1,
+        ...(allowEmptyText ? { allowEmptyText: true } : {}),
         barcode: resolvedCode,
         barcodeVersion: 2,
         baseId: source.base.id,
@@ -238,8 +253,14 @@ export default function StaffPdfWorkspace({
       status: "queued",
     };
   }
-  async function importOrders(orders: StaffPdfCsvOrder[]) {
-    if (running.current || orders.length > QUEUE_LIMIT - queue.length)
+  async function importOrders(
+    orders: StaffPdfCsvOrder[],
+    replacing?: QueueItem,
+  ) {
+    if (
+      running.current ||
+      orders.length > QUEUE_LIMIT - queue.length + (replacing ? 1 : 0)
+    )
       throw new Error("Confira as vagas na fila antes de importar.");
     running.current = true;
     setBusy(true);
@@ -247,6 +268,15 @@ export default function StaffPdfWorkspace({
       const library = await api.list();
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
+      if (
+        replacing &&
+        library.bases.some(
+          (base) =>
+            base.id === replacing.base.id &&
+            base.revision === replacing.base.revision,
+        )
+      )
+        sources.set(replacing.base.id, replacing);
       const items: QueueItem[] = [];
       for (const order of orders) {
         if (!alive.current) return;
@@ -269,21 +299,30 @@ export default function StaffPdfWorkspace({
         const line = mainFrom(layout);
         line.text = order.text;
 
-        items.push(
-          queueItem(
+        items.push({
+          ...queueItem(
             source,
             layout,
             [line],
             "",
-            crypto.randomUUID(),
+            replacing?.id || crypto.randomUUID(),
             order.barcode,
+            !line.text,
           ),
-        );
+          csvRow: order.csvRow,
+          csvWarning: order.csvWarning,
+        });
       }
       if (alive.current) {
-        setQueue((old) => [...old, ...items]);
+        setQueue((old) =>
+          replacing
+            ? old.map((item) => (item.id === replacing.id ? items[0] : item))
+            : [...old, ...items],
+        );
         setMessage(
-          `${items.length} pedido(s) importado(s). Revise antes de processar.`,
+          replacing
+            ? "Pedido da fila atualizado pela planilha."
+            : `${items.length} pedido(s) importado(s). Revise antes de processar.`,
         );
         setError("");
       }
@@ -292,13 +331,38 @@ export default function StaffPdfWorkspace({
       if (alive.current) setBusy(false);
     }
   }
+  async function reviseCsvRow(
+    row: StaffPdfCsvOrder["csvRow"],
+    replacement?: StaffPdfCsvOrder,
+  ) {
+    const key = csvRowKey(row);
+    const existing = queue.find(
+      (item) => item.csvRow && csvRowKey(item.csvRow) === key,
+    );
+    if (running.current) throw new Error("Aguarde a operação atual.");
+    if (
+      existing?.batchId ||
+      existing?.status === "ready" ||
+      lockedCsvRows.current.has(key)
+    )
+      throw new Error(
+        "Esta linha já pertence a um lote em processamento ou concluído.",
+      );
+    if (!existing) return false;
+    if (replacement) await importOrders([replacement], existing);
+    else setQueue((old) => old.filter((item) => item.id !== existing.id));
+    if (editingId === existing.id) setEditingId(null);
+    return !!replacement;
+  }
   function saveQueue() {
     const items = queue
       .filter((item) => item.status !== "ready")
-      .map(({ requestId, job, batchId }) => ({
+      .map(({ requestId, job, batchId, csvWarning, csvRow }) => ({
         requestId,
         job,
         ...(batchId ? { batchId } : {}),
+        ...(csvWarning ? { csvWarning } : {}),
+        ...(csvRow ? { csvRow } : {}),
       }));
     downloadPersonalization(
       new Blob([JSON.stringify({ schemaVersion: 1, items }, null, 2)], {
@@ -323,6 +387,9 @@ export default function StaffPdfWorkspace({
       )
         throw new Error("Selecione um JSON de fila salvo na oficina.");
       const seen = new Set(queue.map((item) => item.requestId));
+      const seenRows = new Set(
+        queue.flatMap((item) => (item.csvRow ? [csvRowKey(item.csvRow)] : [])),
+      );
       const incoming = [];
       for (const item of value.items) {
         const id = item?.requestId;
@@ -330,6 +397,20 @@ export default function StaffPdfWorkspace({
           throw new Error("Identificador de pedido inválido no JSON.");
         if (seen.has(id)) continue;
         seen.add(id);
+        const csvRow = item.csvRow;
+        if (csvRow !== undefined) {
+          if (
+            typeof csvRow?.sourceId !== "string" ||
+            !/^[a-f0-9-]{36}$/.test(csvRow.sourceId) ||
+            !Number.isInteger(csvRow.index) ||
+            csvRow.index < 0 ||
+            csvRow.index > 10000
+          )
+            throw new Error("Linha do CSV inválida no arquivo da fila.");
+          const key = csvRowKey(csvRow);
+          if (seenRows.has(key) || lockedCsvRows.current.has(key)) continue;
+          seenRows.add(key);
+        }
         if (
           item.batchId !== undefined &&
           (typeof item.batchId !== "string" ||
@@ -338,6 +419,11 @@ export default function StaffPdfWorkspace({
           throw new Error("Lote inválido no arquivo da fila.");
         incoming.push({
           ...(item.batchId ? { batchId: item.batchId } : {}),
+          csvWarning:
+            typeof item.csvWarning === "string"
+              ? item.csvWarning.slice(0, 800)
+              : undefined,
+          csvRow,
           requestId: id,
           job: normalizeStaffPdfJob(item.job, fonts),
         });
@@ -348,7 +434,7 @@ export default function StaffPdfWorkspace({
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
       const items: QueueItem[] = [];
-      for (const { requestId, job, batchId } of incoming) {
+      for (const { requestId, job, batchId, csvWarning, csvRow } of incoming) {
         if (!alive.current) return;
         const base = library.bases.find((b) => b.id === job.baseId);
         const layout = library.layouts.find((t) => t.id === job.layoutId);
@@ -368,6 +454,8 @@ export default function StaffPdfWorkspace({
           id: crypto.randomUUID(),
           requestId,
           ...(batchId ? { batchId } : {}),
+          csvWarning,
+          csvRow,
           job,
           base: source.base,
           original: source.original,
@@ -552,6 +640,8 @@ export default function StaffPdfWorkspace({
               createdBatch ||= (await api.batches.create(crypto.randomUUID()))
                 .id;
               batchId = createdBatch;
+              if (item.csvRow)
+                lockedCsvRows.current.add(csvRowKey(item.csvRow));
               if (alive.current)
                 setQueue((old) =>
                   old.map((row) =>
@@ -585,6 +675,7 @@ export default function StaffPdfWorkspace({
             reference = doc.reference;
           }
           successes++;
+          if (item.csvRow) lockedCsvRows.current.add(csvRowKey(item.csvRow));
           if (alive.current)
             setQueue((old) =>
               old.map((q) =>
@@ -632,10 +723,17 @@ export default function StaffPdfWorkspace({
         lines,
         outputName,
         editingId ?? undefined,
+        barcode,
+        !!editingItem?.job.allowEmptyText &&
+          !lines.some((line) => line.text.trim()),
       );
       setQueue((old) =>
         editingId
-          ? old.map((q) => (q.id === editingId ? item : q))
+          ? old.map((q) =>
+              q.id === editingId
+                ? { ...item, csvRow: q.csvRow, csvWarning: q.csvWarning }
+                : q,
+            )
           : [...old, item],
       );
       loadLines([mainFrom(mold)]);
@@ -807,6 +905,8 @@ export default function StaffPdfWorkspace({
             fallback={{ baseId: loaded?.base.id || "", layoutId }}
             onAdd={importOrders}
             onReviewQueue={() => setTab("edit")}
+            onReviseRow={reviseCsvRow}
+            reviewRequest={csvReview}
           />
         </div>
       )}
@@ -1052,6 +1152,11 @@ export default function StaffPdfWorkspace({
                     <p className="break-words text-sm">
                       {item.job.lines.map((l) => l.text).join(" / ")}
                     </p>
+                    {(item.csvWarning || item.job.allowEmptyText) && (
+                      <p className="break-words text-xs text-amber-300">
+                        Campos em branco no CSV: {item.csvWarning || "Nome"}.
+                      </p>
+                    )}
                     {item.error && (
                       <p role="alert" className="text-sm text-red-300">
                         {item.error}
@@ -1164,7 +1269,10 @@ export default function StaffPdfWorkspace({
             <button
               type="button"
               disabled={
-                busy || !mold || !lines.some((line) => line.text.trim())
+                busy ||
+                !mold ||
+                (!editingItem?.job.allowEmptyText &&
+                  !lines.some((line) => line.text.trim()))
               }
               className="rounded-xl bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"
               onClick={add}
@@ -1194,7 +1302,10 @@ export default function StaffPdfWorkspace({
                 )
               }
               className="rounded-xl bg-purple-600 px-4 py-2 font-bold disabled:opacity-40"
-              onClick={() => void process()}
+              onClick={() => {
+                if (pendingBlanks) setConfirmBlanks(true);
+                else void process();
+              }}
             >
               Processar fila
             </button>
@@ -1308,6 +1419,23 @@ export default function StaffPdfWorkspace({
             setQueue((old) => old.filter((q) => q.id !== removeId));
             if (editingId === removeId) setEditingId(null);
             setRemoveId(null);
+          }}
+        />
+      )}
+      {confirmBlanks && (
+        <ConfirmDialog
+          title="Gerar lote com campos em branco?"
+          message={`${pendingBlanks} pedido(s) têm campos em branco no CSV. Confira os avisos da fila ou volte à planilha para corrigir as linhas antes de gerar.`}
+          confirmLabel="Gerar mesmo assim"
+          onCancel={() => {
+            setConfirmBlanks(false);
+            setCsvOpened(true);
+            setTab("csv");
+            setCsvReview((value) => value + 1);
+          }}
+          onConfirm={() => {
+            setConfirmBlanks(false);
+            void process();
           }}
         />
       )}

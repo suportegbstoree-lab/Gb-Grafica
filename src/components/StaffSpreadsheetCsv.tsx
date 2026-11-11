@@ -9,6 +9,7 @@ import {
   createStaffSkuMatcher,
   staffOrderColumn,
   staffSheetColumn,
+  staffSheetOrders,
   STAFF_SHEET_FIELDS,
   type StaffSheetField,
 } from "../lib/staffPdfCsv";
@@ -23,7 +24,17 @@ export default function StaffSpreadsheetCsv({
   onUseCsv,
   layouts,
 }: {
-  onUseCsv: (csv: string, name: string, separator: string) => void;
+  onUseCsv: (
+    csv: string,
+    name: string,
+    separator: string,
+    mapping: {
+      reference: number;
+      template: number;
+      text: number;
+      barcode: number;
+    },
+  ) => void;
   layouts: StaffPdfLayoutView[];
 }) {
   const [book, setBook] = React.useState<StaffWorkbook | null>(null);
@@ -82,7 +93,7 @@ export default function StaffSpreadsheetCsv({
     }
   }
 
-  function convert(useInQueue: boolean) {
+  function convert(mode: "review" | "selected" | "all") {
     if (!current) return;
     try {
       if (!Number.isInteger(start) || start < 1 || start > current.rows.length)
@@ -113,25 +124,47 @@ export default function StaffSpreadsheetCsv({
         ...optional,
       ];
       const match = createStaffSkuMatcher(layouts);
-      const data = current.rows
-        .slice(start - 1)
-        .map((row) => [
-          row[orderIndex] || "",
-          row[columns.barcode] || "",
-          match(row[columns.af_clean] || ""),
-          row[columns.nome] || "",
-          ...optional.map((key) => row[columns[key]] || ""),
-        ])
-        .filter((row) => row.some((cell) => cell.trim()));
+      const mapped = [orderIndex, ...Object.values(columns)].filter(
+        (index) => index >= 0,
+      );
+      if (new Set(mapped).size !== mapped.length)
+        throw new Error("Use uma coluna diferente para cada campo.");
+      const fields = {
+        reference: orderIndex,
+        template: columns.af_clean,
+        text: columns.nome,
+        barcode: columns.barcode,
+      };
+      const data = staffSheetOrders(
+        current.rows.slice(start - 1),
+        fields,
+        match,
+      );
       if (!data.length)
         throw new Error("Nenhum pedido encontrado nas linhas selecionadas.");
-      const csv = selectedColumnsCsv(
-        [headers, ...data],
-        headers.map((_, i) => i),
-        ",",
-      );
+      const allColumns = mode !== "selected";
+      const indexes = allColumns
+        ? Array.from({ length: current.columns }, (_, i) => i)
+        : headers.map((_, i) => i);
+      if (indexes.length * data.length > 10 * 1024 * 1024)
+        throw new Error("Divida a planilha em arquivos menores para exportar.");
+      const output = allColumns
+        ? [header, ...data]
+        : [
+            headers,
+            ...data.map((row) =>
+              [
+                orderIndex,
+                columns.barcode,
+                columns.af_clean,
+                columns.nome,
+                ...optional.map((key) => columns[key]),
+              ].map((index) => row[index] || ""),
+            ),
+          ];
+      const csv = selectedColumnsCsv(output, indexes, ",");
       const filename = `${name}-${current.name}.csv`;
-      if (useInQueue) onUseCsv(csv, filename, ",");
+      if (mode === "review") onUseCsv(csv, filename, ",", fields);
       else
         downloadPersonalization(
           new Blob([csv], { type: "text/csv;charset=utf-8" }),
@@ -217,15 +250,21 @@ export default function StaffSpreadsheetCsv({
           <div className="flex flex-wrap gap-3">
             <button
               className="rounded-xl bg-pink-500 px-5 py-3 font-bold"
-              onClick={() => convert(true)}
+              onClick={() => convert("review")}
             >
               Converter e revisar pedidos
             </button>
             <button
               className="rounded-xl border border-gray-700 px-5 py-3"
-              onClick={() => convert(false)}
+              onClick={() => convert("selected")}
             >
               Baixar CSV selecionado
+            </button>
+            <button
+              className="rounded-xl border border-gray-700 px-5 py-3"
+              onClick={() => convert("all")}
+            >
+              Baixar CSV com todas as colunas
             </button>
           </div>
         </>

@@ -122,7 +122,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="D1" t="inlineStr"><is><t>Ignorar</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><dimension ref="A1:F2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="D1" t="inlineStr"><is><t>Ignorar</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf");
@@ -148,15 +148,22 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
 
+  const allColumns = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "Baixar CSV com todas as colunas" })
+    .click();
+  const fullCsv = await readFile((await (await allColumns).path())!, "utf8");
+  expect(fullCsv).toContain('"Ignorar",,\r\n');
+  expect(fullCsv).toContain('"Fora",,\r\n');
+
   await page
     .getByRole("button", { name: "Converter e revisar pedidos" })
     .click();
   const record = page.getByRole("row").filter({ hasText: "00123" });
   await expect(record).toContainText("Ana");
+  await expect(record).toContainText("Campos em branco: Coluna E, Coluna F.");
   await record.getByLabel("Rastreio do registro 2").fill("BR2684621549924");
-  await record
-    .getByLabel("Base do registro 2")
-    .selectOption({ label: "Kit de teste.pdf · Sem categoria" });
+  await record.getByLabel("Base do registro 2").selectOption("a".repeat(32));
   await expect(record.getByLabel("Molde do registro 2")).toHaveValue(
     "b".repeat(32),
   );
@@ -171,12 +178,12 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     "Kit de teste Ana BR2684621549924",
   );
   await page.getByRole("button", { name: "Editar item da fila" }).click();
-  await expect(page.getByLabel("Texto principal", { exact: true })).toHaveValue(
-    "Ana",
-  );
-  await page
-    .getByLabel("Texto principal", { exact: true })
-    .fill("ANA REVISADA");
+  const text = page.getByRole("textbox", {
+    name: "Texto principal",
+    exact: true,
+  });
+  await expect(text).toHaveValue("Ana");
+  await text.fill("ANA REVISADA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
   const savingQueue = page.waitForEvent("download");
   await page.getByRole("button", { name: "Salvar fila em JSON" }).click();
@@ -191,6 +198,10 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     .setInputFiles((await queueFile.path())!);
   await expect(page.getByRole("article")).toContainText("ANA REVISADA");
   await page.getByRole("button", { name: "Processar fila" }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Gerar mesmo assim" })
+    .click();
   await expect(page.getByRole("article")).toContainText("Concluído");
   const savingPdf = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar PDF-TEST-1" }).click();
@@ -258,6 +269,17 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await expect(page.getByRole("article")).toContainText("Concluído");
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
   await page.getByText(/LOTE-TESTE ·/).click();
+  const filter = page.getByRole("searchbox", {
+    name: "Buscar arquivo em LOTE-TESTE",
+  });
+  await filter.fill("inexistente");
+  await expect(
+    page.getByText("Nenhum arquivo encontrado neste lote."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Baixar lote", exact: true }),
+  ).toBeEnabled();
+  await filter.fill("TESTE ANA");
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar", exact: true }).click();
   const file = await download;
@@ -311,6 +333,86 @@ test("equal tracking codes remain separate orders and are highlighted in the imp
   ).toContainText("BR264979796804XSPXLM14002828");
 });
 
+test("CSV review corrects and deletes queued rows and confirms remaining blanks before generation", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.goto("/__e2e/staff-pdf?batches=true");
+  await page
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
+    .click();
+  await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
+    name: "revisar.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "pedido_plataforma,,af_clean,nome,barcode\n" +
+        "001,,Kit de teste,,BR2684621549924\n" +
+        "002,,Kit de teste,BIA,BR2684621549925\n" +
+        "003,,Kit de teste,,",
+    ),
+  });
+  const add = (count: number) =>
+    page.getByRole("button", {
+      name: `Adicionar ${count} pedido(s) da página à fila`,
+      exact: true,
+    });
+  await expect(
+    page.getByText("Campos em branco: Coluna B, nome.", { exact: true }),
+  ).toBeVisible();
+  await add(3).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(
+    page.getByText("Campos em branco no CSV: Coluna B, nome, barcode."),
+  ).toBeVisible();
+  const process = page.getByRole("button", { name: "Processar fila" });
+  await process.click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Gerar lote com campos em branco?",
+  });
+  await confirmation
+    .getByRole("button", { name: "Voltar", exact: true })
+    .click();
+  const table = page.getByRole("dialog", {
+    name: "Planilha dos pedidos importados",
+  });
+  const first = table.getByRole("row").filter({ hasText: "001" });
+  await first.getByRole("button", { name: "001", exact: true }).click();
+  await expect(table.getByRole("status")).toContainText("copiado");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("001");
+  await first.getByRole("button", { name: "Editar linha" }).click();
+  await first
+    .getByRole("textbox", { name: "Coluna B, linha 2" })
+    .fill("REVISTO");
+  await first.getByRole("textbox", { name: "nome, linha 2" }).fill("ANA");
+  await first.getByRole("button", { name: "Salvar linha" }).click();
+  const removed = table.getByRole("row").filter({ hasText: "002" });
+  await removed.getByRole("button", { name: "Excluir linha" }).click();
+  await removed.getByRole("button", { name: "Confirmar exclusão" }).click();
+  await expect(removed).toHaveCount(0);
+  const download = page.waitForEvent("download");
+  await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
+  const edited = await readFile((await (await download).path())!, "utf8");
+  expect(edited).toContain('"001","REVISTO","Kit de teste","ANA"');
+  expect(edited).toContain('"003",,"Kit de teste",,');
+  expect(edited).not.toContain('"002"');
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(
+    page.getByRole("article").filter({ hasText: "ANA" }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole("article").filter({ hasText: "BIA" }),
+  ).toHaveCount(0);
+  await process.click();
+  await confirmation.getByRole("button", { name: "Gerar mesmo assim" }).click();
+  await expect(
+    page.getByRole("article").filter({ hasText: "Concluído" }),
+  ).toHaveCount(2);
+});
+
 test("uploading an individual PDF asks for a category and offers direct template editing", async ({
   page,
 }) => {
@@ -341,7 +443,7 @@ test("uploading an individual PDF asks for a category and offers direct template
   await uploading
     .getByRole("button", { name: "Concluir", exact: true })
     .click();
-  await page.getByText('Cadernetas', { exact: true }).click();
+  await page.getByText("Cadernetas", { exact: true }).click();
   await page
     .getByRole("button", { name: "Editar Nova Base.pdf", exact: true })
     .click();
@@ -388,14 +490,12 @@ test("folder import keeps the root category and attaches letters to the matching
       .click();
     await expect(upload.getByText("Enviado", { exact: true })).toHaveCount(2);
     await upload.getByRole("button", { name: "Concluir", exact: true }).click();
-    const category = page
-      .locator("details")
-      .filter({
-        has: page.locator("summary").getByText("Agendas", { exact: true }),
-      });
-    await expect(category.locator('summary')).toBeVisible();
-    await expect(category).not.toHaveAttribute('open', '');
-    await category.locator('summary').click();
+    const category = page.locator("details").filter({
+      has: page.locator("summary").getByText("Agendas", { exact: true }),
+    });
+    await expect(category.locator("summary")).toBeVisible();
+    await expect(category).not.toHaveAttribute("open", "");
+    await category.locator("summary").click();
     await expect(
       category.getByRole("button", { name: "Editar Adulto.pdf", exact: true }),
     ).toBeVisible();

@@ -9,6 +9,8 @@ import { downloadPersonalization } from "../services/personalizationExport";
 
 const button =
   "rounded-lg border border-gray-700 px-3 py-2 text-sm disabled:opacity-40";
+const searchable = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 export default function StaffPdfBatches({
   api,
   revision,
@@ -21,6 +23,7 @@ export default function StaffPdfBatches({
     Record<string, StaffPdfBatchItemView[]>
   >({});
   const [busy, setBusy] = React.useState(false);
+  const [queries, setQueries] = React.useState<Record<string, string>>({});
   const [error, setError] = React.useState("");
   const [preview, setPreview] = React.useState<{ name: string; url: string }>();
   const alive = React.useRef(true),
@@ -30,6 +33,7 @@ export default function StaffPdfBatches({
     if (alive.current) {
       setBatches(value.batches);
       setItems({});
+      setQueries({});
     }
   }, [api]);
   React.useEffect(() => {
@@ -72,6 +76,17 @@ export default function StaffPdfBatches({
     if (recipe.item.status !== "ready") await api.complete(batchId, itemId);
     return { blob, name: `${recipe.item.outputName}.pdf` };
   }
+  const visibleItems = Object.fromEntries(
+    Object.entries<StaffPdfBatchItemView[]>(items).map(([id, rows]) => {
+      const query = searchable(queries[id]?.trim() || "");
+      return [
+        id,
+        rows.filter((item) =>
+          searchable(`${item.outputName}.pdf`).includes(query),
+        ),
+      ];
+    }),
+  );
   return (
     <details className="rounded-2xl border border-gray-800 p-4">
       <summary className="cursor-pointer font-bold">
@@ -147,8 +162,29 @@ export default function StaffPdfBatches({
             >
               Baixar lote
             </button>
+            {items[batch.id] && (
+              <label className="mt-3 block max-w-md text-sm">
+                Buscar arquivo no lote
+                <input
+                  type="search"
+                  aria-label={`Buscar arquivo em ${batch.reference}`}
+                  value={queries[batch.id] || ""}
+                  onChange={(event) =>
+                    setQueries({ ...queries, [batch.id]: event.target.value })
+                  }
+                  className="mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2"
+                  placeholder="Nome do arquivo"
+                />
+              </label>
+            )}
+            {queries[batch.id]?.trim() &&
+              visibleItems[batch.id]?.length === 0 && (
+                <p role="status" className="mt-3 text-sm text-gray-400">
+                  Nenhum arquivo encontrado neste lote.
+                </p>
+              )}
             <ul className="mt-3 space-y-2">
-              {(items[batch.id] || []).map((item) => (
+              {(visibleItems[batch.id] || []).map((item) => (
                 <li
                   key={item.id}
                   className="flex flex-wrap items-center gap-2 border-t border-gray-800 pt-2"

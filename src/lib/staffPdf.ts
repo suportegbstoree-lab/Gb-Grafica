@@ -155,6 +155,7 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
 
 export interface StaffPdfJob {
   schemaVersion: 1;
+  allowEmptyText?: true;
   barcode?: string;
   barcodeVersion?: 1 | 2;
   baseId: string;
@@ -429,6 +430,7 @@ export function normalizeStaffPdfJob(
   if (
     !object(value) ||
     value.schemaVersion !== 1 ||
+    (value.allowEmptyText !== undefined && value.allowEmptyText !== true) ||
     (value.barcodeVersion !== undefined &&
       ![1, 2].includes(value.barcodeVersion)) ||
     typeof value.baseId !== "string" ||
@@ -488,7 +490,7 @@ export function normalizeStaffPdfJob(
     (lines.some((line) => line.kind) &&
       (lines[0].kind !== "main" ||
         lines.slice(1).some((line) => line.kind !== "extra"))) ||
-    !lines.some((l) => l.text.trim()) ||
+    (!value.allowEmptyText && !lines.some((l) => l.text.trim())) ||
     new Set(lines.map((l) => l.id)).size !== lines.length
   )
     throw new Error("Adicione texto e use linhas distintas.");
@@ -500,6 +502,7 @@ export function normalizeStaffPdfJob(
   )
     throw new Error("Nome do arquivo final inválido.");
   return {
+    ...(value.allowEmptyText ? { allowEmptyText: true as const } : {}),
     ...(value.barcodeVersion === undefined
       ? {}
       : { barcodeVersion: value.barcodeVersion }),

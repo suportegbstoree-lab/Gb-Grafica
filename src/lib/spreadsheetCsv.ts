@@ -19,6 +19,7 @@ export function excelColumn(index: number) {
 }
 export function safeCsvCell(value: unknown) {
   let text = String(value ?? "");
+  if (!text) return "";
   // Excel can interpret formula prefixes even after leading whitespace/control characters.
   if (
     /^[\s\u0000-\u001f]*[=+@-]/.test(text) &&
@@ -34,7 +35,7 @@ export function selectedColumnsCsv(
   startRow = 0,
 ) {
   if (
-    ![";", ",", "\t"].includes(separator) ||
+    ![";", ",", "\t", "|"].includes(separator) ||
     !columns.length ||
     new Set(columns).size !== columns.length ||
     columns.some((c) => !Number.isInteger(c) || c < 0 || c > 16383) ||
@@ -46,7 +47,11 @@ export function selectedColumnsCsv(
     "\ufeff" +
     rows
       .slice(startRow)
-      .map((row) => columns.map((c) => safeCsvCell(row[c])).join(separator))
+      .map(
+        (row) =>
+          columns.map((c) => safeCsvCell(row[c])).join(separator) ||
+          (columns.length === 1 ? '""' : ""),
+      )
       .join("\r\n") +
     "\r\n"
   );
@@ -166,8 +171,14 @@ export function parseStaffXlsx(bytes: Uint8Array): StaffWorkbook {
       throw new Error("Caminho de planilha inválido.");
     const data = xml(path),
       rows: string[][] = [];
-    let columns = 0,
+    const lastColumn = /(?:^|:)([A-Z]{1,3})\d+$/.exec(
+      nodes(data, "dimension")[0]?.getAttribute("ref") || "",
+    )?.[1];
+    const columnNumber = (letters: string) =>
+      [...letters].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
+    let columns = lastColumn ? columnNumber(lastColumn) : 0,
       lastRow = 0;
+    if (columns > 16384) throw new Error("Coluna fora dos limites do Excel.");
     for (const row of nodes(data, "row")) {
       const rowNumber = Number(row.getAttribute("r") || lastRow + 1);
       lastRow = rowNumber;
@@ -180,9 +191,7 @@ export function parseStaffXlsx(bytes: Uint8Array): StaffWorkbook {
           throw new Error("Use até 200.000 células por arquivo.");
         const ref = cell.getAttribute("r") || "",
           letters = /^([A-Z]+)\d+$/.exec(ref)?.[1];
-        const column = letters
-          ? [...letters].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1
-          : previous + 1;
+        const column = letters ? columnNumber(letters) - 1 : previous + 1;
         if (column > 16383)
           throw new Error("Coluna fora dos limites do Excel.");
         previous = column;
@@ -192,12 +201,14 @@ export function parseStaffXlsx(bytes: Uint8Array): StaffWorkbook {
         // Formulas are never executed. Use only the workbook's stored/cached value.
         rows[rowNumber - 1][column] =
           type === "s"
-            ? shared[Number(value)] || ""
+            ? value === ""
+              ? ""
+              : shared[Number(value)] || ""
             : type === "inlineStr"
               ? nodes(cell, "t")
                   .map((t) => t.textContent || "")
                   .join("")
-              : type === "b"
+              : type === "b" && value !== ""
                 ? value === "1"
                   ? "TRUE"
                   : "FALSE"

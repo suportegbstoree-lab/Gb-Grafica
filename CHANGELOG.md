@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-09
+## Última atualização: 2026-11-11
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -33,6 +33,13 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 | 2026-10-29            | Capa, contracapa e exportação dos modelos                              | COMPLETO                             |
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
+
+## 2026-11-11 — Revisão de planilhas e lotes da oficina de PDFs
+
+- A conversão de XLSX preserva as posições das colunas vazias na revisão e na exportação de todas as colunas. Quando o número de pedido e o SKU se repetem, as linhas seguintes do mesmo par ficam com o nome em branco.
+- A visualização da planilha permite corrigir e excluir linhas, copiar células com um clique e baixar o CSV revisado.
+- A fila indica os campos vazios de cada pedido. Antes de gerar, o operador pode confirmar ou voltar à planilha para corrigir as linhas.
+- Cada lote anterior tem uma busca pelo nome do arquivo.
 
 ## 2026-11-09 — Bases, moldes e letras decorativas
 
