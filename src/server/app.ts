@@ -31,7 +31,7 @@ import { createOperationsRouter } from './operationsRouter.js';
 import { createOrderWithDocuments, sendOrderEmail } from './orderDocuments.js';
 import { pendingBackPdf, templateArtwork } from './pdfTemplates.js';
 import { isTemplatePath } from '../lib/pdfTemplate.js';
-import { validTrackingCode } from '../lib/tracking.js';
+import { validMelhorEnvioTrackingCode, validTrackingCode } from '../lib/tracking.js';
 import { cronAuthorized, syncCorreiosTracking, processTrackingJobs } from './correiosTracking.js';
 import { expirePromotions } from './maintenance.js';
 import { createProductionLabel, productionLabelFingerprint } from './productionLabel.js';
@@ -137,26 +137,30 @@ import {
 } from './appCheck.js';
 import firebaseClientConfig from '../../firebase-applet-config.json' with { type: 'json' };
 import { AdminAiError, adminAiInstruction, generateAdminAiText, vertexAiConfig } from './adminAi.js';
-import { CorreiosError, correiosConfig, getCorreiosClient } from './correios.js';
+import { CorreiosError } from './correiosError.js';
+import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
+import { ShippingError } from './shippingError.js';
 import { shippingParcelsForCart } from './shippingCart.js';
-import type { ShippingOption, ShippingParcel } from '../lib/shipping.js';
+import type { MelhorEnvioShippingOption, ShippingParcel } from '../lib/shipping.js';
 
 type RawBodyRequest = express.Request & { rawBody?: string; rawBodyBytes?: Buffer };
 type PlainRecord = Record<string, unknown>;
 
 interface ShippingQuote {
 	cep: string;
+	originCep: string;
+	environment?: MelhorEnvioConfig['environment'];
 	amountCents: number;
 	address: string;
 	state: string;
 	street: string;
 	neighborhood: string;
 	city: string;
-	options: ShippingOption[];
+	options: MelhorEnvioShippingOption[];
 	parcels: ShippingParcel[];
 	quotedAt: string;
 	expiresAt: string;
-	selected?: ShippingOption;
+	selected?: MelhorEnvioShippingOption;
 }
 
 interface NormalizedCartItem {
@@ -632,6 +636,7 @@ async function getShippingQuote(
 	if (deliveryMethod === 'retirada') {
 		return {
 			cep: '',
+			originCep: '',
 			amountCents: 0,
 			address: '',
 			state: '',
@@ -648,13 +653,13 @@ async function getShippingQuote(
 
 	const cep = typeof cepValue === 'string' ? cepValue.replace(/\D/g, '') : '';
 	if (cep.length !== 8) throw new HttpError(422, 'Informe um CEP válido.');
-	const client = getCorreiosClient();
 	const { db } = getAdminServices();
   const loaded = new Map<string, PlainRecord | undefined>();
   const loadProduct = async (id: string) => { if (loaded.has(id)) return loaded.get(id); const value = catalog?.get(id) || (await db.collection('anuncios').doc(id).get()).data(); loaded.set(id, value); return value; };
   let shippingItems: unknown;
   try { shippingItems = await expandBundleShipping(itemsValue, loadProduct); } catch (error) { throw new HttpError(422, (error as Error).message); }
   const parcels = await shippingParcelsForCart(shippingItems, loadProduct);
+	const config = melhorEnvioConfig();
 
 	try {
 		const response = await axios.get<{
@@ -679,12 +684,13 @@ async function getShippingQuote(
 			? `${[street, neighborhood].filter(Boolean).join(', ')} - ${city}/${state}`
 			: `${city}/${state}`;
 
-		const options = await client.quote(cep, parcels);
+		const options = await quoteMelhorEnvio(config, cep, parcels);
 		const quotedAt = new Date().toISOString();
-		return { cep, amountCents: options[0].amount_cents, address, state, street, neighborhood, city,
+		return { cep, originCep: config.originCep, environment: config.environment,
+			amountCents: options[0].amount_cents, address, state, street, neighborhood, city,
 			options, parcels, quotedAt, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
 	} catch (error) {
-		if (error instanceof HttpError || error instanceof CorreiosError) throw error;
+		if (error instanceof HttpError || error instanceof ShippingError) throw error;
 		logEvent('error', 'viacep_request_failed', {
 			request_id: requestId,
 			provider: 'viacep',
@@ -1525,7 +1531,7 @@ function sendError(res: express.Response, error: unknown) {
 	const requestId = responseRequestId(res);
 	res.setHeader('X-Request-Id', requestId);
 
-	if (error instanceof HttpError || error instanceof CorreiosError || error instanceof CouponError) {
+	if (error instanceof HttpError || error instanceof CorreiosError || error instanceof CouponError || error instanceof ShippingError) {
 		const code = error.code || publicErrorCode(error.status);
 		const publicMessage = error instanceof HttpError ? error.publicMessage : error.message;
 		logEvent(error.status >= 500 ? 'error' : 'warn', 'api_request_rejected', {
@@ -1796,6 +1802,9 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		const normalizedCart = await normalizeCart(body.items, services, firebaseUser.uid);
 		const shipping = await getShippingQuote(deliveryMethod, body.cep, normalizedCart.items.map(item => item.cartItem), responseRequestId(res), normalizedCart.shippingProducts);
 		if (deliveryMethod === 'entrega') {
+			if (shipping.environment === 'sandbox' && pagbank.environment === 'production') {
+				throw new HttpError(503, 'O Melhor Envio precisa estar em produção para cobrar um frete real.', 'SHIPPING_ENVIRONMENT_MISMATCH');
+			}
 			const selected = shipping.options.find(option => option.service_code === body.shippingServiceCode);
 			if (!selected || !Number.isSafeInteger(body.shippingAmountCents) || Number(body.shippingAmountCents) <= 0) {
 				throw new HttpError(422, 'Calcule o frete e selecione um serviço antes de continuar.', 'SHIPPING_SELECTION_REQUIRED');
@@ -1888,7 +1897,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			subtotal: (normalizedCart.subtotalCents / 100).toFixed(2),
       ...(coupon ? { cupom: coupon } : {}),
 			frete: (shipping.amountCents / 100).toFixed(2),
-			...(shipping.selected ? { shipping: { ...shipping.selected, origin_cep: correiosConfig().originCep,
+			...(shipping.selected ? { shipping: { ...shipping.selected, origin_cep: shipping.originCep,
 				destination_cep: shipping.cep, quoted_at: shipping.quotedAt, parcels: shipping.parcels } } : {}),
 			total: (totalCents / 100).toFixed(2),
 			totalCents,
@@ -1957,7 +1966,6 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			if (deliveryAddress) {
 				checkoutBody.shipping = {
 					type: 'FIXED',
-					service_type: shipping.selected!.service_name,
 					amount: shipping.amountCents,
 					address_modifiable: false,
 					address: {
@@ -2332,8 +2340,11 @@ async function performOrderOperation(req: express.Request, res: express.Response
     throw new HttpError(409, 'A etiqueta exige pagamento confirmado e pedido ativo.');
   }
   const requested = label ? (initialStage === 'pagamento_confirmado' ? 'em_producao' : initialStage) : body.fulfillmentStatus as FulfillmentStatus;
-  const trackingCode = typeof body.trackingCode === 'string' ? body.trackingCode.trim().toUpperCase() : '';
-  if (trackingCode && !validTrackingCode(trackingCode)) throw new HttpError(422, 'Código de rastreio inválido.');
+  const melhorEnvioShipment = isPlainRecord(initial.shipping) && initial.shipping.provider === 'melhor_envio';
+  const rawTrackingCode = typeof body.trackingCode === 'string' ? body.trackingCode.trim() : '';
+  const trackingCode = melhorEnvioShipment ? rawTrackingCode : rawTrackingCode.toUpperCase();
+  const trackingCodeValid = melhorEnvioShipment ? validMelhorEnvioTrackingCode : validTrackingCode;
+  if (trackingCode && !trackingCodeValid(trackingCode)) throw new HttpError(422, 'Código de rastreio inválido.');
   const changingTracking = !label && requested === 'enviado' && Boolean(trackingCode) && (!isPlainRecord(initial.tracking) || initial.tracking.code !== trackingCode);
   const fingerprint = label ? productionLabelFingerprint(initial) : '';
   // Rendering failures must happen before any operational transition.
@@ -2352,6 +2363,8 @@ async function performOrderOperation(req: express.Request, res: express.Response
     if (label && productionLabelFingerprint(order) !== fingerprint) throw new HttpError(409, 'Os dados do pedido mudaram. Atualize e gere novamente.');
     const target = label ? (current === 'pagamento_confirmado' ? 'em_producao' : current) : requested;
     const updateTracking = !label && target === 'enviado' && Boolean(trackingCode) && (!isPlainRecord(order.tracking) || order.tracking.code !== trackingCode);
+    if (updateTracking && melhorEnvioShipment !== (isPlainRecord(order.shipping) && order.shipping.provider === 'melhor_envio'))
+      throw new HttpError(409, 'O serviço de envio mudou. Atualize o pedido.');
     if (updateTracking && order.paymentStatus !== 'pago') throw new HttpError(409, 'Confira o pagamento antes de alterar o rastreio.');
     if ((label || target !== current || updateTracking) && order.paymentStatus === 'pago' &&
       (!verifiedChargeId || verifiedChargeId !== order.pagbankChargeId || Number(order.pagbankRefundedAmountCents) > 0)) {
@@ -2364,7 +2377,7 @@ async function performOrderOperation(req: express.Request, res: express.Response
     if (!label && target === 'entregue' && order.tracking && isPlainRecord(order.tracking) && order.tracking.provider === 'correios') {
       throw new HttpError(409, 'A entrega deste envio é confirmada pelo rastreamento dos Correios. Use Consultar rastreio.');
     }
-    if (!label && target === 'enviado' && current !== 'enviado' && order.shipping && !trackingCode) throw new HttpError(422, 'Informe o código de rastreio dos Correios antes de enviar.');
+    if (!label && target === 'enviado' && current !== 'enviado' && order.shipping && !trackingCode) throw new HttpError(422, 'Informe o código de rastreio antes de enviar.');
     if (existingLabel?.exists) {
       if (existingLabel.data()?.fingerprint !== fingerprint) throw new HttpError(409, 'Este identificador já foi usado para outra versão da etiqueta.');
       return;
@@ -2372,13 +2385,19 @@ async function performOrderOperation(req: express.Request, res: express.Response
     const audit = label || target !== current || updateTracking ? await prepareWorkActivity(db,operationActor,label?'order.label_generated':target!==current?'order.fulfillment_updated':'order.tracking_updated',orderId,transaction) : null;
     const timestamp = new Date().toISOString();
     if (updateTracking) {
-      transaction.set(orderRef, { tracking: { provider: 'correios', code: trackingCode, status: 'Aguardando consulta', updatedAt: timestamp } }, { merge: true });
-      transaction.set(db.collection('_trackingJobs').doc(orderId), { code: trackingCode, nextCheckAt: Date.now(), attempts: 0 });
+      transaction.set(orderRef, { tracking: {
+        provider: melhorEnvioShipment ? 'melhor_envio' : 'correios', code: trackingCode,
+        status: melhorEnvioShipment ? 'Postado' : 'Aguardando consulta', updatedAt: timestamp,
+      } }, { merge: true });
+      if (!melhorEnvioShipment) transaction.set(db.collection('_trackingJobs').doc(orderId), { code: trackingCode, nextCheckAt: Date.now(), attempts: 0 });
       transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'shipment_tracking_changed', code: trackingCode, actorUid: firebaseUser.uid, createdAt: timestamp });
     }
     appliedStatus = target;
     if (target !== current) {
       transaction.set(orderRef, { fulfillmentStatus: target, status: legacyStatusForFulfillment(target), fulfillmentUpdatedAt: timestamp }, { merge: true });
+      if (target === 'entregue' && isPlainRecord(order.tracking) && order.tracking.provider === 'melhor_envio') {
+        transaction.set(orderRef, { tracking: { ...order.tracking, status: 'Entregue', updatedAt: timestamp } }, { merge: true });
+      }
       transaction.create(orderRef.collection('events').doc(randomUUID()), { type: 'fulfillment_status_changed', from: current, to: target, actorUid: firebaseUser.uid, createdAt: timestamp });
     }
     if (target !== current || updateTracking) queueOrderStatusEmail(transaction, db, orderId, order, { fulfillmentStatus: target, ...(updateTracking ? { tracking: { code: trackingCode } } : {}) });

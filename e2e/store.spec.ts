@@ -65,7 +65,7 @@ test('calcula frete e preenche o endereço retornado pela API simulada', async (
   await expect(cart.getByText('Prazo estimado: 5 dias úteis após a postagem.')).toBeVisible();
 });
 
-test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async ({ page }) => {
+test('seleciona Jadlog pelo Melhor Envio e envia preço e serviço escolhidos ao checkout', async ({ page }) => {
   await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
   await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
   await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
@@ -73,7 +73,7 @@ test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async (
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await cart.getByLabel('Calcular frete').fill('14400000');
   await cart.getByRole('button', { name: 'OK', exact: true }).click();
-  await cart.getByRole('radio', { name: /SEDEX/ }).check();
+  await cart.getByRole('radio', { name: /Jadlog/ }).check();
   await expect(cart.getByText('R$ 25.90', { exact: true })).toHaveCount(2);
   await cart.getByLabel('Número', { exact: true }).fill('123');
   await cart.getByLabel('Nome completo').fill('Cliente Teste');
@@ -82,7 +82,7 @@ test('seleciona SEDEX e envia preço e serviço escolhidos ao checkout', async (
   await cart.getByLabel('Li e aceito as condições da compra.').check();
   const request = page.waitForRequest(r => r.url().endsWith('/api/checkout'));
   await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();
-  expect((await request).postDataJSON()).toEqual(expect.objectContaining({ shippingServiceCode: '03220', shippingAmountCents: 2590 }));
+  expect((await request).postDataJSON()).toEqual(expect.objectContaining({ shippingServiceCode: 'me:3', shippingAmountCents: 2590 }));
   await expect(page.getByTestId('e2e-checkout-redirect')).not.toBeEmpty();
 });
 

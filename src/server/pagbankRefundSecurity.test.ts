@@ -318,3 +318,22 @@ test('maintenance rejects absent and incorrect cron secrets before accessing Fir
   assert.equal((await localFetch(`${baseUrl}/api/internal/maintenance`)).status, 401);
   assert.equal((await localFetch(`${baseUrl}/api/internal/maintenance`, { headers: { 'user-agent': 'vercel-cron/1.0', authorization: 'Bearer wrong' } })).status, 401);
 });
+test('Melhor Envio shipments use manual tracking and delivery without scheduling Correios calls', async () => {
+  const orderPath = `orders/${orderId}`;
+  Object.assign(docs.get(orderPath)!, {
+    fulfillmentStatus: 'em_producao', metodoEntrega: 'entrega',
+    shipping: { provider: 'melhor_envio', service_code: 'me:3', carrier_name: 'Jadlog' },
+  });
+  const change = (body: unknown) => localFetch(`${baseUrl}/api/admin/orders/${orderId}/fulfillment`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer id-token', 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await change({ fulfillmentStatus: 'enviado' })).status, 422);
+  assert.equal((await change({ fulfillmentStatus: 'enviado', trackingCode: '10082562132393' })).status, 200);
+  assert.equal(docs.get(orderPath)!.fulfillmentStatus, 'enviado');
+  assert.equal(docs.get(`_trackingJobs/${orderId}`), undefined);
+  assert.equal((await change({ fulfillmentStatus: 'entregue' })).status, 200);
+  assert.equal(docs.get(orderPath)!.fulfillmentStatus, 'entregue');
+  assert.partialDeepStrictEqual(docs.get(orderPath)!.tracking, { provider: 'melhor_envio', code: '10082562132393', status: 'Entregue' });
+});

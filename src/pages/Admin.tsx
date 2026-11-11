@@ -1,4 +1,5 @@
 import { CouponsPanel, VariationTypesPanel } from '../components/SalesAdminPanels';
+import { shippingOptionLabel } from '../lib/shipping';
 import { salesAdminApi, type SalesAdminApi } from '../services/salesService';
 import { variationReferenceUrls, MAX_PRODUCT_SKU } from '../lib/productSales';
 import StaffDocuments from '../components/StaffDocuments';
@@ -2583,8 +2584,9 @@ function OrderCard({
           <div>{order.enderecoEntrega.bairro} — {order.enderecoEntrega.cidade}/{order.enderecoEntrega.estado}</div>
           <div>CEP {order.enderecoEntrega.cep}</div>
           {order.shipping && <div className="mt-3 space-y-1">
-            <div>{order.shipping.service_name} ({order.shipping.service_code}) — {order.shipping.parcels.length} volume(s) — {order.shipping.delivery_days} dia(s) útil(eis) após postagem.</div>
-            {!order.shipping.home_delivery && <div>Entrega domiciliar indisponível na cotação; pode exigir retirada em agência.</div>}
+            <div>{shippingOptionLabel(order.shipping)} — {order.shipping.parcels.length} volume(s) — {order.shipping.delivery_days} dia(s) útil(eis) após postagem.</div>
+            {order.shipping.provider === 'melhor_envio' && <div>Frete via Melhor Envio. Emita a etiqueta de postagem no painel do Melhor Envio.</div>}
+            {order.shipping.provider !== 'melhor_envio' && !order.shipping.home_delivery && <div>Entrega domiciliar indisponível na cotação; pode exigir retirada em agência.</div>}
             {order.shipping.parcels.map((parcel, i) => <div key={i}>Volume {i + 1}: {parcel.weightGrams} g — {parcel.lengthCm} × {parcel.widthCm} × {parcel.heightCm} cm</div>)}
           </div>}
         </div>

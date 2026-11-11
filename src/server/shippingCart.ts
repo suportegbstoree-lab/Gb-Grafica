@@ -1,9 +1,9 @@
 import type { Anuncio } from '../types.js';
 import { productPrice } from '../lib/productCustomization.js';
 import { isRecord, parseShippingProfile, parcelsForProfile, type ShippingParcel } from '../lib/shipping.js';
-import { CorreiosError } from './correios.js';
+import { ShippingError } from './shippingError.js';
 
-const invalidCart = () => new CorreiosError(422, 'SHIPPING_INVALID_CART', 'Revise os produtos, opções e quantidades do carrinho.');
+const invalidCart = () => new ShippingError(422, 'SHIPPING_INVALID_CART', 'Revise os produtos, opções e quantidades do carrinho.');
 
 export async function shippingParcelsForCart(
   input: unknown,
@@ -47,9 +47,9 @@ export async function shippingParcelsForCart(
   for (const { product, combination, quantity } of groups.values()) {
     const variants = isRecord(product.shippingByCombination) ? product.shippingByCombination : {};
     const profile = parseShippingProfile(Object.hasOwn(variants, combination) ? variants[combination] : product.shipping);
-    if (!profile) throw new CorreiosError(422, 'SHIPPING_PRODUCT_NOT_CONFIGURED', 'Um produto ainda está sem peso ou embalagem cadastrados. Entre em contato com a loja ou escolha retirada.');
+    if (!profile) throw new ShippingError(422, 'SHIPPING_PRODUCT_NOT_CONFIGURED', 'Um produto ainda está sem peso ou embalagem cadastrados. Entre em contato com a loja ou escolha retirada.');
     const count = Math.ceil(quantity / profile.unitsPerParcel);
-    if (parcels.length + count > 20) throw new CorreiosError(422, 'SHIPPING_TOO_MANY_PARCELS', 'Este pedido precisa de mais de 20 volumes. Consulte a loja para combinar o envio.');
+    if (parcels.length + count > 20) throw new ShippingError(422, 'SHIPPING_TOO_MANY_PARCELS', 'Este pedido precisa de mais de 20 volumes. Consulte a loja para combinar o envio.');
     parcels.push(...parcelsForProfile(profile, quantity));
   }
   return parcels;

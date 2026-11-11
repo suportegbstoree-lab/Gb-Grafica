@@ -19,13 +19,21 @@ export async function requestShippingQuote(
     || !Number.isSafeInteger(data.parcel_count) || Number(data.parcel_count) < 1 || Number(data.parcel_count) > 20
     || typeof data.quoted_at !== 'string' || !Number.isFinite(Date.parse(data.quoted_at))
     || typeof data.expires_at !== 'string' || !Number.isFinite(Date.parse(data.expires_at)) || Date.parse(data.expires_at) <= Date.now()
-    || !Array.isArray(data.options) || !data.options.length || data.options.length > 3
-    || data.options.some(option => !isRecord(option) || typeof option.service_code !== 'string' || !/^\d{5}$/.test(option.service_code)
-      || !['PAC', 'SEDEX'].includes(String(option.service_name)) || !Number.isSafeInteger(option.amount_cents) || Number(option.amount_cents) <= 0
+    || !Array.isArray(data.options) || !data.options.length || data.options.length > 100
+    || data.options.some(option => !isRecord(option) || typeof option.service_code !== 'string'
+      || !Number.isSafeInteger(option.amount_cents) || Number(option.amount_cents) <= 0
       || !Number.isInteger(option.delivery_days) || Number(option.delivery_days) < 0 || Number(option.delivery_days) > 365
-      || typeof option.home_delivery !== 'boolean' || typeof option.saturday_delivery !== 'boolean')
+      || (option.provider === 'melhor_envio'
+        ? !/^me:[1-9]\d{0,8}$/.test(option.service_code) || !validName(option.carrier_name) || !validName(option.service_name)
+        : (option.provider !== undefined && option.provider !== 'correios') || !/^\d{5}$/.test(option.service_code)
+          || !['PAC', 'SEDEX'].includes(String(option.service_name))
+          || typeof option.home_delivery !== 'boolean' || typeof option.saturday_delivery !== 'boolean'))
     || new Set(data.options.map(option => option.service_code)).size !== data.options.length) {
     throw new Error('A cotação de frete retornou dados inválidos. Tente novamente.');
   }
   return data as unknown as ShippingQuoteResponse;
+}
+
+function validName(value: unknown): boolean {
+  return typeof value === 'string' && Boolean(value.trim()) && value.length <= 100 && !/[\x00-\x1f\x7f]/.test(value);
 }

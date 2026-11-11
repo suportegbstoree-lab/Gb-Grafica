@@ -80,8 +80,8 @@ async function startE2EServer() {
       city: 'Franca',
       state: 'SP',
       options: [
-        { service_code: '03298', service_name: 'PAC', amount_cents: 1290, delivery_days: 5, home_delivery: true, saturday_delivery: false },
-        { service_code: '03220', service_name: 'SEDEX', amount_cents: 2590, delivery_days: 2, home_delivery: true, saturday_delivery: false },
+        { provider: 'melhor_envio', carrier_name: 'Correios', service_code: 'me:1', service_name: 'PAC', amount_cents: 1290, delivery_days: 5 },
+        { provider: 'melhor_envio', carrier_name: 'Jadlog', service_code: 'me:3', service_name: '.Package', amount_cents: 2590, delivery_days: 2 },
       ],
       parcel_count: 1,
       quoted_at: new Date().toISOString(),

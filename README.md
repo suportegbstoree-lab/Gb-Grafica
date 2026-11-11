@@ -10,7 +10,7 @@ PDFs internos da equipe, expediente, produção automática e upload de alfabeto
 
 ## Rodar localmente
 
-A integração de frete real com os Correios usa credenciais apenas no servidor e perfis de peso/embalagem no catálogo. Consulte [Correios: configuração e testes](docs/correios-integration.md) antes de habilitar entregas. Diagnóstico local: `npm run shipping:check`.
+A loja usa o Melhor Envio para cotar as entregas. Veja [Frete pelo Melhor Envio](#frete-pelo-melhor-envio) para configurar e testar a conta.
 
 Requisitos: Node.js 22, npm e Java 21 para os testes das regras Firebase.
 
@@ -103,6 +103,7 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `APP_URL=https://www.gblgrafica.com.br`
 - `PAGBANK_ENV=production`
 - `PAGBANK_TOKEN`
+- `MELHOR_ENVIO_ENV`, `MELHOR_ENVIO_TOKEN`, `MELHOR_ENVIO_ORIGIN_CEP` e `MELHOR_ENVIO_CONTACT_EMAIL`
 - `FIREBASE_SERVICE_ACCOUNT_JSON` ou as três credenciais Firebase separadas
 - `FIREBASE_FIRESTORE_DATABASE_ID`
 - `FIREBASE_STORAGE_BUCKET`
@@ -113,6 +114,32 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 - `LOG_INCLUDE_STACK=false`
 
 O token PagBank e a conta de serviço Firebase são exclusivos do servidor. A IA administrativa chama a Agent Platform Gemini API no backend com OAuth da conta de serviço existente. O navegador envia somente a ação e os textos para `/api/admin/ai/suggestions`, com login e App Check. Os quatro recursos do painel foram preservados. Confira a [ativação da IA administrativa](docs/ia-administrativa-seguranca.md) antes de publicar: são necessárias a API e a permissão IAM da conta de serviço, além do fechamento posterior do acesso direto antigo.
+
+### Frete pelo Melhor Envio
+
+No painel da conta correspondente ao ambiente, acesse **Integrações → Permissões de Acesso → Gerar novo token** e habilite a cotação de fretes. Use este bloco no `.env` local e preencha os valores. Na Vercel, cadastre as variáveis no ambiente correspondente, com `MELHOR_ENVIO_ENV=production` e o token de produção antes de liberar pagamentos reais com entrega.
+
+```dotenv
+MELHOR_ENVIO_ENV=sandbox
+MELHOR_ENVIO_TOKEN=
+MELHOR_ENVIO_ORIGIN_CEP=
+MELHOR_ENVIO_CONTACT_EMAIL=
+# Opcional. IDs separados por vírgula. Em branco, usa os serviços retornados pela API.
+MELHOR_ENVIO_SERVICES=
+# Ative apenas para continuar sincronizando pedidos antigos dos Correios.
+CORREIOS_TRACKING_ENABLED=false
+```
+
+Cadastre o token como variável exclusiva do servidor, sem prefixo `VITE_`. Use o CEP real de postagem e o e-mail de suporte técnico exigido no `User-Agent`. Sandbox e produção usam tokens de contas separadas.
+
+```bash
+npm run shipping:check
+npm run shipping:check -- --quote --destination 01001000 --weight 750 --length 25 --width 20 --height 15
+```
+
+O primeiro comando valida as variáveis locais. O segundo consulta o preço e o prazo de um volume na API. O checkout recalcula o frete com os volumes do catálogo e envia o valor fixo ao PagBank. A retirada na loja funciona independentemente da configuração de frete. Para expedir, emita a etiqueta no painel do Melhor Envio e registre o código de rastreio da transportadora no pedido da loja.
+
+[Documentação da API do Melhor Envio](https://docs.melhorenvio.com.br/reference/introducao-api-melhor-envio)
 
 ### App Check
 

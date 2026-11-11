@@ -15,13 +15,29 @@ export interface ShippingParcel {
   heightCm: number;
 }
 
-export interface ShippingOption {
+interface ShippingOptionBase {
   service_code: string;
-  service_name: 'PAC' | 'SEDEX';
   amount_cents: number;
   delivery_days: number;
+}
+
+export interface CorreiosShippingOption extends ShippingOptionBase {
+  provider?: 'correios';
+  service_name: 'PAC' | 'SEDEX';
   home_delivery: boolean;
   saturday_delivery: boolean;
+}
+
+export interface MelhorEnvioShippingOption extends ShippingOptionBase {
+  provider: 'melhor_envio';
+  carrier_name: string;
+  service_name: string;
+}
+
+export type ShippingOption = CorreiosShippingOption | MelhorEnvioShippingOption;
+
+export function shippingOptionLabel(option: ShippingOption): string {
+  return `${option.provider === 'melhor_envio' ? option.carrier_name : 'Correios'} · ${option.service_name}`;
 }
 
 export interface ShippingQuoteResponse {

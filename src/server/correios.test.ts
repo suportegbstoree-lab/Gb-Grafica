@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { CorreiosClient, CorreiosError, correiosConfig, correiosMoneyToCents, type CorreiosTransport } from './correios.js';
 import { shippingParcelsForCart } from './shippingCart.js';
+import { ShippingError } from './shippingError.js';
 import { parseShippingProfile, type ShippingParcel } from '../lib/shipping.js';
 
 const env = { CORREIOS_TOKEN: 'token-ficticio', CORREIOS_ORIGIN_CEP: '14400-000', CORREIOS_SERVICES: '03298:PAC,03220:SEDEX' };
 const parcel: ShippingParcel = { weightGrams: 750, lengthCm: 25, widthCm: 20, heightCm: 15 };
 const profile = { unitWeightGrams: 300, packagingWeightGrams: 150, lengthCm: 25, widthCm: 20, heightCm: 15, unitsPerParcel: 2 };
-const hasCode = (code: string) => (error: unknown) => error instanceof CorreiosError && error.code === code;
+const hasCode = (code: string) => (error: unknown) => (error instanceof CorreiosError || error instanceof ShippingError) && error.code === code;
 
 function successfulResponse(url: string, body: any) {
   if (url.includes('/preco/')) return { status: 200, data: body.parametrosProduto.map((p: any) => ({

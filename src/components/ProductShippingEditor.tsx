@@ -28,7 +28,7 @@ export default function ProductShippingEditor({ product, onChange }: {
   };
   return (
     <fieldset className="md:col-span-2 space-y-4 rounded-lg border border-gray-800 p-4">
-      <legend className="px-2 text-xs font-bold text-gray-400 uppercase">Peso e embalagem para os Correios</legend>
+      <legend className="px-2 text-xs font-bold text-gray-400 uppercase">Peso e embalagem para o frete</legend>
       <p className="text-xs text-gray-400">Informe medidas externas da embalagem pronta e sua capacidade real. Produtos ou variações diferentes usam volumes separados. Sem cadastro, o produto permite retirada e precisa combinar o envio com a loja.</p>
       {combinations.length > 0 && <label className="block text-xs text-gray-400">Aplicar a
         <select aria-label="Embalagem da combinação" value={target} onChange={event => setCombination(event.target.value)}

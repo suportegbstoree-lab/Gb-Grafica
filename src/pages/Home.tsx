@@ -68,7 +68,7 @@ import {
 } from '../lib/personalizationModel';
 import type { ComposedPersonalizationModel } from '../services/personalizationModelService';
 import { requestShippingQuote } from '../services/shippingService';
-import type { ShippingQuoteResponse } from '../lib/shipping';
+import { shippingOptionLabel, type ShippingQuoteResponse } from '../lib/shipping';
 
 type Notice = { type: 'success' | 'error' | 'info'; message: string };
 
@@ -575,7 +575,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       if (onCheckoutRedirect) onCheckoutRedirect(checkoutResult.initPoint);
       else window.location.assign(checkoutResult.initPoint);
     } catch (error: unknown) {
-      if (error instanceof CheckoutApiError && error.code?.startsWith('SHIPPING_')) setShippingInfo(null);
+      if (error instanceof CheckoutApiError && /^(SHIPPING_|MELHOR_ENVIO_)/.test(error.code ?? '')) setShippingInfo(null);
       if (error instanceof CheckoutApiError && error.code?.startsWith('COUPON_')) setCouponRefresh(value => value + 1);
       if (error instanceof CheckoutApiError && error.code === 'PRICE_CHANGED') {
         setCart(current => repriceCart(current, products, promotions, Date.now()));
@@ -1466,14 +1466,14 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                             <span className="text-pink-500">R$ {shippingInfo.price.toFixed(2)}</span>
                           </div>
                           <fieldset className="mt-3 space-y-2">
-                            <legend className="font-bold text-gray-900">Serviço dos Correios</legend>
+                            <legend className="font-bold text-gray-900">Opções de entrega</legend>
                             {shippingInfo.options.map(option => (
                               <label key={option.service_code} className="flex items-start gap-2 rounded-lg border border-gray-200 p-2 cursor-pointer">
                                 <input type="radio" name="shipping-service" checked={shippingInfo.selectedCode === option.service_code}
                                   onChange={() => setShippingInfo({ ...shippingInfo, selectedCode: option.service_code, price: option.amount_cents / 100 })} />
-                                <span>{option.service_name} — R$ {(option.amount_cents / 100).toFixed(2)}
+                                <span>{shippingOptionLabel(option)} — R$ {(option.amount_cents / 100).toFixed(2)}
                                   <span className="block">Prazo estimado: {option.delivery_days} {option.delivery_days === 1 ? 'dia útil' : 'dias úteis'} após a postagem.</span>
-                                  {!option.home_delivery && <span className="block font-semibold">Pode exigir retirada em agência dos Correios.</span>}
+                                  {option.provider !== 'melhor_envio' && !option.home_delivery && <span className="block font-semibold">Pode exigir retirada em agência dos Correios.</span>}
                                 </span>
                               </label>
                             ))}
@@ -1694,7 +1694,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                             {order.metodoEntrega === 'retirada' ? (
                               <><Settings size={10} className="stroke-[2.5px]" /> Retirada na Gráfica</>
                             ) : (
-                              <><Package size={10} className="stroke-[2.5px]" /> Entrega{order.shipping ? ` — ${order.shipping.service_name}` : ''}</>
+                              <><Package size={10} className="stroke-[2.5px]" /> Entrega{order.shipping ? ` — ${shippingOptionLabel(order.shipping)}` : ''}</>
                             )}
                           </div>
                         )}
@@ -1719,6 +1719,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         order.fulfillmentStatus || legacyFulfillmentStatus(order.status, order.paymentStatus),
                       )}
                     </div>
+                    {order.tracking && <p className="break-all text-xs text-gray-700">Código de rastreio: {order.tracking.code}</p>}
                     <div className="space-y-2">
                       {orderItems(order.itens).map((item) => (
                         <div key={item.id} className="text-xs space-y-1">

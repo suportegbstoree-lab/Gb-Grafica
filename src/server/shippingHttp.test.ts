@@ -14,8 +14,9 @@ const env = {
   NODE_ENV: 'production', APP_URL: 'https://loja.example.com', LOG_LEVEL: 'silent',
   PAGBANK_ENV: 'sandbox', PAGBANK_TOKEN: 'pagbank-ficticio', FIREBASE_APP_CHECK_MODE: 'off',
   FIREBASE_FIRESTORE_DATABASE_ID: 'shipping-test', FIREBASE_STORAGE_BUCKET: 'demo-shipping.firebasestorage.app',
-  CORREIOS_ENV: 'production', CORREIOS_ORIGIN_CEP: '14400000', CORREIOS_SERVICES: '03298:PAC,03220:SEDEX', CORREIOS_TOKEN: 'correios-ficticio',
-  CORREIOS_USER: '', CORREIOS_ACCESS_CODE: '', CORREIOS_POSTING_CARD: '', CORREIOS_CONTRACT: '', CORREIOS_REGIONAL: '',
+  MELHOR_ENVIO_ENV: 'sandbox', MELHOR_ENVIO_ORIGIN_CEP: '14400-000', MELHOR_ENVIO_CONTACT_EMAIL: 'suporte@example.test',
+  MELHOR_ENVIO_TOKEN: 'melhor-envio-ficticio', MELHOR_ENVIO_SERVICES: '1,3',
+  CORREIOS_TOKEN: 'correios-ficticio',
 };
 const oldEnv = new Map(Object.keys(env).map(key => [key, process.env[key]]));
 const localFetch = globalThis.fetch;
@@ -27,11 +28,11 @@ let server: Server;
 let baseUrl = '';
 let uid = '';
 let scenario = 0;
-let price = 1290;
+let price = 2580;
 let providerStatus = 200;
-let rawPriceParameters: any[] = [];
+let quoteBody: any;
 let pagbankBodies: any[] = [];
-let correiosCalls = 0;
+let melhorEnvioCalls = 0;
 
 function ref(path: string) {
   return {
@@ -66,23 +67,22 @@ before(async () => {
   mock.method(getStorage(firebaseApp), 'bucket', (() => ({})) as unknown as ReturnType<typeof getStorage>['bucket']);
   mock.method(axios, 'get', async () => ({ data: { logradouro: 'Rua Teste', bairro: 'Centro', localidade: 'São Paulo', uf: 'SP' } }));
   mock.method(axios, 'post', async (url: string, body: any, config: any) => {
-    if (url.startsWith('https://api.correios.com.br/')) {
-      correiosCalls++;
-      assert.equal(config.headers.Authorization, 'Bearer correios-ficticio');
+    if (url === 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate') {
+      melhorEnvioCalls++;
+      assert.equal(config.headers.Authorization, 'Bearer melhor-envio-ficticio');
+      assert.equal(config.headers['User-Agent'], 'GB Grafica (suporte@example.test)');
       assert.equal(config.maxRedirects, 0);
       assert.equal(config.timeout, 6000);
-      if (providerStatus !== 200) return { status: providerStatus, data: { msgs: ['CORREIOS-SEGREDO-NAO-EXIBIR'] } };
-      if (url.includes('/preco/')) {
-        rawPriceParameters = body.parametrosProduto;
-        return { status: 200, data: body.parametrosProduto.map((p: any) => ({
-          coProduto: p.coProduto, nuRequisicao: p.nuRequisicao,
-          pcFinal: ((p.coProduto === '03298' ? price : 2500) / 100).toFixed(2).replace('.', ','),
-        })) };
-      }
-      return { status: 200, data: body.parametrosPrazo.map((p: any) => ({
-        coProduto: p.coProduto, nuRequisicao: p.nuRequisicao, prazoEntrega: 4, entregaDomiciliar: 'S', entregaSabado: 'N',
-      })) };
+      quoteBody = body;
+      if (providerStatus !== 200) return { status: providerStatus, data: { error: 'MELHOR-ENVIO-SEGREDO-NAO-EXIBIR' } };
+      return { status: 200, data: [
+        { id: 1, name: 'PAC', company: { name: 'Correios' }, price: '15.00', custom_price: (price / 100).toFixed(2), delivery_time: 2, custom_delivery_time: 4 },
+        { id: 3, name: '.Package', company: { name: 'Jadlog' }, price: '50.00', delivery_time: 3 },
+        { id: 2, name: 'SEDEX', company: { name: 'Correios' }, price: '1.00', delivery_time: 1 },
+        { id: 7, error: 'Indisponível para este volume' },
+      ] };
     }
+    assert.ok(!url.includes('correios.com.br'));
     assert.ok(url.endsWith('/checkouts'));
     pagbankBodies.push(body);
     return { status: 201, data: { id: 'CHEC_TEST', status: 'ACTIVE', links: [{ rel: 'PAY', href: 'https://pagamento.sandbox.pagbank.com.br/pagamento?code=test' }] } };
@@ -95,7 +95,8 @@ before(async () => {
 });
 beforeEach(() => {
   scenario++; uid = `shipping-user-${scenario}`;
-  docs.clear(); pagbankBodies = []; rawPriceParameters = []; price = 1290; providerStatus = 200; correiosCalls = 0;
+  Object.assign(process.env, env);
+  docs.clear(); pagbankBodies = []; quoteBody = undefined; price = 2580; providerStatus = 200; melhorEnvioCalls = 0;
   docs.set('config/main', {});
   docs.set('anuncios/produto', { nome: 'Produto Teste', desc: 'Produto', categoria: 'teste', preco_base: '10.00', tipoInput: 'nenhum', shipping: profile });
 });
@@ -111,7 +112,7 @@ function post(path: string, body: unknown) {
 function checkout(extra: Record<string, unknown> = {}) {
   return post('/api/checkout', { requestId: randomUUID(), legalAcceptance: currentLegalAcceptance(),
     customerName: 'Cliente Teste', cpf: '52998224725', phone: '11987654321', deliveryMethod: 'entrega',
-    cep: '01001000', addressNumber: '10', items, shippingServiceCode: '03298', shippingAmountCents: 2580, ...extra });
+    cep: '01001000', addressNumber: '10', items, shippingServiceCode: 'me:1', shippingAmountCents: 2580, ...extra });
 }
 
 test('HTTP: cotação usa perfil do catálogo e retorna opções sem expor credenciais', async () => {
@@ -120,23 +121,33 @@ test('HTTP: cotação usa perfil do catálogo e retorna opções sem expor crede
   const body = await response.json();
   assert.equal(body.parcel_count, 2);
   assert.equal(body.amount_cents, 2580);
-  assert.deepEqual(body.options.map((o: any) => o.service_name), ['PAC', 'SEDEX']);
-  assert.deepEqual(rawPriceParameters.filter(p => p.coProduto === '03298').map(p => p.psObjeto), ['750', '450']);
+  assert.deepEqual(body.options, [
+    { provider: 'melhor_envio', carrier_name: 'Correios', service_code: 'me:1', service_name: 'PAC', amount_cents: 2580, delivery_days: 4 },
+    { provider: 'melhor_envio', carrier_name: 'Jadlog', service_code: 'me:3', service_name: '.Package', amount_cents: 5000, delivery_days: 3 },
+  ]);
+  assert.deepEqual(quoteBody, {
+    from: { postal_code: '14400000' }, to: { postal_code: '01001000' }, services: '1,3',
+    volumes: [{ length: 25, width: 20, height: 15, weight: 0.75 }, { length: 25, width: 20, height: 15, weight: 0.45 }],
+  });
   assert.ok(!JSON.stringify(body).includes('ficticio'));
   assert.match(response.headers.get('cache-control') || '', /no-store/);
   assert.ok(Date.parse(body.expires_at) > Date.parse(body.quoted_at));
 });
 
 test('HTTP: checkout recalcula e envia o serviço escolhido e o preço real ao PagBank', async () => {
-  const response = await checkout({ shippingServiceCode: '03220', shippingAmountCents: 5000 });
+  const response = await checkout({ shippingServiceCode: 'me:3', shippingAmountCents: 5000 });
   assert.equal(response.status, 201, await response.clone().text());
   assert.equal(pagbankBodies.length, 1);
-  assert.equal(pagbankBodies[0].shipping.service_type, 'SEDEX');
+  assert.equal(pagbankBodies[0].shipping.type, 'FIXED');
+  assert.equal(pagbankBodies[0].shipping.service_type, undefined);
   assert.equal(pagbankBodies[0].shipping.amount, 5000);
   const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))![1] as any;
   assert.equal(order.frete, '50.00');
   assert.equal(order.totalCents, 8000);
-  assert.equal(order.shipping.service_code, '03220');
+  assert.equal(order.shipping.provider, 'melhor_envio');
+  assert.equal(order.shipping.carrier_name, 'Jadlog');
+  assert.equal(order.shipping.service_code, 'me:3');
+  assert.equal(order.shipping.origin_cep, '14400000');
   assert.equal(order.shipping.parcels.length, 2);
 });
 
@@ -161,20 +172,20 @@ test('HTTP: token recusado devolve erro controlado sem detalhe do provedor', asy
   const response = await checkout();
   assert.equal(response.status, 503);
   const body = await response.json();
-  assert.equal(body.code, 'CORREIOS_TOKEN_EXPIRED');
-  assert.ok(!JSON.stringify(body).includes('CORREIOS-SEGREDO'));
+  assert.equal(body.code, 'MELHOR_ENVIO_ACCESS_DENIED');
+  assert.ok(!JSON.stringify(body).includes('SEGREDO'));
   assert.equal(pagbankBodies.length, 0);
 });
 
-test('HTTP: falha de rede do Correios não aparece como erro do PagBank nem vaza AxiosError', async () => {
+test('HTTP: falha de rede do Melhor Envio não aparece como erro do PagBank nem vaza AxiosError', async () => {
   const originalMock = axios.post;
-  const tokenError = Object.assign(new Error('CORREIOS-SEGREDO-NAO-EXIBIR'), { isAxiosError: true, config: { headers: { Authorization: 'token-privado' } } });
+  const tokenError = Object.assign(new Error('MELHOR-ENVIO-SEGREDO-NAO-EXIBIR'), { isAxiosError: true, config: { headers: { Authorization: 'token-privado' } } });
   mock.method(axios, 'post', async () => { throw tokenError; });
   try {
     const response = await post('/api/shipping-quote', { cep: '01001000', items });
     assert.equal(response.status, 502);
     const body = await response.json();
-    assert.equal(body.code, 'CORREIOS_UNAVAILABLE');
+    assert.equal(body.code, 'MELHOR_ENVIO_UNAVAILABLE');
     assert.ok(!JSON.stringify(body).includes('SEGREDO'));
     assert.ok(!JSON.stringify(body).includes('token-privado'));
   } finally { mock.method(axios, 'post', originalMock); }
@@ -185,10 +196,28 @@ test('HTTP: produto sem peso não recebe frete fictício; retirada continua func
   const response = await post('/api/shipping-quote', { cep: '01001000', items });
   assert.equal(response.status, 422);
   assert.equal((await response.json()).code, 'SHIPPING_PRODUCT_NOT_CONFIGURED');
-  assert.equal(correiosCalls, 0);
+  assert.equal(melhorEnvioCalls, 0);
   const pickup = await checkout({ deliveryMethod: 'retirada' });
   assert.equal(pickup.status, 201, await pickup.clone().text());
   assert.equal(pagbankBodies[0].shipping, undefined);
+});
+
+test('HTTP: sem token do Melhor Envio não consulta Correios nem bloqueia retirada', async () => {
+  delete process.env.MELHOR_ENVIO_TOKEN;
+  const quote = await post('/api/shipping-quote', { cep: '01001000', items });
+  assert.equal(quote.status, 503);
+  assert.equal((await quote.json()).code, 'MELHOR_ENVIO_CONFIGURATION');
+  assert.equal(melhorEnvioCalls, 0);
+  const pickup = await checkout({ deliveryMethod: 'retirada' });
+  assert.equal(pickup.status, 201, await pickup.clone().text());
+});
+
+test('HTTP: frete simulado não é cobrado no PagBank de produção', async () => {
+  process.env.PAGBANK_ENV = 'production';
+  const result = await checkout();
+  assert.equal(result.status, 503);
+  assert.equal((await result.json()).code, 'SHIPPING_ENVIRONMENT_MISMATCH');
+  assert.equal(pagbankBodies.length, 0);
 });
 
 

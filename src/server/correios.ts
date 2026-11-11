@@ -2,7 +2,7 @@ import axios from 'axios';
 import { validTrackingCode } from '../lib/tracking.js';
 import { parseCorreiosTracking, type CorreiosTrackingEvent } from './correiosTrackingResponse.js';
 import { createHash } from 'node:crypto';
-import { isRecord, validShippingParcel, type ShippingOption, type ShippingParcel } from '../lib/shipping.js';
+import { isRecord, validShippingParcel, type CorreiosShippingOption, type ShippingParcel } from '../lib/shipping.js';
 
 import { CorreiosError } from './correiosError.js';
 export { CorreiosError } from './correiosError.js';
@@ -160,7 +160,7 @@ export class CorreiosClient {
     return this.request(`${this.config.baseUrl}${path}`, body, `Bearer ${token}`, signal);
   }
 
-  async quote(destinationCep: string, parcels: ShippingParcel[]): Promise<ShippingOption[]> {
+  async quote(destinationCep: string, parcels: ShippingParcel[]): Promise<CorreiosShippingOption[]> {
     if (!/^\d{8}$/.test(destinationCep) || parcels.length < 1 || parcels.length > 20 || !parcels.every(validShippingParcel)) {
       throw new CorreiosError(422, 'SHIPPING_INVALID_PACKAGE', 'Revise o CEP e os volumes do pedido.');
     }
@@ -193,7 +193,7 @@ export class CorreiosClient {
     return parseCorreiosTracking(response.data, code, this.now());
   }
 
-  private async performQuote(destinationCep: string, parcels: ShippingParcel[], signal: AbortSignal): Promise<ShippingOption[]> {
+  private async performQuote(destinationCep: string, parcels: ShippingParcel[], signal: AbortSignal): Promise<CorreiosShippingOption[]> {
     const { services, originCep } = this.config;
     const parameters = services.flatMap(service => parcels.map((parcel, i) => ({
       coProduto: service.code, nuRequisicao: `${service.code}-${i}`,
@@ -222,7 +222,7 @@ export class CorreiosClient {
     }
     const prices = responses[0].data as unknown[];
     const deadlines = responses[1].data as unknown[];
-    const options: ShippingOption[] = [];
+    const options: CorreiosShippingOption[] = [];
     for (const service of services) {
       let total = 0;
       let complete = true;

@@ -60,7 +60,7 @@ export async function createOrderLabel(orderId: string, order: Order, production
   line(`Total: R$ ${order.total}`, true, 12);
   if (order.observacoes) line(`Observações: ${order.observacoes}`);
   line('Confira os arquivos e a ficha no painel antes de produzir.', false, 8);
-  line('Uso interno. Não substitui etiqueta de postagem dos Correios.', false, 8);
+  line('Uso interno. Use a etiqueta de postagem da transportadora.', false, 8);
   return pdf.save();
 }
 

@@ -1,4 +1,5 @@
 import type { Order, SiteConfig } from "../types.js";
+import { shippingOptionLabel } from "../lib/shipping.js";
 import {
   formatBrazilianPhone,
   formatMoney,
@@ -52,7 +53,7 @@ function deliveryLines(order: Order, config: Partial<SiteConfig>) {
   const a = order.enderecoEntrega;
   return [
     order.shipping?.service_name
-      ? `Correios · ${order.shipping.service_name}`
+      ? shippingOptionLabel(order.shipping)
       : "Entrega no endereço informado",
     ...(a
       ? [

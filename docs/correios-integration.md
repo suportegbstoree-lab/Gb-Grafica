@@ -1,5 +1,7 @@
 # Integração de frete com os Correios
 
+O checkout atual usa o Melhor Envio. As instruções abaixo descrevem a integração anterior. Para configurar o frete atual, consulte [Frete pelo Melhor Envio](../README.md#frete-pelo-melhor-envio).
+
 Preço e prazo nacionais de PAC/SEDEX por contrato, consultados no backend. O checkout consulta novamente antes de criar pedido ou pagamento. Não existe fallback para a antiga tabela regional de R$ 18,50/R$ 35,90.
 
 ## Aplicar
@@ -73,13 +75,13 @@ Esta versão trabalha com caixas/pacotes retangulares: até 30 kg por volume; co
 Conferência local, sem chamar os Correios nem imprimir credenciais:
 
 ```bash
-npm run shipping:check
+node --import tsx scripts/check-correios.ts
 ```
 
 Cotação real de **um volume de teste**; troque CEP e medidas por dados válidos:
 
 ```bash
-npm run shipping:check -- --quote --destination 01001000 --weight 750 --length 25 --width 20 --height 15
+node --import tsx scripts/check-correios.ts --quote --destination 01001000 --weight 750 --length 25 --width 20 --height 15
 ```
 
 A consulta usa a origem configurada e retorna preço e prazo dos serviços disponíveis. Não cria etiqueta, postagem, pedido, checkout ou pagamento. Ela valida o acesso da conta; não testa o perfil físico do catálogo.
