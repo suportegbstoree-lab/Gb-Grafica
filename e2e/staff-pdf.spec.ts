@@ -6,6 +6,200 @@ import { PDFDocument } from "pdf-lib";
 import { zipSync, strToU8 } from "fflate";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
+test("lists bases in natural name order and links alphabet folders in bulk", async ({
+  page,
+}) => {
+  const root = await mkdtemp(join(tmpdir(), "gb-workshop-alphabets-"));
+  try {
+    const pdfRoot = join(root, "Cadernetas");
+    const lettersRoot = join(root, "Alfabetos");
+    await mkdir(pdfRoot);
+    const pdf = await PDFDocument.create();
+    pdf.addPage([595, 842]);
+    const bytes = await pdf.save();
+    for (const name of ["10 Azul", "Abelhas", "2 Verde"]) {
+      await writeFile(join(pdfRoot, `${name}.pdf`), bytes);
+    }
+    const png = await readFile("e2e/fixtures/editor-cover.png");
+    for (const [folder, letter] of [
+      ["Abelhas", "É"],
+      ["Álbum especial", "K"],
+      ["Sem destino", "A"],
+      ["10 Azul", "AB"],
+      ["subpasta/2 Verde", "V"],
+      ["duplicada/2 Verde", "V"],
+    ]) {
+      const path = join(lettersRoot, folder);
+      await mkdir(path, { recursive: true });
+      await writeFile(join(path, `${letter}.png`), png);
+    }
+    await page.goto("/__e2e/staff-pdf");
+    await page
+      .getByRole("button", { name: "Bases e moldes", exact: true })
+      .click();
+    await page
+      .getByLabel("Importar pasta de PDFs", { exact: true })
+      .setInputFiles(pdfRoot);
+    const bases = page.getByRole("dialog", { name: "Importar bases PDF" });
+    await bases
+      .getByRole("button", { name: "Enviar 3 PDF(s)", exact: true })
+      .click();
+    await expect(bases.getByText("Enviado", { exact: true })).toHaveCount(3);
+    await bases.getByRole("button", { name: "Concluir", exact: true }).click();
+    await page.getByText("Cadernetas", { exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: /^Editar .*\.pdf$/ }),
+    ).toHaveText([
+      "Editar 2 Verde.pdf",
+      "Editar 10 Azul.pdf",
+      "Editar Abelhas.pdf",
+    ]);
+    await page.getByLabel("Importar ou soltar JSON").setInputFiles({
+      name: "templates.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(
+        JSON.stringify({
+          Abelhas_template__1p: defaultPdfLayout(),
+          "Álbum especial_template": {
+            ...defaultPdfLayout(),
+            base_id: "a".repeat(32),
+          },
+        }),
+      ),
+    });
+    await expect(
+      page.getByText("Abelhas_template__1p", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByLabel("Importar pastas de letras", { exact: true })
+      .setInputFiles(lettersRoot);
+    const letters = page.getByRole("dialog", {
+      name: "Importar alfabetos em lote",
+    });
+    await expect(
+      letters.getByText("Molde Abelhas_template__1p", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      letters
+        .getByRole("listitem")
+        .filter({ hasText: "Molde Álbum especial_template" }),
+    ).toContainText("Kit de teste.pdf");
+    await expect(
+      letters.getByText(/Nenhuma base da equipe corresponde/),
+    ).toBeVisible();
+    await expect(letters.getByText(/Mais de uma pasta aponta/)).toHaveCount(2);
+    await expect(letters.getByText(/AB\.png.*inválido/)).toBeVisible();
+    await letters
+      .getByRole("button", { name: "Importar 2 pasta(s)", exact: true })
+      .click();
+    await expect(letters.getByText("Vinculada", { exact: true })).toHaveCount(
+      2,
+    );
+    await letters
+      .getByRole("button", { name: "Concluir", exact: true })
+      .click();
+    await expect(
+      page.getByText("Letras cadastradas · É", { exact: true }),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Edição e fila", exact: true })
+      .click();
+    await expect(
+      page.getByLabel("Base PDF da equipe").locator("option"),
+    ).toHaveText([
+      "Selecione o PDF",
+      "2 Verde.pdf · Cadernetas",
+      "10 Azul.pdf · Cadernetas",
+      "Abelhas.pdf · Cadernetas",
+      "Kit de teste.pdf · Sem categoria",
+    ]);
+    await page
+      .getByRole("button", { name: "Buscar base PDF", exact: true })
+      .click();
+    await expect(
+      page
+        .getByRole("dialog", { name: "Buscar base PDF" })
+        .getByRole("listitem"),
+    ).toHaveText([
+      "2 Verde.pdf · Cadernetas",
+      "10 Azul.pdf · Cadernetas",
+      "Abelhas.pdf · Cadernetas",
+      "Kit de teste.pdf · Sem categoria",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("editing a queued order synchronizes only the mapped name cell and its warning", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
+    .click();
+  await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
+    name: "pedidos.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "pedido_plataforma,af_clean,nome,observacao,barcode\n001,Kit de teste,,,BR2684621549924\n002,Kit de teste,Luísa,,BR2684621549925",
+    ),
+  });
+  await page
+    .getByRole("button", { name: "Adicionar 2 pedido(s) da página à fila" })
+    .click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  const order = page
+    .getByRole("article")
+    .filter({ hasText: "BR2684621549924" });
+  await expect(order).toContainText(
+    "Campos em branco no CSV: nome, observacao.",
+  );
+  await order.getByRole("button", { name: "Editar item da fila" }).click();
+  await page
+    .getByRole("textbox", { name: "Texto principal", exact: true })
+    .fill("Érica");
+  await page.getByRole("button", { name: "Atualizar item da fila" }).click();
+  await expect(order).toContainText("Érica");
+  await expect(order).toContainText("Campos em branco no CSV: observacao.");
+  await page
+    .getByRole("button", { name: "Planilha e CSV", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Visualizar planilha importada" })
+    .click();
+  const table = page.getByRole("dialog", {
+    name: "Planilha dos pedidos importados",
+  });
+  await expect(
+    table
+      .getByRole("row")
+      .filter({ hasText: "001" })
+      .getByRole("button", { name: "Érica", exact: true }),
+  ).toBeVisible();
+  await expect(
+    table
+      .getByRole("row")
+      .filter({ hasText: "002" })
+      .getByRole("button", { name: "Luísa", exact: true }),
+  ).toBeVisible();
+  const download = page.waitForEvent("download");
+  await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
+  const csv = await readFile((await (await download).path())!, "utf8");
+  expect(csv).toContain('"001","Kit de teste","Érica",,"BR2684621549924"');
+  expect(csv).toContain('"002","Kit de teste","Luísa",,"BR2684621549925"');
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await order.getByRole("button", { name: "Editar item da fila" }).click();
+  await page
+    .getByRole("textbox", { name: "Texto principal", exact: true })
+    .fill("");
+  await page.getByRole("button", { name: "Atualizar item da fila" }).click();
+  await expect(order).toContainText(
+    "Campos em branco no CSV: nome, observacao.",
+  );
+});
+
 test("imports 30 PNG letters including accents from an existing mold", async ({
   page,
 }) => {

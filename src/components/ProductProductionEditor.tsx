@@ -14,14 +14,15 @@ import {
   uploadCatalogImage,
   type UploadedCatalogImage,
 } from "../services/catalogImageService";
-import { baseForPdfLayout, layoutFont, matchPdfLayout } from "../lib/staffPdf";
+import {
+  baseForPdfLayout,
+  compareStaffPdfNames,
+  layoutFont,
+  matchPdfLayout,
+} from "../lib/staffPdf";
 import UploadInput from "./UploadInput";
 const field =
   "mt-2 w-full rounded-lg border border-gray-700 bg-black px-3 py-2 text-sm";
-const compareNames = new Intl.Collator("pt-BR", {
-  sensitivity: "base",
-  numeric: true,
-});
 const searchableName = (value: string) =>
   value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
@@ -44,7 +45,7 @@ function LibrarySelect({
     .filter(
       (row) => row.id === value || searchableName(row.name).includes(search),
     )
-    .sort((a, b) => compareNames.compare(a.name, b.name));
+    .sort((a, b) => compareStaffPdfNames(a.name, b.name));
   return (
     <div className="space-y-2">
       <div className="flex items-end gap-2">

@@ -5,6 +5,10 @@ export const STAFF_PDF_MAX_PAGES = 16;
 export const STAFF_PDF_DPI = 300;
 export const STAFF_PDF_MAX_LINES = 30;
 export const STAFF_PDF_LAYOUT_PERMISSION = "documents.templates.manage";
+export const compareStaffPdfNames = new Intl.Collator("pt-BR", {
+  sensitivity: "base",
+  numeric: true,
+}).compare;
 export type PdfTextLayout = "portrait" | "landscape";
 export interface PdfTextBox {
   x: number;

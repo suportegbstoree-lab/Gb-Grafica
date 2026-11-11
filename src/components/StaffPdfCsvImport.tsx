@@ -18,12 +18,31 @@ export interface StaffPdfCsvOrder {
   layoutId: string;
   text: string;
   barcode: string;
-  csvRow: { sourceId: string; index: number };
+  csvRow: {
+    sourceId: string;
+    index: number;
+    textColumn?: number;
+    textWarnings?: { blank: string; filled: string };
+  };
   csvWarning: string;
+}
+export interface StaffPdfCsvImportHandle {
+  updateText(row: StaffPdfCsvOrder["csvRow"], text: string): void;
 }
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
 
+function blankWarning(fields: string[]) {
+  const shown = fields.slice(0, 8).map((header) => header.slice(0, 80));
+  return (
+    shown.join(", ") +
+    (fields.length > shown.length
+      ? ` e mais ${fields.length - shown.length} coluna(s)`
+      : "")
+  );
+}
+
 export default function StaffPdfCsvImport({
+  ref,
   data,
   fonts,
   busy,
@@ -34,6 +53,7 @@ export default function StaffPdfCsvImport({
   onReviseRow,
   reviewRequest,
 }: {
+  ref?: React.Ref<StaffPdfCsvImportHandle>;
   data: StaffPdfLibrary;
   fonts: PersonalizationFont[];
   busy: boolean;
@@ -78,6 +98,25 @@ export default function StaffPdfCsvImport({
     }
   }, [reviewRequest, source]);
   const block = busy || reading;
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      updateText({ sourceId, index, textColumn }, text) {
+        if (textColumn === undefined) return;
+        setSource((current) => {
+          const row = current?.rows[index];
+          if (current?.id !== sourceId || !row || textColumn >= current.width)
+            return current;
+          const cells = [...row];
+          cells[textColumn] = text;
+          const rows = [...current.rows];
+          rows[index] = cells;
+          return { ...current, rows };
+        });
+      },
+    }),
+    [],
+  );
   function useCsv(csv: string, name: string, separator?: string) {
     const parsed = readStaffPdfCsv(csv, separator);
     const { rows } = parsed;
@@ -144,16 +183,16 @@ export default function StaffPdfCsvImport({
     const base = data.bases.find((base) => base.id === model?.baseId);
     const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
     const reference = row[columns.reference]?.trim() || String(index + 1);
-    const empty = headers.filter(
-      (_, column) => !(column === barcodeIndex ? barcode : row[column]?.trim()),
-    );
-    const blankFields = empty.map((header) => header.slice(0, 80));
-    const shown = blankFields.slice(0, 8);
-    const csvWarning =
-      shown.join(", ") +
-      (blankFields.length > shown.length
-        ? ` e mais ${blankFields.length - shown.length} coluna(s)`
-        : "");
+    const missingFields = (blankText: boolean) =>
+      headers.filter((_, column) =>
+        column === columns.text
+          ? blankText
+          : !(column === barcodeIndex ? barcode : row[column]?.trim()),
+      );
+    const textWarnings = {
+      blank: blankWarning(missingFields(true)),
+      filled: blankWarning(missingFields(false)),
+    };
     return {
       index,
       template,
@@ -162,8 +201,13 @@ export default function StaffPdfCsvImport({
       layoutId: mold?.id || "",
       text,
       barcode,
-      csvRow: { sourceId: source!.id, index },
-      csvWarning,
+      csvRow: {
+        sourceId: source!.id,
+        index,
+        textColumn: columns.text,
+        textWarnings,
+      },
+      csvWarning: textWarnings[text ? "filled" : "blank"],
       missingFont:
         mold?.layout.font_name && !layoutFont(mold.layout, fonts)
           ? mold.layout.font_name

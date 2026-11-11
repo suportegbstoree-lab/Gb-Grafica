@@ -15,6 +15,7 @@ import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import {
   matchPdfLayout,
+  compareStaffPdfNames,
   staffPdfInitialSize,
   newPdfLine,
   normalizeStaffPdfJob,
@@ -43,7 +44,10 @@ import StaffPdfTextEditor from "./StaffPdfTextEditor";
 import StaffPdfPicker from "./StaffPdfPicker";
 import StaffPdfPreview from "./StaffPdfPreview";
 import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
-import StaffPdfCsvImport, { type StaffPdfCsvOrder } from "./StaffPdfCsvImport";
+import StaffPdfCsvImport, {
+  type StaffPdfCsvOrder,
+  type StaffPdfCsvImportHandle,
+} from "./StaffPdfCsvImport";
 import ConfirmDialog from "./ConfirmDialog";
 import EditorModal from "./EditorModal";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
@@ -88,7 +92,7 @@ export default function StaffPdfWorkspace({
   visible?: boolean;
   onProgress?: (value: StaffPdfQueueProgressValue) => void;
 }) {
-  const [data, setData] = React.useState<StaffPdfLibrary>({
+  const [library, setData] = React.useState<StaffPdfLibrary>({
       bases: [],
       layouts: [],
       truncated: false,
@@ -99,6 +103,18 @@ export default function StaffPdfWorkspace({
     [message, setMessage] = React.useState(""),
     [picker, setPicker] = React.useState<"base" | "layout">(),
     [autoTemplate, setAutoTemplate] = React.useState(true);
+  const data = React.useMemo(
+    () => ({
+      ...library,
+      bases: [...library.bases].sort((a, b) =>
+        compareStaffPdfNames(a.name, b.name),
+      ),
+      layouts: [...library.layouts].sort((a, b) =>
+        compareStaffPdfNames(a.name, b.name),
+      ),
+    }),
+    [library],
+  );
   const [baseId, setBaseId] = React.useState(""),
     [layoutId, setLayoutId] = React.useState(""),
     [loaded, setLoaded] = React.useState<{
@@ -130,6 +146,7 @@ export default function StaffPdfWorkspace({
     attempts = React.useRef<number[]>([]),
     revision = React.useRef(0);
   const lockedCsvRows = React.useRef(new Set<string>());
+  const csvImport = React.useRef<StaffPdfCsvImportHandle>(null);
   const generationAllowed = React.useRef(canGenerate);
   generationAllowed.current = canGenerate;
   const pendingBlanks = queue.filter(
@@ -415,7 +432,15 @@ export default function StaffPdfWorkspace({
             !/^[a-f0-9-]{36}$/.test(csvRow.sourceId) ||
             !Number.isInteger(csvRow.index) ||
             csvRow.index < 0 ||
-            csvRow.index > 10000
+            csvRow.index > 10000 ||
+            (csvRow.textColumn !== undefined &&
+              (!Number.isSafeInteger(csvRow.textColumn) ||
+                csvRow.textColumn < 0)) ||
+            (csvRow.textWarnings !== undefined &&
+              (typeof csvRow.textWarnings?.blank !== "string" ||
+                typeof csvRow.textWarnings?.filled !== "string" ||
+                csvRow.textWarnings.blank.length > 800 ||
+                csvRow.textWarnings.filled.length > 800))
           )
             throw new Error("Linha do CSV inválida no arquivo da fila.");
           const key = csvRowKey(csvRow);
@@ -756,16 +781,29 @@ export default function StaffPdfWorkspace({
         outputName,
         editingId ?? undefined,
         barcode,
-        !!editingItem?.job.allowEmptyText &&
+        !!(editingItem?.csvRow || editingItem?.job.allowEmptyText) &&
           !lines.some((line) => line.text.trim()),
       );
+      if (editingItem?.csvRow) {
+        const csvRow = editingItem.csvRow;
+        const text = item.job.lines[0].text;
+        const blank = !text.trim();
+        const legacyWarning = editingItem.csvWarning;
+        const csvWarning = csvRow.textWarnings
+          ? csvRow.textWarnings[blank ? "blank" : "filled"]
+          : blank
+            ? legacyWarning
+            : legacyWarning
+                ?.split(", ")
+                .filter((label) => label.toLowerCase() !== "nome")
+                .join(", ");
+        if (text !== editingItem.job.lines[0].text)
+          csvImport.current?.updateText(csvRow, text);
+        Object.assign(item, { csvRow, csvWarning });
+      }
       setQueue((old) =>
         editingId
-          ? old.map((q) =>
-              q.id === editingId
-                ? { ...item, csvRow: q.csvRow, csvWarning: q.csvWarning }
-                : q,
-            )
+          ? old.map((q) => (q.id === editingId ? item : q))
           : [...old, item],
       );
       loadLines([mainFrom(mold)]);
@@ -931,6 +969,7 @@ export default function StaffPdfWorkspace({
       {csvOpened && canGenerate && (
         <div hidden={tab !== "csv"}>
           <StaffPdfCsvImport
+            ref={csvImport}
             data={data}
             fonts={fonts}
             busy={busy}
@@ -1332,7 +1371,8 @@ export default function StaffPdfWorkspace({
               disabled={
                 busy ||
                 !mold ||
-                (!editingItem?.job.allowEmptyText &&
+                (!editingItem?.csvRow &&
+                  !editingItem?.job.allowEmptyText &&
                   !lines.some((line) => line.text.trim()))
               }
               className="rounded-xl bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"

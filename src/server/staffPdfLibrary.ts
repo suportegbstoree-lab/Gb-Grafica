@@ -23,6 +23,7 @@ import {
 import {
   STAFF_PDF_LAYOUT_PERMISSION,
   STAFF_PDF_MAX_PAGES,
+  baseForPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
   staffPdfName,
@@ -249,7 +250,8 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           id: d.id,
           name: b.name,
           initialLetters: Object.keys(b.alphabet?.letters || {}),
-          initialFolderName: b.alphabet?.folderName,
+          initialFolderName:
+            b.alphabet?.sourceFolderName ?? b.alphabet?.folderName,
           initialSizePercent: b.alphabet?.sizePercent,
           category: b.category || UNCATEGORIZED_PDFS,
           pageCount: b.pageCount,
@@ -622,6 +624,8 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         base = await resolveStaffPdfBase(services(), req.params.id),
         {
           folderName,
+          layoutId,
+          baseRevision,
           letters,
           sizePercent = base.alphabet?.sizePercent ?? 60,
         } = req.body || {};
@@ -640,13 +644,25 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         throw new OperationsError(
           `Escolha uma base da equipe e uma pasta com até ${MAX_ALPHABET_LETTERS} letras PNG, como A.png e É.png.`,
         );
+      if (baseRevision !== undefined && baseRevision !== base.revision)
+        throw new OperationsError(
+          "A base mudou. Atualize a lista e selecione a pasta novamente.",
+          409,
+        );
       if (
         typeof folderName !== "string" ||
-        !matchingAlphabetName(base.name, folderName)
+        folderName.normalize("NFC").trim().length > 180
       )
+        throw new OperationsError("Nome de pasta de letras inválido.");
+      const sameName = matchingAlphabetName(base.name, folderName);
+      if (!sameName && !validDocumentId(layoutId))
         throw new OperationsError(
           `Selecione a pasta “${alphabetFolderName(base.name)}” para a base “${base.name}”.`,
         );
+      const db = services().db;
+      const layoutRef = sameName
+        ? undefined
+        : db.collection("_staffPdfLayouts").doc(layoutId);
       const bucket = services().bucket;
       const canonical = Object.fromEntries(
         await uploadBatch(
@@ -683,26 +699,51 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           { concurrency: 6, rollback: async () => undefined },
         ),
       );
-      const ref = services().db.collection("_staffPdfBases").doc(base.id);
-      await services().db.runTransaction(async (tx) => {
+      const ref = db.collection("_staffPdfBases").doc(base.id);
+      const alphabet = {
+        folderName: sameName ? folderName : alphabetFolderName(base.name),
+        ...(!sameName ? { sourceFolderName: folderName } : {}),
+        letters: canonical,
+        sizePercent,
+      };
+      await db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data();
         if (current?.status !== "ready" || current.revision !== base.revision)
           throw new OperationsError("A base mudou. Atualize a lista.", 409);
+        if (layoutRef) {
+          const mold = (await tx.get(layoutRef)).data();
+          if (
+            !mold?.enabled ||
+            typeof mold.name !== "string" ||
+            !matchingAlphabetName(mold.name, folderName) ||
+            !mold.layout ||
+            !baseForPdfLayout(
+              {
+                id: layoutRef.id,
+                name: mold.name,
+                layout: mold.layout,
+                revision: mold.revision,
+              },
+              [base],
+            )
+          )
+            throw new OperationsError(
+              "O molde precisa estar associado à base e corresponder ao nome da pasta.",
+              409,
+            );
+        }
         const retain = await prepareCatalogRetention(
-          services().db,
+          db,
           tx,
           ref.path,
           current,
-          {
-            ...current,
-            alphabet: { folderName, letters: canonical, sizePercent },
-          },
+          { ...current, alphabet },
           services().bucket.name,
           now(),
         );
         retain();
         tx.update(ref, {
-          alphabet: { folderName, letters: canonical, sizePercent },
+          alphabet,
           revision: revision(),
         });
       });

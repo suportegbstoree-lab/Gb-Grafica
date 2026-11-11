@@ -2,6 +2,7 @@ import React from "react";
 import EditorModal from "./EditorModal";
 import ConfirmDialog from "./ConfirmDialog";
 import StaffPdfBaseImport from "./StaffPdfBaseImport";
+import StaffPdfAlphabetImport from "./StaffPdfAlphabetImport";
 import StaffPdfPicker from "./StaffPdfPicker";
 import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
 import { alphabetFolderName } from "../lib/decorativeInitial";
@@ -9,6 +10,7 @@ import StaffPdfPreview from "./StaffPdfPreview";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
   baseForPdfLayout,
+  compareStaffPdfNames,
   staffPdfInitialSize,
   defaultPdfLayout,
   normalizePdfLayout,
@@ -275,6 +277,18 @@ export default function StaffPdfLibraryEditor({
           onBusy={setImportBusy}
           onImported={reload}
         />
+        <div className="mt-3">
+          <StaffPdfAlphabetImport
+            api={api}
+            data={data}
+            disabled={busy}
+            onBusy={setImportBusy}
+            onImported={reload}
+          />
+          <p className="mt-1 text-xs text-gray-400">
+            Selecione a pasta-mãe que contém as pastas de letras.
+          </p>
+        </div>
         <div className="mt-4 space-y-2">
           {data.pendingUploads?.map((b) => (
             <div
@@ -301,7 +315,7 @@ export default function StaffPdfLibraryEditor({
                 .map((base) => base.category || UNCATEGORIZED_PDFS),
             ),
           ]
-            .sort()
+            .sort(compareStaffPdfNames)
             .map((category) => (
               <details
                 key={category}

@@ -16,6 +16,7 @@ import type {
 import type { StaffDocumentView } from "./staffDocumentService";
 import {
   firstInitial,
+  matchingAlphabetName,
   readAlphabetFiles,
   validDecorativePngHeader,
   type DecorativeInitial,
@@ -56,9 +57,11 @@ export interface StaffPdfApi {
   ): Promise<{ created: number; skipped: number }>;
   initial(id: string, text: string): Promise<DecorativeInitial | undefined>;
   uploadAlphabet(
-    base: Pick<StaffPdfBase, "id" | "name">,
+    base: Pick<StaffPdfBase, "id" | "name"> &
+      Partial<Pick<StaffPdfBase, "revision">>,
     files: File[],
     progress?: (completed: number, total: number) => void,
+    mold?: Pick<StaffPdfLayoutView, "id" | "name">,
   ): Promise<void>;
   saveCatalogInitialSize(
     base: StaffPdfBase,
@@ -177,10 +180,10 @@ export const staffPdfApi: StaffPdfApi = {
       sizePercent: data.sizePercent,
     };
   },
-  uploadAlphabet: async (base, files, progress) => {
+  uploadAlphabet: async (base, files, progress, mold) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
-    const parsed = readAlphabetFiles(files, base.name),
+    const parsed = readAlphabetFiles(files, mold?.name ?? base.name),
       letters: Record<string, { path: string }> = {};
     for (const { file } of parsed.letters) {
       const header = new Uint8Array(await file.slice(0, 33).arrayBuffer());
@@ -216,6 +219,10 @@ export const staffPdfApi: StaffPdfApi = {
     try {
       await staffPdfRequest(`/bases/${base.id}/alphabet`, {
         folderName: parsed.folderName,
+        ...(base.revision ? { baseRevision: base.revision } : {}),
+        ...(!matchingAlphabetName(base.name, parsed.folderName) && mold
+          ? { layoutId: mold.id }
+          : {}),
         letters,
       });
     } catch (e) {

@@ -115,8 +115,11 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         const source = letter ? alphabet?.[letter] : undefined;
         return source ? { source, sizePercent: 60 } : undefined;
       },
-      uploadAlphabet: async ({ id, name }, files, progress) => {
-        const { folderName, letters } = readAlphabetFiles(files, name);
+      uploadAlphabet: async ({ id, name }, files, progress, mold) => {
+        const { folderName, letters } = readAlphabetFiles(
+          files,
+          mold?.name ?? name,
+        );
         progress?.(0, letters.length);
         alphabets.set(
           id,

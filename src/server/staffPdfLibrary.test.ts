@@ -516,6 +516,48 @@ test("decorative letters use the folder stem of an imported template and preserv
       422,
     );
     assert.ok(objects.has(path));
+    const layoutId = pdfLibraryId("Marrom_template");
+    const mold = {
+      enabled: true,
+      name: "Marrom_template",
+      revision,
+      layout: { ...defaultPdfLayout(), base_id: "f".repeat(32) },
+    };
+    const layoutPath = `_staffPdfLayouts/${layoutId}`;
+    docs.set(layoutPath, mold);
+    const alias = {
+      folderName: "Marrom",
+      layoutId,
+      letters: { É: { path: accentedPath } },
+    };
+    assert.equal(
+      (await request(`/library/bases/${id}/alphabet`, "manager", alias)).status,
+      409,
+    );
+    docs.set(layoutPath, { ...mold, layout: { ...mold.layout, base_id: id } });
+    assert.equal(
+      (
+        await request(`/library/bases/${id}/alphabet`, "manager", {
+          ...alias,
+          baseRevision: revision,
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (await request(`/library/bases/${id}/alphabet`, "manager", alias)).status,
+      200,
+    );
+    const library = await (await request("/library", "manager")).json();
+    assert.equal(
+      library.bases.find((base: { id: string }) => base.id === id)
+        .initialFolderName,
+      "Marrom",
+    );
+    const linked = await (
+      await request(`/library/bases/${id}/initial?letter=%C3%89`, "generator")
+    ).json();
+    assert.equal(linked.url, `https://signed.example.test/${accentedPath}`);
   }));
 
 test("batch recipes snapshot inputs, preserve tracking and enforce ownership, idempotence and three-day expiry", async () =>
