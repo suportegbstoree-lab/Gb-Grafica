@@ -5,7 +5,10 @@ import StaffPdfBaseImport from "./StaffPdfBaseImport";
 import StaffPdfAlphabetImport from "./StaffPdfAlphabetImport";
 import StaffPdfPicker from "./StaffPdfPicker";
 import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
-import { alphabetFolderName } from "../lib/decorativeInitial";
+import {
+  alphabetFolderName,
+  DEFAULT_DECORATIVE_INITIAL_PERCENT,
+} from "../lib/decorativeInitial";
 import StaffPdfPreview from "./StaffPdfPreview";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
@@ -24,6 +27,8 @@ import {
 import type { PersonalizationFont } from "../lib/textCustomization";
 import type { StaffPdfApi, StaffPdfLibrary } from "../services/staffPdfService";
 import { downloadPersonalization } from "../services/personalizationExport";
+const searchKey = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 const input =
   "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-2";
 export default function StaffPdfLibraryEditor({
@@ -41,6 +46,7 @@ export default function StaffPdfLibraryEditor({
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
     [query, setQuery] = React.useState(""),
+    [baseQueries, setBaseQueries] = React.useState(() => new Map<string, string>()),
     [importBusy, setImportBusy] = React.useState(false),
     [catalogBaseId, setCatalogBaseId] = React.useState(""),
     [alphabetUpload, setAlphabetUpload] = React.useState<{
@@ -316,28 +322,44 @@ export default function StaffPdfLibraryEditor({
             ),
           ]
             .sort(compareStaffPdfNames)
-            .map((category) => (
-              <details
-                key={category}
-                className="rounded-lg border border-gray-800 p-3"
-              >
-                <summary className="cursor-pointer font-semibold">
-                  {category}
-                </summary>
-                <div className="mt-2 space-y-2">
-                  {data.bases
-                    .filter(
-                      (base) =>
-                        base.source === "internal" &&
-                        (base.category || UNCATEGORIZED_PDFS) === category,
-                    )
-                    .map((b) => (
+            .map((category) => {
+              const term = baseQueries.get(category) ?? "";
+              const key = searchKey(term);
+              const bases = data.bases.filter(
+                (base) =>
+                  base.source === "internal" &&
+                  (base.category || UNCATEGORIZED_PDFS) === category &&
+                  searchKey(base.name).includes(key),
+              );
+              return (
+                <details
+                  key={category}
+                  className="rounded-lg border border-gray-800 p-3"
+                >
+                  <summary className="cursor-pointer font-semibold">
+                    {category}
+                  </summary>
+                  <label className="mt-3 block text-sm">
+                    Buscar base
+                    <input
+                      aria-label={`Buscar base em ${category}`}
+                      className={input}
+                      value={term}
+                      onChange={(event) =>
+                        setBaseQueries(new Map(baseQueries).set(category, event.target.value))
+                      }
+                    />
+                  </label>
+                  <div className="mt-3 max-h-96 space-y-2 overflow-y-auto">
+                    {!bases.length && <p className="p-3 text-sm text-gray-400">Nenhuma base encontrada.</p>}
+                    {bases.map((b) => (
                       <div
                         key={b.id}
                         className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 p-3"
                       >
-                        <span className="min-w-0 break-words">
-                          {b.name} · {b.pageCount} páginas
+                        <div className="min-w-0 flex-1 basis-52">
+                          <p className="break-words font-medium">{b.name}</p>
+                          <p className="text-xs text-gray-400">{b.pageCount} páginas</p>
                           {b.initialFolderName && (
                             <span className="block text-xs text-gray-300">
                               Pasta vinculada · {b.initialFolderName}
@@ -349,30 +371,33 @@ export default function StaffPdfLibraryEditor({
                               {b.initialLetters.slice().sort().join(", ")}
                             </span>
                           )}
-                        </span>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          className="rounded-lg border border-gray-700 p-2 text-sm"
-                          onClick={() => edit(b)}
-                        >
-                          Editar {b.name}
-                        </button>
-                        {alphabetPicker(b)}
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            setConfirm({ kind: "base", id: b.id, name: b.name })
-                          }
-                          className="text-sm text-red-300"
-                        >
-                          Excluir base
-                        </button>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            className="rounded-lg border border-gray-700 p-2 text-sm"
+                            onClick={() => edit(b)}
+                          >
+                            Editar {b.name}
+                          </button>
+                          {alphabetPicker(b)}
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              setConfirm({ kind: "base", id: b.id, name: b.name })
+                            }
+                            className="text-sm text-red-300"
+                          >
+                            Excluir base
+                          </button>
+                        </div>
                       </div>
                     ))}
-                </div>
-              </details>
-            ))}
+                  </div>
+                </details>
+              );
+            })}
         </div>
       </div>
       {!!catalogAlphabets.length && (
@@ -424,7 +449,7 @@ export default function StaffPdfLibraryEditor({
                   min={5}
                   max={100}
                   step="any"
-                  defaultValue={catalogBase.initialSizePercent ?? 60}
+                  defaultValue={catalogBase.initialSizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT}
                   required
                   disabled={busy}
                 />
@@ -743,7 +768,7 @@ export default function StaffPdfLibraryEditor({
                   placeholder={String(
                     editing.layout.imagem_full_page
                       ? 100
-                      : (base?.initialSizePercent ?? 60),
+                      : (base?.initialSizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT),
                   )}
                   value={editing.layout.initial_size_percent ?? ""}
                   onChange={(event) =>

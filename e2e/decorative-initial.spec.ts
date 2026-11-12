@@ -11,7 +11,6 @@ test('pasta do PDF seleciona a primeira letra na prévia, sem inicial na contrac
   await expect(editor.getByText('PDF: editor-template.pdf', { exact: true })).toBeVisible();
   await editor.getByLabel('Pasta de letras de editor-template.pdf', { exact: true }).setInputFiles(folder);
   await expect(editor.getByText(/Pasta: editor-template · Letras: A/)).toBeVisible();
-  await editor.getByLabel('Tamanho máximo da inicial (% da página)').fill('55');
   await editor.getByRole('button', { name: 'Salvar Produto', exact: true }).click();
   await expect(editor).toHaveCount(0);
   await page.getByRole('link', { name: 'Visualizar como cliente', exact: true }).click();
@@ -48,7 +47,7 @@ test('pasta do PDF seleciona a primeira letra na prévia, sem inicial na contrac
   await expect(page.getByText('Adicionado ao carrinho', { exact: false }).first()).toBeVisible();
   const cart = JSON.parse(await page.getByTestId('e2e-cart').textContent() || '[]');
   expect(cart).toHaveLength(1); expect(cart[0].inicialReferencia).toContain('"A"');
-  expect(cart[0].inicialReferencia).toContain('55');
+  expect(JSON.parse(cart[0].inicialReferencia)[2]).toBe(50);
 });
 
 test('PDF de produção preserva os vetores e o alpha da inicial apenas na primeira página', async ({ page }) => {

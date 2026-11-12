@@ -6,7 +6,9 @@ import {
   createEmailCampaign,
   deleteEmailCampaign,
   updateEmailCampaign,
+  releaseScheduledCampaigns,
 } from "./emailCampaigns.js";
+import { listEmailAutomations, prepareEmailAutomation, saveEmailAutomation } from "./emailAutomations.js";
 import { previewEmailCampaign } from "./emailCampaignPreview.js";
 import { campaignEmailMessage } from "./emailMessages.js";
 import { renderEmailPreview } from "./resendEmailTemplates.js";
@@ -95,8 +97,8 @@ test("two sessions cannot overwrite each other and stale deletion cannot remove 
   );
   assert.ok(docs.has(`_emailCampaigns/${draft.id}`));
 });
-test("only drafts can be edited or deleted, including by a caller bypassing the UI", async () => {
-  for (const phase of ["queued", "completed", "cancelled"]) {
+test("pending, scheduled and cancelled campaigns reject editing and deletion", async () => {
+  for (const phase of ["queued", "scheduled", "cancelled"]) {
     const { db, docs } = memoryFirestore();
     const draft = await createEmailCampaign(db, "admin", fields);
     docs.set(`_emailCampaigns/${draft.id}`, { ...draft, status: phase });
@@ -242,4 +244,72 @@ test("previews allow empty new drafts but reject HTML injection, unsafe field ty
     { ...fields, subject: "x".repeat(161) },
   ])
     assert.throws(() => previewEmailCampaign(invalid), status(422));
+});
+
+test("editing a completed campaign keeps its counts and resend creates one fresh execution", async () => {
+  const { db, docs } = memoryFirestore();
+  const draft = await createEmailCampaign(db, "admin", fields);
+  const path = `_emailCampaigns/${draft.id}`;
+  docs.set(path, { ...draft, status: "completed", queuedCount: 3, processedCount: 3, acceptedCount: 2 });
+  const saved = await updateEmailCampaign(db, draft.id, "editor", {
+    ...fields, subject: "Oferta atualizada", expectedRevision: draft.revision,
+  });
+  assert.equal(docs.get(path)?.status, "completed");
+  assert.equal(docs.get(path)?.acceptedCount, 2);
+  const attempts = await Promise.allSettled([
+    changeEmailCampaign(db, draft.id, "admin", "resend", saved.revision),
+    changeEmailCampaign(db, draft.id, "admin", "resend", saved.revision),
+  ]);
+  assert.equal(attempts.filter((row) => row.status === "fulfilled").length, 1);
+  const copies = [...docs.values()].filter((row) => row.resendOf === draft.id);
+  assert.equal(copies.length, 1);
+  assert.equal(copies[0].subject, "Oferta atualizada");
+  assert.equal(copies[0].status, "queued");
+  assert.equal(copies[0].acceptedCount, 0);
+  await deleteEmailCampaign(db, draft.id, docs.get(path)!.revision);
+  assert.equal(docs.has(path), false);
+  assert.ok([...docs.values()].some((row) => row.resendOf === draft.id && row.status === "queued"));
+});
+
+test("schedules cannot release early, can return to draft and enter the queue only once when due", async () => {
+  const { db, docs } = memoryFirestore();
+  const draft = await createEmailCampaign(db, "admin", fields);
+  const path = `_emailCampaigns/${draft.id}`;
+  const now = Date.now(), target = now + 60000;
+  await assert.rejects(changeEmailCampaign(db, draft.id, "admin", "schedule", draft.revision, now, now), status(422));
+  await changeEmailCampaign(db, draft.id, "admin", "schedule", draft.revision, target, now);
+  await releaseScheduledCampaigns(db, target - 1);
+  assert.equal(docs.get(path)?.status, "scheduled");
+  await changeEmailCampaign(db, draft.id, "admin", "cancel", docs.get(path)?.revision);
+  await releaseScheduledCampaigns(db, target);
+  assert.equal(docs.get(path)?.status, "draft");
+  await changeEmailCampaign(db, draft.id, "admin", "schedule", docs.get(path)?.revision, target, now);
+  await Promise.all([releaseScheduledCampaigns(db, target), releaseScheduledCampaigns(db, target)]);
+  assert.equal(docs.get(path)?.status, "queued");
+  assert.equal(docs.get(path)?.queuedAt, new Date(target).toISOString());
+  assert.equal(docs.get(path)?.scheduledAt, null);
+});
+
+test("marketing rules default to disabled, render event data and skip a promotion removed before release", async () => {
+  const { db, docs } = memoryFirestore();
+  const now = Date.now(), target = now + 60000;
+  assert.ok((await listEmailAutomations(db)).every((rule) => !rule.enabled));
+  await db.runTransaction(async tx => assert.equal(await prepareEmailAutomation(db, tx, "product", "one", "Caderno"), undefined));
+  for (const event of ["product", "promotion", "coupon"] as const) {
+    await saveEmailAutomation(db, "admin", event, {
+      enabled: true, expectedRevision: null, subject: "Conheça {{nome}}",
+      text: event === "coupon" ? "Use {{codigo}}" : "Confira na loja",
+    });
+    await db.runTransaction(async tx => {
+      const enqueue = await prepareEmailAutomation(db, tx, event, "CODIGO", "Oferta", event === "promotion" ? target : 0, now);
+      enqueue?.();
+    });
+  }
+  const campaigns = [...docs.values()].filter((row) => row.automationEvent);
+  assert.equal(campaigns.length, 3);
+  assert.equal(campaigns.find((row) => row.automationEvent === "product")?.channel, "news");
+  assert.equal(campaigns.find((row) => row.automationEvent === "coupon")?.text, "Use CODIGO");
+  assert.equal(campaigns.find((row) => row.automationEvent === "promotion")?.status, "scheduled");
+  await releaseScheduledCampaigns(db, target);
+  assert.equal([...docs.values()].find((row) => row.automationEvent === "promotion")?.status, "cancelled");
 });

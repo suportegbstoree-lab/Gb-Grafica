@@ -2,6 +2,7 @@ import { uploadBatch } from "../lib/uploadBatch";
 import React from "react";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import {
+  DEFAULT_DECORATIVE_INITIAL_PERCENT,
   alphabetFolderName,
   readAlphabetFiles,
   validDecorativePngHeader,
@@ -64,7 +65,7 @@ export default function PdfTemplatesEditor({
       }
       const alphabet: DecorativeAlphabet = {
         folderName: parsed.folderName,
-        sizePercent: template.alphabet?.sizePercent || 60,
+        sizePercent: template.alphabet?.sizePercent || DEFAULT_DECORATIVE_INITIAL_PERCENT,
         letters: {},
       };
       const results = await uploadBatch(

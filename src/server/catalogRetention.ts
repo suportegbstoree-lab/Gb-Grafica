@@ -348,6 +348,17 @@ export async function cleanupCatalog(
       });
       if (!source) continue;
       await db.recursiveDelete(sourceDoc(db, source));
+      if (source.startsWith("_emailCampaigns/")) {
+        const id = source.split("/")[1];
+        for (;;) {
+          if (Date.now() >= deadline)
+            throw new Error("Campaign cleanup time budget reached");
+          const jobs = await db.collection("_emailOutbox")
+            .where("campaignId", "==", id).limit(100).get();
+          await Promise.all(jobs.docs.map((doc) => doc.ref.delete()));
+          if (jobs.size < 100) break;
+        }
+      }
       if (source.startsWith("anuncios/")) {
         const id = source.split("/")[1];
         await db.collection("productRatings").doc(id).delete();

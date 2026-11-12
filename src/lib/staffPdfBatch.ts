@@ -2,6 +2,13 @@ import type { StaffPdfJob } from "./staffPdf.js";
 import type { StaffBarcodeVersion } from "./staffPdfBarcode.js";
 
 export const STAFF_PDF_BATCH_MAX_ITEMS = 50;
+export const STAFF_PDF_BATCH_NAME_MAX = 80;
+export function staffPdfBatchName(value: unknown): string {
+  if (typeof value !== "string" || value.length > STAFF_PDF_BATCH_NAME_MAX || /[\x00-\x1f\x7f]/.test(value))
+    throw new Error("Informe um nome de lote com até 80 caracteres.");
+  return value.trim().normalize("NFC");
+}
+
 import type { PrintProfile } from "./printProfile.js";
 import type { TextCustomization } from "./textCustomization.js";
 import type { PersonalizationFont } from "./textCustomization.js";
@@ -22,6 +29,7 @@ export const isStaffPdfSimpleJob = (
 export interface StaffPdfBatchView {
   id: string;
   reference: string;
+  name?: string;
   createdAt: string;
   expiresAt: string;
   ownerName: string;
@@ -45,7 +53,8 @@ export interface StaffPdfRecipe {
 }
 export interface StaffPdfBatchApi {
   list(): Promise<{ batches: StaffPdfBatchView[] }>;
-  create(requestId: string): Promise<StaffPdfBatchView>;
+  rename(id: string, name: string): Promise<StaffPdfBatchView>;
+  create(requestId: string, name?: string): Promise<StaffPdfBatchView>;
   items(batchId: string): Promise<{ items: StaffPdfBatchItemView[] }>;
   save(
     batchId: string,

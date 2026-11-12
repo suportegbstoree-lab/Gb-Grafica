@@ -1,5 +1,7 @@
 import React from "react";
 import ConfirmDialog from "./ConfirmDialog";
+import EditorModal from "./EditorModal";
+import EmailAutomationSettings from "./EmailAutomationSettings";
 import EmailCampaignEditor from "./EmailCampaignEditor";
 import { emailApi, type EmailApi } from "../services/emailService";
 import type {
@@ -10,6 +12,7 @@ import type {
 const labels: Record<string, string> = {
   draft: "Rascunho",
   queued: "Na fila",
+  scheduled: "Agendada",
   completed: "Processamento concluído",
   cancelled: "Cancelada",
 };
@@ -25,9 +28,10 @@ export default function EmailManagement({
   const [editor, setEditor] = React.useState<EmailCampaign | null | undefined>(
     undefined,
   );
+  const [schedule, setSchedule] = React.useState<{ campaign: EmailCampaign; time: string }>();
   const [confirmation, setConfirmation] = React.useState<{
     campaign: EmailCampaign;
-    action: "queue" | "cancel" | "delete";
+    action: "queue" | "cancel" | "delete" | "resend";
   } | null>(null);
   const alive = React.useRef(true),
     working = React.useRef(false);
@@ -74,7 +78,9 @@ export default function EmailManagement({
     setError("");
     setMessage(
       editor
-        ? "Rascunho atualizado. Nenhum e-mail foi enviado."
+        ? editor.status === "draft"
+          ? "Rascunho atualizado. Nenhum e-mail foi enviado."
+          : "Campanha atualizada para um próximo envio."
         : "Rascunho criado. Confira a mensagem antes de iniciar o envio.",
     );
     // A refresh failure must not turn a successful creation into a duplicate retry.
@@ -112,14 +118,16 @@ export default function EmailManagement({
             },
         );
         setMessage(
-          "Rascunho excluído. A cópia privada será limpa após 7 dias.",
+          campaign.status === "draft"
+            ? "Rascunho excluído. A cópia privada será limpa após 7 dias."
+            : "Campanha excluída da lista. A cópia privada será limpa após 7 dias.",
         );
       }
     } else {
       await api.campaignAction(campaign.id, action, campaign.revision ?? null);
       await reload();
-      if (action === "queue") await dispatch();
-      else setMessage("Campanha cancelada.");
+      if (action === "queue" || action === "resend") await dispatch();
+      else setMessage(campaign.status === "scheduled" ? "Agendamento cancelado. A campanha voltou para rascunho." : "Campanha cancelada.");
     }
   };
   return (
@@ -188,6 +196,13 @@ export default function EmailManagement({
           significa aceito pelo serviço de e-mail; não confirma entrega na caixa
           de entrada.
         </p>
+        {!!overview?.automations?.length && (
+          <EmailAutomationSettings rules={overview.automations} onSave={(value) => run(async () => {
+            await api.saveAutomation(value);
+            await reload();
+            setMessage("Automação salva.");
+          })} />
+        )}
         {!overview ? (
           <p>Carregando campanhas...</p>
         ) : !overview.campaigns.length ? (
@@ -208,6 +223,13 @@ export default function EmailManagement({
                   : "Novidades e informativos"}{" "}
                 · {labels[campaign.status] || campaign.status}
               </p>
+              {campaign.status === "scheduled" && typeof campaign.scheduledAt === "number" && (
+                <p className="text-sm">
+                  Envio previsto para <time dateTime={new Date(campaign.scheduledAt).toISOString()}>
+                    {new Date(campaign.scheduledAt).toLocaleString("pt-BR")}
+                  </time>
+                </p>
+              )}
               <p className="whitespace-pre-wrap text-sm text-gray-300">
                 {campaign.text}
               </p>
@@ -218,11 +240,11 @@ export default function EmailManagement({
                 {campaign.reviewCount}
               </p>
               <div className="flex flex-wrap gap-3">
-                {campaign.status === "draft" && (
+                {(campaign.status === "draft" || campaign.status === "completed") && (
                   <>
                     <button
                       type="button"
-                      aria-label={`Editar rascunho ${campaign.subject}`}
+                      aria-label={`Editar ${campaign.status === "draft" ? "rascunho" : "campanha"} ${campaign.subject}`}
                       onClick={() => setEditor(campaign)}
                       className="rounded-lg border border-gray-700 px-4 py-3 text-xs font-bold"
                     >
@@ -230,7 +252,7 @@ export default function EmailManagement({
                     </button>
                     <button
                       type="button"
-                      aria-label={`Excluir rascunho ${campaign.subject}`}
+                      aria-label={`Excluir ${campaign.status === "draft" ? "rascunho" : "campanha"} ${campaign.subject}`}
                       onClick={() =>
                         setConfirmation({ campaign, action: "delete" })
                       }
@@ -242,15 +264,22 @@ export default function EmailManagement({
                       type="button"
                       disabled={!overview.marketingConfigured}
                       onClick={() =>
-                        setConfirmation({ campaign, action: "queue" })
+                        setConfirmation({ campaign, action: campaign.status === "draft" ? "queue" : "resend" })
                       }
                       className="rounded-lg bg-purple-500 px-4 py-3 text-xs font-bold disabled:opacity-50"
                     >
-                      Enviar campanha {campaign.subject}
+                      {campaign.status === "draft" ? "Enviar campanha" : "Reenviar campanha"} {campaign.subject}
                     </button>
+                    {campaign.status === "draft" && (
+                      <button type="button" disabled={!overview.marketingConfigured}
+                        onClick={() => { setError(""); setSchedule({ campaign, time: "" }); }}
+                        className="rounded-lg border border-gray-700 px-4 py-3 text-xs font-bold disabled:opacity-50">
+                        Agendar envio
+                      </button>
+                    )}
                   </>
                 )}
-                {campaign.status === "queued" && (
+                {(campaign.status === "queued" || campaign.status === "scheduled") && (
                   <button
                     type="button"
                     onClick={() =>
@@ -258,7 +287,7 @@ export default function EmailManagement({
                     }
                     className="rounded-lg border border-red-500/50 px-4 py-3 text-xs text-red-300"
                   >
-                    Cancelar campanha {campaign.subject}
+                    {campaign.status === "scheduled" ? "Cancelar agendamento" : "Cancelar campanha"} {campaign.subject}
                   </button>
                 )}
               </div>
@@ -274,31 +303,64 @@ export default function EmailManagement({
           onClose={() => setEditor(undefined)}
         />
       )}
+      {schedule && (
+        <EditorModal title="Agendar envio" busy={busy}
+          onClose={() => setSchedule(undefined)} doneLabel="Fechar">
+          <form className="space-y-4" onSubmit={(event) => {
+            event.preventDefault();
+            void run(async () => {
+              const time = new Date(schedule.time).getTime();
+              if (!Number.isFinite(time) || time <= Date.now()) throw new Error("Escolha uma data futura.");
+              await api.campaignAction(schedule.campaign.id, "schedule", schedule.campaign.revision ?? null, time);
+              if (!alive.current) return;
+              setSchedule(undefined);
+              setMessage("Envio agendado.");
+              await reload();
+            });
+          }}>
+            <p className="text-sm">Campanha: {schedule.campaign.subject}</p>
+            <label className="block text-sm">
+              Data e hora do envio
+              <input type="datetime-local" required value={schedule.time}
+                onChange={(event) => setSchedule({ ...schedule, time: event.target.value })}
+                className="mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2" />
+            </label>
+            <p className="text-xs text-gray-400">
+              Fuso do navegador: {Intl.DateTimeFormat().resolvedOptions().timeZone}.
+              A fila começa na primeira execução do servidor após esse horário.
+            </p>
+            {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+            <button type="submit" disabled={busy} className="rounded-lg bg-pink-500 px-4 py-2 text-sm font-bold disabled:opacity-50">
+              Confirmar agendamento
+            </button>
+          </form>
+        </EditorModal>
+      )}
       {confirmation && (
         <ConfirmDialog
           busy={busy}
           title={
-            confirmation.action === "queue"
-              ? "Enviar campanha"
-              : confirmation.action === "delete"
-                ? "Excluir rascunho?"
-                : "Cancelar campanha"
+            confirmation.action === "queue" ? "Enviar campanha"
+              : confirmation.action === "resend" ? "Reenviar campanha"
+              : confirmation.action === "delete" ? confirmation.campaign.status === "draft" ? "Excluir rascunho?" : "Excluir campanha?"
+              : confirmation.campaign.status === "scheduled" ? "Cancelar agendamento?" : "Cancelar campanha"
           }
           message={
-            confirmation.action === "queue"
-              ? `Enviar “${confirmation.campaign.subject}” para quem autorizou ${confirmation.campaign.channel === "promotions" ? "promoções" : "novidades e informativos"}? A preferência será conferida novamente antes de cada envio.`
+            confirmation.action === "queue" || confirmation.action === "resend"
+              ? `${confirmation.action === "resend" ? "Reenviar" : "Enviar"} “${confirmation.campaign.subject}” para quem autorizou ${confirmation.campaign.channel === "promotions" ? "promoções" : "novidades e informativos"}? A preferência será conferida novamente antes de cada envio.`
               : confirmation.action === "delete"
-                ? `Excluir o rascunho “${confirmation.campaign.subject}”? Ele sai da lista agora e sua cópia privada será limpa após 7 dias. Nenhum e-mail será enviado.`
-                : `Cancelar “${confirmation.campaign.subject}”? Isso interrompe os próximos envios; mensagens já aceitas pelo serviço não podem ser recolhidas.`
+                ? `Excluir “${confirmation.campaign.subject}”? Ela sai da lista agora e sua cópia privada será limpa após 7 dias.`
+                : confirmation.campaign.status === "scheduled"
+                  ? `Cancelar o agendamento de “${confirmation.campaign.subject}” e voltar para rascunho?`
+                  : `Cancelar “${confirmation.campaign.subject}”? Isso interrompe os próximos envios. Mensagens já aceitas pelo serviço não podem ser recolhidas.`
           }
           confirmLabel={
-            confirmation.action === "queue"
-              ? "Confirmar envio"
-              : confirmation.action === "delete"
-                ? "Excluir rascunho"
-                : "Confirmar cancelamento"
+            confirmation.action === "queue" ? "Confirmar envio"
+              : confirmation.action === "resend" ? "Confirmar reenvio"
+              : confirmation.action === "delete" ? confirmation.campaign.status === "draft" ? "Excluir rascunho" : "Excluir campanha"
+              : "Confirmar cancelamento"
           }
-          danger={confirmation.action !== "queue"}
+          danger={confirmation.action === "delete" || confirmation.action === "cancel"}
           onCancel={() => setConfirmation(null)}
           onConfirm={() => void run(confirm)}
         />

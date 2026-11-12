@@ -8,6 +8,7 @@ import {
 } from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
 import {
+  DEFAULT_DECORATIVE_INITIAL_PERCENT,
   findAlphabetLetter,
   readAlphabetFiles,
 } from "../lib/decorativeInitial";
@@ -113,7 +114,8 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         const alphabet = alphabets.get(id);
         const letter = findAlphabetLetter(alphabet, text);
         const source = letter ? alphabet?.[letter] : undefined;
-        return source ? { source, sizePercent: 60 } : undefined;
+        const sizePercent = bases.find((base) => base.id === id)?.initialSizePercent;
+        return source ? { source, sizePercent: sizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT } : undefined;
       },
       uploadAlphabet: async ({ id, name }, files, progress, mold) => {
         const { folderName, letters } = readAlphabetFiles(
@@ -130,6 +132,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             ? {
                 ...base,
                 initialFolderName: folderName,
+                initialSizePercent: base.initialSizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT,
                 initialLetters: letters.map(({ letter }) => letter),
               }
             : base,
@@ -227,7 +230,12 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             count: records.size,
           })),
         }),
-        create: async (requestId) => {
+        rename: async (id, name) => {
+          const batch = batches.get(id)!;
+          batch.view = { ...batch.view, name, count: batch.records.size };
+          return batch.view;
+        },
+        create: async (requestId, name) => {
           const id = requestId.replaceAll("-", "");
           const existing = batches.get(id);
           if (existing) return existing.view;
@@ -239,6 +247,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             createdAt: new Date().toISOString(),
             expiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
             ownerName: "Equipe de teste",
+            name,
             count: 0,
           };
           batches.set(id, { view, records: new Map() });

@@ -132,12 +132,14 @@ export default function EmailCampaignEditor({
     <>
       <EditorModal
         wide
-        title={campaign ? "Editar rascunho" : "Nova campanha"}
+        title={campaign?.status === "completed" ? "Editar campanha" : campaign ? "Editar rascunho" : "Nova campanha"}
         busy={saving}
         onClose={close}
         closeLabel="Fechar editor de campanha"
         doneLabel="Fechar editor"
-        footerText="Salvar mantém a campanha como rascunho. O envio exige uma confirmação separada."
+        footerText={campaign?.status === "completed"
+          ? "As alterações serão usadas no próximo envio."
+          : "Salvar mantém a campanha como rascunho. O envio exige uma confirmação separada."}
         footerActions={
           <button
             type="submit"

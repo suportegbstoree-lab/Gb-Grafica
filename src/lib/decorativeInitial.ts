@@ -1,3 +1,5 @@
+export const DEFAULT_DECORATIVE_INITIAL_PERCENT = 50;
+
 export const MAX_ALPHABET_LETTERS = 64;
 
 /** Folder names are metadata; they are never used to build Storage paths. */

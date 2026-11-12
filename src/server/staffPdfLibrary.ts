@@ -39,6 +39,7 @@ import {
 import { retainedAssetPath } from "../lib/catalogRetention.js";
 import { uploadBatch } from "../lib/uploadBatch.js";
 import {
+  DEFAULT_DECORATIVE_INITIAL_PERCENT,
   alphabetFolderName,
   findAlphabetLetter,
   isAlphabetLetter,
@@ -614,7 +615,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           action: "read",
           expires: now() + 300000,
         });
-      res.json({ url, sizePercent: alphabet.sizePercent || 60 });
+      res.json({ url, sizePercent: alphabet.sizePercent || DEFAULT_DECORATIVE_INITIAL_PERCENT });
     }),
   );
   router.post(
@@ -627,7 +628,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           layoutId,
           baseRevision,
           letters,
-          sizePercent = base.alphabet?.sizePercent ?? 60,
+          sizePercent = base.alphabet?.sizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT,
         } = req.body || {};
       if (
         base.source !== "internal" ||

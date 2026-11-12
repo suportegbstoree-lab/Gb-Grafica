@@ -1,3 +1,4 @@
+import { prepareEmailAutomation } from "./emailAutomations.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import express from "express";
 import { OperationsError } from "../lib/operations.js";
@@ -164,8 +165,13 @@ export function createSalesAdminRouter(deps: {
             : { id: ref.id }),
           revision: randomUUID().replaceAll("-", ""),
         };
+        const automation = coupons && !id && input.active === true &&
+          Date.parse(String(input.expiresOn) + "T23:59:59.999-03:00") >= Date.now()
+          ? await prepareEmailAutomation(db, tx, "coupon", ref.id, String(input.description))
+          : undefined;
         if (id) tx.set(ref, row);
         else tx.create(ref, row);
+        automation?.();
         return row;
       });
       const result = await transaction.catch((error: unknown) => {

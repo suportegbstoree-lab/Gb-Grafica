@@ -25,6 +25,20 @@ test('deleted email drafts keep a private copy for a full week and are purged by
   assert.equal(result.backupsDeleted, 1); assert.equal(result.documentsDeleted, 1);
   assert.equal([...f.docs.keys()].filter(path => path.startsWith('_catalogTrash/')).length, 0);
 });
+test("removing a completed campaign retains its outbox only until the cleanup deadline", async () => {
+  const f = fixture(), campaignId = "12345678-1234-4234-8234-123456789abc";
+  const source = `_emailCampaigns/${campaignId}`;
+  await f.mutate(source, { status: "completed", subject: "Oferta", text: "Campanha enviada" });
+  f.docs.set("_emailOutbox/sent", { campaignId, status: "accepted" });
+  f.docs.set("_emailOutbox/other", { campaignId: "other", status: "accepted" });
+  await f.mutate(source, null);
+  await cleanupCatalog(f.services, at + WEEK - 1);
+  assert.equal(f.docs.has("_emailOutbox/sent"), true);
+  const result = await cleanupCatalog(f.services, at + WEEK);
+  assert.equal(result.documentsDeleted, 1);
+  assert.equal(f.docs.has("_emailOutbox/sent"), false);
+  assert.equal(f.docs.has("_emailOutbox/other"), true);
+});
 const image = (id = "a") => `catalog/products/product/${id.repeat(32)}.png`;
 function fixture() {
   const { db, docs } = memoryFirestore();

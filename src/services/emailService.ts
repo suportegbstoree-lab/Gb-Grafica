@@ -1,7 +1,7 @@
 import { auth, type FirebaseUser } from '../firebase';
 import { apiFetch } from './apiClient';
 import { apiErrorMessage } from '../lib/apiError';
-import { EMAIL_CONSENT_VERSION, type EmailPreferences, type EmailOverview, type EmailCampaign, type EmailCampaignInput, type EmailCampaignPreview } from '../lib/email';
+import { EMAIL_CONSENT_VERSION, type EmailPreferences, type EmailOverview, type EmailCampaign, type EmailCampaignInput, type EmailCampaignPreview, type EmailAutomationRule } from '../lib/email';
 export interface EmailApi {
   preferences(): Promise<EmailPreferences>;
   savePreferences(value: EmailPreferences): Promise<EmailPreferences>;
@@ -10,7 +10,8 @@ export interface EmailApi {
   updateCampaign(id: string, value: EmailCampaignInput & { expectedRevision: string | null }): Promise<EmailCampaign>;
   deleteCampaign(id: string, expectedRevision: string | null): Promise<void>;
   previewCampaign(value: EmailCampaignInput, signal?: AbortSignal): Promise<EmailCampaignPreview>;
-  campaignAction(id: string, action: 'queue' | 'cancel', expectedRevision?: string | null): Promise<void>;
+  campaignAction(id: string, action: 'queue' | 'cancel' | 'resend' | 'schedule', expectedRevision?: string | null, scheduledAt?: number): Promise<void>;
+  saveAutomation(value: EmailAutomationRule): Promise<void>;
   dispatch(): Promise<{ busy: boolean; processed: number; workRemaining: boolean }>;
 }
 async function call<T>(path: string, value?: unknown, user = auth.currentUser, signal?: AbortSignal): Promise<T> {
@@ -26,5 +27,6 @@ export const emailApi: EmailApi = {
   updateCampaign: (id, value) => call(`admin/email/campaigns/${encodeURIComponent(id)}/update`, value),
   deleteCampaign: (id, expectedRevision) => call(`admin/email/campaigns/${encodeURIComponent(id)}/delete`, { expectedRevision }),
   previewCampaign: (value, signal) => call('admin/email/preview', value, auth.currentUser, signal),
-  campaignAction: (id, action, expectedRevision) => call(`admin/email/campaigns/${encodeURIComponent(id)}/${action}`, { ...(expectedRevision !== undefined ? { expectedRevision } : {}) }), dispatch: () => call('admin/email/dispatch', {}),
+  saveAutomation: ({ event, revision, ...value }) => call(`admin/email/automations/${event}`, { ...value, expectedRevision: revision }),
+  campaignAction: (id, action, expectedRevision, scheduledAt) => call(`admin/email/campaigns/${encodeURIComponent(id)}/${action}`, { expectedRevision, scheduledAt }), dispatch: () => call('admin/email/dispatch', {}),
 };

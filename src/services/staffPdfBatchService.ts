@@ -8,8 +8,10 @@ import { exportStaffPdf } from "./staffPdfRender";
 
 export const staffPdfBatchApi: StaffPdfBatchApi = {
   list: () => staffPdfRequest("/batches"),
-  create: async (requestId) =>
-    (await staffPdfRequest("/batches", { requestId })).batch,
+  create: async (requestId, name) =>
+    (await staffPdfRequest("/batches", { requestId, name })).batch,
+  rename: async (id, name) =>
+    (await staffPdfRequest(`/batches/${id}/name`, { name })).batch,
   items: (id) => staffPdfRequest(`/batches/${id}/items`),
   save: (id, job, requestId) =>
     staffPdfRequest(`/batches/${id}/items`, { job, requestId }),

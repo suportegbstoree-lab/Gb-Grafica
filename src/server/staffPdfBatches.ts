@@ -16,6 +16,7 @@ import { parsePrintProfile } from "../lib/printProfile.js";
 import {
   isStaffPdfSimpleJob,
   STAFF_PDF_BATCH_MAX_ITEMS,
+  staffPdfBatchName,
   type StaffPdfBatchJob,
 } from "../lib/staffPdfBatch.js";
 import { staffPdfOutputName } from "../lib/staffPdf.js";
@@ -25,6 +26,7 @@ import {
   STAFF_BATCH_TTL_MS,
 } from "../lib/staffPdfBarcode.js";
 import {
+  DEFAULT_DECORATIVE_INITIAL_PERCENT,
   findAlphabetLetter,
   matchingAlphabetName,
 } from "../lib/decorativeInitial.js";
@@ -65,6 +67,10 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     }
     next();
   });
+  function batchName(value: unknown) {
+    try { return staffPdfBatchName(value); }
+    catch (error) { throw new OperationsError((error as Error).message); }
+  }
   const action =
     (
       fn: (req: express.Request, res: express.Response) => Promise<void>,
@@ -76,6 +82,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
   const view = (id: string, data: any) => ({
     id,
     reference: data.reference,
+    ...(data.name ? { name: data.name } : {}),
     createdAt: data.createdAt,
     expiresAt: data.expiresAt,
     ownerName: data.ownerName,
@@ -223,12 +230,14 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const user = actor(res);
       const id = idFor(user.uid, req.body?.requestId);
       const ref = services().db.collection("_staffPdfBatches").doc(id);
-      const name = await activityActor(services().db, user);
+      const name = batchName(req.body?.name ?? "");
+      const owner = await activityActor(services().db, user);
       await services().db.runTransaction(async (tx) => {
         if ((await tx.get(ref)).exists) return;
         tx.create(ref, {
           ownerId: user.uid,
-          ownerName: name.actorName,
+          ownerName: owner.actorName,
+          name,
           itemIds: [],
           createdAt: new Date(now()).toISOString(),
           expiresAt: new Date(now() + STAFF_BATCH_TTL_MS).toISOString(),
@@ -237,6 +246,26 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       });
       const { data } = await access(id, user);
       res.status(201).json({ batch: view(id, data) });
+    }),
+  );
+  router.post(
+    "/:batchId/name",
+    action(async (req, res) => {
+      const user = actor(res), id = req.params.batchId;
+      if (!validDocumentId(id)) throw new OperationsError("Lote inválido.");
+      const name = batchName(req.body?.name);
+      const { db } = services();
+      const ref = db.collection("_staffPdfBatches").doc(id);
+      const batch = await db.runTransaction(async (tx) => {
+        const data = (await tx.get(ref)).data();
+        if (!data || (!user.admin && data.ownerId !== user.uid))
+          throw new OperationsError("Lote não encontrado.", 404);
+        if (Date.parse(data.expiresAt) <= now())
+          throw new OperationsError("Este lote expirou.", 410);
+        tx.set(ref, { name }, { merge: true });
+        return view(id, { ...data, name });
+      });
+      res.json({ batch });
     }),
   );
   router.get(
@@ -423,7 +452,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         if (!valid) throw new OperationsError("Inicial inválida.");
         initial = {
           asset: await snapshot(batchId, path, STAFF_DOCUMENT_MAX_BYTES),
-          sizePercent: initialSize ?? (alphabet.sizePercent || 60),
+          sizePercent: initialSize ?? (alphabet.sizePercent || DEFAULT_DECORATIVE_INITIAL_PERCENT),
         };
       }
       const current = await deps.authorize(req);

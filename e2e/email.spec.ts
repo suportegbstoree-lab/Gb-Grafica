@@ -117,3 +117,36 @@ test('the sandboxed preview works under the production frame CSP', async ({ page
   await expect(preview.getByText('HTML da campanha com isolamento.', { exact: true })).toBeVisible();
   await expect(page.locator('iframe[title="Prévia da campanha"]')).toHaveAttribute('sandbox', '');
 });
+
+test('admin schedules, cancels, edits and resends completed campaigns', async ({ page }) => {
+  await page.goto('/admin/email');
+  await page.getByRole('button', { name: 'Nova campanha', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Nova campanha', exact: true });
+  await editor.getByLabel('Assunto', { exact: true }).fill('Aviso agendado');
+  await editor.getByLabel('Mensagem', { exact: true }).fill('Confira os novos cadernos.');
+  await editor.getByRole('button', { name: 'Criar rascunho' }).click();
+  await page.getByRole('button', { name: 'Agendar envio', exact: true }).click();
+  const scheduler = page.getByRole('dialog', { name: 'Agendar envio', exact: true });
+  const tomorrow = new Date(Date.now() + 86400000);
+  await scheduler.getByLabel('Data e hora do envio').fill(tomorrow.toISOString().slice(0, 16));
+  await scheduler.getByRole('button', { name: 'Confirmar agendamento' }).click();
+  await expect(page.getByText(/Envio previsto para/)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancelar agendamento Aviso agendado' }).click();
+  await page.getByRole('alertdialog', { name: 'Cancelar agendamento?' }).getByRole('button', { name: 'Confirmar cancelamento' }).click();
+  await page.getByRole('button', { name: 'Enviar campanha Aviso agendado', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar envio' }).click();
+  await page.getByRole('button', { name: 'Editar campanha Aviso agendado' }).click();
+  const edit = page.getByRole('dialog', { name: 'Editar campanha', exact: true });
+  await edit.getByLabel('Assunto', { exact: true }).fill('Aviso revisado');
+  await edit.getByRole('button', { name: 'Salvar alterações' }).click();
+  await page.getByRole('button', { name: 'Reenviar campanha Aviso revisado' }).click();
+  await page.getByRole('button', { name: 'Confirmar reenvio' }).click();
+  await expect(page.getByText(/Processamento concluído/)).toHaveCount(2);
+  await page.getByRole('button', { name: 'Excluir campanha Aviso revisado' }).last().click();
+  await page.getByRole('alertdialog', { name: 'Excluir campanha?' }).getByRole('button', { name: 'Excluir campanha' }).click();
+  await expect(page.getByRole('heading', { name: 'Aviso revisado' })).toHaveCount(1);
+  await page.getByText('Automações de marketing', { exact: true }).click();
+  await page.getByLabel('Ativar novo produto', { exact: true }).check();
+  await page.getByRole('button', { name: 'Salvar automação' }).first().click();
+  await expect(page.getByText('Automação salva.', { exact: true })).toBeVisible();
+});

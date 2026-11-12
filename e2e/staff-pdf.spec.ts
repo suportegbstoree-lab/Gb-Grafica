@@ -59,6 +59,10 @@ test("lists bases in natural name order and links alphabet folders in bulk", asy
       "Editar 10 Azul.pdf",
       "Editar Abelhas.pdf",
     ]);
+    const search = page.getByRole("textbox", { name: "Buscar base em Cadernetas" });
+    await search.fill("abelhas");
+    await expect(page.getByRole("button", { name: /^Editar .*\.pdf$/ })).toHaveText(["Editar Abelhas.pdf"]);
+    await search.fill("");
     await page.getByLabel("Importar ou soltar JSON").setInputFiles({
       name: "templates.json",
       mimeType: "application/json",
@@ -283,6 +287,13 @@ test("imports 30 PNG letters including accents from an existing mold", async ({
     await expect(
       mold.getByText("Pasta vinculada · Kit de teste", { exact: true }),
     ).toBeVisible();
+    const size = mold.getByLabel("Tamanho da inicial no molde (% da página)", { exact: true });
+    await expect(size).toHaveAttribute("placeholder", "50");
+    await size.fill("57");
+    await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
+    await expect(mold).toHaveCount(0);
+    await page.getByRole("button", { name: "Editar molde", exact: true }).click();
+    await expect(size).toHaveValue("57");
     await mold.getByRole("button", { name: "Fechar editor de molde" }).click();
     await page.getByText("Sem categoria", { exact: true }).click();
     await expect(page.getByText(/^Letras cadastradas/)).toContainText(
@@ -572,14 +583,19 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await page
     .getByRole("button", { name: "Adicionar à fila", exact: true })
     .click();
+  await page.getByLabel("Nome do lote (opcional)", { exact: true }).fill("Pedidos de terça");
   await page
     .getByRole("button", { name: "Processar fila", exact: true })
     .click();
   await expect(page.getByRole("article")).toContainText("Concluído");
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
-  await page.getByText(/LOTE-TESTE ·/).click();
+  await page.getByText(/Pedidos de terça ·/).click();
+  await page.getByRole("button", { name: "Renomear lote" }).click();
+  await page.getByLabel("Novo nome do lote").fill("Pedidos revisados");
+  await page.getByRole("button", { name: "Salvar nome" }).click();
+  await expect(page.getByText(/Pedidos revisados ·/)).toBeVisible();
   const filter = page.getByRole("searchbox", {
-    name: "Buscar arquivo em LOTE-TESTE",
+    name: "Buscar arquivo em Pedidos revisados",
   });
   await filter.fill("inexistente");
   await expect(

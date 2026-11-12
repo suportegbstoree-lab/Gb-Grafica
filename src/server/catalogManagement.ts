@@ -1,3 +1,4 @@
+import { prepareEmailAutomation } from './emailAutomations.js';
 import { optionProductionAssets } from '../lib/productCustomization.js';
 import { variationReferenceUrls } from '../lib/productSales.js';
 import { VARIATION_TYPES } from './salesAdmin.js';
@@ -135,10 +136,17 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
       }
       const retain = await prepareCatalogRetention(db, tx, `${collection}/${id}`, old, next, services.bucket?.name || '');
       const audit = await prepareWorkActivity(db, who, action, id, tx);
+      const now = Date.now();
+      const automation = old || !next ? undefined
+        : collection === 'anuncios' ? await prepareEmailAutomation(db, tx, 'product', id, next.nome, 0, now)
+        : collection === 'promocoes' && next.ativa === true && (!next.endsAt || next.endsAt > now)
+          ? await prepareEmailAutomation(db, tx, 'promotion', id, next.titulo, next.startsAt || 0, now)
+          : undefined;
       // Keep fields outside this patch intact; validators check the resulting document.
       if (next) tx.set(target, collection === 'config' ? next : { ...next, id });
       else tx.delete(target);
       retain();
+      automation?.();
       audit.write(tx);
     });
     res.json({ saved: true });

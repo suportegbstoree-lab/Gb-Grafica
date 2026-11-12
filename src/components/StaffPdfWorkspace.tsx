@@ -14,7 +14,7 @@ import StaffPdfBatches from "./StaffPdfBatches";
 import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
-import { STAFF_PDF_BATCH_MAX_ITEMS } from "../lib/staffPdfBatch";
+import { STAFF_PDF_BATCH_MAX_ITEMS, STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
 import { Search } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
@@ -139,6 +139,7 @@ export default function StaffPdfWorkspace({
     [barcodeSizeDraft, setBarcodeSizeDraft] = React.useState<StaffBarcodeSize>(
       DEFAULT_STAFF_BARCODE_SIZE,
     ),
+    [batchName, setBatchName] = React.useState(""),
     [batchRevision, setBatchRevision] = React.useState(0),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
@@ -682,7 +683,7 @@ export default function StaffPdfWorkspace({
     try {
       const current = await api.list();
       if (alive.current) setData(current);
-      let batch = { requestId: crypto.randomUUID(), id: "", count: 0 };
+      let batch = { requestId: crypto.randomUUID(), id: "", count: 0, part: 1 };
       for (const item of pending) {
         if (!alive.current || stop.current || !generationAllowed.current) break;
         attempts.current = attempts.current.filter(
@@ -745,8 +746,13 @@ export default function StaffPdfWorkspace({
             let batchId = item.batchId;
             if (!batchId) {
               if (batch.count === STAFF_PDF_BATCH_MAX_ITEMS)
-                batch = { requestId: crypto.randomUUID(), id: "", count: 0 };
-              batch.id ||= (await api.batches.create(batch.requestId)).id;
+                batch = { requestId: crypto.randomUUID(), id: "", count: 0, part: batch.part + 1 };
+              const suffix = batch.part > 1 ? ` (${batch.part})` : "";
+              const name = batchName.trim();
+              batch.id ||= (await api.batches.create(
+                batch.requestId,
+                name ? name.slice(0, STAFF_PDF_BATCH_NAME_MAX - suffix.length) + suffix : undefined,
+              )).id;
               batchId = batch.id;
               batch.count++;
               if (item.csvRow)
@@ -1453,6 +1459,18 @@ export default function StaffPdfWorkspace({
               >
                 Cancelar revisão
               </button>
+            )}
+            {api.batches && (
+              <label className="block max-w-xs text-sm">
+                Nome do lote (opcional)
+                <input
+                  className="mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2"
+                  value={batchName}
+                  disabled={busy}
+                  maxLength={STAFF_PDF_BATCH_NAME_MAX}
+                  onChange={(event) => setBatchName(event.target.value)}
+                />
+              </label>
             )}
             <button
               type="button"

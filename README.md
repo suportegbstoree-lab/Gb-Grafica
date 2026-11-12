@@ -172,6 +172,26 @@ Veja o [roteiro completo de ativação e validação](docs/app-check-ativacao.md
 
 `PAGBANK_HOMOLOGATION_CAPTURE` deve permanecer ausente ou `false` em produção: essa variável ativa apenas a coleta Sandbox. A coleta para a validação final em produção exige a conta e a janela explícitas descritas abaixo.
 
+## Campanhas por e-mail
+
+Em **E-mails**, rascunhos podem ser enviados na hora ou agendados. Cancelar o
+agendamento devolve a campanha para rascunho. Campanhas concluídas podem ser
+editadas, excluídas ou reenviadas. O reenvio cria um novo registro com a versão
+atual do conteúdo e confere as autorizações de recebimento novamente.
+
+Em **Automações de marketing**, configure e ative os gatilhos para novo produto,
+nova promoção ativa e novo cupom ativo. Eles ficam desativados inicialmente e se
+aplicam aos novos cadastros. A campanha de uma promoção com início futuro entra
+na fila a partir da vigência. Use `{{nome}}` no assunto ou no texto e
+`{{codigo}}` para o código do cupom.
+
+A fila só libera um agendamento a partir do horário escolhido no painel. O
+`vercel.json` executa a fila diariamente. Para envio perto do horário escolhido,
+configure a rotina de e-mail para executar a cada minuto no Vercel Pro ou use um
+agendador externo que faça `GET /api/internal/email-dispatch` com
+`Authorization: Bearer <CRON_SECRET>`. A fila usa o mesmo endpoint autenticado
+que já existe na loja. [Limites do cron da Vercel](https://vercel.com/docs/schedules/cron-jobs/usage-and-pricing)
+
 ## Firebase
 
 - Adicione `localhost` e os domínios publicados em Authentication → Settings → Authorized domains.

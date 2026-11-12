@@ -1,3 +1,4 @@
+import { listEmailAutomations, saveEmailAutomation } from './emailAutomations.js';
 import express from 'express';
 import type { getAdminServices } from './firebaseAdmin.js';
 import { EmailError, emailConfiguration, readEmailPreferences, saveEmailPreferences, unsubscribeEmail } from './emailPreferences.js';
@@ -35,12 +36,24 @@ export function createEmailRouters(deps: Dependencies) {
   customer.use(errors);
   admin.use((_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
   admin.use(deps.appCheck, (req, res, next) => { void deps.manage(req).then(user => { const preview = req.path === '/preview'; deps.limit(`${preview ? 'email-preview' : 'email-admin'}:${user.uid}`, preview ? 120 : 60, 60000); res.locals.emailActor = user.uid; next(); }).catch(next); });
-  admin.get('/', wrap(async (_req, res) => { const config = emailConfiguration(), rows = await deps.services().db.collection('_emailCampaigns').orderBy('createdAt', 'desc').limit(30).get(); res.json({ configured: config.configured, marketingConfigured: config.marketingConfigured, campaigns: rows.docs.map(doc => ({ id: doc.id, ...doc.data(), revision: doc.data().revision ?? null })) }); }));
+  admin.get('/', wrap(async (_req, res) => { const config = emailConfiguration(), { db } = deps.services();
+    const campaigns = db.collection('_emailCampaigns');
+    const [recent, active, automations] = await Promise.all([
+      campaigns.orderBy('createdAt', 'desc').limit(30).get(),
+      campaigns.where('status', 'in', ['scheduled', 'queued']).limit(100).get(),
+      listEmailAutomations(db),
+    ]);
+    const rows = [...new Map([...active.docs, ...recent.docs].map(doc => [doc.id, doc])).values()];
+    res.json({ configured: config.configured, marketingConfigured: config.marketingConfigured, automations, campaigns: rows.map(doc => ({ id: doc.id, ...doc.data(), revision: doc.data().revision ?? null })) }); }));
   admin.post('/preview', wrap(async (req, res) => { res.json(previewEmailCampaign(req.body)); }));
   admin.post('/campaigns', wrap(async (req, res) => { res.status(201).json(await createEmailCampaign(deps.services().db, res.locals.emailActor, req.body)); }));
   admin.post('/campaigns/:id/update', wrap(async (req, res) => { res.json(await updateEmailCampaign(deps.services().db, req.params.id, res.locals.emailActor, req.body)); }));
   admin.post('/campaigns/:id/delete', wrap(async (req, res) => { await deleteEmailCampaign(deps.services().db, req.params.id, req.body?.expectedRevision); res.json({ deleted: true }); }));
-  for (const action of ['queue', 'cancel'] as const) admin.post(`/campaigns/:id/${action}`, wrap(async (req, res) => { await changeEmailCampaign(deps.services().db, req.params.id, res.locals.emailActor, action, req.body?.expectedRevision); res.json({ updated: true }); }));
+  admin.post('/automations/:event', wrap(async (req, res) => {
+    await saveEmailAutomation(deps.services().db, res.locals.emailActor, req.params.event, req.body);
+    res.json({ updated: true });
+  }));
+  for (const action of ['queue', 'cancel', 'schedule', 'resend'] as const) admin.post(`/campaigns/:id/${action}`, wrap(async (req, res) => { await changeEmailCampaign(deps.services().db, req.params.id, res.locals.emailActor, action, req.body?.expectedRevision, req.body?.scheduledAt); res.json({ updated: true }); }));
   admin.post('/dispatch', wrap(async (req, res) => { deps.limit(`email-dispatch:${res.locals.emailActor}`, 30, 60000); const { db, auth } = deps.services(); res.json(await dispatchCustomerEmails(db, auth)); }));
   admin.use(errors);
   return { customer, admin };

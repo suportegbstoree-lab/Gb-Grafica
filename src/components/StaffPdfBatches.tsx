@@ -1,4 +1,6 @@
 import React from "react";
+import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
+import { staffPdfOutputName } from "../lib/staffPdf";
 import type {
   StaffPdfBatchApi,
   StaffPdfBatchItemView,
@@ -22,6 +24,7 @@ export default function StaffPdfBatches({
   const [items, setItems] = React.useState<
     Record<string, StaffPdfBatchItemView[]>
   >({});
+  const [renaming, setRenaming] = React.useState<{ id: string; name: string }>();
   const [busy, setBusy] = React.useState(false);
   const [queries, setQueries] = React.useState<Record<string, string>>({});
   const [error, setError] = React.useState("");
@@ -120,13 +123,38 @@ export default function StaffPdfBatches({
             }}
           >
             <summary className="cursor-pointer text-sm">
-              {batch.reference} ·{" "}
+              {batch.name || batch.reference} ·{" "}
               {new Date(batch.createdAt).toLocaleString("pt-BR")} ·{" "}
               {batch.count} arquivo(s)
             </summary>
             <p className="my-3 text-xs text-gray-400">
               Disponível até {new Date(batch.expiresAt).toLocaleString("pt-BR")}
             </p>
+            {renaming?.id === batch.id ? (
+              <form className="mb-3 flex flex-wrap items-end gap-2" onSubmit={(event) => {
+                event.preventDefault();
+                void run(async () => {
+                  const updated = await api.rename(batch.id, renaming.name);
+                  if (!alive.current) return;
+                  setBatches((current) => current.map((entry) => entry.id === batch.id ? updated : entry));
+                  setRenaming(undefined);
+                });
+              }}>
+                <label className="text-sm">
+                  Novo nome do lote
+                  <input className="mt-1 block rounded-lg border border-gray-700 bg-black p-2" maxLength={STAFF_PDF_BATCH_NAME_MAX}
+                    disabled={busy} value={renaming.name}
+                    onChange={(event) => setRenaming({ id: batch.id, name: event.target.value })} />
+                </label>
+                <button type="submit" className={button} disabled={busy}>Salvar nome</button>
+                <button type="button" className={button} disabled={busy} onClick={() => setRenaming(undefined)}>Cancelar</button>
+              </form>
+            ) : (
+              <button type="button" className={`${button} mr-2`} disabled={busy}
+                onClick={() => setRenaming({ id: batch.id, name: batch.name || "" })}>
+                Renomear lote
+              </button>
+            )}
             <button
               className={button}
               disabled={busy || !batch.count}
@@ -155,7 +183,7 @@ export default function StaffPdfBatches({
                     new Blob([new Uint8Array(zipSync(files, { level: 0 }))], {
                       type: "application/zip",
                     }),
-                    `${batch.reference}.zip`,
+                    `${staffPdfOutputName(batch.name || "") || batch.reference}.zip`,
                   );
                 })
               }
@@ -167,7 +195,7 @@ export default function StaffPdfBatches({
                 Buscar arquivo no lote
                 <input
                   type="search"
-                  aria-label={`Buscar arquivo em ${batch.reference}`}
+                  aria-label={`Buscar arquivo em ${batch.name || batch.reference}`}
                   value={queries[batch.id] || ""}
                   onChange={(event) =>
                     setQueries({ ...queries, [batch.id]: event.target.value })

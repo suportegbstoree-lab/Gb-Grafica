@@ -50,12 +50,20 @@ test('a failure recording activity rolls back the catalog write', async () => sc
 }));
 test('product managers generate separate category/product/promotion events with server-owned identity', async () => scenario(async context => {
   context.actor.permissions = ['products.manage', 'categories.manage', 'promotions.manage'];
+  for (const event of ['product', 'promotion']) context.docs.set(`_emailAutomations/${event}`, {
+    enabled: true, subject: 'Conheça {{nome}}', text: 'Visite a loja', updatedBy: 'email-manager',
+  });
   assert.equal((await context.call('categories', 'new-category', 'set', { id: 'new-category', nome: 'Novidades' })).status, 200);
   assert.equal((await context.call('anuncios', 'second', 'set', { ...product, id: 'second', nome: 'Outro caderno', categoria: 'Novidades' })).status, 200);
   const promotion = { titulo: 'Oferta', ativa: true, alvoTipo: 'produto', alvoId: 'second', alvoIds: ['second'], alvoNome: 'Outro caderno', descontoTipo: 'percentual', descontoPercentual: 10 };
   const response = await context.call('promocoes', 'offer', 'set', promotion); assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.deepEqual(context.activity().map(event => event.action), ['category.created', 'product.created', 'promotion.created']);
   assert.ok(context.activity().every(event => event.actor === 'employee'));
+  assert.equal((await context.call('anuncios', 'second', 'patch', { desc: 'Descrição atualizada' })).status, 200);
+  const campaigns = [...context.docs.entries()].filter(([path]) => path.startsWith('_emailCampaigns/')).map(([, data]) => data);
+  assert.deepEqual(campaigns.map(campaign => [campaign.channel, campaign.subject, campaign.status]), [
+    ['news', 'Conheça Outro caderno', 'queued'], ['promotions', 'Conheça Oferta', 'queued'],
+  ]);
 }));
 
 test('bundle permission manages packages without granting ordinary product management or trusting client prices/revisions',async()=>scenario(async c=>{
