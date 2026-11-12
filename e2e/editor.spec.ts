@@ -154,13 +154,17 @@ test('a single selection uploads 400 valid font files and preserves the last fon
   expect(compact!.width).toBeLessThanOrEqual(520);
   expect(compact!.height).toBeLessThan(320);
   await expect(modal.getByRole('status').filter({ hasText: '400 enviada(s) · 0 com falha · 0 pendente(s)' })).toBeVisible({ timeout: 60000 });
+  const fontName = modal.getByRole('textbox', { name: /^Nome da fonte \d+$/ });
   await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
-  await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();
+  await expect(fontName).toBeVisible();
+  await expect(fontName).toHaveValue('Lote 399');
   await modal.getByRole('button', { name: 'Concluir edição de fontes', exact: true }).click();
   await page.getByRole('button', { name: 'Salvar fontes', exact: true }).click();
+  await expect(page.getByText('Configurações salvas com sucesso!', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Gerenciar fontes', exact: true }).click();
   await modal.getByLabel('Filtrar fontes', { exact: true }).fill('Lote 399');
-  await expect(modal.locator('input[value="Lote 399"]')).toBeVisible();
+  await expect(fontName).toBeVisible();
+  await expect(fontName).toHaveValue('Lote 399');
 });
 
 
