@@ -137,9 +137,63 @@ npm run shipping:check
 npm run shipping:check -- --quote --destination 01001000 --weight 750 --length 25 --width 20 --height 15
 ```
 
-O primeiro comando valida as variáveis locais. O segundo consulta o preço e o prazo de um volume na API. O checkout recalcula o frete com os volumes do catálogo e envia o valor fixo ao PagBank. A retirada na loja funciona independentemente da configuração de frete. Para expedir, emita a etiqueta no painel do Melhor Envio e registre o código de rastreio da transportadora no pedido da loja.
+O primeiro comando valida as variáveis locais. O segundo consulta o preço e o prazo de um volume na API. O checkout recalcula o frete com os volumes do catálogo e envia o valor fixo ao PagBank. A retirada na loja funciona independentemente da configuração de frete. Para expedir, use **Etiqueta de postagem** no pedido do ADM.
 
 [Documentação da API do Melhor Envio](https://docs.melhorenvio.com.br/reference/introducao-api-melhor-envio)
+
+### Etiqueta de postagem no ADM
+
+Configure `MELHOR_ENVIO_SENDER` como JSON no servidor. Exemplo de formato:
+
+```dotenv
+MELHOR_ENVIO_SENDER='{"name":"GB Gráfica","email":"suporte@gblgrafica.com.br","phone":"16999999999","document":"CNPJ_DO_REMETENTE","state_register":"INSCRICAO_ESTADUAL","address":"Logradouro","number":"123","district":"Bairro","city":"Franca","state_abbr":"SP"}'
+```
+
+O CEP do remetente é `MELHOR_ENVIO_ORIGIN_CEP`. Se necessário, inclua
+`complement` e `economic_activity_code` (CNAE). Para compras comerciais,
+preencha o CNPJ e a inscrição estadual exigidos pelo Melhor Envio. Gere o token
+com as permissões de cotação, carrinho, leitura de etiquetas, compra, geração e
+impressão (`shipping-calculate`, `cart-read`, `cart-write`, `orders-read`,
+`shipping-checkout`, `shipping-generate` e `shipping-print`).
+
+Em **Pedidos → Etiqueta de postagem**, prepare o envio com a chave de NF-e,
+CPF/CNPJ do destinatário e ID da agência quando exigido. Confira o custo e
+confirme o débito na carteira do Melhor Envio. Depois que a compra for liberada,
+emita e baixe o PDF. Se a API ainda estiver processando, consulte o andamento
+no próprio painel. Para uma preparação sem confirmação, consulte o carrinho do
+Melhor Envio e vincule o ID do envio que tenha a identificação do pedido.
+Emissão e download deixam a confirmação de postagem para a etapa **A Caminho**.
+A emissão suporta volumes agrupados conforme o serviço. Serviços que exigem
+etiquetas separadas por volume, como Correios, J&T, Loggi e Jadlog Centralizado,
+precisam de distribuição dos itens por pacote antes de emitir um pedido com
+vários volumes. Azul Cargo permanece disponível apenas na cotação.
+
+#### Testar o Melhor Envio com o PagBank em produção
+
+Use `MELHOR_ENVIO_ENV=sandbox`, as credenciais da conta de teste do Melhor Envio
+e um remetente de teste em `MELHOR_ENVIO_SENDER` com CPF/CNPJ válido. O comando
+abaixo cria um envio fictício pela Jadlog com declaração de conteúdo no sandbox.
+Ele usa o saldo fictício da conta de testes na etapa `buy`, sem criar pedidos ou
+chamar o PagBank. Use o ID devolvido em `prepare` nas próximas etapas:
+
+```bash
+npm run shipping:label:sandbox -- prepare
+npm run shipping:label:sandbox -- buy ID
+npm run shipping:label:sandbox -- emit ID
+npm run shipping:label:sandbox -- print ID
+```
+
+Aguarde a confirmação da compra antes de emitir. Se a compra ficar pendente,
+consulte sua situação na conta de testes antes de tentar comprá-la novamente.
+Aguarde a geração antes de baixar o PDF. Para testar a interface do ADM com
+dados simulados, rode `npm run dev:e2e` e abra
+`http://127.0.0.1:4173/__e2e/admin?shipping-label=1`.
+
+A emissão de pedidos reais exige que PagBank e Melhor Envio usem o mesmo
+ambiente e que o PagBank confirme a cobrança do pedido. Para produção, valide
+as permissões, o saldo, o remetente e a emissão na conta apropriada.
+[Compra de etiquetas](https://docs.melhorenvio.com.br/reference/compra-de-fretes-1) ·
+[Impressão em PDF](https://docs.melhorenvio.com.br/reference/impressao-de-etiquetas-em-arquivo)
 
 ### App Check
 

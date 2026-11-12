@@ -1,3 +1,4 @@
+import type { ShipmentLabelFields, ShipmentLabelView } from '../lib/shipmentLabel';
 import type { FulfillmentStatus } from '../lib/orderStatus';
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import { auth } from '../firebase';
@@ -24,9 +25,25 @@ export async function requestProductionLabel(orderId: string, requestId: string)
   return response.blob();
 }
 export async function refreshOrderTracking(orderId: string): Promise<void> { await orderOperation(orderId, 'tracking/refresh', {}); }
+export type ShipmentLabelRequest = { action: 'status' } |
+  ({ action: 'prepare' } & ShipmentLabelFields) |
+  { action: 'recover'; providerId: string } |
+  { action: 'issue'; expectedAmountCents?: number };
+
+export async function requestShipmentLabel(orderId: string, body: ShipmentLabelRequest): Promise<ShipmentLabelView> {
+  return (await orderOperation(orderId, 'shipment-label', body)).json();
+}
+
+export async function downloadShipmentLabel(orderId: string): Promise<Blob> {
+  const response = await orderOperation(orderId, 'shipment-label', { action: 'print' });
+  if (!response.headers.get('content-type')?.startsWith('application/pdf')) throw new Error('O Melhor Envio ainda não retornou um PDF válido.');
+  return response.blob();
+}
 export interface OrderOperationsApi {
   updateFulfillment: typeof updateOrderFulfillment;
   productionLabel: typeof requestProductionLabel;
   refreshTracking: typeof refreshOrderTracking;
+  shipmentLabel: typeof requestShipmentLabel;
+  shipmentLabelPdf: typeof downloadShipmentLabel;
 }
-export const ORDER_OPERATIONS_API: OrderOperationsApi = { updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking };
+export const ORDER_OPERATIONS_API: OrderOperationsApi = { updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking, shipmentLabel: requestShipmentLabel, shipmentLabelPdf: downloadShipmentLabel };

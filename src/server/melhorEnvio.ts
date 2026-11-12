@@ -2,12 +2,12 @@ import axios from 'axios';
 import { isRecord, validShippingParcel, type MelhorEnvioShippingOption, type ShippingParcel } from '../lib/shipping.js';
 import { ShippingError } from './shippingError.js';
 
-const hosts = {
+export const melhorEnvioHosts = {
   sandbox: 'https://sandbox.melhorenvio.com.br',
   production: 'https://melhorenvio.com.br',
 } as const;
 const serviceId = /^[1-9]\d{0,8}$/;
-type Environment = keyof typeof hosts;
+type Environment = keyof typeof melhorEnvioHosts;
 
 export function melhorEnvioConfig(env: NodeJS.ProcessEnv = process.env) {
   const environment = env.MELHOR_ENVIO_ENV?.trim();
@@ -28,9 +28,9 @@ export function melhorEnvioConfig(env: NodeJS.ProcessEnv = process.env) {
 
 export type MelhorEnvioConfig = ReturnType<typeof melhorEnvioConfig>;
 
-function moneyToCents(value: unknown): number | null {
+export function melhorEnvioMoneyToCents(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
-  const match = /^(\d{1,8})(?:\.(\d{1,2}))?$/.exec(String(value).trim());
+  const match = /^(\d{1,8})(?:\.(\d{1,2})0*)?$/.exec(String(value).trim());
   if (!match) return null;
   const cents = Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'));
   return cents > 0 && cents <= 100_000_000 ? cents : null;
@@ -62,7 +62,7 @@ export async function quoteMelhorEnvio(
   };
   let response: { status: number; data: unknown };
   try {
-    response = await axios.post(`${hosts[config.environment]}/api/v2/me/shipment/calculate`, body, {
+    response = await axios.post(`${melhorEnvioHosts[config.environment]}/api/v2/me/shipment/calculate`, body, {
       headers: {
         Authorization: `Bearer ${config.token}`,
         'User-Agent': `GB Grafica (${config.contactEmail})`,
@@ -91,7 +91,7 @@ export async function quoteMelhorEnvio(
     if (!serviceId.test(id) || (config.services.length && !config.services.includes(id))) continue;
     const carrier = displayName(row.company.name);
     const name = displayName(row.name);
-    const amount = moneyToCents(row.custom_price ?? row.price);
+    const amount = melhorEnvioMoneyToCents(row.custom_price ?? row.price);
     const days = row.custom_delivery_time ?? row.delivery_time;
     if (!carrier || !name || amount === null || typeof days !== 'number' || !Number.isInteger(days) || days < 0 || days > 365) continue;
     const code = `me:${id}`;

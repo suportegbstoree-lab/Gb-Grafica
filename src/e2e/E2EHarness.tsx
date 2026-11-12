@@ -14,6 +14,7 @@ import PanelAccessGate from '../components/PanelAccessGate';
 import { mayEnterPanel } from '../lib/panelAccess';
 import { useStaffEntryFixture } from './StaffEntryFixture';
 import { PDFDocument } from 'pdf-lib';
+import type { ShipmentLabelView } from '../lib/shipmentLabel';
 import type { OrderOperationsApi } from '../services/orderService';
 import { legacyStatusForFulfillment } from '../lib/orderStatus';
 import { DEFAULT_ROLE_PERMISSIONS, type StaffRoleId, type StaffRoleView } from '../lib/staffAccess';
@@ -212,6 +213,13 @@ if (new URLSearchParams(window.location.search).has('delivery')) FIXTURE_ORDERS.
   shipping: { service_code: '03220', service_name: 'SEDEX', amount_cents: 1290, delivery_days: 3, home_delivery: true, saturday_delivery: false, origin_cep: '14400000', destination_cep: '01001000', quoted_at: '2026-10-30T10:00:00.000Z', parcels: [{ weightGrams: 500, lengthCm: 20, widthCm: 15, heightCm: 5 }] },
   enderecoEntrega: { cep: '01001000', rua: 'Praça da Sé', numero: '1', bairro: 'Sé', cidade: 'São Paulo', estado: 'SP' },
 });
+if (new URLSearchParams(window.location.search).has('shipping-label')) FIXTURE_ORDERS.push({
+  ...FIXTURE_ORDERS[0], id: 'GB-E2E-ETIQUETA', metodoEntrega: 'entrega', fulfillmentStatus: 'em_producao',
+  shipping: { provider: 'melhor_envio', carrier_name: 'Jadlog', service_code: 'me:3', service_name: '.Package',
+    amount_cents: 1290, delivery_days: 3, origin_cep: '14400000', destination_cep: '01001000',
+    quoted_at: '2026-10-30T10:00:00.000Z', parcels: [{ weightGrams: 500, lengthCm: 20, widthCm: 15, heightCm: 5 }] },
+  enderecoEntrega: { cep: '01001000', rua: 'Praça da Sé', numero: '1', bairro: 'Sé', cidade: 'São Paulo', estado: 'SP' },
+});
 if (PRINT_FIXTURE) {
   FIXTURE_PRODUCTS.find(product => product.id === 'caderno')!.printProfile = PRINT_PROFILE;
   FIXTURE_ORDERS[0].itens[0].printProfile = { ...PRINT_PROFILE };
@@ -318,7 +326,27 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const [promotions, setPromotions] = React.useState(FIXTURE_PROMOTIONS);
   const [lastAction, setLastAction] = React.useState('');
   const [orders, setOrders] = React.useState(FIXTURE_ORDERS);
+  const shipmentLabels = React.useRef(new Map<string, ShipmentLabelView>());
   const orderOperations = React.useMemo<OrderOperationsApi>(() => ({
+    async shipmentLabel(id, request) {
+      const old = shipmentLabels.current.get(id) ?? { phase: 'none', amountCents: null };
+      if (request.action === 'status') return old;
+      let next: ShipmentLabelView = old;
+      if (request.action === 'prepare') next = { phase: 'cart', amountCents: 1250 };
+      if (request.action === 'issue' && old.phase === 'cart') {
+        if (request.expectedAmountCents !== old.amountCents) throw new Error('Confira o valor do frete.');
+        next = { ...old, phase: 'paid' };
+      }
+      if (request.action === 'issue' && old.phase === 'paid') next = { ...old, phase: 'issued', tracking: '12345678901234' };
+      shipmentLabels.current.set(id, next);
+      return next;
+    },
+    async shipmentLabelPdf(id) {
+      if (shipmentLabels.current.get(id)?.phase !== 'issued') throw new Error('Emita a etiqueta primeiro.');
+      const pdf = await PDFDocument.create();
+      pdf.addPage([300, 450]);
+      return new Blob([await pdf.save() as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });
+    },
     async updateFulfillment(id, status, code) {
       setOrders(current => current.map(order => order.id === id ? { ...order, fulfillmentStatus: status, status: legacyStatusForFulfillment(status) as Order['status'], ...(code ? { tracking: { provider: 'correios', code, status: 'Aguardando consulta', updatedAt: new Date().toISOString() } } : {}) } : order));
     },

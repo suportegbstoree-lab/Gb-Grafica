@@ -140,6 +140,7 @@ import { AdminAiError, adminAiInstruction, generateAdminAiText, vertexAiConfig }
 import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
+import { shipmentLabelOperation } from './shipmentLabelOperation.js';
 import { shippingParcelsForCart } from './shippingCart.js';
 import type { MelhorEnvioShippingOption, ShippingParcel } from '../lib/shipping.js';
 
@@ -1898,7 +1899,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
       ...(coupon ? { cupom: coupon } : {}),
 			frete: (shipping.amountCents / 100).toFixed(2),
 			...(shipping.selected ? { shipping: { ...shipping.selected, origin_cep: shipping.originCep,
-				destination_cep: shipping.cep, quoted_at: shipping.quotedAt, parcels: shipping.parcels } } : {}),
+				destination_cep: shipping.cep, quoted_at: shipping.quotedAt, parcels: shipping.parcels, environment: shipping.environment } } : {}),
 			total: (totalCents / 100).toFixed(2),
 			totalCents,
 			status: 'Pendente',
@@ -2456,6 +2457,25 @@ app.post('/api/admin/orders/:orderId/retry-email', requireAppCheck, async (req, 
     if (!/^GB-[A-Z0-9]{8,64}$/.test(req.params.orderId)) throw new HttpError(422, 'Pedido inválido.');
     const { db } = getAdminServices();
     res.json({ statuses: await Promise.all(['customer', 'merchant'].map(kind => sendOrderEmail(db, `${req.params.orderId}-${kind}`))) });
+  } catch (error) { sendError(res, error); }
+});
+
+app.post('/api/admin/orders/:orderId/shipment-label', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.fulfillment');
+    const { db } = getAdminServices(), orderId = req.params.orderId;
+    enforceRateLimit(`shipment-label:${user.uid}`, 20, 60_000);
+    await enforceDistributedRateLimit(db, `shipment-label:${user.uid}`, 40, 60_000);
+    res.set('Cache-Control', 'private, no-store');
+    const result = await shipmentLabelOperation({
+      db, orderId, actor: user.uid, body: isPlainRecord(req.body) ? req.body : {},
+      paymentEnvironment: () => getPagBankConfig().environment,
+      verifyPayment: order => verifyOperationalPayment(db, orderId, order, res),
+    });
+    if (Buffer.isBuffer(result)) {
+      res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="etiqueta-envio-${orderId}.pdf"` });
+      res.send(result);
+    } else res.json(result);
   } catch (error) { sendError(res, error); }
 });
 

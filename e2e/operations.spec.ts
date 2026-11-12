@@ -68,3 +68,23 @@ test('order operations fit a mobile viewport', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Enviar pedido GB-E2E-ENVIO', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
 });
+
+test('shipping label can be purchased, issued and downloaded in the admin order panel', async ({ page }) => {
+  await page.goto('/__e2e/admin?shipping-label=1');
+  await page.getByRole('button', { name: 'Pedidos', exact: true }).click();
+  const queue = page.getByRole('button', { name: /^Em produção/ });
+  if (await queue.getAttribute('aria-expanded') === 'false') await queue.click();
+  await page.getByRole('button', { name: 'Etiqueta de postagem', exact: true }).click();
+  const label = page.getByRole('dialog', { name: 'Etiqueta de postagem', exact: true });
+  await expect(label).toContainText('Jadlog');
+  await label.getByLabel('Chave da NF-e').fill('1'.repeat(44));
+  await label.getByLabel('CPF ou CNPJ do destinatário').fill('52998224725');
+  await label.getByRole('button', { name: 'Preparar envio', exact: true }).click();
+  await expect(label.getByText(/Custo no Melhor Envio/)).toBeVisible();
+  await label.getByRole('button', { name: 'Confirmar compra da etiqueta', exact: true }).click();
+  await label.getByRole('button', { name: 'Emitir etiqueta', exact: true }).click();
+  await expect(label).toContainText('12345678901234');
+  const downloading = page.waitForEvent('download');
+  await label.getByRole('button', { name: 'Baixar etiqueta de postagem em PDF', exact: true }).click();
+  expect((await downloading).suggestedFilename()).toBe('etiqueta-envio-GB-E2E-ETIQUETA.pdf');
+});

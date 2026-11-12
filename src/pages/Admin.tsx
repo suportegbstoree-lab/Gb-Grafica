@@ -2585,7 +2585,7 @@ function OrderCard({
           <div>CEP {order.enderecoEntrega.cep}</div>
           {order.shipping && <div className="mt-3 space-y-1">
             <div>{shippingOptionLabel(order.shipping)} — {order.shipping.parcels.length} volume(s) — {order.shipping.delivery_days} dia(s) útil(eis) após postagem.</div>
-            {order.shipping.provider === 'melhor_envio' && <div>Frete via Melhor Envio. Emita a etiqueta de postagem no painel do Melhor Envio.</div>}
+            {order.shipping.provider === 'melhor_envio' && <div>Frete via Melhor Envio. Use a ação de etiqueta de postagem deste pedido.</div>}
             {order.shipping.provider !== 'melhor_envio' && !order.shipping.home_delivery && <div>Entrega domiciliar indisponível na cotação; pode exigir retirada em agência.</div>}
             {order.shipping.parcels.map((parcel, i) => <div key={i}>Volume {i + 1}: {parcel.weightGrams} g — {parcel.lengthCm} × {parcel.widthCm} × {parcel.heightCm} cm</div>)}
           </div>}

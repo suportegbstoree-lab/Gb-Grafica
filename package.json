@@ -25,6 +25,7 @@
     "security:app-check": "node --import tsx scripts/check-app-check-config.ts",
     "security:staff-check": "node --import tsx scripts/check-staff-access.ts",
     "security:ai-check": "node --import tsx scripts/check-admin-ai.ts",
+    "shipping:label:sandbox": "node --import tsx scripts/check-melhor-envio-label.ts",
     "shipping:check": "node --import tsx scripts/check-melhor-envio.ts",
     "admin:catalog-lease": "tsx scripts/admin-catalog-lease.ts",
     "admin:set": "tsx scripts/set-admin-claim.ts",
@@ -39,6 +40,7 @@
   "dependencies": {
     "@google/genai": "^2.24.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@vercel/sandbox": "^3.9.1",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.15.0",
     "bwip-js": "4.11.4",
