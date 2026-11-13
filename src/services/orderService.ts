@@ -1,4 +1,5 @@
-import type { ShipmentLabelFields, ShipmentLabelView } from '../lib/shipmentLabel';
+import type { OrderTracking } from '../lib/tracking';
+import type { ShipmentLabelFields, ShipmentLabelPrintLink, ShipmentLabelView } from '../lib/shipmentLabel';
 import type { FulfillmentStatus } from '../lib/orderStatus';
 import { apiErrorMessage, type ApiErrorPayload } from '../lib/apiError';
 import { auth } from '../firebase';
@@ -25,7 +26,7 @@ export async function requestProductionLabel(orderId: string, requestId: string)
   return response.blob();
 }
 export async function refreshOrderTracking(orderId: string): Promise<void> { await orderOperation(orderId, 'tracking/refresh', {}); }
-export type ShipmentLabelRequest = { action: 'status' } |
+export type ShipmentLabelRequest = { action: 'status' | 'discard' } |
   ({ action: 'prepare' } & ShipmentLabelFields) |
   { action: 'recover'; providerId: string } |
   { action: 'issue'; expectedAmountCents?: number };
@@ -34,16 +35,26 @@ export async function requestShipmentLabel(orderId: string, body: ShipmentLabelR
   return (await orderOperation(orderId, 'shipment-label', body)).json();
 }
 
-export async function downloadShipmentLabel(orderId: string): Promise<Blob> {
+export async function printShipmentLabel(orderId: string): Promise<Blob | ShipmentLabelPrintLink> {
   const response = await orderOperation(orderId, 'shipment-label', { action: 'print' });
-  if (!response.headers.get('content-type')?.startsWith('application/pdf')) throw new Error('O Melhor Envio ainda não retornou um PDF válido.');
-  return response.blob();
+  const contentType = response.headers.get('content-type');
+  if (contentType?.startsWith('application/pdf')) return response.blob();
+  if (contentType?.startsWith('application/json')) {
+    const result = await response.json();
+    if (typeof result?.printUrl === 'string') return { printUrl: result.printUrl };
+  }
+  throw new Error('O Melhor Envio ainda não retornou um PDF ou link de impressão válido.');
 }
+export async function refreshMelhorEnvioTracking(orderId: string): Promise<{ tracking: OrderTracking; fulfillmentStatus: FulfillmentStatus }> {
+  return (await orderOperation(orderId, 'shipment-tracking', {})).json();
+}
+
 export interface OrderOperationsApi {
   updateFulfillment: typeof updateOrderFulfillment;
   productionLabel: typeof requestProductionLabel;
   refreshTracking: typeof refreshOrderTracking;
   shipmentLabel: typeof requestShipmentLabel;
-  shipmentLabelPdf: typeof downloadShipmentLabel;
+  shipmentLabelPrint: typeof printShipmentLabel;
+  refreshMelhorEnvioTracking: typeof refreshMelhorEnvioTracking;
 }
-export const ORDER_OPERATIONS_API: OrderOperationsApi = { updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking, shipmentLabel: requestShipmentLabel, shipmentLabelPdf: downloadShipmentLabel };
+export const ORDER_OPERATIONS_API: OrderOperationsApi = { updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking, shipmentLabel: requestShipmentLabel, shipmentLabelPrint: printShipmentLabel, refreshMelhorEnvioTracking };

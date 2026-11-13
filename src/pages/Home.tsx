@@ -1719,7 +1719,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         order.fulfillmentStatus || legacyFulfillmentStatus(order.status, order.paymentStatus),
                       )}
                     </div>
-                    {order.tracking && <p className="break-all text-xs text-gray-700">Código de rastreio: {order.tracking.code}</p>}
+                    {order.tracking && <p className="break-all text-xs text-gray-700">{order.tracking.code ? `Código de rastreio: ${order.tracking.code}` : order.tracking.status}</p>}
                     <div className="space-y-2">
                       {orderItems(order.itens).map((item) => (
                         <div key={item.id} className="text-xs space-y-1">

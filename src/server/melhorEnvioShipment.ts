@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { isValidCpf, parseMoneyToCents } from '../lib/commerce.js';
-import { isRecord, validShippingParcel, type ShippingParcel } from '../lib/shipping.js';
+import { canIssueMelhorEnvioLabel, isRecord, validShippingParcel, type ShippingParcel } from '../lib/shipping.js';
 import { validMelhorEnvioTrackingCode } from '../lib/tracking.js';
 import { melhorEnvioHosts, melhorEnvioMoneyToCents, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
@@ -42,7 +42,7 @@ function address(value: Record<string, unknown>) {
   return result;
 }
 
-function sender(config: MelhorEnvioConfig, invoice: boolean) {
+export function validateShipmentSender(config: MelhorEnvioConfig, invoice: boolean) {
   let data: unknown;
   try { data = JSON.parse(process.env.MELHOR_ENVIO_SENDER || ''); } catch { data = null; }
   const source = isRecord(data) ? data : {};
@@ -68,9 +68,8 @@ export function shipmentCartBody(
   if (!parcels.length || parcels.length > 20 || !parcels.every(p => isRecord(p) && validShippingParcel(p as unknown as ShippingParcel)))
     throw shipmentFailure(422, 'Confira os volumes gravados no pedido.');
   const carrier = String(shipping.carrier_name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
-  if (carrier.includes('azul')) throw shipmentFailure(422, 'A emissão de etiquetas Azul Cargo não está disponível nesta integração.');
-  if (parcels.length > 1 && (['1', '2', '17', '27'].includes(service) || /correios|loggi|j\s*&\s*t|j\s*t\s*express/.test(carrier)))
-    throw shipmentFailure(422, 'Este serviço exige uma etiqueta e uma distribuição de produtos por volume. Use um serviço que aceite vários volumes para este pedido.');
+  if (!canIssueMelhorEnvioLabel({ carrier_name: carrier, service_code: `me:${service}` }, parcels.length))
+    throw shipmentFailure(422, 'Este serviço não permite emitir a etiqueta no painel para estes volumes. Alguns serviços exigem uma distribuição de produtos por volume.');
   const invoiceKey = digits(fields.invoiceKey);
   if (!sandboxSample && !/^\d{44}$/.test(invoiceKey))
     throw shipmentFailure(422, 'Informe a chave de 44 dígitos da NF-e.');
@@ -85,7 +84,7 @@ export function shipmentCartBody(
   });
   if (!document || !to || to.postal_code !== shipping.destination_cep)
     throw shipmentFailure(422, 'Confira o CPF/CNPJ e os dados de entrega do destinatário no pedido.');
-  const from = sender(config, !sandboxSample);
+  const from = validateShipmentSender(config, !sandboxSample);
   if (!Array.isArray(order.itens) || !order.itens.length || order.itens.length > 50)
     throw shipmentFailure(422, 'O pedido precisa ter itens para declarar.');
   const products = order.itens.map(item => {
@@ -124,16 +123,16 @@ export class ShipmentProviderError extends ShippingError {
 }
 
 function provider(config: MelhorEnvioConfig) {
-  return async (path: string, body?: unknown, pdf = false): Promise<unknown> => {
+  return async (path: string, body?: unknown, pdf = false, method = body === undefined ? 'GET' : 'POST'): Promise<unknown> => {
     let response;
     try {
       response = await axios.request({
-        method: body === undefined ? 'GET' : 'POST',
+        method,
         url: `${melhorEnvioHosts[config.environment]}/api/v2/me/${path}`, data: body,
         headers: {
           Authorization: `Bearer ${config.token}`,
           'User-Agent': `GB Grafica (${config.contactEmail})`,
-          Accept: pdf ? 'application/pdf' : 'application/json',
+          Accept: pdf ? 'application/pdf, application/json' : 'application/json',
           'Content-Type': 'application/json',
         },
         responseType: pdf ? 'arraybuffer' : 'json',
@@ -146,8 +145,8 @@ function provider(config: MelhorEnvioConfig) {
     if (response.status >= 200 && response.status < 300) return response.data;
     if (response.status === 401 || response.status === 403)
       throw new ShipmentProviderError(true, 503, 'Confira as permissões do token do Melhor Envio para esta operação.');
-    if (pdf && [400, 404, 422].includes(response.status))
-      throw new ShipmentProviderError(true, 409, 'O PDF ainda não está disponível para impressão no Melhor Envio.');
+    if (pdf && ([400, 404, 406, 415, 422].includes(response.status) ||
+      (response.status >= 300 && response.status < 400))) return null;
     if ([400, 402, 422].includes(response.status))
       throw new ShipmentProviderError(true, 422, 'O Melhor Envio recusou a operação. Confira saldo, dados fiscais e condições do serviço.');
     throw new ShipmentProviderError(false, 502, 'O Melhor Envio não confirmou a operação. Consulte a situação antes de continuar.');
@@ -156,6 +155,14 @@ function provider(config: MelhorEnvioConfig) {
 
 export function shipmentProvider(config: MelhorEnvioConfig) {
   const request = provider(config);
+  function timestamp(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    // Prefer timezone-aware provider values. Some endpoints use SQL UTC timestamps.
+    const input = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? value.replace(' ', 'T') + 'Z' : value;
+    if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(input)) return undefined;
+    const date = Date.parse(input);
+    return Number.isFinite(date) ? new Date(date).toISOString() : undefined;
+  }
   return {
     async create(body: ReturnType<typeof shipmentCartBody>) {
       const data = await request('cart', body);
@@ -169,26 +176,50 @@ export function shipmentProvider(config: MelhorEnvioConfig) {
       if (!isRecord(data) || data.id !== id)
         throw shipmentFailure(502, 'O Melhor Envio retornou um envio diferente do registrado.');
       const state = String(data.status ?? '').toLowerCase();
-      const unavailable = Boolean(data.canceled_at || data.cancelled_at || data.expired_at || data.suspended_at) ||
-        ['canceled', 'cancelled', 'expired', 'suspended'].includes(state);
+      const postedAt = timestamp(data.posted_at), deliveredAt = timestamp(data.delivered_at);
+      const discarded = Boolean(data.canceled_at || data.cancelled_at || data.expired_at) ||
+        ['canceled', 'cancelled', 'expired'].includes(state);
+      const unavailable = discarded || Boolean(data.suspended_at) || state === 'suspended';
       return {
         amountCents: melhorEnvioMoneyToCents(data.price),
-        paid: Boolean(data.paid_at || data.generated_at || ['released', 'generated', 'posted', 'delivered', 'undelivered'].includes(state)),
-        issued: Boolean(data.generated_at || ['generated', 'posted', 'delivered', 'undelivered'].includes(state)),
+        paid: Boolean(data.paid_at || data.generated_at || ['released', 'generated', 'received', 'posted', 'delivered', 'undelivered', 'paused'].includes(state)),
+        issued: Boolean(data.generated_at || ['generated', 'received', 'posted', 'delivered', 'undelivered', 'paused'].includes(state)),
         pending: state === 'pending',
-        unavailable,
+        state, postedAt, deliveredAt,
+        unavailable, discarded,
         tracking: validMelhorEnvioTrackingCode(data.tracking) ? data.tracking : '',
         service: Number(data.service_id),
         tags: Array.isArray(data.tags) ? data.tags : [],
       };
     },
+    async removeCartItem(id: string) {
+      if (!uuid.test(id)) throw shipmentFailure(422, 'Identificador de etiqueta inválido.');
+      await request(`cart/${id}`, undefined, false, 'DELETE');
+    },
     checkout: (id: string) => request('shipment/checkout', { orders: [id] }),
     generate: (id: string) => request('shipment/generate', { orders: [id] }),
-    async pdf(id: string) {
+    async print(id: string) {
+      if (!uuid.test(id)) throw shipmentFailure(422, 'Identificador de etiqueta inválido.');
       const raw = await request(`imprimir/pdf/${id}`, undefined, true);
-      if (!(raw instanceof Uint8Array) || Buffer.from(raw.subarray(0, 5)).toString() !== '%PDF-')
-        throw shipmentFailure(409, 'O Melhor Envio ainda não disponibilizou o PDF desta etiqueta.');
-      return Buffer.from(raw);
+      if (raw instanceof Uint8Array && Buffer.from(raw.subarray(0, 5)).toString() === '%PDF-')
+        return Buffer.from(raw);
+
+      let data: unknown;
+      try {
+        data = await request('shipment/print', { mode: 'private', orders: [id] });
+      } catch (error) {
+        if (error instanceof ShipmentProviderError && error.status === 422)
+          throw shipmentFailure(409, 'O Melhor Envio recusou o link privado de impressão. Confira esta etiqueta no painel do Melhor Envio.');
+        throw error;
+      }
+      const rawUrl = isRecord(data) && typeof data.url === 'string' ? data.url : '';
+      const url = URL.canParse(rawUrl) ? new URL(rawUrl) : null;
+      const origin = melhorEnvioHosts[config.environment];
+      const allowed = url && (url.origin === origin ||
+        (config.environment === 'production' && url.origin === 'https://www.melhorenvio.com.br'));
+      if (!allowed || url.username || url.password)
+        throw shipmentFailure(502, 'O Melhor Envio não retornou um link de impressão válido para este ambiente.');
+      return { printUrl: url.href };
     },
   };
 }

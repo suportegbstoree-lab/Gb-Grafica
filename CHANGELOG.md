@@ -211,7 +211,6 @@ Os status descrevem a implementação do código. Publicação, configuração e
 - Configuração de ambiente/URL passou a recusar valores inválidos, credenciais embutidas e URLs públicas inseguras. Ativação deste ajuste depende de redeploy; homologação e liberação do novo serviço de assinaturas continuam sujeitas à confirmação do PagBank.
 - Configurações de e-mail e valores de cobrança foram preservados.
 
-
 ## 2026-11-01 — Gerador interno de PDFs para funcionários
 
 - Adicionada a seção **Gerar PDF** ao painel, com permissão independente `documents.generate` e modelos PDF cadastrados no catálogo.

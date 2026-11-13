@@ -126,6 +126,8 @@ MELHOR_ENVIO_ORIGIN_CEP=
 MELHOR_ENVIO_CONTACT_EMAIL=
 # Opcional. IDs separados por vírgula. Em branco, usa os serviços retornados pela API.
 MELHOR_ENVIO_SERVICES=
+# Opcional. Use true para consultar automaticamente o rastreio das etiquetas emitidas.
+MELHOR_ENVIO_TRACKING_ENABLED=false
 # Ative apenas para continuar sincronizando pedidos antigos dos Correios.
 CORREIOS_TRACKING_ENABLED=false
 ```
@@ -159,25 +161,38 @@ impressão (`shipping-calculate`, `cart-read`, `cart-write`, `orders-read`,
 Em **Pedidos → Etiqueta de postagem**, prepare o envio com a chave de NF-e,
 CPF/CNPJ do destinatário e ID da agência quando exigido. Confira o custo e
 confirme o débito na carteira do Melhor Envio. Depois que a compra for liberada,
-emita e baixe o PDF. Se a API ainda estiver processando, consulte o andamento
-no próprio painel. Para uma preparação sem confirmação, consulte o carrinho do
+emita e baixe o PDF. Se o arquivo estiver indisponível pela API, o ADM solicita
+um link privado de impressão. Abra esse link com a conta que emitiu a etiqueta.
+Se a API ainda estiver processando, consulte o andamento no painel. Para uma
+preparação sem confirmação, consulte o carrinho do
 Melhor Envio e vincule o ID do envio que tenha a identificação do pedido.
-Emissão e download deixam a confirmação de postagem para a etapa **A Caminho**.
-A emissão suporta volumes agrupados conforme o serviço. Serviços que exigem
-etiquetas separadas por volume, como Correios, J&T, Loggi e Jadlog Centralizado,
-precisam de distribuição dos itens por pacote antes de emitir um pedido com
-vários volumes. Azul Cargo permanece disponível apenas na cotação.
+Use **Remover do carrinho** antes da compra para corrigir os dados e preparar
+o envio novamente. Em **Consultar rastreio**, a confirmação de postagem pelo
+Melhor Envio move o pedido para **A Caminho** e a confirmação de entrega move
+para **Entregue**. O código pode aparecer após a postagem.
+
+Para ativar a consulta automática, configure `MELHOR_ENVIO_TRACKING_ENABLED=true`
+e `CRON_SECRET` para a rota `/api/internal/maintenance`. O agendamento consulta
+até dez etiquetas por execução. Para etiquetas emitidas antes dessa configuração
+estar disponível no código, faça a primeira consulta pelo ADM.
+
+O checkout oferece serviços compatíveis com a emissão no painel. Para vários
+volumes, ficam fora os que exigem etiquetas separadas por pacote, como Correios,
+J&T, Loggi e Jadlog Centralizado. A Azul Cargo fica fora do checkout.
 
 #### Testar o Melhor Envio com o PagBank em produção
 
-Use `MELHOR_ENVIO_ENV=sandbox`, as credenciais da conta de teste do Melhor Envio
-e um remetente de teste em `MELHOR_ENVIO_SENDER` com CPF/CNPJ válido. O comando
-abaixo cria um envio fictício pela Jadlog com declaração de conteúdo no sandbox.
-Ele usa o saldo fictício da conta de testes na etapa `buy`, sem criar pedidos ou
-chamar o PagBank. Use o ID devolvido em `prepare` nas próximas etapas:
+Use `.env.sandbox.local` com `MELHOR_ENVIO_ENV=sandbox`, as credenciais da conta
+de teste do Melhor Envio e um remetente de teste em `MELHOR_ENVIO_SENDER` com
+CPF/CNPJ válido. `check` valida a configuração local. `prepare` cria um envio
+fictício pela Jadlog com declaração de conteúdo. `buy` usa o saldo fictício da
+conta de testes. Essas etapas dispensam pedidos da loja e chamadas ao PagBank.
+Use o ID devolvido em `prepare` nas próximas etapas.
 
 ```bash
+npm run shipping:label:sandbox -- check
 npm run shipping:label:sandbox -- prepare
+npm run shipping:label:sandbox -- status ID
 npm run shipping:label:sandbox -- buy ID
 npm run shipping:label:sandbox -- emit ID
 npm run shipping:label:sandbox -- print ID
@@ -185,13 +200,17 @@ npm run shipping:label:sandbox -- print ID
 
 Aguarde a confirmação da compra antes de emitir. Se a compra ficar pendente,
 consulte sua situação na conta de testes antes de tentar comprá-la novamente.
-Aguarde a geração antes de baixar o PDF. Para testar a interface do ADM com
+Aguarde a geração antes de imprimir. `print` salva o PDF quando a API entrega
+o arquivo ou mostra o link privado para abrir com a sessão da conta sandbox.
+Para testar a interface do ADM com
 dados simulados, rode `npm run dev:e2e` e abra
 `http://127.0.0.1:4173/__e2e/admin?shipping-label=1`.
 
-A emissão de pedidos reais exige que PagBank e Melhor Envio usem o mesmo
-ambiente e que o PagBank confirme a cobrança do pedido. Para produção, valide
-as permissões, o saldo, o remetente e a emissão na conta apropriada.
+A cobrança de pedidos reais com entrega exige o Melhor Envio em produção e o
+remetente comercial configurado no ambiente de produção da Vercel. A compra da
+etiqueta exige que o PagBank confirme a cobrança do pedido. Antes de habilitar
+o frete real, valide as permissões, o saldo, o remetente e a emissão na conta
+apropriada.
 [Compra de etiquetas](https://docs.melhorenvio.com.br/reference/compra-de-fretes-1) ·
 [Impressão em PDF](https://docs.melhorenvio.com.br/reference/impressao-de-etiquetas-em-arquivo)
 

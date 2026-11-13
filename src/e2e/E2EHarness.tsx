@@ -333,6 +333,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
       if (request.action === 'status') return old;
       let next: ShipmentLabelView = old;
       if (request.action === 'prepare') next = { phase: 'cart', amountCents: 1250 };
+      if (request.action === 'discard' && old.phase === 'cart') next = { phase: 'none', amountCents: null };
       if (request.action === 'issue' && old.phase === 'cart') {
         if (request.expectedAmountCents !== old.amountCents) throw new Error('Confira o valor do frete.');
         next = { ...old, phase: 'paid' };
@@ -341,8 +342,14 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
       shipmentLabels.current.set(id, next);
       return next;
     },
-    async shipmentLabelPdf(id) {
+    async refreshMelhorEnvioTracking(id) {
+      return { tracking: { provider: 'melhor_envio', status: 'Postado',
+        code: shipmentLabels.current.get(id)?.tracking || '', updatedAt: new Date().toISOString() }, fulfillmentStatus: 'enviado' };
+    },
+    async shipmentLabelPrint(id) {
       if (shipmentLabels.current.get(id)?.phase !== 'issued') throw new Error('Emita a etiqueta primeiro.');
+      if (new URLSearchParams(window.location.search).has('shipping-print-link'))
+        return { printUrl: 'https://sandbox.melhorenvio.com.br/imprimir/etiqueta-de-teste' };
       const pdf = await PDFDocument.create();
       pdf.addPage([300, 450]);
       return new Blob([await pdf.save() as Uint8Array<ArrayBuffer>], { type: 'application/pdf' });

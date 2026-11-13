@@ -40,6 +40,16 @@ export function shippingOptionLabel(option: ShippingOption): string {
   return `${option.provider === 'melhor_envio' ? option.carrier_name : 'Correios'} · ${option.service_name}`;
 }
 
+/** A service offered in checkout must also be issuable from the store panel. */
+export function canIssueMelhorEnvioLabel(option: Pick<MelhorEnvioShippingOption, 'carrier_name' | 'service_code'>, parcelCount: number) {
+  const carrier = option.carrier_name.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  if (carrier.includes('azul')) return false;
+  return parcelCount === 1 || (
+    !['me:1', 'me:2', 'me:17', 'me:27'].includes(option.service_code) &&
+    !/correios|loggi|j\s*&\s*t|j\s*t\s*express/.test(carrier)
+  );
+}
+
 export interface ShippingQuoteResponse {
   cep: string;
   address: string;

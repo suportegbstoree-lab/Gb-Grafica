@@ -16,6 +16,7 @@ const env = {
   FIREBASE_FIRESTORE_DATABASE_ID: 'shipping-test', FIREBASE_STORAGE_BUCKET: 'demo-shipping.firebasestorage.app',
   MELHOR_ENVIO_ENV: 'sandbox', MELHOR_ENVIO_ORIGIN_CEP: '14400-000', MELHOR_ENVIO_CONTACT_EMAIL: 'suporte@example.test',
   MELHOR_ENVIO_TOKEN: 'melhor-envio-ficticio', MELHOR_ENVIO_SERVICES: '1,3',
+  MELHOR_ENVIO_SENDER: '',
   CORREIOS_TOKEN: 'correios-ficticio',
 };
 const oldEnv = new Map(Object.keys(env).map(key => [key, process.env[key]]));
@@ -30,9 +31,11 @@ let uid = '';
 let scenario = 0;
 let price = 2580;
 let providerStatus = 200;
+let providerQuote: Record<string, unknown> | undefined;
 let quoteBody: any;
 let pagbankBodies: any[] = [];
 let melhorEnvioCalls = 0;
+let jadlogAvailable = true;
 
 function ref(path: string) {
   return {
@@ -67,7 +70,7 @@ before(async () => {
   mock.method(getStorage(firebaseApp), 'bucket', (() => ({})) as unknown as ReturnType<typeof getStorage>['bucket']);
   mock.method(axios, 'get', async () => ({ data: { logradouro: 'Rua Teste', bairro: 'Centro', localidade: 'São Paulo', uf: 'SP' } }));
   mock.method(axios, 'post', async (url: string, body: any, config: any) => {
-    if (url === 'https://sandbox.melhorenvio.com.br/api/v2/me/shipment/calculate') {
+    if (url === `https://${process.env.MELHOR_ENVIO_ENV === 'production' ? '' : 'sandbox.'}melhorenvio.com.br/api/v2/me/shipment/calculate`) {
       melhorEnvioCalls++;
       assert.equal(config.headers.Authorization, 'Bearer melhor-envio-ficticio');
       assert.equal(config.headers['User-Agent'], 'GB Grafica (suporte@example.test)');
@@ -75,9 +78,11 @@ before(async () => {
       assert.equal(config.timeout, 6000);
       quoteBody = body;
       if (providerStatus !== 200) return { status: providerStatus, data: { error: 'MELHOR-ENVIO-SEGREDO-NAO-EXIBIR' } };
+      if (providerQuote) return { status: 200, data: providerQuote };
       return { status: 200, data: [
         { id: 1, name: 'PAC', company: { name: 'Correios' }, price: '15.00', custom_price: (price / 100).toFixed(2), delivery_time: 2, custom_delivery_time: 4 },
-        { id: 3, name: '.Package', company: { name: 'Jadlog' }, price: '50.00', delivery_time: 3 },
+        ...(jadlogAvailable ? [{ id: 3, name: '.Package', company: { name: 'Jadlog' }, price: '50.00', delivery_time: 3 }] : []),
+        { id: 11, name: 'Azul', company: { name: 'Azul Cargo Express' }, price: '5.00', delivery_time: 1 },
         { id: 2, name: 'SEDEX', company: { name: 'Correios' }, price: '1.00', delivery_time: 1 },
         { id: 7, error: 'Indisponível para este volume' },
       ] };
@@ -96,7 +101,8 @@ before(async () => {
 beforeEach(() => {
   scenario++; uid = `shipping-user-${scenario}`;
   Object.assign(process.env, env);
-  docs.clear(); pagbankBodies = []; quoteBody = undefined; price = 2580; providerStatus = 200; melhorEnvioCalls = 0;
+  docs.clear(); pagbankBodies = []; quoteBody = undefined; price = 2580; providerStatus = 200; melhorEnvioCalls = 0; jadlogAvailable = true;
+  providerQuote = undefined;
   docs.set('config/main', {});
   docs.set('anuncios/produto', { nome: 'Produto Teste', desc: 'Produto', categoria: 'teste', preco_base: '10.00', tipoInput: 'nenhum', shipping: profile });
 });
@@ -120,9 +126,8 @@ test('HTTP: cotação usa perfil do catálogo e retorna opções sem expor crede
   assert.equal(response.status, 200, await response.clone().text());
   const body = await response.json();
   assert.equal(body.parcel_count, 2);
-  assert.equal(body.amount_cents, 2580);
+  assert.equal(body.amount_cents, 5000);
   assert.deepEqual(body.options, [
-    { provider: 'melhor_envio', carrier_name: 'Correios', service_code: 'me:1', service_name: 'PAC', amount_cents: 2580, delivery_days: 4 },
     { provider: 'melhor_envio', carrier_name: 'Jadlog', service_code: 'me:3', service_name: '.Package', amount_cents: 5000, delivery_days: 3 },
   ]);
   assert.deepEqual(quoteBody, {
@@ -132,6 +137,26 @@ test('HTTP: cotação usa perfil do catálogo e retorna opções sem expor crede
   assert.ok(!JSON.stringify(body).includes('ficticio'));
   assert.match(response.headers.get('cache-control') || '', /no-store/);
   assert.ok(Date.parse(body.expires_at) > Date.parse(body.quoted_at));
+});
+
+test('HTTP: aceita cotação com um único serviço retornado como objeto', async () => {
+  process.env.MELHOR_ENVIO_SERVICES = '3';
+  providerQuote = { id: 3, name: '.Package', company: { name: 'Jadlog' }, price: '55.00', custom_price: '50.00', delivery_time: 4, custom_delivery_time: 3 };
+  const response = await post('/api/shipping-quote', { cep: '01001000', items });
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(quoteBody.services, '3');
+  assert.deepEqual((await response.json()).options, [
+    { provider: 'melhor_envio', carrier_name: 'Jadlog', service_code: 'me:3', service_name: '.Package', amount_cents: 5000, delivery_days: 3 },
+  ]);
+});
+
+test('HTTP: rejeita objeto sem serviço mesmo quando a cotação responde 200', async () => {
+  providerQuote = { message: 'MELHOR-ENVIO-SEGREDO-NAO-EXIBIR' };
+  const response = await post('/api/shipping-quote', { cep: '01001000', items });
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.equal(body.code, 'MELHOR_ENVIO_UNAVAILABLE');
+  assert.ok(!JSON.stringify(body).includes('SEGREDO'));
 });
 
 test('HTTP: checkout recalcula e envia o serviço escolhido e o preço real ao PagBank', async () => {
@@ -152,8 +177,7 @@ test('HTTP: checkout recalcula e envia o serviço escolhido e o preço real ao P
 });
 
 test('HTTP: preço alterado ou adulterado não cria pedido nem checkout', async () => {
-  price = 1490;
-  const response = await checkout();
+  const response = await checkout({ shippingServiceCode: 'me:3', shippingAmountCents: 1490 });
   assert.equal(response.status, 409);
   assert.equal((await response.json()).code, 'SHIPPING_QUOTE_CHANGED');
   assert.equal(pagbankBodies.length, 0);
@@ -220,6 +244,15 @@ test('HTTP: frete simulado não é cobrado no PagBank de produção', async () =
   assert.equal(pagbankBodies.length, 0);
 });
 
+test('HTTP: frete real exige o remetente comercial antes de criar a cobrança', async () => {
+  process.env.PAGBANK_ENV = 'production';
+  process.env.MELHOR_ENVIO_ENV = 'production';
+  const response = await checkout({ shippingServiceCode: 'me:3', shippingAmountCents: 5000 });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, 'MELHOR_ENVIO_SHIPMENT');
+  assert.equal(pagbankBodies.length, 0);
+  assert.ok(![...docs.keys()].some(path => path.startsWith('orders/')));
+});
 
 test('HTTP: expired flash promotion or stale displayed price blocks checkout before payment creation', async () => {
   docs.set('promocoes/flash', { ativa: true, relampago: true, startsAt: Date.now() - 120_000, endsAt: Date.now() - 1, alvoTipo: 'produto', alvoId: 'produto', descontoTipo: 'percentual', descontoPercentual: 20 });
@@ -228,4 +261,22 @@ test('HTTP: expired flash promotion or stale displayed price blocks checkout bef
   uid += '-fresh';
   const fresh = await checkout({ deliveryMethod: 'retirada', items: [{ ...items[0], expectedUnitAmountCents: 1000 }] });
   assert.equal(fresh.status, 201, await fresh.clone().text()); assert.equal(pagbankBodies.length, 1);
+});
+
+test('HTTP: no checkout quote when no offered service can be issued for the volumes', async () => {
+  jadlogAvailable = false;
+  process.env.MELHOR_ENVIO_SERVICES = '';
+  const response = await post('/api/shipping-quote', { cep: '01001000', items });
+  assert.equal(response.status, 422);
+  assert.equal((await response.json()).code, 'SHIPPING_NO_ISSUABLE_SERVICE');
+  assert.equal(pagbankBodies.length, 0);
+});
+
+test('HTTP: a single volume can still use PAC through Melhor Envio', async () => {
+  process.env.MELHOR_ENVIO_SERVICES = '';
+  const response = await post('/api/shipping-quote', { cep: '01001000', items: [{ ...items[0], quantidade: 1 }] });
+  assert.equal(response.status, 200);
+  const codes = (await response.json()).options.map((option: any) => option.service_code);
+  assert.ok(codes.includes('me:1'));
+  assert.ok(!codes.includes('me:11'));
 });

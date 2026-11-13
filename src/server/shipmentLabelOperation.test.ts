@@ -6,6 +6,7 @@ import { shipmentLabelOperation } from './shipmentLabelOperation.js';
 
 const orderId = 'GB-ETIQUETA-TESTE', orderPath = `orders/${orderId}`;
 const providerId = 'a33865e5-6c42-484d-9ec2-8a94e29484b7';
+const sandboxPrintUrl = 'https://sandbox.melhorenvio.com.br/imprimir/etiqueta-de-teste';
 const labelPath = `_melhorEnvioLabels/${orderId}`;
 const chargeId = 'CHAR_ETIQUETA';
 const fields = { action: 'prepare', invoiceKey: '1'.repeat(44), recipientDocument: '52998224725' };
@@ -34,9 +35,9 @@ afterEach(() => {
   for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
 });
 
-function scenario() {
+function scenario(printFileStatus = 200, printUrl = sandboxPrintUrl) {
   const { db, docs } = memoryFirestore([[orderPath, structuredClone(baseOrder)]]);
-  let paid = false, issued = false, amount = '14.25', ambiguous = false, reject = false;
+  let paid = false, issued = false, removed = false, lostRemovalResponse = false, amount = '14.25', ambiguous = false, reject = false;
   let verified = 0;
   const calls: AxiosRequestConfig[] = [];
   mock.method(axios, 'request', async (request: AxiosRequestConfig) => {
@@ -45,9 +46,17 @@ function scenario() {
     assert.equal(request.maxRedirects, 0);
     assert.equal(request.headers?.Authorization, 'Bearer token-de-teste');
     const path = request.url!.split('/api/v2/me/')[1];
-    if (path === 'cart') return { status: 201, data: { id: providerId, price: amount } };
+    if (path === 'cart') {
+      removed = false;
+      return { status: 201, data: { id: providerId, price: amount } };
+    }
+    if (path === `cart/${providerId}` && request.method === 'DELETE') {
+      removed = true;
+      if (lostRemovalResponse) throw new Error('Timeout após a remoção');
+      return { status: 204 };
+    }
     if (path === `orders/${providerId}`) return { status: 200, data: {
-      id: providerId, price: amount, status: paid ? 'released' : 'pending',
+      id: providerId, price: amount, status: removed ? 'cancelled' : paid ? 'released' : 'pending',
       paid_at: paid ? 'now' : null, generated_at: issued ? 'now' : null,
       tracking: issued ? '12345678901234' : null, service_id: 3, tags: [{ tag: orderId }],
     } };
@@ -61,7 +70,11 @@ function scenario() {
       assert.deepEqual(request.data, { orders: [providerId] });
       issued = true; return { status: 200, data: {} };
     }
-    if (path === `imprimir/pdf/${providerId}`) return { status: 200, data: Buffer.from('%PDF-1.7\nfixture') };
+    if (path === `imprimir/pdf/${providerId}`) return { status: printFileStatus, data: Buffer.from('%PDF-1.7\nfixture') };
+    if (path === 'shipment/print') {
+      assert.deepEqual(request.data, { mode: 'private', orders: [providerId] });
+      return { status: 200, data: { url: printUrl } };
+    }
     throw new Error('Chamada inesperada');
   });
   const invoke = (body: Record<string, unknown>, environment = 'sandbox') =>
@@ -73,6 +86,7 @@ function scenario() {
     changePrice: (value: string) => { amount = value; },
     failPayment: (value: 'ambiguous' | 'rejected' | null) => { ambiguous = value === 'ambiguous'; reject = value === 'rejected'; },
     markPaid: () => { paid = true; },
+    loseRemovalResponse: () => { lostRemovalResponse = true; },
   };
 }
 
@@ -95,11 +109,27 @@ test('creates, purchases, generates and downloads a shipping label for a simulat
   assert.deepEqual(await s.invoke({ action: 'issue', expectedAmountCents: 1500 }), { phase: 'paid', amountCents: 1500, providerId });
   assert.deepEqual(await s.invoke({ action: 'issue' }), { phase: 'issued', amountCents: 1500, providerId, tracking: '12345678901234' });
   assert.deepEqual(await s.invoke({ action: 'print' }), Buffer.from('%PDF-1.7\nfixture'));
+  assert.equal(s.count('/shipment/print'), 0);
   await s.invoke({ action: 'issue' });
   assert.equal(s.count('/cart'), 1);
   assert.equal(s.count('/shipment/checkout'), 1);
   assert.equal(s.count('/shipment/generate'), 1);
   assert.equal(s.docs.get(orderPath)?.fulfillmentStatus, 'em_producao');
+});
+
+test('returns a private print link for an issued label when the file endpoint returns 404', async () => {
+  const s = scenario(404);
+  s.docs.set(labelPath, { phase: 'issued', providerId, environment: 'sandbox' });
+  assert.deepEqual(await s.invoke({ action: 'print' }), { printUrl: sandboxPrintUrl });
+  assert.equal(s.count('/shipment/print'), 1);
+  assert.equal(s.count('/shipment/checkout'), 0);
+  assert.equal(s.count('/shipment/generate'), 0);
+});
+
+test('rejects private print links pointing outside the selected Melhor Envio environment', async () => {
+  const s = scenario(404, 'https://melhorenvio.com.br/imprimir/etiqueta-de-teste');
+  s.docs.set(labelPath, { phase: 'issued', providerId, environment: 'sandbox' });
+  await assert.rejects(s.invoke({ action: 'print' }), /link de impressão válido para este ambiente/);
 });
 
 test('rejects unpaid or refunded orders and mixed environments before reaching Melhor Envio', async () => {
@@ -148,4 +178,27 @@ test('rejects unallocated multiple parcels for carriers that require one shipmen
   order.shipping = { ...baseOrder.shipping, carrier_name: 'Loggi', service_code: 'me:31', parcels: [...baseOrder.shipping.parcels, ...baseOrder.shipping.parcels] };
   await assert.rejects(s.invoke(fields), /distribuição de produtos por volume/);
   assert.equal(s.calls.length, 0);
+});
+
+test('removes only an unpaid label and allows a replacement', async () => {
+  const s = scenario();
+  await s.invoke(fields);
+  assert.deepEqual(await s.invoke({ action: 'discard' }), { phase: 'none', amountCents: null });
+  assert.equal(s.docs.get(labelPath)?.providerId, undefined);
+  await s.invoke(fields);
+  s.markPaid();
+  await assert.rejects(s.invoke({ action: 'discard' }), /ainda está no carrinho/);
+  assert.equal(s.count(`/cart/${providerId}`), 1);
+});
+
+test('recovers a confirmed removal after a timeout without buying or deleting twice', async () => {
+  const s = scenario();
+  await s.invoke(fields);
+  s.loseRemovalResponse();
+  await assert.rejects(s.invoke({ action: 'discard' }), /não confirmou a operação/);
+  await assert.rejects(s.invoke({ action: 'issue', expectedAmountCents: 1425 }), /remoção aguarda/);
+  s.docs.get(labelPath)!.updatedAt = Date.now() - 21_000;
+  assert.deepEqual(await s.invoke({ action: 'discard' }), { phase: 'none', amountCents: null });
+  assert.equal(s.count(`/cart/${providerId}`), 1);
+  assert.equal(s.count('/shipment/checkout'), 0);
 });

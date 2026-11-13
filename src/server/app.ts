@@ -141,8 +141,10 @@ import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
 import { shipmentLabelOperation } from './shipmentLabelOperation.js';
+import { validateShipmentSender } from './melhorEnvioShipment.js';
+import { processMelhorEnvioTracking, syncMelhorEnvioTracking } from './melhorEnvioTracking.js';
 import { shippingParcelsForCart } from './shippingCart.js';
-import type { MelhorEnvioShippingOption, ShippingParcel } from '../lib/shipping.js';
+import { canIssueMelhorEnvioLabel, type MelhorEnvioShippingOption, type ShippingParcel } from '../lib/shipping.js';
 
 type RawBodyRequest = express.Request & { rawBody?: string; rawBodyBytes?: Buffer };
 type PlainRecord = Record<string, unknown>;
@@ -685,7 +687,10 @@ async function getShippingQuote(
 			? `${[street, neighborhood].filter(Boolean).join(', ')} - ${city}/${state}`
 			: `${city}/${state}`;
 
-		const options = await quoteMelhorEnvio(config, cep, parcels);
+		const options = (await quoteMelhorEnvio(config, cep, parcels))
+      .filter(option => canIssueMelhorEnvioLabel(option, parcels.length));
+    if (!options.length) throw new ShippingError(422, 'SHIPPING_NO_ISSUABLE_SERVICE',
+      'Nenhum serviço disponível permite emitir a etiqueta para estes volumes. Escolha retirada ou fale com a loja.');
 		const quotedAt = new Date().toISOString();
 		return { cep, originCep: config.originCep, environment: config.environment,
 			amountCents: options[0].amount_cents, address, state, street, neighborhood, city,
@@ -1803,8 +1808,8 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		const normalizedCart = await normalizeCart(body.items, services, firebaseUser.uid);
 		const shipping = await getShippingQuote(deliveryMethod, body.cep, normalizedCart.items.map(item => item.cartItem), responseRequestId(res), normalizedCart.shippingProducts);
 		if (deliveryMethod === 'entrega') {
-			if (shipping.environment === 'sandbox' && pagbank.environment === 'production') {
-				throw new HttpError(503, 'O Melhor Envio precisa estar em produção para cobrar um frete real.', 'SHIPPING_ENVIRONMENT_MISMATCH');
+			if (shipping.environment !== pagbank.environment) {
+				throw new HttpError(503, 'O Melhor Envio e o PagBank precisam estar no mesmo ambiente para cobrar um pedido com entrega.', 'SHIPPING_ENVIRONMENT_MISMATCH');
 			}
 			const selected = shipping.options.find(option => option.service_code === body.shippingServiceCode);
 			if (!selected || !Number.isSafeInteger(body.shippingAmountCents) || Number(body.shippingAmountCents) <= 0) {
@@ -1813,6 +1818,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			if (selected.amount_cents !== body.shippingAmountCents) {
 				throw new HttpError(409, 'O valor do frete mudou. Calcule novamente e confira o total antes de pagar.', 'SHIPPING_QUOTE_CHANGED');
 			}
+			if (shipping.environment === 'production') validateShipmentSender(melhorEnvioConfig(), true);
 			shipping.selected = selected;
 			shipping.amountCents = selected.amount_cents;
 		}
@@ -2483,6 +2489,21 @@ app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (
   try { await performOrderOperation(req, res, true); } catch (error) { sendError(res, error); }
 });
 
+app.post('/api/admin/orders/:orderId/shipment-tracking', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.fulfillment');
+    const { db, auth } = getAdminServices(), orderId = req.params.orderId;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId)) throw new HttpError(422, 'Pedido inválido.');
+    enforceRateLimit(`melhor-envio-tracking:${user.uid}`, 12, 60_000);
+    await enforceDistributedRateLimit(db, `melhor-envio-tracking:${orderId}`, 4, 60_000);
+    res.set('Cache-Control', 'private, no-store');
+    const result = await syncMelhorEnvioTracking(db, orderId, getPagBankConfig().environment,
+      (id, order) => verifyOperationalPayment(db, id, order, res));
+    await sendLatestOrderEmail(db, auth, orderId).catch(() => undefined);
+    res.json(result);
+  } catch (error) { sendError(res, error); }
+});
+
 app.post('/api/admin/orders/:orderId/tracking/refresh', requireAppCheck, async (req, res) => {
   try {
     const actor = await requirePermissionUser(req, 'orders.fulfillment');
@@ -2507,13 +2528,14 @@ app.get('/api/internal/maintenance', async (req, res) => {
     const work = await Promise.allSettled([
       expirePromotions(db), processTrackingJobs(db, (id, order) => verifyOperationalPayment(db, id, order)), dispatchCustomerEmails(db, getAdminServices().auth), cleanupStaffDocuments(getAdminServices()), cleanupStaffPdfBatches(getAdminServices()), cleanupCatalog(getAdminServices()),
       reviewCouponHolds(db, async (id, order) => { await reconcileStoredOrderPayment(db, id, order, getPagBankConfig()); }),
+      processMelhorEnvioTracking(db, () => getPagBankConfig().environment, (id, order) => verifyOperationalPayment(db, id, order)),
     ]);
     const cleanup = work[5];
     if (cleanup.status === 'fulfilled') logEvent(cleanup.value.failed || cleanup.value.scanDeferred ? 'warn' : 'info', 'catalog_cleanup_completed', { ...cleanup.value });
     const rejected = work.find((result): result is PromiseRejectedResult => result.status === 'rejected');
     if (rejected) throw rejected.reason;
-    const [expiredPromotions, tracking, customerEmails, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds] = work.map(result => (result as PromiseFulfilledResult<any>).value);
-    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
+    const [expiredPromotions, tracking, customerEmails, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds, melhorEnvioTracking] = work.map(result => (result as PromiseFulfilledResult<any>).value);
+    res.json({ expiredPromotions, tracking, staffDocuments, staffPdfBatches, catalogCleanup, couponHolds, melhorEnvioTracking, orderEmails: customerEmails.legacyOrderEmails || [], customerEmails });
   } catch (error) { sendError(res, error); }
 });
 

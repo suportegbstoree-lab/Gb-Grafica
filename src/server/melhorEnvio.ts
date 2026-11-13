@@ -81,10 +81,13 @@ export async function quoteMelhorEnvio(
   if (response.status === 401 || response.status === 403)
     throw new ShippingError(503, 'MELHOR_ENVIO_ACCESS_DENIED', 'A loja precisa verificar o token e a permissão de cotação do Melhor Envio.');
   if (response.status === 422) throw noService();
-  if (response.status !== 200 || !Array.isArray(response.data) || response.data.length > 100) throw unavailable();
+  const data = response.data;
+  const rows = Array.isArray(data) ? data
+    : isRecord(data) && (typeof data.id === 'number' || typeof data.id === 'string') ? [data] : null;
+  if (response.status !== 200 || !rows || rows.length > 100) throw unavailable();
 
   const options = new Map<string, MelhorEnvioShippingOption>();
-  for (const row of response.data) {
+  for (const row of rows) {
     if (!isRecord(row) || row.error || !isRecord(row.company)) continue;
     if (typeof row.id !== 'number' && typeof row.id !== 'string') continue;
     const id = String(row.id);

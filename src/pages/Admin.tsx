@@ -2571,7 +2571,7 @@ function OrderCard({
 
       <OrderDocuments order={order} staff canRetry={canRetryEmail} />
       {canFulfill && <OrderActions order={order} api={operations} onError={onOperationError} onSuccess={onOperationSuccess} />}
-      {order.tracking && <p className="break-words text-xs text-cyan-300">Rastreio: {order.tracking.code} · {order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
+      {order.tracking && <p className="break-words text-xs text-cyan-300">{order.tracking.code ? `Rastreio: ${order.tracking.code} · ` : ''}{order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
       {sheetOpen && <OrderProductionSheet canOpenFiles={canOpenFiles} order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}
       {order.metodoEntrega === 'entrega' && order.enderecoEntrega && (

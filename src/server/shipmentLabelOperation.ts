@@ -1,7 +1,7 @@
 import type { Firestore } from 'firebase-admin/firestore';
 import { isRecord } from '../lib/shipping.js';
 import { legacyFulfillmentStatus } from '../lib/orderStatus.js';
-import type { ShipmentLabelView } from '../lib/shipmentLabel.js';
+import type { ShipmentLabelPrintLink, ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { melhorEnvioConfig, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { shipmentCartBody, shipmentFailure, shipmentProvider, ShipmentProviderError } from './melhorEnvioShipment.js';
 
@@ -9,6 +9,7 @@ type Row = Record<string, unknown>;
 interface SavedLabel extends ShipmentLabelView {
   environment: MelhorEnvioConfig['environment'];
   updatedAt: number;
+  nextTrackingAt?: number;
 }
 
 const view = (row?: SavedLabel): ShipmentLabelView => row ? {
@@ -39,9 +40,9 @@ export async function shipmentLabelOperation(input: {
   body: Row;
   paymentEnvironment: () => string;
   verifyPayment: (order: Row) => Promise<string>;
-}): Promise<ShipmentLabelView | Buffer> {
+}): Promise<ShipmentLabelView | ShipmentLabelPrintLink | Buffer> {
   const { db, orderId, actor, body } = input;
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof body.action !== 'string' || !['status', 'prepare', 'recover', 'issue', 'print'].includes(body.action))
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof body.action !== 'string' || !['status', 'prepare', 'recover', 'discard', 'issue', 'print'].includes(body.action))
     throw shipmentFailure(422, 'Pedido ou operação de etiqueta inválida.');
   const orderRef = db.collection('orders').doc(orderId);
   const labelRef = db.collection('_melhorEnvioLabels').doc(orderId);
@@ -59,10 +60,10 @@ export async function shipmentLabelOperation(input: {
   if (body.action === 'print') {
     if (!saved?.providerId || saved.phase !== 'issued')
       throw shipmentFailure(409, 'A etiqueta precisa estar emitida para baixar o PDF.');
-    return service.pdf(saved.providerId);
+    return service.print(saved.providerId);
   }
   const change = async (expected: SavedLabel | undefined, patch: Partial<SavedLabel>, chargeId?: string) =>
-    db.runTransaction(async tx => {
+    db.runTransaction<SavedLabel>(async tx => {
       if (chargeId !== undefined) prePosting(activePaidDelivery((await tx.get(orderRef)).data(), chargeId));
       const current = (await tx.get(labelRef)).data() as SavedLabel | undefined;
       if (current?.phase !== expected?.phase || current?.updatedAt !== expected?.updatedAt)
@@ -71,6 +72,11 @@ export async function shipmentLabelOperation(input: {
         phase: 'none', amountCents: null, ...current, ...patch,
         environment: config.environment, updatedAt: Math.max(Date.now(), (current?.updatedAt ?? 0) + 1),
       };
+      if (next.phase === 'issued' && !next.nextTrackingAt) next.nextTrackingAt = Date.now();
+      if (next.phase === 'none') {
+        tx.set(labelRef, { phase: 'none', amountCents: null, environment: config.environment, updatedAt: next.updatedAt, updatedBy: actor });
+        return { phase: 'none', amountCents: null, environment: config.environment, updatedAt: next.updatedAt };
+      }
       tx.set(labelRef, { ...next, updatedBy: actor });
       return next;
     });
@@ -110,6 +116,25 @@ export async function shipmentLabelOperation(input: {
   }
 
   if (!saved?.providerId) throw shipmentFailure(409, 'Prepare o envio antes de emitir a etiqueta.');
+  if (body.action === 'discard') {
+    const retrying = saved.phase === 'discarding' && Date.now() - saved.updatedAt >= 20_000;
+    if (saved.phase !== 'cart' && !retrying) throw shipmentFailure(409, 'A remoção exige uma etiqueta no carrinho. Se já solicitou a remoção, aguarde alguns segundos e consulte novamente.');
+    const details = await service.details(saved.providerId);
+    if (details.paid || (!details.discarded && (!details.pending || details.unavailable)))
+      throw shipmentFailure(409, 'O Melhor Envio não confirmou que esta etiqueta ainda está no carrinho.');
+    // Claim before deletion so another tab cannot buy the label at the same time.
+    const discarding = await change(saved, { phase: 'discarding' });
+    if (!details.discarded) {
+      try { await service.removeCartItem(saved.providerId); }
+      catch (error) {
+        if (error instanceof ShipmentProviderError && error.rejected) await change(discarding, { phase: 'cart' });
+        throw error;
+      }
+    }
+    return view(await change(discarding, { phase: 'none' }));
+  }
+  if (saved.phase === 'discarding')
+    throw shipmentFailure(409, 'A remoção aguarda confirmação do Melhor Envio. Confira o carrinho antes de continuar.');
   if (saved.phase === 'issued') return view(saved);
   const providerId = saved.providerId;
   let current = saved;

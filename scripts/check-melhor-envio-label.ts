@@ -2,21 +2,24 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { loadEnv } from 'vite';
 import { melhorEnvioConfig, quoteMelhorEnvio } from '../src/server/melhorEnvio.js';
-import { shipmentCartBody, shipmentProvider } from '../src/server/melhorEnvioShipment.js';
+import { shipmentCartBody, shipmentProvider, validateShipmentSender } from '../src/server/melhorEnvioShipment.js';
 import { ShippingError } from '../src/server/shippingError.js';
 
 const [action, id, extra] = process.argv.slice(2);
-const usage = 'npm run shipping:label:sandbox -- prepare | buy ID | emit ID | print ID';
+const usage = 'npm run shipping:label:sandbox -- check | prepare | status ID | buy ID | emit ID | print ID';
 try {
   if (!action || action === '--help') {
     console.log(usage);
   } else {
-    if (extra || !['prepare', 'buy', 'emit', 'print'].includes(action) || (action === 'prepare' ? id : !id)) throw new Error(usage);
+    if (extra || !['check', 'prepare', 'status', 'buy', 'emit', 'print'].includes(action) || (['check', 'prepare'].includes(action) ? id : !id)) throw new Error(usage);
     Object.assign(process.env, loadEnv('sandbox', process.cwd(), ''));
     const config = melhorEnvioConfig();
     if (config.environment !== 'sandbox') throw new Error('Use MELHOR_ENVIO_ENV=sandbox e um token da conta de testes.');
     const provider = shipmentProvider(config);
-    if (action === 'prepare') {
+    if (action === 'check') {
+      validateShipmentSender(config, false);
+      console.log('Configuração local do sandbox e remetente validados. Nenhuma API foi chamada.');
+    } else if (action === 'prepare') {
       const orderId = `GB-SANDBOX-${randomUUID().slice(0, 8)}`;
       const parcels = [{ weightGrams: 750, lengthCm: 25, widthCm: 20, heightCm: 15 }];
       const options = await quoteMelhorEnvio({ ...config, services: ['3'] }, '01001000', parcels);
@@ -34,7 +37,9 @@ try {
     } else {
       const details = await provider.details(id);
       if (details.unavailable) throw new Error('O envio de teste está indisponível.');
-      if (action === 'buy') {
+      if (action === 'status') {
+        console.log(details.issued ? 'Etiqueta emitida.' : details.paid ? 'Compra confirmada.' : 'Compra ainda não confirmada.');
+      } else if (action === 'buy') {
         if (!details.paid) {
           if (!details.pending) throw new Error('O envio de teste ainda não pode ser comprado.');
           await provider.checkout(id);
@@ -48,9 +53,15 @@ try {
         } else console.log('A etiqueta de teste já está emitida.');
       } else {
         if (!details.issued) throw new Error('O sandbox ainda não concluiu a emissão.');
-        const output = `etiqueta-sandbox-${id}.pdf`;
-        await writeFile(output, await provider.pdf(id), { flag: 'wx', mode: 0o600 });
-        console.log(`PDF de teste salvo em ${output}.`);
+        const print = await provider.print(id);
+        if (Buffer.isBuffer(print)) {
+          const output = `etiqueta-sandbox-${id}.pdf`;
+          await writeFile(output, print, { flag: 'wx', mode: 0o600 });
+          console.log(`PDF de teste salvo em ${output}.`);
+        } else {
+          console.log('Abra o link privado com a sessão da conta sandbox que emitiu a etiqueta:');
+          console.log(print.printUrl);
+        }
       }
     }
   }
