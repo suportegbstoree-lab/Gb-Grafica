@@ -11,6 +11,25 @@ import {
 import { zipSync, strToU8 } from "fflate";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
+test("renames an uploaded PDF and reopens its existing mold", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
+  await page.getByText("Sem categoria", { exact: true }).click();
+  await page.getByRole("button", { name: "Renomear Kit de teste.pdf", exact: true }).click();
+  const rename = page.getByRole("dialog", { name: "Renomear base PDF" });
+  await rename.getByRole("textbox", { name: "Nome do PDF" }).fill("Cadernos da equipe");
+  await rename.getByRole("button", { name: "Salvar nome" }).click();
+  await expect(rename).toHaveCount(0);
+  await page.getByRole("button", { name: "Editar Cadernos da equipe.pdf", exact: true }).click();
+  const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
+  await expect(mold.getByRole("textbox", { name: "Nome do molde" })).toHaveValue("Kit de teste");
+  await expect(mold.getByLabel("Base para associar e testar")).toHaveValue("a".repeat(32));
+  await mold.getByRole("button", { name: "Fechar editor de molde" }).click();
+  await page.getByRole("button", { name: "Edição e fila", exact: true }).click();
+  await page.getByLabel("Base PDF da equipe").selectOption({ label: "Cadernos da equipe.pdf · Sem categoria" });
+  await expect(page.getByLabel("Molde PDF da equipe")).toHaveValue("b".repeat(32));
+});
+
 test("lists bases in natural name order and links alphabet folders in bulk", async ({
   page,
 }) => {

@@ -1,5 +1,6 @@
 import {
   matchPdfLayout,
+  staffPdfSourceName,
   type StaffPdfBase,
   type StaffPdfLayoutView,
 } from "./staffPdf.js";
@@ -280,15 +281,17 @@ export function resolveStaffPdfCsvModel(
   const associated =
     named.length === 1 ? named[0].layout.base_pdf_name : undefined;
   const associatedId = named.length === 1 ? named[0].layout.base_id : undefined;
+  const matchesName = (name: string) => associated
+    ? key(name) === key(associated)
+    : modelStem(name) === modelStem(value);
   const candidates = bases.filter((base) =>
-    associatedId
-      ? base.id === associatedId
-      : associated
-        ? key(base.name) === key(associated)
-        : modelStem(base.name) === modelStem(value),
+    associatedId ? base.id === associatedId : matchesName(staffPdfSourceName(base)),
   );
-  const internal = candidates.filter((base) => base.source === "internal");
-  const choices = internal.length ? internal : candidates;
+  const matching = candidates.length || associatedId
+    ? candidates
+    : bases.filter((base) => matchesName(base.name));
+  const internal = matching.filter((base) => base.source === "internal");
+  const choices = internal.length ? internal : matching;
   if (choices.length !== 1) return;
   const [base] = choices;
   const variant = /_template(?:_(\d+)p)?$/.exec(exact);
@@ -296,6 +299,6 @@ export function resolveStaffPdfCsvModel(
     named.length === 1 &&
     (!variant?.[1] || Number(variant[1]) === base.pageCount)
       ? named[0]
-      : matchPdfLayout(base.name, base.pageCount, layouts, base.id);
+      : matchPdfLayout(staffPdfSourceName(base), base.pageCount, layouts, base.id);
   return { baseId: base.id, layoutId: layout?.id || "" };
 }

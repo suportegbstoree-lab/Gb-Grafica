@@ -15,6 +15,7 @@ import {
   baseForPdfLayout,
   compareStaffPdfNames,
   staffPdfInitialSize,
+  staffPdfSourceName,
   defaultPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
@@ -56,7 +57,8 @@ export default function StaffPdfLibraryEditor({
       total: number;
       error?: string;
     }>(),
-    [editBase, setEditBase] = React.useState<StaffPdfBase>();
+    [editBase, setEditBase] = React.useState<StaffPdfBase>(),
+    [renaming, setRenaming] = React.useState<{ base: StaffPdfBase; name: string }>();
   const busy = operationBusy || importBusy;
   const [editing, setEditing] = React.useState<{
       name: string;
@@ -126,7 +128,7 @@ export default function StaffPdfLibraryEditor({
   }
   function associated(base: StaffPdfBase) {
     return data.layouts.filter((row) =>
-      Boolean(matchPdfLayout(base.name, base.pageCount, [row], base.id)),
+      Boolean(matchPdfLayout(staffPdfSourceName(base), base.pageCount, [row], base.id)),
     );
   }
   function unusedName(base: StaffPdfBase) {
@@ -146,7 +148,7 @@ export default function StaffPdfLibraryEditor({
             layout: {
               ...row.layout,
               ...(linked
-                ? { base_pdf_name: linked.name, base_id: linked.id }
+                ? { base_pdf_name: staffPdfSourceName(linked), base_id: linked.id }
                 : {}),
             },
           }
@@ -155,7 +157,7 @@ export default function StaffPdfLibraryEditor({
             layout: {
               ...defaultPdfLayout(),
               ...(linked
-                ? { base_pdf_name: linked.name, base_id: linked.id }
+                ? { base_pdf_name: staffPdfSourceName(linked), base_id: linked.id }
                 : {}),
             },
           },
@@ -380,6 +382,18 @@ export default function StaffPdfLibraryEditor({
                             onClick={() => edit(b)}
                           >
                             Editar {b.name}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            aria-label={`Renomear ${b.name}`}
+                            className="rounded-lg border border-gray-700 p-2 text-sm"
+                            onClick={() => {
+                              setError("");
+                              setRenaming({ base: b, name: b.name });
+                            }}
+                          >
+                            Renomear
                           </button>
                           {alphabetPicker(b)}
                           <button
@@ -795,10 +809,10 @@ export default function StaffPdfLibraryEditor({
                   disabled={busy}
                   onChange={(e) => {
                     const id = e.target.value;
+                    const linked = data.bases.find((item) => item.id === id);
                     setBaseId(id);
                     patch({
-                      base_pdf_name: data.bases.find((item) => item.id === id)
-                        ?.name,
+                      base_pdf_name: linked ? staffPdfSourceName(linked) : undefined,
                       base_id: id || undefined,
                     });
                     setOriginal(null);
@@ -824,7 +838,7 @@ export default function StaffPdfLibraryEditor({
               {base?.source === "internal" && (
                 <div className="space-y-2 text-sm">
                   <p className="text-xs text-gray-300">
-                    Pasta de letras da base “{alphabetFolderName(base.name)}”.
+                    Pasta de letras da base “{alphabetFolderName(staffPdfSourceName(base))}”.
                     Use arquivos PNG como A.png e É.png.
                   </p>
                   {alphabetPicker(base)}
@@ -928,6 +942,39 @@ export default function StaffPdfLibraryEditor({
             setEditBase(undefined);
           }}
         />
+      )}
+      {renaming && (
+        <EditorModal
+          title="Renomear base PDF"
+          onClose={() => setRenaming(undefined)}
+          busy={busy}
+          closeLabel="Fechar renomeação"
+          doneLabel="Cancelar"
+          footerText="O molde e a pasta de letras continuam associados ao PDF."
+          footerActions={
+            <button type="submit" form="rename-staff-pdf" disabled={busy || !renaming.name.trim()}
+              className="rounded-xl bg-pink-500 px-6 py-3 text-xs font-bold disabled:opacity-40">
+              Salvar nome
+            </button>
+          }
+        >
+          <form id="rename-staff-pdf" className="space-y-3" onSubmit={(event) => {
+            event.preventDefault();
+            void run(async () => {
+              await api.renameBase(renaming.base, renaming.name);
+              await reload();
+              setRenaming(undefined);
+              setMessage("Nome do PDF atualizado.");
+            });
+          }}>
+            <label className="block">
+              Nome do PDF
+              <input required maxLength={180} value={renaming.name} disabled={busy} className={input}
+                onChange={(event) => setRenaming({ ...renaming, name: event.target.value })} />
+            </label>
+            {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+          </form>
+        </EditorModal>
       )}
       {confirm && (
         <ConfirmDialog

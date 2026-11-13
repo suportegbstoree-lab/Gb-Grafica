@@ -5,7 +5,7 @@ import {
   pdfCategoryKey,
   UNCATEGORIZED_PDFS,
 } from "../lib/staffPdfCategory";
-import type { StaffPdfBase } from "../lib/staffPdf";
+import { staffPdfSourceName, type StaffPdfBase } from "../lib/staffPdf";
 import type { StaffPdfApi } from "../services/staffPdfService";
 import {
   isFolderMetadata,
@@ -95,7 +95,7 @@ export default function StaffPdfBaseImport({
       const replacement = bases.find(
         (base) =>
           base.source === "internal" &&
-          key(base.name, base.category || UNCATEGORIZED_PDFS) === identity,
+          key(staffPdfSourceName(base), base.category || UNCATEGORIZED_PDFS) === identity,
       );
       const selected = !seen.has(identity) && !replacement;
       seen.add(identity);
@@ -211,7 +211,7 @@ export default function StaffPdfBaseImport({
             await api.uploadAlphabet(
               {
                 id: storedBaseId,
-                name: row.replacement?.name || row.file.name,
+                name: row.replacement ? staffPdfSourceName(row.replacement) : row.file.name,
               },
               row.alphabet,
             );

@@ -22,6 +22,7 @@ import {
   matchPdfLayout,
   compareStaffPdfNames,
   staffPdfInitialSize,
+  staffPdfSourceName,
   newPdfLine,
   normalizeStaffPdfJob,
   layoutFont,
@@ -201,7 +202,7 @@ export default function StaffPdfWorkspace({
     return () => window.removeEventListener("beforeunload", warn);
   }, [queue]);
   const mold = data.layouts.find((t) => t.id === layoutId);
-  const baseName = loaded?.base.name;
+  const baseName = loaded && staffPdfSourceName(loaded.base);
   const compatibleMolds = data.layouts.filter(
     (item) =>
       (item.layout.base_id
@@ -591,13 +592,13 @@ export default function StaffPdfWorkspace({
         item && data.layouts.find((t) => t.id === item.job.layoutId);
       const source =
         item && b.revision === item.base.revision
-          ? { base: item.base, original: item.original }
+          ? { base: b, original: item.original }
           : await readBase(b);
       const layout =
         previousLayout ||
         (autoTemplate
           ? matchPdfLayout(
-              source.base.name,
+              staffPdfSourceName(source.base),
               source.base.pageCount,
               data.layouts,
               source.base.id,

@@ -19,6 +19,7 @@ import {
   compareStaffPdfNames,
   layoutFont,
   matchPdfLayout,
+  staffPdfSourceName,
 } from "../lib/staffPdf";
 import UploadInput from "./UploadInput";
 const field =
@@ -247,7 +248,7 @@ export default function ProductProductionEditor({
                   setLayout(
                     base
                       ? matchPdfLayout(
-                          base.name,
+                          staffPdfSourceName(base),
                           base.pageCount,
                           library.layouts,
                           id,

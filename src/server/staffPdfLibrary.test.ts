@@ -11,7 +11,8 @@ import {
   resolveStaffPdfBase,
 } from "./staffPdfLibrary";
 import { createStaffDocumentRouters, sanitizeStaffPdf } from "./staffDocuments";
-import { defaultPdfLayout, newPdfLine } from "../lib/staffPdf";
+import { baseForPdfLayout, defaultPdfLayout, newPdfLine, staffPdfStoragePath } from "../lib/staffPdf";
+import { resolveStaffPdfCsvModel } from "../lib/staffPdfCsv";
 import { cleanupStaffPdfBatches } from "./staffPdfBatches";
 import {
   automaticStaffBarcode,
@@ -260,6 +261,42 @@ test("JSON imports preserve existing molds, malformed maps have no writes, edits
       templates: { good: defaultPdfLayout(), bad: { color: "red" } },
     });
     assert.equal(docs.size, before);
+  }));
+test("renaming an internal PDF preserves its file, revision, legacy mold and alphabet", async () =>
+  scenario(async ({ request, docs, signatures }) => {
+    const id = "a".repeat(32), revision = "b".repeat(32);
+    const ref = `_staffPdfBases/${id}`, path = staffPdfStoragePath(id);
+    const letterPath = `staff-pdf-bases/${id}/letters/${"d".repeat(32)}.png`;
+    const nameIndex = `_staffPdfBaseNames/${pdfLibraryId("Kit.pdf")}`;
+    const alphabet = { folderName: "Kit", letters: { A: { path: letterPath } }, sizePercent: 45 };
+    const original = { status: "ready", name: "Kit.pdf", revision, path, generation: "5", alphabet, pageCount: 4, pages: [] };
+    docs.set(ref, original);
+    docs.set(nameIndex, { baseId: id });
+    const moldId = "c".repeat(32);
+    const mold = { name: "Kit_template__4p", enabled: true, revision: moldId, layout: defaultPdfLayout() };
+    docs.set(`_staffPdfLayouts/${moldId}`, mold);
+    const route = `/library/bases/${id}/rename`;
+    const input = { name: "Coleção de Cadernos", expectedName: "Kit.pdf", baseRevision: revision };
+    assert.equal((await request(route, "generator", input)).status, 403);
+    assert.equal((await request(route, "manager", { ...input, name: "../base" })).status, 422);
+    assert.equal((await request(route, "manager", { ...input, baseRevision: "0".repeat(32) })).status, 409);
+    assert.equal((await request(route, "manager", input)).status, 200);
+    assert.equal((await request(route, "manager", input)).status, 200);
+    assert.equal((await request(route, "manager", { ...input, name: "Outra base" })).status, 409);
+    const library = await (await request("/library", "manager")).json();
+    assert.equal(library.bases[0].name, "Coleção de Cadernos.pdf");
+    assert.equal(library.bases[0].sourceName, "Kit.pdf");
+    assert.equal(baseForPdfLayout(library.layouts[0], library.bases)?.id, id);
+    for (const label of ["Kit", "Coleção de Cadernos"]) {
+      assert.deepEqual(resolveStaffPdfCsvModel(label, library.bases, library.layouts), { baseId: id, layoutId: moldId });
+    }
+    const initial = await request(`/library/bases/${id}/initial?letter=A`, "generator");
+    assert.deepEqual(await initial.json(), { url: `https://signed.example.test/${letterPath}`, sizePercent: 45 });
+    assert.deepEqual(signatures, [letterPath]);
+    const saved = docs.get(ref);
+    for (const [key, value] of Object.entries(original)) assert.deepEqual(saved[key], value);
+    assert.deepEqual(docs.get(`_staffPdfLayouts/${moldId}`), mold);
+    assert.deepEqual(docs.get(nameIndex), { baseId: id });
   }));
 test("four-page bases stay private, create no product, lock duplicate names, and generate idempotent staff documents", async () =>
   scenario(async ({ request, docs, objects, services, revoke }) => {

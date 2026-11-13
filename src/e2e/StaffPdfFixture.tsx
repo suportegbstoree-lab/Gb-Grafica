@@ -16,6 +16,7 @@ import {
   defaultPdfLayout,
   normalizePdfLayout,
   parsePdfLayoutMap,
+  staffPdfSourceName,
   type StaffPdfBase,
   type StaffPdfLayoutView,
 } from "../lib/staffPdf";
@@ -117,10 +118,11 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         const sizePercent = bases.find((base) => base.id === id)?.initialSizePercent;
         return source ? { source, sizePercent: sizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT } : undefined;
       },
-      uploadAlphabet: async ({ id, name }, files, progress, mold) => {
+      uploadAlphabet: async (target, files, progress, mold) => {
+        const { id } = target;
         const { folderName, letters } = readAlphabetFiles(
           files,
-          mold?.name ?? name,
+          mold?.name ?? staffPdfSourceName(target),
         );
         progress?.(0, letters.length);
         alphabets.set(
@@ -153,6 +155,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         bases.push({
           id,
           name: replacement?.name || file.name,
+          sourceName: replacement?.sourceName,
           category,
           pageCount: d.getPageCount(),
           pages: [],
@@ -160,6 +163,11 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
           source: "internal",
         });
         return id;
+      },
+      renameBase: async (target, name) => {
+        const sourceName = staffPdfSourceName(target);
+        const filename = /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+        bases = bases.map((base) => base.id === target.id ? { ...base, name: filename, sourceName } : base);
       },
       deleteBase: async (id) => {
         bases = bases.filter((b) => b.id !== id);

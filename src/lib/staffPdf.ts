@@ -51,12 +51,19 @@ export interface StaffPdfBase {
   category?: string;
   id: string;
   name: string;
+  /** Original PDF name used by imported molds and letter folders. */
+  sourceName?: string;
   pageCount: number;
   revision: string;
   pages: Array<{ width: number; height: number }>;
   source?: "internal" | "catalog";
   productId?: string;
   templateId?: string;
+}
+export function staffPdfSourceName(
+  base: Pick<StaffPdfBase, "name" | "sourceName">,
+) {
+  return base.sourceName ?? base.name;
 }
 export interface StaffPdfLayoutView {
   id: string;
@@ -358,7 +365,7 @@ export function baseForPdfLayout(
   if (layout.layout.base_id)
     return bases.find((base) => base.id === layout.layout.base_id);
   const matches = bases.filter((base) =>
-    matchPdfLayout(base.name, base.pageCount, [layout], base.id),
+    matchPdfLayout(staffPdfSourceName(base), base.pageCount, [layout], base.id),
   );
   return matches.length === 1 ? matches[0] : undefined;
 }

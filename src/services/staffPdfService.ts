@@ -7,11 +7,12 @@ import {
   STAFF_DOCUMENT_MAX_BYTES,
   staffDocumentPath,
 } from "../lib/staffDocument";
-import type {
-  StaffPdfBase,
-  StaffPdfLayout,
-  StaffPdfLayoutView,
-  StaffPdfJob,
+import {
+  staffPdfSourceName,
+  type StaffPdfBase,
+  type StaffPdfLayout,
+  type StaffPdfLayoutView,
+  type StaffPdfJob,
 } from "../lib/staffPdf";
 import type { StaffDocumentView } from "./staffDocumentService";
 import {
@@ -42,9 +43,10 @@ export interface StaffPdfApi {
   uploadBase(
     file: File,
     requestId: string,
-    replacement?: Pick<StaffPdfBase, "id" | "name" | "revision" | "category">,
+    replacement?: Pick<StaffPdfBase, "id" | "name" | "sourceName" | "revision" | "category">,
     category?: string,
   ): Promise<string>;
+  renameBase(base: Pick<StaffPdfBase, "id" | "name" | "revision">, name: string): Promise<void>;
   deleteBase(id: string): Promise<void>;
   saveLayout(
     name: string,
@@ -57,7 +59,7 @@ export interface StaffPdfApi {
   ): Promise<{ created: number; skipped: number }>;
   initial(id: string, text: string): Promise<DecorativeInitial | undefined>;
   uploadAlphabet(
-    base: Pick<StaffPdfBase, "id" | "name"> &
+    base: Pick<StaffPdfBase, "id" | "name" | "sourceName"> &
       Partial<Pick<StaffPdfBase, "revision">>,
     files: File[],
     progress?: (completed: number, total: number) => void,
@@ -99,7 +101,7 @@ export const staffPdfApi: StaffPdfApi = {
     )
       throw new Error("Envie um PDF válido de até 50 MB.");
     const pending = await staffPdfRequest("/bases", {
-      name: replacement?.name ?? file.name,
+      name: replacement ? staffPdfSourceName(replacement) : file.name,
       requestId,
       ...(category || replacement?.category
         ? { category: category || replacement?.category }
@@ -129,6 +131,13 @@ export const staffPdfApi: StaffPdfApi = {
       );
       throw e;
     }
+  },
+  renameBase: async (base, name) => {
+    await staffPdfRequest(`/bases/${encodeURIComponent(base.id)}/rename`, {
+      name,
+      expectedName: base.name,
+      baseRevision: base.revision,
+    });
   },
   deleteBase: async (id) => {
     await staffPdfRequest(`/bases/${id}/delete`, {});
@@ -183,7 +192,8 @@ export const staffPdfApi: StaffPdfApi = {
   uploadAlphabet: async (base, files, progress, mold) => {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
-    const parsed = readAlphabetFiles(files, mold?.name ?? base.name),
+    const sourceName = staffPdfSourceName(base);
+    const parsed = readAlphabetFiles(files, mold?.name ?? sourceName),
       letters: Record<string, { path: string }> = {};
     for (const { file } of parsed.letters) {
       const header = new Uint8Array(await file.slice(0, 33).arrayBuffer());
@@ -220,7 +230,7 @@ export const staffPdfApi: StaffPdfApi = {
       await staffPdfRequest(`/bases/${base.id}/alphabet`, {
         folderName: parsed.folderName,
         ...(base.revision ? { baseRevision: base.revision } : {}),
-        ...(!matchingAlphabetName(base.name, parsed.folderName) && mold
+        ...(!matchingAlphabetName(sourceName, parsed.folderName) && mold
           ? { layoutId: mold.id }
           : {}),
         letters,

@@ -249,7 +249,10 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         const b = d.data();
         return {
           id: d.id,
-          name: b.name,
+          name: b.displayName ?? b.name,
+          ...(b.displayName && b.displayName !== b.name
+            ? { sourceName: b.name }
+            : {}),
           initialLetters: Object.keys(b.alphabet?.letters || {}),
           initialFolderName:
             b.alphabet?.sourceFolderName ?? b.alphabet?.folderName,
@@ -291,6 +294,41 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         truncated:
           bases.size > 500 || layouts.size > 1000 || products.size > 500,
       });
+    }),
+  );
+  router.post(
+    "/bases/:id/rename",
+    action(async (req, res) => {
+      const actor = manage(res);
+      const id = req.params.id;
+      const { name, expectedName, baseRevision } = req.body || {};
+      if (!validDocumentId(id) || !validDocumentId(baseRevision))
+        throw new OperationsError("Base ou revisão inválida.");
+      const currentName = input(() => staffPdfName(expectedName));
+      const requestedName = input(() => staffPdfName(name));
+      const nextName = input(() =>
+        staffPdfName(/\.pdf$/i.test(requestedName) ? requestedName : `${requestedName}.pdf`),
+      );
+      if (!nextName.slice(0, -4).trim())
+        throw new OperationsError("Informe um nome para o PDF.");
+      const { db } = services();
+      const ref = db.collection("_staffPdfBases").doc(id);
+      await db.runTransaction(async (tx) => {
+        const base = (await tx.get(ref)).data();
+        if (base?.status !== "ready")
+          throw new OperationsError("Base não encontrada.", 404);
+        const displayName = base.displayName ?? base.name;
+        if (base.revision !== baseRevision || (displayName !== currentName && displayName !== nextName))
+          throw new OperationsError("A base mudou. Atualize a biblioteca antes de renomear.", 409);
+        if (displayName === nextName) return;
+        // File revisions identify content. The original name still resolves imported molds and alphabets.
+        tx.update(ref, {
+          displayName: nextName,
+          updatedAt: new Date(now()).toISOString(),
+          updatedBy: actor.uid,
+        });
+      });
+      res.json({ id, name: nextName });
     }),
   );
   router.get(

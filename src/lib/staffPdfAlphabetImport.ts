@@ -6,6 +6,7 @@ import {
 import {
   baseForPdfLayout,
   compareStaffPdfNames,
+  staffPdfSourceName,
   type StaffPdfBase,
   type StaffPdfLayoutView,
 } from "./staffPdf";
@@ -53,7 +54,7 @@ export function planStaffPdfAlphabetImport(
       )
     )
       for (const base of internal)
-        if (matchingAlphabetName(base.name, folderName))
+        if (matchingAlphabetName(staffPdfSourceName(base), folderName))
           targets.set(base.id, base);
 
     if (targets.size !== 1) {
@@ -65,7 +66,7 @@ export function planStaffPdfAlphabetImport(
     const base = [...targets.values()][0];
     const mold = matched.find((match) => match.base?.id === base.id)?.mold;
     try {
-      readAlphabetFiles(group, mold?.name ?? base.name);
+      readAlphabetFiles(group, mold?.name ?? staffPdfSourceName(base));
       row.base = base;
       row.mold = mold;
       targetCounts.set(base.id, (targetCounts.get(base.id) ?? 0) + 1);
