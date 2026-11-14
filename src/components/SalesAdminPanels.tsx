@@ -397,9 +397,10 @@ export function CouponsPanel({
                 <option value="cart">Todo o carrinho</option>
                 <option value="products">Produtos selecionados</option>
                 <option value="categories">Categorias selecionadas</option>
+                <option value="shipping">Frete</option>
               </select>
             </label>
-            {draft.scope !== "cart" && (
+            {(draft.scope === "products" || draft.scope === "categories") && (
               <fieldset className="max-h-44 space-y-2 overflow-auto rounded-lg border border-gray-700 p-3 sm:col-span-2">
                 <legend className="px-1 text-sm">
                   {draft.scope === "products"
@@ -461,7 +462,7 @@ export function CouponsPanel({
             <button
               className={primary}
               disabled={
-                busy || (draft.scope !== "cart" && !draft.targets.length)
+                busy || ((draft.scope === "products" || draft.scope === "categories") && !draft.targets.length)
               }
             >
               Salvar cupom
@@ -487,7 +488,7 @@ export function CouponsPanel({
                 {row.description} ·{" "}
                 {row.kind === "fixed"
                   ? formatMoney(row.amount / 100)
-                  : `${row.amount / 100}%`}
+                  : `${row.amount / 100}%`}{row.scope === "shipping" ? " no frete" : ""}
               </p>
               <p className="text-xs text-gray-400">
                 {couponAvailable(row, Date.now())

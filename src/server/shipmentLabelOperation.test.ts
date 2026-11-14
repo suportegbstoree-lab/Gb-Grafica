@@ -75,6 +75,15 @@ function scenario(printFileStatus = 200, printUrl = sandboxPrintUrl) {
       assert.deepEqual(request.data, { mode: 'private', orders: [providerId] });
       return { status: 200, data: { url: printUrl } };
     }
+    if (path === 'shipment/preview') {
+      assert.deepEqual(request.data, { orders: [providerId] });
+      return { status: 200, data: { url: printUrl } };
+    }
+    if (path === 'shipment/cancel') {
+      assert.deepEqual(request.data, { order: { id: providerId, reason_id: 2, description: 'Envio substituído' } });
+      removed = true;
+      return { status: 200, data: {} };
+    }
     throw new Error('Chamada inesperada');
   });
   const invoke = (body: Record<string, unknown>, environment = 'sandbox') =>
@@ -129,7 +138,30 @@ test('returns a private print link for an issued label when the file endpoint re
 test('rejects private print links pointing outside the selected Melhor Envio environment', async () => {
   const s = scenario(404, 'https://melhorenvio.com.br/imprimir/etiqueta-de-teste');
   s.docs.set(labelPath, { phase: 'issued', providerId, environment: 'sandbox' });
-  await assert.rejects(s.invoke({ action: 'print' }), /link de impressão válido para este ambiente/);
+  await assert.rejects(s.invoke({ action: 'print' }), /link válido para este ambiente/);
+});
+
+test('previews a purchased label and cancels it once even when the customer has been refunded', async () => {
+  const s = scenario();
+  await s.invoke(fields);
+  await assert.rejects(s.invoke({ action: 'preview' }), /Compre a etiqueta/);
+  await s.invoke({ action: 'issue', expectedAmountCents: 1425 });
+  assert.deepEqual(await s.invoke({ action: 'preview' }), { printUrl: sandboxPrintUrl });
+  s.docs.get(orderPath)!.pagbankRefundedAmountCents = 4000;
+  const request = { action: 'cancel', description: 'Envio substituído' };
+  await Promise.allSettled([s.invoke(request), s.invoke(request)]);
+  assert.equal(s.count('/shipment/cancel'), 1);
+  assert.equal(s.docs.get(labelPath)?.phase, 'canceled');
+  assert.equal(s.docs.get(orderPath)?.pagbankRefundedAmountCents, 4000);
+  assert.equal([...s.docs.keys()].filter(path => path.startsWith(`${labelPath}/cancellations/`)).length, 1);
+  await assert.rejects(s.invoke(fields), /sem estorno/);
+});
+
+test('a store freight coupon preserves the declared goods value', async () => {
+  const s = scenario();
+  s.docs.get(orderPath)!.cupom = { discountCents: 5000, shippingDiscountCents: 5000 };
+  await s.invoke(fields);
+  assert.equal(s.calls[0].data.options.insurance_value, 40);
 });
 
 test('rejects unpaid or refunded orders and mixed environments before reaching Melhor Envio', async () => {

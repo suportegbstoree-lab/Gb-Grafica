@@ -15,7 +15,7 @@ export interface CouponDraft {
   limit: number;
   active: boolean;
   firstPurchase: boolean;
-  scope: "cart" | "products" | "categories";
+  scope: "cart" | "products" | "categories" | "shipping";
   targets: string[];
 }
 
@@ -31,6 +31,7 @@ export interface AppliedCoupon {
   code: string;
   description: string;
   discountCents: number;
+  shippingDiscountCents?: number;
   firstPurchase: boolean;
 }
 
@@ -70,7 +71,7 @@ export function normalizeCouponDraft(
     throw new Error("Informe entre 1 e 100.000 usos.");
   }
   if (
-    !["cart", "products", "categories"].includes(value.scope!) ||
+    !["cart", "products", "categories", "shipping"].includes(value.scope!) ||
     !Array.isArray(value.targets) ||
     value.targets.length > 50 ||
     value.targets.some(
@@ -80,7 +81,7 @@ export function normalizeCouponDraft(
         target.length > 100 ||
         (value.scope === "products" && !/^[A-Za-z0-9_-]+$/.test(target)),
     ) ||
-    (value.scope !== "cart" && !value.targets.length)
+    ((value.scope === "products" || value.scope === "categories") && !value.targets.length)
   ) {
     throw new Error("Escolha o alcance e até 50 produtos ou categorias.");
   }
@@ -111,7 +112,7 @@ export function normalizeCouponDraft(
     firstPurchase: value.firstPurchase,
     scope: value.scope!,
     targets:
-      value.scope === "cart"
+      value.scope === "cart" || value.scope === "shipping"
         ? []
         : [...new Set(value.targets.map((target) => target.trim()))],
   };
@@ -130,6 +131,7 @@ export function allocateCoupon(
   coupon: SalesCoupon,
   lines: CouponLine[],
 ): number[] {
+  if (coupon.scope === "shipping") return lines.map(() => 0);
   const eligible = lines.map(
     (line) =>
       coupon.scope === "cart" ||
@@ -152,6 +154,13 @@ export function allocateCoupon(
     remaining -= discount;
     return discount;
   });
+}
+
+export function shippingCouponDiscount(coupon: SalesCoupon, freightCents: number): number {
+  if (coupon.scope !== "shipping" || !Number.isSafeInteger(freightCents) || freightCents <= 0) return 0;
+  return Math.min(freightCents, coupon.kind === "percent"
+    ? Math.round(freightCents * coupon.amount / 10_000)
+    : coupon.amount);
 }
 
 /** PagBank receives its existing positive unit prices. At most one discounted line is split. */

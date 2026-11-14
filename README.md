@@ -156,9 +156,10 @@ O CEP do remetente é `MELHOR_ENVIO_ORIGIN_CEP`. Se necessário, inclua
 preencha o CNPJ e a inscrição estadual exigidos pelo Melhor Envio. Gere o token
 com as permissões de cotação, carrinho, leitura de etiquetas, compra, geração e
 impressão (`shipping-calculate`, `cart-read`, `cart-write`, `orders-read`,
-`shipping-checkout`, `shipping-generate` e `shipping-print`).
+`shipping-checkout`, `shipping-generate` e `shipping-print`). Para a prévia e o
+cancelamento no ADM, inclua também `shipping-preview` e `shipping-cancel`.
 
-Em **Pedidos → Etiqueta de postagem**, prepare o envio com a chave de NF-e,
+Em **Etiquetas → Abrir etiqueta** ou **Pedidos → Etiqueta de postagem**, prepare o envio com a chave de NF-e,
 CPF/CNPJ do destinatário e ID da agência quando exigido. Confira o custo e
 confirme o débito na carteira do Melhor Envio. Depois que a compra for liberada,
 emita e baixe o PDF. Se o arquivo estiver indisponível pela API, o ADM solicita
@@ -170,6 +171,16 @@ Use **Remover do carrinho** antes da compra para corrigir os dados e preparar
 o envio novamente. Em **Consultar rastreio**, a confirmação de postagem pelo
 Melhor Envio move o pedido para **A Caminho** e a confirmação de entrega move
 para **Entregue**. O código pode aparecer após a postagem.
+
+Após a compra, **Solicitar prévia do Melhor Envio** abre um link privado que
+exige a sessão da conta emissora. Depois da emissão, **Ver e imprimir PDF**
+abre o arquivo no ADM quando o provedor entrega o PDF. **Cancelar etiqueta**
+solicita o cancelamento ao Melhor Envio antes da postagem. O status é confirmado
+consultando a etiqueta na API. Eventual estorno da venda é tratado no PagBank.
+
+Em **Cupons**, escolha **Aplicar em → Frete** para criar um desconto percentual
+ou fixo sobre a entrega. Um cupom de 100% oferece frete grátis ao cliente. A loja
+continua comprando a etiqueta com o saldo do Melhor Envio.
 
 Para ativar a consulta automática, configure `MELHOR_ENVIO_TRACKING_ENABLED=true`
 e `CRON_SECRET` para a rota `/api/internal/maintenance`. O agendamento consulta

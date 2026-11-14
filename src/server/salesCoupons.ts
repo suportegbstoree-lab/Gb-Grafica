@@ -4,6 +4,7 @@ import {
   allocateCoupon,
   couponAvailable,
   normalizeCouponCode,
+  shippingCouponDiscount,
   validCouponCode,
   type AppliedCoupon,
   type CouponLine,
@@ -58,6 +59,7 @@ export async function selectCoupon(
   lines: CouponLine[],
   requested: unknown,
   tx?: Transaction,
+  freight: number | (() => Promise<number>) = 0,
 ): Promise<CouponSelection | null> {
   if (requested !== undefined && typeof requested !== "string")
     throw new CouponError("Código de cupom inválido.");
@@ -81,12 +83,14 @@ export async function selectCoupon(
     );
   }
 
-  const applicable = candidates
-    .filter((coupon) => couponAvailable(coupon, Date.now()))
-    .map((coupon) => ({ coupon, discounts: allocateCoupon(coupon, lines) }))
+  const available = candidates.filter((coupon) => couponAvailable(coupon, Date.now()));
+  const freightCents = typeof freight === "number" ? freight
+    : available.some(coupon => coupon.scope === "shipping") ? await freight() : 0;
+  const applicable = available
+    .map((coupon) => ({ coupon, discounts: allocateCoupon(coupon, lines), shippingDiscountCents: shippingCouponDiscount(coupon, freightCents) }))
     .map((row) => ({
       ...row,
-      discountCents: row.discounts.reduce((sum, amount) => sum + amount, 0),
+      discountCents: row.discounts.reduce((sum, amount) => sum + amount, row.shippingDiscountCents),
     }))
     .filter((row) => row.discountCents > 0)
     .sort(
@@ -96,6 +100,8 @@ export async function selectCoupon(
     );
   const first = applicable[0];
   if (!first) {
+    if (code && !freightCents && available.some(coupon => coupon.scope === "shipping"))
+      throw new CouponError("Selecione a entrega e calcule o frete para usar este cupom.");
     if (code)
       throw new CouponError(
         "Cupom inválido, indisponível ou sem itens elegíveis.",
@@ -144,7 +150,7 @@ export async function selectCoupon(
     }
   }
 
-  const { coupon, discounts, discountCents } = first;
+  const { coupon, discounts, discountCents, shippingDiscountCents } = first;
   return {
     coupon,
     discounts,
@@ -153,6 +159,7 @@ export async function selectCoupon(
       code: coupon.code,
       description: coupon.description,
       discountCents,
+      ...(shippingDiscountCents ? { shippingDiscountCents } : {}),
       firstPurchase: coupon.firstPurchase,
     },
   };

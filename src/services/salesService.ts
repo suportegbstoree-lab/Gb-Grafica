@@ -97,11 +97,12 @@ export async function quoteCoupon(
   items: unknown,
   couponCode: string,
   signal: AbortSignal,
+  delivery?: { deliveryMethod: 'entrega'; cep: string; shippingServiceCode: string },
 ) {
   return request<{ coupon: AppliedCoupon | null }>(
     "/api/checkout/coupon",
     token,
-    { items, couponCode },
+    { items, couponCode, ...delivery },
     signal,
   );
 }

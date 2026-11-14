@@ -66,6 +66,7 @@ import {
 } from '../services/catalogImageService';
 import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
 import OrderActions from '../components/OrderActions';
+import ShipmentLabelsPanel from '../components/ShipmentLabelsPanel';
 import PromotionTargets from '../components/PromotionTargets';
 import VariantImagesEditor from '../components/VariantImagesEditor';
 import FlashPromotionEditor from '../components/FlashPromotionEditor';
@@ -243,6 +244,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
     { id: 'bundles' as const, label: 'Pacotes', icon: Package },
     { id: 'categories' as const, label: 'Categorias', icon: List },
     { id: 'orders' as const, label: 'Pedidos', icon: Package },
+    { id: 'shipment-labels' as const, label: 'Etiquetas', icon: Tag },
     { id: 'promotions' as const, label: 'Promoções', icon: Tag },
     { id: 'coupons' as const, label: 'Cupons', icon: Tag },
     { id: 'branding' as const, label: 'Identidade Visual', icon: Image },
@@ -1509,6 +1511,10 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
           </div>
         )}
 
+        {activeTab === 'shipment-labels' && tabAllowed('shipment-labels') && (
+          <ShipmentLabelsPanel orders={orders} ready={ordersReady} ordersError={ordersError}
+            canManage={can('orders.fulfillment')} api={orderOperations} />
+        )}
         {activeTab === 'orders' && tabAllowed('orders') && (
           <div className="space-y-8">
             <div>

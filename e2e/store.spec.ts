@@ -101,6 +101,40 @@ test('alteração de quantidade invalida a cotação', async ({ page }) => {
   await expect(cart.getByRole('alert')).toContainText('CEP e cálculo do frete');
 });
 
+test('cupom de frete é recalculado quando o cliente troca de serviço', async ({ page }) => {
+  await page.route('**/api/checkout/coupon', async route => {
+    const { couponCode, shippingServiceCode } = route.request().postDataJSON();
+    const amount = shippingServiceCode === 'me:3' ? 1295 : 645;
+    await route.fulfill({ json: { coupon: couponCode ? {
+      code: 'FRETE50', description: 'Metade do frete', discountCents: amount, shippingDiscountCents: amount, firstPurchase: false,
+    } : null } });
+  });
+  await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
+  await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
+  const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
+  await cart.getByLabel('Calcular frete').fill('14400000');
+  await cart.getByRole('button', { name: 'OK', exact: true }).click();
+  await expect(cart.getByRole('radio', { name: /PAC/ })).toBeChecked();
+  await cart.getByRole('textbox', { name: 'Cupom de desconto', exact: true }).fill('FRETE50');
+  await cart.getByRole('button', { name: 'Aplicar cupom' }).click();
+  await expect(cart.getByText('Desconto no frete')).toBeVisible();
+  await expect(cart.getByText(/− R\$\s*6,45/)).toBeVisible();
+  const revalidation = page.waitForRequest(r => r.url().endsWith('/api/checkout/coupon') && r.postDataJSON()?.shippingServiceCode === 'me:3');
+  await cart.getByRole('radio', { name: /Jadlog/ }).check();
+  expect((await revalidation).postDataJSON()).toMatchObject({ couponCode: 'FRETE50', cep: '14400000' });
+  await expect(cart.getByText(/− R\$\s*12,95/)).toBeVisible();
+  await cart.getByLabel('Número', { exact: true }).fill('123');
+  await cart.getByLabel('Nome completo').fill('Cliente Teste');
+  await cart.getByLabel(/CPF do pagador/).fill('52998224725');
+  await cart.getByLabel('Telefone para contato').fill('16999376260');
+  await cart.getByLabel('Li e aceito as condições da compra.').check();
+  const checkout = page.waitForRequest(r => r.url().endsWith('/api/checkout'));
+  await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();
+  expect((await checkout).postDataJSON()).toMatchObject({
+    shippingServiceCode: 'me:3', shippingAmountCents: 2590, expectedCouponCents: 1295, expectedShippingDiscountCents: 1295,
+  });
+});
+
 test('resposta atrasada de outro CEP não restaura uma cotação antiga', async ({ page }) => {
   let release: () => void = () => {};
   const gate = new Promise<void>(resolve => { release = resolve; });

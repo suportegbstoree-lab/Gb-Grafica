@@ -339,8 +339,15 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         next = { ...old, phase: 'paid' };
       }
       if (request.action === 'issue' && old.phase === 'paid') next = { ...old, phase: 'issued', tracking: '12345678901234' };
+      if (request.action === 'cancel' && (old.phase === 'paid' || old.phase === 'issued')) next = { ...old, phase: 'canceled' };
       shipmentLabels.current.set(id, next);
       return next;
+    },
+    async shipmentLabels(ids) {
+      return Object.fromEntries(ids.map(id => [id, shipmentLabels.current.get(id) ?? { phase: 'none', amountCents: null }]));
+    },
+    async shipmentLabelPreview() {
+      return { printUrl: 'https://sandbox.melhorenvio.com.br/imprimir/previa-de-teste' };
     },
     async refreshMelhorEnvioTracking(id) {
       return { tracking: { provider: 'melhor_envio', status: 'Postado',

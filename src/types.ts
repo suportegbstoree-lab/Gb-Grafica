@@ -112,6 +112,8 @@ export interface DeliveryAddress {
 export interface Order {
   cupom?: import('./lib/salesCoupons').AppliedCoupon;
   cupomLiberado?: boolean;
+  paymentConfirmedAt?: string;
+  pagbankRefundedAmountCents?: number;
   etiquetaCriada?: boolean;
   observacoes?: string;
   tracking?: import('./lib/tracking').OrderTracking;

@@ -7,6 +7,7 @@ import { initializeApp, deleteApp, type App } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
 import { currentLegalAcceptance } from '../lib/legal.js';
 import app from './app.js';
 
@@ -40,7 +41,7 @@ let jadlogAvailable = true;
 function ref(path: string) {
   return {
     path,
-    async get() { const value = docs.get(path); return { exists: value !== undefined, data: () => value }; },
+    async get() { const value = docs.get(path); return { id: path.split('/').at(-1), exists: value !== undefined, data: () => value }; },
     async set(value: Record<string, unknown>) { docs.set(path, { ...docs.get(path), ...value }); },
     async create(value: Record<string, unknown>) { assert.ok(!docs.has(path)); docs.set(path, value); },
   };
@@ -49,6 +50,7 @@ type Ref = ReturnType<typeof ref>;
 const tx = {
   get: (r: Ref) => r.get(),
   create(r: Ref, value: Record<string, unknown>) { docs.set(r.path, value); },
+  update(r: Ref, value: Record<string, unknown>) { docs.set(r.path, { ...docs.get(r.path), ...value }); },
   set(r: Ref, value: Record<string, unknown>) { docs.set(r.path, { ...docs.get(r.path), ...value }); },
 };
 
@@ -62,6 +64,7 @@ before(async () => {
     return { uid, sub: uid, email: 'comprador@example.test', name: 'Cliente Teste' } as unknown as DecodedIdToken;
   });
   mock.method(db, 'collection', ((name: string) => ({ doc: (id: string) => ref(`${name}/${id}`), get: async () => ({ docs: [...docs.entries()].filter(([path]) => path.startsWith(`${name}/`) && path.split('/').length === 2).map(([path, data]) => ({ id: path.split('/')[1], data: () => data })) }) })) as unknown as typeof db.collection);
+  mock.method(db, 'getAll', ((...refs: Ref[]) => Promise.all(refs.map(r => r.get()))) as unknown as typeof db.getAll);
   mock.method(db, 'runTransaction', (async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx)) as unknown as typeof db.runTransaction);
   mock.method(db, 'batch', (() => {
     const writes: Array<[Ref, Record<string, unknown>]> = [];
@@ -174,6 +177,46 @@ test('HTTP: checkout recalcula e envia o serviço escolhido e o preço real ao P
   assert.equal(order.shipping.service_code, 'me:3');
   assert.equal(order.shipping.origin_cep, '14400000');
   assert.equal(order.shipping.parcels.length, 2);
+});
+
+test('HTTP: cupom de frete zera a entrega no PagBank e preserva o preço dos produtos e a cotação original', async () => {
+  docs.set('_salesCoupons/FRETEGRATIS', { code: 'FRETEGRATIS', description: 'Frete grátis', kind: 'percent', amount: 10000,
+    scope: 'shipping', targets: [], active: true, expiresOn: '2099-12-31', used: 0, limit: 10, revision: 'r', firstPurchase: false });
+  const base = { items, couponCode: 'FRETEGRATIS', deliveryMethod: 'entrega', cep: '01001000', shippingServiceCode: 'me:3' };
+  const quote = await post('/api/checkout/coupon', { ...base, shippingAmountCents: 1 });
+  assert.equal(quote.status, 200, await quote.clone().text());
+  assert.equal((await quote.json()).coupon.shippingDiscountCents, 5000);
+  const pickup = await post('/api/checkout/coupon', { ...base, deliveryMethod: 'retirada' });
+  assert.equal(pickup.status, 422);
+  const response = await checkout({ ...base, shippingAmountCents: 5000, expectedCouponCode: 'FRETEGRATIS',
+    expectedCouponCents: 5000, expectedShippingDiscountCents: 5000 });
+  assert.equal(response.status, 201, await response.clone().text());
+  assert.equal(pagbankBodies[0].shipping.type, 'FREE');
+  assert.equal(pagbankBodies[0].shipping.amount, undefined);
+  assert.equal(pagbankBodies[0].items[0].unit_amount, 1000);
+  const order = [...docs.entries()].find(([path]) => path.startsWith('orders/'))![1] as any;
+  assert.equal(order.totalCents, 3000);
+  assert.equal(order.shipping.amount_cents, 5000);
+  assert.equal(order.cupom.shippingDiscountCents, 5000);
+  assert.equal(docs.get('_salesCoupons/FRETEGRATIS')?.used, 1);
+});
+
+test('HTTP: consulta em lote exige acesso a pedidos e retorna só o estado público da etiqueta', async () => {
+  const endpoint = '/api/admin/shipment-labels/status';
+  const body = { ids: ['GB-PAGO', 'GB-PENDENTE', 'GB-PAGO'] };
+  docs.set('_melhorEnvioLabels/GB-PAGO', { phase: 'issued', amountCents: 5000, tracking: '12345678901234', updatedBy: 'outro-usuário' });
+  assert.equal((await post(endpoint, body)).status, 403);
+  docs.set(`${ADMIN_ACCESS_COLLECTION}/${uid}`, { schemaVersion: 1, epoch: 'legacy', enabled: true });
+  docs.set(`users/${uid}`, { role: 'admin' });
+  assert.equal((await post(endpoint, { ids: ['pedidos/invalidos'] })).status, 422);
+  const response = await post(endpoint, body);
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.match(response.headers.get('cache-control') || '', /no-store/);
+  assert.deepEqual(await response.json(), {
+    'GB-PAGO': { phase: 'issued', amountCents: 5000, tracking: '12345678901234' },
+    'GB-PENDENTE': { phase: 'none', amountCents: null },
+  });
+  assert.equal(melhorEnvioCalls, 0);
 });
 
 test('HTTP: preço alterado ou adulterado não cria pedido nem checkout', async () => {

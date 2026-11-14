@@ -27,6 +27,7 @@ export async function requestProductionLabel(orderId: string, requestId: string)
 }
 export async function refreshOrderTracking(orderId: string): Promise<void> { await orderOperation(orderId, 'tracking/refresh', {}); }
 export type ShipmentLabelRequest = { action: 'status' | 'discard' } |
+  { action: 'cancel'; description: string } | { action: 'check-cancel' } |
   ({ action: 'prepare' } & ShipmentLabelFields) |
   { action: 'recover'; providerId: string } |
   { action: 'issue'; expectedAmountCents?: number };
@@ -49,12 +50,34 @@ export async function refreshMelhorEnvioTracking(orderId: string): Promise<{ tra
   return (await orderOperation(orderId, 'shipment-tracking', {})).json();
 }
 
+export async function previewShipmentLabel(orderId: string): Promise<ShipmentLabelPrintLink> {
+  return (await orderOperation(orderId, 'shipment-label', { action: 'preview' })).json();
+}
+
+export async function readShipmentLabels(ids: string[], signal: AbortSignal): Promise<Record<string, ShipmentLabelView>> {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Sua sessão expirou. Faça login novamente.');
+  const response = await apiFetch('/api/admin/shipment-labels/status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await user.getIdToken()}` },
+    body: JSON.stringify({ ids }), signal,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(apiErrorMessage(data, 'Não foi possível consultar as etiquetas.'));
+  return data;
+}
+
 export interface OrderOperationsApi {
   updateFulfillment: typeof updateOrderFulfillment;
   productionLabel: typeof requestProductionLabel;
   refreshTracking: typeof refreshOrderTracking;
   shipmentLabel: typeof requestShipmentLabel;
   shipmentLabelPrint: typeof printShipmentLabel;
+  shipmentLabelPreview: typeof previewShipmentLabel;
+  shipmentLabels: typeof readShipmentLabels;
   refreshMelhorEnvioTracking: typeof refreshMelhorEnvioTracking;
 }
-export const ORDER_OPERATIONS_API: OrderOperationsApi = { updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking, shipmentLabel: requestShipmentLabel, shipmentLabelPrint: printShipmentLabel, refreshMelhorEnvioTracking };
+export const ORDER_OPERATIONS_API: OrderOperationsApi = {
+  updateFulfillment: updateOrderFulfillment, productionLabel: requestProductionLabel, refreshTracking: refreshOrderTracking,
+  shipmentLabel: requestShipmentLabel, shipmentLabelPrint: printShipmentLabel, shipmentLabelPreview: previewShipmentLabel,
+  shipmentLabels: readShipmentLabels, refreshMelhorEnvioTracking,
+};

@@ -113,3 +113,30 @@ test('the admin opens a private print link when the provider does not return a P
   await expect(link).toHaveAttribute('href', 'https://sandbox.melhorenvio.com.br/imprimir/etiqueta-de-teste');
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
 });
+
+test('shipping labels tab lists the order, previews and opens the PDF, and reflects cancellation', async ({ page }) => {
+  await page.goto('/__e2e/admin?shipping-label=1');
+  await page.getByRole('button', { name: 'Etiquetas', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Etiquetas de postagem' });
+  await panel.getByLabel('Buscar por pedido ou cliente').fill('GB-E2E-ETIQUETA');
+  const row = panel.getByRole('listitem').filter({ hasText: 'GB-E2E-ETIQUETA' });
+  await expect(row).toContainText('Sem etiqueta');
+  await row.getByRole('button', { name: 'Abrir etiqueta' }).click();
+  const label = page.getByRole('dialog', { name: 'Etiqueta de postagem', exact: true });
+  await label.getByLabel('Chave da NF-e').fill('1'.repeat(44));
+  await label.getByLabel('CPF ou CNPJ do destinatário').fill('52998224725');
+  await label.getByRole('button', { name: 'Preparar envio', exact: true }).click();
+  await label.getByRole('button', { name: 'Confirmar compra da etiqueta', exact: true }).click();
+  await label.getByRole('button', { name: 'Solicitar prévia do Melhor Envio' }).click();
+  await expect(label.getByRole('link', { name: 'Abrir prévia privada' }))
+    .toHaveAttribute('href', 'https://sandbox.melhorenvio.com.br/imprimir/previa-de-teste');
+  await label.getByRole('button', { name: 'Emitir etiqueta', exact: true }).click();
+  await label.getByRole('button', { name: 'Ver e imprimir PDF' }).click();
+  await expect(label.locator('iframe[title="PDF da etiqueta de postagem"]')).toHaveAttribute('src', /^blob:/);
+  await label.getByLabel('Motivo do cancelamento da etiqueta').fill('Corrigir os dados do envio');
+  await label.getByRole('button', { name: 'Cancelar etiqueta', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar cancelamento da etiqueta' }).click();
+  await expect(label.getByText('Cancelada', { exact: true })).toBeVisible();
+  await label.getByRole('button', { name: 'Fechar', exact: true }).click();
+  await expect(row).toContainText('Cancelada');
+});

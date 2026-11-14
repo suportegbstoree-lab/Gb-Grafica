@@ -205,28 +205,6 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       ...(item.bundleItems ? { bundleRevision: item.bundleRevision, bundleItems: item.bundleItems.map(quoteItem) } : {}),
     };
   }));
-  const couponKey = JSON.stringify([user?.uid, couponCode, couponItems, couponRefresh]);
-  const currentCouponQuote = couponQuote?.key === couponKey ? couponQuote : undefined;
-  const appliedCoupon = currentCouponQuote?.coupon;
-  const awaitingCoupon = Boolean(user && cart.length && !currentCouponQuote);
-  React.useEffect(() => {
-    setCouponInput('');
-    setCouponCode('');
-    setCouponQuote(undefined);
-  }, [user?.uid]);
-  React.useEffect(() => {
-    if (!isCartOpen || !user || couponItems === '[]') return;
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      void user.getIdToken().then(token => quoteCoupon(token, JSON.parse(couponItems), couponCode, controller.signal))
-        .then(result => {
-          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: result.coupon });
-        }).catch(error => {
-          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: null, error: error.message });
-        });
-    }, 150);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [isCartOpen, user, couponKey, couponItems, couponCode]);
   const [isEmailPreferencesOpen, setIsEmailPreferencesOpen] = useState(false);
   React.useEffect(() => setIsEmailPreferencesOpen(false), [user?.uid]);
   const [isOrdersOpen, setIsOrdersOpen] = useState(false);
@@ -285,6 +263,31 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   currentShippingContext.current = shippingContext;
   const shippingInfo = storedShippingInfo?.context === shippingContext && Date.parse(storedShippingInfo.expires_at) > Date.now()
     ? storedShippingInfo : null;
+  const couponCep = shippingInfo ? cep.replace(/\D/g, '') : '';
+  const couponService = shippingInfo?.selectedCode;
+  const couponKey = JSON.stringify([user?.uid, couponCode, couponItems, couponRefresh, couponCep, couponService, shippingInfo?.price]);
+  const currentCouponQuote = couponQuote?.key === couponKey ? couponQuote : undefined;
+  const appliedCoupon = currentCouponQuote?.coupon;
+  const awaitingCoupon = Boolean(user && cart.length && !currentCouponQuote);
+  React.useEffect(() => {
+    setCouponInput('');
+    setCouponCode('');
+    setCouponQuote(undefined);
+  }, [user?.uid]);
+  React.useEffect(() => {
+    if (!isCartOpen || !user || couponItems === '[]') return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void user.getIdToken().then(token => quoteCoupon(token, JSON.parse(couponItems), couponCode, controller.signal,
+        couponCep && couponService ? { deliveryMethod: 'entrega', cep: couponCep, shippingServiceCode: couponService } : undefined))
+        .then(result => {
+          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: result.coupon });
+        }).catch(error => {
+          if (!controller.signal.aborted) setCouponQuote({ key: couponKey, coupon: null, error: error.message });
+        });
+    }, 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [isCartOpen, user, couponKey, couponItems, couponCode, couponCep, couponService]);
   const shouldReduceMotion = useReducedMotion();
 
   const [promotionNow, setPromotionNow] = useState(Date.now);
@@ -551,6 +554,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         ...(couponCode ? { couponCode } : {}),
         expectedCouponCents: appliedCoupon?.discountCents ?? 0,
         expectedCouponCode: appliedCoupon?.code ?? null,
+        expectedShippingDiscountCents: appliedCoupon?.shippingDiscountCents ?? 0,
         customerName: formResult.customerName,
         observacoes: orderNotes,
         cpf: formResult.cpf,
@@ -1632,7 +1636,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                       <span>{formatMoney(subtotalCents / 100)}</span>
                     </div>
                     {appliedCoupon && <div className="flex justify-between items-center text-sm font-bold text-green-700">
-                      <span>Desconto do cupom</span>
+                      <span>{appliedCoupon.shippingDiscountCents ? 'Desconto no frete' : 'Desconto do cupom'}</span>
                       <span>− {formatMoney(appliedCoupon.discountCents / 100)}</span>
                     </div>}
                     {deliveryMethod === 'entrega' && shippingInfo && (

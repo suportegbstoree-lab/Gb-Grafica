@@ -12,16 +12,20 @@ interface SavedLabel extends ShipmentLabelView {
   nextTrackingAt?: number;
 }
 
-const view = (row?: SavedLabel): ShipmentLabelView => row ? {
+export const shipmentLabelView = (row?: ShipmentLabelView): ShipmentLabelView => row ? {
   phase: row.phase, amountCents: row.amountCents,
   ...(row.providerId ? { providerId: row.providerId } : {}),
   ...(row.tracking ? { tracking: row.tracking } : {}),
 } : { phase: 'none', amountCents: null };
 
-function activePaidDelivery(order: Row | undefined, chargeId?: string) {
+function melhorEnvioDelivery(order: Row | undefined) {
   if (!order) throw shipmentFailure(404, 'Pedido não encontrado.');
   if (order.metodoEntrega !== 'entrega' || !isRecord(order.shipping) || order.shipping.provider !== 'melhor_envio')
     throw shipmentFailure(422, 'Este pedido não tem entrega cotada pelo Melhor Envio.');
+  return order;
+}
+function activePaidDelivery(input: Row | undefined, chargeId?: string) {
+  const order = melhorEnvioDelivery(input);
   if (order.paymentStatus !== 'pago' || Number(order.pagbankRefundedAmountCents) > 0 ||
     (chargeId !== undefined && order.pagbankChargeId !== chargeId))
     throw shipmentFailure(409, 'A etiqueta exige um pedido com pagamento confirmado e sem estorno.');
@@ -42,14 +46,16 @@ export async function shipmentLabelOperation(input: {
   verifyPayment: (order: Row) => Promise<string>;
 }): Promise<ShipmentLabelView | ShipmentLabelPrintLink | Buffer> {
   const { db, orderId, actor, body } = input;
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof body.action !== 'string' || !['status', 'prepare', 'recover', 'discard', 'issue', 'print'].includes(body.action))
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId) || typeof body.action !== 'string' || !['status', 'prepare', 'recover', 'discard', 'issue', 'print', 'preview', 'cancel', 'check-cancel'].includes(body.action))
     throw shipmentFailure(422, 'Pedido ou operação de etiqueta inválida.');
   const orderRef = db.collection('orders').doc(orderId);
   const labelRef = db.collection('_melhorEnvioLabels').doc(orderId);
   const [orderSnap, labelSnap] = await Promise.all([orderRef.get(), labelRef.get()]);
-  const order = activePaidDelivery(orderSnap.data());
+  const order = melhorEnvioDelivery(orderSnap.data());
   const saved = labelSnap.data() as SavedLabel | undefined;
+  const view = shipmentLabelView;
   if (body.action === 'status') return view(saved);
+  if (!['cancel', 'check-cancel', 'discard'].includes(body.action)) activePaidDelivery(order);
   const config = melhorEnvioConfig();
   const storedEnvironment = (order.shipping as Row).environment;
   if (config.environment !== input.paymentEnvironment() ||
@@ -62,9 +68,20 @@ export async function shipmentLabelOperation(input: {
       throw shipmentFailure(409, 'A etiqueta precisa estar emitida para baixar o PDF.');
     return service.print(saved.providerId);
   }
+  if (body.action === 'preview') {
+    if (!saved?.providerId || !['paid', 'issued'].includes(saved.phase))
+      throw shipmentFailure(409, 'Compre a etiqueta antes de solicitar a prévia.');
+    return service.preview(saved.providerId);
+  }
   const change = async (expected: SavedLabel | undefined, patch: Partial<SavedLabel>, chargeId?: string) =>
     db.runTransaction<SavedLabel>(async tx => {
       if (chargeId !== undefined) prePosting(activePaidDelivery((await tx.get(orderRef)).data(), chargeId));
+      if (patch.phase === 'canceling') {
+        const latest = melhorEnvioDelivery((await tx.get(orderRef)).data());
+        const stage = latest.fulfillmentStatus ?? legacyFulfillmentStatus(String(latest.status), 'pago');
+        if (stage === 'enviado' || stage === 'entregue')
+          throw shipmentFailure(409, 'A postagem já foi registrada para este pedido.');
+      }
       const current = (await tx.get(labelRef)).data() as SavedLabel | undefined;
       if (current?.phase !== expected?.phase || current?.updatedAt !== expected?.updatedAt)
         throw shipmentFailure(409, 'Outra operação alterou a etiqueta. Atualize a situação antes de continuar.');
@@ -73,16 +90,27 @@ export async function shipmentLabelOperation(input: {
         environment: config.environment, updatedAt: Math.max(Date.now(), (current?.updatedAt ?? 0) + 1),
       };
       if (next.phase === 'issued' && !next.nextTrackingAt) next.nextTrackingAt = Date.now();
+      if (next.phase === 'canceled') {
+        const { nextTrackingAt: _nextTrackingAt, ...canceled } = next;
+        tx.set(labelRef, { ...canceled, updatedBy: actor });
+        tx.set(labelRef.collection('cancellations').doc(String(next.updatedAt)), { providerId: next.providerId!, updatedBy: actor, canceledAt: next.updatedAt });
+        return canceled;
+      }
       if (next.phase === 'none') {
         tx.set(labelRef, { phase: 'none', amountCents: null, environment: config.environment, updatedAt: next.updatedAt, updatedBy: actor });
         return { phase: 'none', amountCents: null, environment: config.environment, updatedAt: next.updatedAt };
+      }
+      if (next.phase === 'preparing') {
+        const preparing: SavedLabel = { phase: 'preparing', amountCents: null, environment: config.environment, updatedAt: next.updatedAt };
+        tx.set(labelRef, { ...preparing, updatedBy: actor });
+        return preparing;
       }
       tx.set(labelRef, { ...next, updatedBy: actor });
       return next;
     });
 
   if (body.action === 'prepare') {
-    if (saved && saved.phase !== 'none') return view(saved);
+    if (saved && saved.phase !== 'none' && saved.phase !== 'canceled') return view(saved);
     prePosting(order);
     const payload = shipmentCartBody(orderId, order, body, config);
     const chargeId = await input.verifyPayment(order);
@@ -116,6 +144,32 @@ export async function shipmentLabelOperation(input: {
   }
 
   if (!saved?.providerId) throw shipmentFailure(409, 'Prepare o envio antes de emitir a etiqueta.');
+  if (body.action === 'cancel' || body.action === 'check-cancel') {
+    if (saved.phase === 'canceled') return view(saved);
+    if (body.action === 'check-cancel' && saved.phase !== 'canceling') return view(saved);
+    if (!['paid', 'issued', 'canceling'].includes(saved.phase))
+      throw shipmentFailure(409, 'Selecione uma etiqueta comprada para cancelar.');
+    const details = await service.details(saved.providerId);
+    if (details.canceled) return view(await change(saved, { phase: 'canceled' }));
+    if (saved.phase === 'canceling') return view(saved);
+    if (!details.paid || details.unavailable || details.postedAt || details.deliveredAt || ['received', 'posted', 'delivered', 'undelivered', 'paused'].includes(details.state))
+      throw shipmentFailure(409, 'O Melhor Envio não permite cancelar esta etiqueta pelo painel.');
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    if (!description || description.length > 200 || /[\x00-\x1f\x7f]/.test(description))
+      throw shipmentFailure(422, 'Informe o motivo do cancelamento em até 200 caracteres.');
+    const pending = await change(saved, { phase: 'canceling' });
+    try {
+      await service.cancel(saved.providerId, description);
+    } catch (error) {
+      if (error instanceof ShipmentProviderError && error.rejected) {
+        await change(pending, { phase: saved.phase });
+        if (error.status === 422) throw shipmentFailure(409, 'O Melhor Envio recusou o cancelamento. Confira a etiqueta no painel do Melhor Envio.');
+      }
+      throw error;
+    }
+    const result = await service.details(saved.providerId);
+    return view(result.canceled ? await change(pending, { phase: 'canceled' }) : pending);
+  }
   if (body.action === 'discard') {
     const retrying = saved.phase === 'discarding' && Date.now() - saved.updatedAt >= 20_000;
     if (saved.phase !== 'cart' && !retrying) throw shipmentFailure(409, 'A remoção exige uma etiqueta no carrinho. Se já solicitou a remoção, aguarde alguns segundos e consulte novamente.');
@@ -135,7 +189,7 @@ export async function shipmentLabelOperation(input: {
   }
   if (saved.phase === 'discarding')
     throw shipmentFailure(409, 'A remoção aguarda confirmação do Melhor Envio. Confira o carrinho antes de continuar.');
-  if (saved.phase === 'issued') return view(saved);
+  if (saved.phase === 'issued' || saved.phase === 'canceling' || saved.phase === 'canceled') return view(saved);
   const providerId = saved.providerId;
   let current = saved;
   let details = await service.details(providerId);

@@ -173,7 +173,7 @@ export function orderReceiptEmailMessage(
   const totals: [string, string][] = [];
   if (order.subtotal !== undefined)
     totals.push(["Subtotal", formatMoney(order.subtotal)]);
-  if (order.cupom) totals.push([`Cupom ${order.cupom.code}`, `− ${formatMoney(order.cupom.discountCents / 100)}`]);
+  if (order.cupom) totals.push([`${order.cupom.shippingDiscountCents ? 'Cupom de frete' : 'Cupom'} ${order.cupom.code}`, `− ${formatMoney(order.cupom.discountCents / 100)}`]);
   if (order.frete !== undefined)
     totals.push(["Frete", formatMoney(order.frete)]);
   totals.push([

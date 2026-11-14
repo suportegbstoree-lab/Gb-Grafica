@@ -96,8 +96,9 @@ export function shipmentCartBody(
     return { name, quantity, unitary_value: (cents / 100).toFixed(2), cents };
   });
   const subtotal = products.reduce((total, p) => total + p.cents * p.quantity, 0);
-  const coupon = isRecord(order.cupom) && typeof order.cupom.discountCents === 'number' ? order.cupom.discountCents : 0;
-  const insuranceCents = subtotal - coupon;
+  const coupon = isRecord(order.cupom) && typeof order.cupom.discountCents === 'number' ? order.cupom : undefined;
+  const itemDiscountCents = coupon ? Number(coupon.discountCents) - Number(coupon.shippingDiscountCents ?? 0) : 0;
+  const insuranceCents = subtotal - itemDiscountCents;
   if (!Number.isSafeInteger(insuranceCents) || insuranceCents <= 0)
     throw shipmentFailure(422, 'Confira o valor das mercadorias declarado no pedido.');
   const agency = text(fields.agency, 10);
@@ -155,6 +156,15 @@ function provider(config: MelhorEnvioConfig) {
 
 export function shipmentProvider(config: MelhorEnvioConfig) {
   const request = provider(config);
+  function privateLink(data: unknown) {
+    const rawUrl = isRecord(data) && typeof data.url === 'string' ? data.url : '';
+    const url = URL.canParse(rawUrl) ? new URL(rawUrl) : null;
+    const allowed = url && (url.origin === melhorEnvioHosts[config.environment] ||
+      (config.environment === 'production' && url.origin === 'https://www.melhorenvio.com.br'));
+    if (!allowed || url.username || url.password)
+      throw shipmentFailure(502, 'O Melhor Envio não retornou um link válido para este ambiente.');
+    return { printUrl: url.href };
+  }
   function timestamp(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
     // Prefer timezone-aware provider values. Some endpoints use SQL UTC timestamps.
@@ -177,8 +187,8 @@ export function shipmentProvider(config: MelhorEnvioConfig) {
         throw shipmentFailure(502, 'O Melhor Envio retornou um envio diferente do registrado.');
       const state = String(data.status ?? '').toLowerCase();
       const postedAt = timestamp(data.posted_at), deliveredAt = timestamp(data.delivered_at);
-      const discarded = Boolean(data.canceled_at || data.cancelled_at || data.expired_at) ||
-        ['canceled', 'cancelled', 'expired'].includes(state);
+      const canceled = Boolean(data.canceled_at || data.cancelled_at) || ['canceled', 'cancelled'].includes(state);
+      const discarded = canceled || Boolean(data.expired_at) || state === 'expired';
       const unavailable = discarded || Boolean(data.suspended_at) || state === 'suspended';
       return {
         amountCents: melhorEnvioMoneyToCents(data.price),
@@ -186,7 +196,7 @@ export function shipmentProvider(config: MelhorEnvioConfig) {
         issued: Boolean(data.generated_at || ['generated', 'received', 'posted', 'delivered', 'undelivered', 'paused'].includes(state)),
         pending: state === 'pending',
         state, postedAt, deliveredAt,
-        unavailable, discarded,
+        unavailable, discarded, canceled,
         tracking: validMelhorEnvioTrackingCode(data.tracking) ? data.tracking : '',
         service: Number(data.service_id),
         tags: Array.isArray(data.tags) ? data.tags : [],
@@ -198,6 +208,11 @@ export function shipmentProvider(config: MelhorEnvioConfig) {
     },
     checkout: (id: string) => request('shipment/checkout', { orders: [id] }),
     generate: (id: string) => request('shipment/generate', { orders: [id] }),
+    cancel: (id: string, description: string) => request('shipment/cancel', { order: { id, reason_id: 2, description } }),
+    async preview(id: string) {
+      if (!uuid.test(id)) throw shipmentFailure(422, 'Identificador de etiqueta inválido.');
+      return privateLink(await request('shipment/preview', { orders: [id] }));
+    },
     async print(id: string) {
       if (!uuid.test(id)) throw shipmentFailure(422, 'Identificador de etiqueta inválido.');
       const raw = await request(`imprimir/pdf/${id}`, undefined, true);
@@ -212,14 +227,7 @@ export function shipmentProvider(config: MelhorEnvioConfig) {
           throw shipmentFailure(409, 'O Melhor Envio recusou o link privado de impressão. Confira esta etiqueta no painel do Melhor Envio.');
         throw error;
       }
-      const rawUrl = isRecord(data) && typeof data.url === 'string' ? data.url : '';
-      const url = URL.canParse(rawUrl) ? new URL(rawUrl) : null;
-      const origin = melhorEnvioHosts[config.environment];
-      const allowed = url && (url.origin === origin ||
-        (config.environment === 'production' && url.origin === 'https://www.melhorenvio.com.br'));
-      if (!allowed || url.username || url.password)
-        throw shipmentFailure(502, 'O Melhor Envio não retornou um link de impressão válido para este ambiente.');
-      return { printUrl: url.href };
+      return privateLink(data);
     },
   };
 }

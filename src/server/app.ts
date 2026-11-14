@@ -140,7 +140,8 @@ import { AdminAiError, adminAiInstruction, generateAdminAiText, vertexAiConfig }
 import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
-import { shipmentLabelOperation } from './shipmentLabelOperation.js';
+import { shipmentLabelOperation, shipmentLabelView } from './shipmentLabelOperation.js';
+import type { ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { validateShipmentSender } from './melhorEnvioShipment.js';
 import { processMelhorEnvioTracking, syncMelhorEnvioTracking } from './melhorEnvioTracking.js';
 import { shippingParcelsForCart } from './shippingCart.js';
@@ -1738,7 +1739,12 @@ app.post('/api/checkout/coupon', requireAppCheck, async (req, res) => {
     enforceRateLimit(`coupon:${user.uid}`, 30, 60_000);
     await enforceDistributedRateLimit(services.db, `coupon:${user.uid}`, 60, 60_000);
     const cart = await normalizeCart(req.body?.items, services, user.uid, false, true);
-    const selection = await selectCoupon(services.db, user, couponLines(cart), req.body?.couponCode);
+    const selection = await selectCoupon(services.db, user, couponLines(cart), req.body?.couponCode, undefined, async () => {
+      const code = req.body?.shippingServiceCode;
+      if (req.body?.deliveryMethod !== 'entrega' || typeof code !== 'string' || !/^me:[1-9]\d{0,8}$/.test(code)) return 0;
+      const quote = await getShippingQuote('entrega', req.body?.cep, cart.items.map(item => item.cartItem), responseRequestId(res), cart.shippingProducts);
+      return quote.options.find(option => option.service_code === code)?.amount_cents ?? 0;
+    });
     res.setHeader('Cache-Control', 'private, no-store');
     res.json({ coupon: selection?.applied ?? null });
   } catch (error) {
@@ -1836,10 +1842,12 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
     // Old clients without a coupon quote keep the total they already displayed.
     const usesCouponQuote = body.expectedCouponCents !== undefined || body.couponCode !== undefined;
     const lines = usesCouponQuote ? couponLines(normalizedCart) : [];
-    const selection = usesCouponQuote ? await selectCoupon(db, firebaseUser, lines, body.couponCode) : null;
+    const selection = usesCouponQuote ? await selectCoupon(db, firebaseUser, lines, body.couponCode, undefined, shipping.amountCents) : null;
     const coupon = selection?.applied;
     if (usesCouponQuote && (body.expectedCouponCents !== (coupon?.discountCents ?? 0) ||
-      (body.expectedCouponCode ?? null) !== (coupon?.code ?? null))) throw couponChanged();
+      (body.expectedCouponCode ?? null) !== (coupon?.code ?? null) ||
+      (body.expectedShippingDiscountCents ?? 0) !== (coupon?.shippingDiscountCents ?? 0))) throw couponChanged();
+    const payableFreightCents = shipping.amountCents - (coupon?.shippingDiscountCents ?? 0);
     const checkoutItems = discountedCheckoutItems(normalizedCart.items.map(item => item.checkoutItem), selection?.discounts || []);
     if (selection && checkoutItems.length > 50) {
       throw new CouponError('Reduza o número de itens no carrinho para aplicar este desconto.');
@@ -1929,9 +1937,10 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 		};
 		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '',
       selection ? async tx => {
-        const current = await selectCoupon(db, firebaseUser, lines, body.couponCode, tx);
+        const current = await selectCoupon(db, firebaseUser, lines, body.couponCode, tx, shipping.amountCents);
         if (!current || current.coupon.revision !== selection.coupon.revision ||
-          current.applied.code !== coupon?.code || current.applied.discountCents !== coupon?.discountCents) {
+          current.applied.code !== coupon?.code || current.applied.discountCents !== coupon?.discountCents ||
+          current.applied.shippingDiscountCents !== coupon?.shippingDiscountCents) {
           throw couponChanged();
         }
         reserveCoupon(db, tx, orderId, current, checkoutExpiresAt);
@@ -1972,8 +1981,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 
 			if (deliveryAddress) {
 				checkoutBody.shipping = {
-					type: 'FIXED',
-					amount: shipping.amountCents,
+					...(payableFreightCents ? { type: 'FIXED', amount: payableFreightCents } : { type: 'FREE' }),
 					address_modifiable: false,
 					address: {
 						country: 'BRA',
@@ -2369,6 +2377,11 @@ async function performOrderOperation(req: express.Request, res: express.Response
     const existingLabel = labelRef ? await transaction.get(labelRef) : null;
     if (label && productionLabelFingerprint(order) !== fingerprint) throw new HttpError(409, 'Os dados do pedido mudaram. Atualize e gere novamente.');
     const target = label ? (current === 'pagamento_confirmado' ? 'em_producao' : current) : requested;
+    if (!label && target === 'enviado' && current !== 'enviado' && melhorEnvioShipment) {
+      const shipment = (await transaction.get(db.collection('_melhorEnvioLabels').doc(orderId))).data();
+      if (shipment?.phase === 'canceling' || shipment?.phase === 'canceled')
+        throw new HttpError(409, 'Regularize a etiqueta cancelada antes de registrar a postagem.');
+    }
     const updateTracking = !label && target === 'enviado' && Boolean(trackingCode) && (!isPlainRecord(order.tracking) || order.tracking.code !== trackingCode);
     if (updateTracking && melhorEnvioShipment !== (isPlainRecord(order.shipping) && order.shipping.provider === 'melhor_envio'))
       throw new HttpError(409, 'O serviço de envio mudou. Atualize o pedido.');
@@ -2463,6 +2476,21 @@ app.post('/api/admin/orders/:orderId/retry-email', requireAppCheck, async (req, 
     if (!/^GB-[A-Z0-9]{8,64}$/.test(req.params.orderId)) throw new HttpError(422, 'Pedido inválido.');
     const { db } = getAdminServices();
     res.json({ statuses: await Promise.all(['customer', 'merchant'].map(kind => sendOrderEmail(db, `${req.params.orderId}-${kind}`))) });
+  } catch (error) { sendError(res, error); }
+});
+
+app.post('/api/admin/shipment-labels/status', requireAppCheck, async (req, res) => {
+  try {
+    const user = await requirePermissionUser(req, 'orders.read');
+    const { db } = getAdminServices();
+    enforceRateLimit(`shipment-labels:${user.uid}`, 40, 60_000);
+    await enforceDistributedRateLimit(db, `shipment-labels:${user.uid}`, 80, 60_000);
+    const ids: unknown = req.body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id)))
+      throw new HttpError(422, 'Informe até 50 pedidos válidos.');
+    const snapshots = await db.getAll(...[...new Set<string>(ids)].map(id => db.collection('_melhorEnvioLabels').doc(id)));
+    res.set('Cache-Control', 'private, no-store');
+    res.json(Object.fromEntries(snapshots.map(snapshot => [snapshot.id, shipmentLabelView(snapshot.data() as ShipmentLabelView | undefined)])));
   } catch (error) { sendError(res, error); }
 });
 
