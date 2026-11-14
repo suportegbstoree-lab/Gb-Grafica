@@ -1466,16 +1466,16 @@ export default function StaffPdfWorkspace({
               </button>
             )}
             {api.batches && (
-              <label className="block max-w-xs text-sm">
-                Nome do lote (opcional)
-                <input
-                  className="mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2"
-                  value={batchName}
-                  disabled={busy}
-                  maxLength={STAFF_PDF_BATCH_NAME_MAX}
-                  onChange={(event) => setBatchName(event.target.value)}
-                />
-              </label>
+              <input
+                type="text"
+                aria-label="Nome do lote (opcional)"
+                placeholder="Nome do lote (opcional)"
+                className="h-[42px] w-full min-w-0 rounded-lg border border-gray-700 bg-black px-3 text-sm placeholder:text-gray-400 disabled:opacity-40 sm:w-52"
+                value={batchName}
+                disabled={busy}
+                maxLength={STAFF_PDF_BATCH_NAME_MAX}
+                onChange={(event) => setBatchName(event.target.value)}
+              />
             )}
             <button
               type="button"

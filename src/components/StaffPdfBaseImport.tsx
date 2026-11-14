@@ -1,4 +1,5 @@
 import React from "react";
+import { Upload } from "lucide-react";
 import EditorModal from "./EditorModal";
 import {
   normalizePdfCategory,
@@ -265,23 +266,27 @@ export default function StaffPdfBaseImport({
   return (
     <div className="space-y-3">
       <label
-        className="mt-4 block rounded-lg border border-dashed border-gray-600 p-3 text-sm"
+        className="mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-dashed border-gray-600 px-4 py-3 text-sm has-[:disabled]:opacity-50"
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
+          if (disabled || busy) return;
           if (e.dataTransfer.files.length !== 1) {
             setError("Use Importar pasta de PDFs para enviar uma pasta.");
             return;
           }
-          if (!disabled) chooseSingle(e.dataTransfer.files[0]);
+          chooseSingle(e.dataTransfer.files[0]);
         }}
       >
-        Enviar base PDF ou soltar aqui
+        <Upload size={16} aria-hidden="true" />
+        <span className="font-medium">Selecionar base PDF</span>
+        <span className="text-xs text-gray-400">ou arraste aqui</span>
         <input
           disabled={disabled || busy}
           type="file"
+          aria-label="Selecionar base PDF"
           accept="application/pdf,.pdf"
-          className="mt-2 block max-w-full"
+          className="sr-only"
           onChange={(e) => {
             chooseSingle(e.target.files?.[0]);
             e.target.value = "";

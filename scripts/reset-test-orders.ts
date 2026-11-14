@@ -14,14 +14,40 @@ const orderId = /^GB-[A-Za-z0-9_-]+$/i;
 const orderArtwork = /^artworks\/[^/]+\/orders\/.+/;
 const usage = 'Uso: npm run orders:reset -- [--apply=PROJETO/BANCO/BUCKET]';
 
-async function documentCount(collection: CollectionReference): Promise<number> {
-  let count = 0;
+async function collectionCounts(collection: CollectionReference): Promise<{ direct: number; descendants: number; missing: number }> {
+  let direct = 0;
+  let descendants = 0;
+  let missing = 0;
   for (const doc of await collection.listDocuments()) {
     const [snapshot, children] = await Promise.all([doc.get(), doc.listCollections()]);
-    if (snapshot.exists) count++;
-    for (const child of children) count += await documentCount(child);
+    if (snapshot.exists) direct++;
+    else missing++;
+    for (const child of children) {
+      const counts = await collectionCounts(child);
+      descendants += counts.direct + counts.descendants;
+    }
   }
-  return count;
+  return { direct, descendants, missing };
+}
+
+async function deleteDocumentTree(doc: DocumentReference): Promise<void> {
+  // Remove the parent first so payment callbacks no longer find the order.
+  await doc.delete();
+  for (const collection of await doc.listCollections()) {
+    for (const child of await collection.listDocuments()) await deleteDocumentTree(child);
+  }
+}
+
+async function verifyCollections(collections: CollectionReference[]) {
+  const remaining: string[] = [];
+  for (const collection of collections) {
+    if (!(await collection.listDocuments()).length) continue;
+    const { direct, descendants, missing } = await collectionCounts(collection);
+    if (direct || descendants || missing) {
+      remaining.push(`${collection.id} (${direct} documentos no nível principal, ${descendants} em subcoleções, ${missing} pais sem documento)`);
+    }
+  }
+  if (remaining.length) throw new Error(`Ainda há registros no Firestore: ${remaining.join('; ')}.`);
 }
 
 async function mixedDocuments(db: Firestore, ids: Set<string>) {
@@ -65,15 +91,20 @@ export async function resetOrderData(
   const [files] = await bucket.getFiles({ prefix: 'artworks/', matchGlob: 'artworks/*/orders/**', versions: true });
   const objects = files.filter(file => orderArtwork.test(file.name));
   const coupons = (await db.collection('_salesCoupons').select('used').get()).docs.filter(doc => Number(doc.get('used')) > 0);
-  for (const collection of collections) log(`${collection.id}: ${await documentCount(collection)}`);
+  for (const collection of collections) {
+    const { direct, descendants, missing } = await collectionCounts(collection);
+    log(`${collection.id}: ${direct} no nível principal, ${descendants} em subcoleções, ${missing} pais sem documento`);
+  }
   for (const [name, rows] of mixed) log(`${name} vinculados a pedidos: ${rows.length}`);
   log(`Artes de pedidos no Storage: ${objects.length}\nCupons com uso a zerar: ${coupons.length}`);
   if (!apply) return;
   const deleteDocuments = async (refs: DocumentReference[]) => {
-    await uploadBatch(refs, ref => db.recursiveDelete(ref), { concurrency: 4, rollback: async () => undefined });
+    await uploadBatch(refs, deleteDocumentTree, { concurrency: 4, rollback: async () => undefined });
   };
-  // Remove pedidos primeiro para impedir que os webhooks reapliquem eventos a pedidos já excluídos.
-  for (const collection of collections) await db.recursiveDelete(collection);
+  const [orders, ...related] = collections;
+  await deleteDocuments(await orders.listDocuments());
+  await verifyCollections([orders]);
+  for (const collection of related) await deleteDocuments(await collection.listDocuments());
   for (const refs of mixed.values()) await deleteDocuments(refs);
   await uploadBatch(objects, async file => {
     const generation = file.metadata.generation;
@@ -87,9 +118,7 @@ export async function resetOrderData(
     });
   }, { concurrency: 6, rollback: async () => undefined });
   const remainingMixed = await mixedDocuments(db, ids);
-  for (const collection of collections) {
-    if ((await collection.listDocuments()).length) throw new Error(`Ainda há documentos em ${collection.id}.`);
-  }
+  await verifyCollections(collections);
   const [remainingFiles] = await bucket.getFiles({ prefix: 'artworks/', matchGlob: 'artworks/*/orders/**', versions: true });
   if ([...remainingMixed.values()].some(refs => refs.length) || remainingFiles.some(file => orderArtwork.test(file.name)))
     throw new Error('Ainda há registros ou artes de pedidos. Confira as escritas simultâneas e rode a prévia novamente.');

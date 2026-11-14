@@ -603,7 +603,9 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await page
     .getByRole("button", { name: "Adicionar à fila", exact: true })
     .click();
-  await page.getByLabel("Nome do lote (opcional)", { exact: true }).fill("Pedidos de terça");
+  const batchName = page.getByRole("textbox", { name: "Nome do lote (opcional)" });
+  await expect(batchName).toHaveAttribute("placeholder", "Nome do lote (opcional)");
+  await batchName.fill("Pedidos de terça");
   await page
     .getByRole("button", { name: "Processar fila", exact: true })
     .click();
@@ -839,7 +841,7 @@ test("uploading an individual PDF asks for a category and offers direct template
     .getByRole("button", { name: "Bases e moldes", exact: true })
     .click();
   await page
-    .getByLabel("Enviar base PDF ou soltar aqui", { exact: true })
+    .getByLabel("Selecionar base PDF", { exact: true })
     .setInputFiles({
       name: "Nova Base.pdf",
       mimeType: "application/pdf",
