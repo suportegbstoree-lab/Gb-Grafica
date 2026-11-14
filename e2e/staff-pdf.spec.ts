@@ -71,16 +71,17 @@ test("lists bases in natural name order and links alphabet folders in bulk", asy
     await expect(bases.getByText("Enviado", { exact: true })).toHaveCount(3);
     await bases.getByRole("button", { name: "Concluir", exact: true }).click();
     await page.getByText("Cadernetas", { exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: /^Editar .*\.pdf$/ }),
-    ).toHaveText([
+    const editButtons = page.getByRole("button", { name: /^Editar .*\.pdf$/ });
+    await expect.poll(() => editButtons.evaluateAll(
+      buttons => buttons.map(button => button.getAttribute("aria-label")),
+    )).toEqual([
       "Editar 2 Verde.pdf",
       "Editar 10 Azul.pdf",
       "Editar Abelhas.pdf",
     ]);
     const search = page.getByRole("textbox", { name: "Buscar base em Cadernetas" });
     await search.fill("abelhas");
-    await expect(page.getByRole("button", { name: /^Editar .*\.pdf$/ })).toHaveText(["Editar Abelhas.pdf"]);
+    await expect(page.getByRole("button", { name: /^Editar .*\.pdf$/ })).toHaveAccessibleName("Editar Abelhas.pdf");
     await search.fill("");
     await page.getByLabel("Importar ou soltar JSON").setInputFiles({
       name: "templates.json",
@@ -292,7 +293,7 @@ test("imports 30 PNG letters including accents from an existing mold", async ({
     });
     await page.getByLabel("Buscar molde", { exact: true }).fill(moldName);
     await page
-      .getByRole("button", { name: "Editar molde", exact: true })
+      .getByRole("button", { name: `Editar molde ${moldName}`, exact: true })
       .click();
     const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
     const picker = mold.getByLabel("Importar pasta de letras", { exact: true });
@@ -311,7 +312,7 @@ test("imports 30 PNG letters including accents from an existing mold", async ({
     await size.fill("57");
     await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
     await expect(mold).toHaveCount(0);
-    await page.getByRole("button", { name: "Editar molde", exact: true }).click();
+    await page.getByRole("button", { name: `Editar molde ${moldName}`, exact: true }).click();
     await expect(size).toHaveValue("57");
     await mold.getByRole("button", { name: "Fechar editor de molde" }).click();
     await page.getByText("Sem categoria", { exact: true }).click();

@@ -1,6 +1,5 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { PDFDocument } from "pdf-lib";
 test("admin product name and category filters combine, normalize accents, and clear", async ({
   page,
 }) => {
@@ -34,137 +33,13 @@ test("admin product name and category filters combine, normalize accents, and cl
     page.getByRole("button", { name: "Editar Carimbo", exact: true }),
   ).toBeVisible();
 });
-test("staff generator shares the text editor, locks the automatic back, saves, reopens, downloads, emails and creates WhatsApp links", async ({
-  page,
-}, info) => {
-  let checkoutCalls = 0;
-  page.on("request", (request) => {
-    if (request.url().endsWith("/api/checkout")) checkoutCalls++;
-  });
+test("the PDF workshop opens without the separate product template editors", async ({ page }) => {
   await page.goto("/__e2e/admin");
-  await page
-    .getByRole("button", {
-      name: "Editar Livro de Receitas Personalizado",
-      exact: true,
-    })
-    .click();
-  const product = page.getByRole("dialog", {
-    name: "Editar Produto",
-    exact: true,
-  });
-  await product
-    .getByLabel("Selecionar imagem principal do computador")
-    .setInputFiles("e2e/fixtures/editor-template.pdf");
-  await expect(product.getByText(/PDF: editor-template.pdf/)).toBeVisible();
-  await product
-    .getByRole("button", { name: "Salvar Produto", exact: true })
-    .click();
-  await expect(product).toHaveCount(0);
   await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
-  await page.getByText('Edição simples de modelos de produtos',{exact:true}).click();
-  await page
-    .getByRole("button", {
-      name: "Personalizar PDF editor-template.pdf",
-      exact: true,
-    })
-    .click();
-  const editor = page.getByRole("dialog", {
-    name: "Personalizar texto",
-    exact: true,
-  });
-  await expect(editor).toBeVisible();
-  await expect(editor.getByLabel("Incluir contracapa")).toBeChecked();
-  await expect(editor.getByLabel("Incluir contracapa")).toBeDisabled();
-  await expect(
-    editor.getByRole("radio", {
-      name: "Automática: mesma arte da capa, sem o texto personalizado",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await expect(
-    editor.getByLabel("Imagem da contracapa", { exact: true }),
-  ).toHaveCount(0);
-  await editor
-    .getByLabel("Texto da personalização", { exact: true })
-    .fill("Ana\nDesigner");
-  await page.screenshot({ path: info.outputPath("staff-editor.png") });
-  await editor
-    .getByRole("button", { name: "Aplicar e gerar modelo", exact: true })
-    .click();
-  await expect(editor).toHaveCount(0);
-  await expect(
-    page.getByRole("status").filter({ hasText: "salvo por sete dias" }),
-  ).toBeVisible();
-  const downloadButton = page
-    .getByRole("button", { name: /^Baixar PDF PDF-/ })
-    .last();
-  const filename = (await downloadButton.textContent())!
-    .replace("Baixar PDF ", "")
-    .trim();
-  const download = page.waitForEvent("download");
-  await downloadButton.click();
-  const artifact = await download;
-  expect(artifact.suggestedFilename()).toBe(`${filename}.pdf`);
-  const pdf = await PDFDocument.load(await readFile((await artifact.path())!));
-  expect(pdf.getPageCount()).toBe(2);
-  await page
-    .getByRole("button", { name: `Visualizar ${filename}`, exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: filename, exact: true }).locator("iframe"),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Fechar PDF", exact: true }).click();
-  await page
-    .getByRole("button", { name: `Enviar por e-mail ${filename}`, exact: true })
-    .click();
-  const mail = page.getByRole("dialog", {
-    name: `Enviar ${filename} por e-mail`,
-    exact: true,
-  });
-  await mail.getByLabel("E-mail do destinatário").fill("buyer@example.test");
-  await mail
-    .getByRole("button", { name: "Enviar PDF por e-mail", exact: true })
-    .click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "aceitou o envio" }),
-  ).toBeVisible();
-  await expect(
-    mail.getByRole("button", { name: "Enviar PDF por e-mail", exact: true }),
-  ).toBeDisabled();
-  await mail
-    .getByRole("button", { name: "Fechar envio por e-mail", exact: true })
-    .click();
-  await page
-    .getByRole("button", {
-      name: `WhatsApp / copiar link ${filename}`,
-      exact: true,
-    })
-    .click();
-  const share = page.getByRole("dialog", {
-    name: "Compartilhar PDF",
-    exact: true,
-  });
-  await expect(
-    share.getByRole("link", { name: "Compartilhar no WhatsApp", exact: true }),
-  ).toHaveAttribute("href", /^https:\/\/wa.me\/\?text=/);
-  await share
-    .getByRole("button", { name: "Fechar compartilhamento", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Atualizar documentos", exact: true })
-    .click();
-  await expect(downloadButton).toBeVisible();
-  expect(checkoutCalls).toBe(0);
-  await page.screenshot({ path: info.outputPath("staff-documents.png") });
-  await page.getByRole("button", { name: "Operações", exact: true }).click();
-  await expect(page.getByRole("table").last()).toContainText(
-    "PDF interno gerado",
-  );
-  await expect(page.getByRole("table").last()).toContainText(filename);
-  await page.screenshot({
-    path: info.outputPath("staff-operations.png"),
-    fullPage: true,
-  });
+  await expect(page.getByText("Edição simples de modelos de produtos", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
+  await expect(page.getByText("Iniciais dos modelos de produtos", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Criar molde", exact: true })).toBeVisible();
 });
 test("document-only employee cannot open orders, products or team productivity pages", async ({
   page,

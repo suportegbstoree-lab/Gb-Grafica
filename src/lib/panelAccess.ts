@@ -7,8 +7,8 @@ const SECTION_PERMISSIONS: Record<PanelSection, readonly StaffPermission[]> = {
   email: ['emails.manage'],
   bundles: ['bundles.manage'],
   products: ['products.manage', 'products.images', 'products.personalization'],
-  'variation-types': ['products.manage'], coupons: ['promotions.manage'],
-  categories: ['categories.manage'], orders: ['orders.read'], 'shipment-labels': ['orders.read'], promotions: ['promotions.manage'],
+  'variation-types': ['products.manage'], coupons: ['coupons.manage'],
+  categories: ['categories.manage'], orders: ['orders.read'], 'shipment-labels': ['shipments.read'], promotions: ['promotions.manage'],
   branding: ['branding.manage'], fonts: ['fonts.manage'], config: ['settings.manage'], staff: [],
 };
 

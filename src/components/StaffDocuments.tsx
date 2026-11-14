@@ -1,17 +1,11 @@
 import React from "react";
+import { Download, Eye, Link2, Mail, Printer, Trash2, Unlink } from "lucide-react";
 import StaffPdfWorkspace from './StaffPdfWorkspace';
 import type { StaffPdfQueueProgressValue } from './StaffPdfQueueProgress';
-import { staffPdfApi, type StaffPdfApi } from '../services/staffPdfService';
-import { renderStaffPdfRecipe } from '../services/staffPdfBatchService';
-import { automaticStaffBarcode, staffPdfDefaultFilename, STAFF_BARCODE_VERSION } from '../lib/staffPdfBarcode';
-import type { Anuncio, PersonalizationFont } from "../types";
-import type { ProductPdfTemplate } from "../lib/pdfTemplate";
-import { selectedInitial } from "../lib/decorativeInitial";
-import TextCustomizationDrawer from "./TextCustomizationDrawer";
+import type { StaffPdfApi } from '../services/staffPdfService';
+import type { PersonalizationFont } from "../types";
 import EditorModal from "./EditorModal";
-import { pdfPreviewPages } from "../services/pdfPreview";
 import {
-  exportPersonalizationPdf,
   downloadPersonalization,
 } from "../services/personalizationExport";
 import {
@@ -19,10 +13,15 @@ import {
   type StaffDocumentApi,
   type StaffDocumentView,
 } from "../services/staffDocumentService";
-import { beginWorkTask, workApi, type WorkApi } from "../services/workService";
-import { normalizeSearch } from "../lib/catalog";
+import { workApi, type WorkApi } from "../services/workService";
+const iconButton = "rounded-md p-2 text-gray-500 hover:text-[#ff4d79] disabled:opacity-40";
+const deleteButton = "rounded-md p-2 text-gray-500 hover:text-red-500 disabled:opacity-40";
+const fileActions = [
+  { mode: "view", label: "Visualizar", Icon: Eye },
+  { mode: "download", label: "Baixar PDF", Icon: Download },
+  { mode: "print", label: "Imprimir", Icon: Printer },
+] as const;
 export default function StaffDocuments({
-  products,
   fonts,
   api = staffDocumentApi,
   timingApi = workApi,
@@ -32,7 +31,6 @@ export default function StaffDocuments({
   visible = true,
   onProgress,
 }: {
-  products: Anuncio[];
   fonts: PersonalizationFont[];
   api?: StaffDocumentApi;
   timingApi?: WorkApi;
@@ -42,21 +40,12 @@ export default function StaffDocuments({
   visible?: boolean;
   onProgress?: (value: StaffPdfQueueProgressValue) => void;
 }) {
-  const [batchRevision, setBatchRevision] = React.useState(0);
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
     [truncated, setTruncated] = React.useState(false),
-    [query, setQuery] = React.useState(""),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
     [busy, setBusy] = React.useState(false);
-  const [editor, setEditor] = React.useState<{
-      product: Anuncio;
-      template: ProductPdfTemplate;
-      original: Blob;
-      front: Blob;
-      requestId: string;
-    } | null>(null),
-    [preview, setPreview] = React.useState<{
+  const [preview, setPreview] = React.useState<{
       title: string;
       url: string;
     } | null>(null),
@@ -88,9 +77,6 @@ export default function StaffDocuments({
       request.current++;
     };
   }, [load]);
-  React.useEffect(() => {
-    if (visible && editor) return beginWorkTask("document", "", timingApi);
-  }, [visible, Boolean(editor), timingApi]);
   React.useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview.url);
@@ -110,26 +96,6 @@ export default function StaffDocuments({
       if (alive.current) setBusy(false);
     }
   };
-  const templates = products
-    .flatMap((product) =>
-      (product.modelosPdf || []).map((template) => ({ product, template })),
-    )
-    .filter(({ template }) =>
-      normalizeSearch(template.name).includes(normalizeSearch(query)),
-    );
-  const open = (product: Anuncio, template: ProductPdfTemplate) =>
-    void run(async () => {
-      const original = await api.template(product.id, template.id),
-        pages = await pdfPreviewPages(original);
-      if (alive.current)
-        setEditor({
-          product,
-          template,
-          original,
-          front: pages[0],
-          requestId: crypto.randomUUID(),
-        });
-    });
   const file = (
     doc: StaffDocumentView,
     mode: "view" | "download" | "print",
@@ -167,7 +133,7 @@ export default function StaffDocuments({
           Biblioteca, edição e lotes da equipe. Os novos lotes ficam disponíveis por três dias.
         </p>
       </header>
-      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} externalBatchRevision={batchRevision} onGenerated={load} timingApi={timingApi} api={libraryApi} visible={visible} onProgress={onProgress}/>
+      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} onGenerated={load} timingApi={timingApi} api={libraryApi} visible={visible} onProgress={onProgress}/>
       {error && (
         <p role="alert" className="rounded-xl bg-red-950 p-4 text-red-200">
           {error}
@@ -178,44 +144,6 @@ export default function StaffDocuments({
           {message}
         </p>
       )}
-      {canGenerate && <details className="rounded-2xl border border-gray-800 p-4"><summary className="cursor-pointer font-bold">Edição simples de modelos de produtos</summary>
-      <label className="mt-4 block text-sm">
-        Buscar modelo PDF
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="mt-2 w-full rounded-xl border border-gray-700 bg-black p-3"
-        />
-      </label>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {templates.map(({ product, template }) => (
-          <article
-            key={`${product.id}-${template.id}`}
-            className="space-y-3 rounded-2xl border border-gray-800 bg-[#161616] p-4"
-          >
-            <img
-              src={template.pages[0]}
-              alt=""
-              className="aspect-[4/3] w-full rounded-xl object-contain"
-              loading="lazy"
-            />
-            <h3 className="break-words font-bold">{template.name}</h3>
-            <button
-              disabled={busy}
-              onClick={() => open(product, template)}
-              className="w-full rounded-xl bg-pink-500 px-4 py-3 text-sm font-bold text-white disabled:opacity-50"
-            >
-              Personalizar PDF {template.name}
-            </button>
-          </article>
-        ))}
-      </div>
-      {!templates.length && (
-        <p className="text-sm text-gray-400">
-          Nenhum modelo PDF encontrado no catálogo.
-        </p>
-      )}
-      </details>}
       {canGenerate && <><div className="flex flex-wrap justify-between gap-3">
         <h3 className="text-lg font-bold">Documentos salvos anteriormente</h3>
         <button
@@ -252,42 +180,43 @@ export default function StaffDocuments({
             </p>
             {doc.status === "ready" ? (
               <div className="flex flex-wrap gap-2">
-                {(["view", "download", "print"] as const).map((mode) => (
+                {fileActions.map(({ mode, label, Icon }) => (
                   <button
                     key={mode}
+                    type="button"
                     disabled={busy}
                     onClick={() => file(doc, mode)}
-                    className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold"
+                    className={iconButton}
+                    title={label}
+                    aria-label={`${label} ${doc.reference}`}
                   >
-                    {mode === "view"
-                      ? "Visualizar"
-                      : mode === "download"
-                        ? "Baixar PDF"
-                        : "Imprimir"}{" "}
-                    {doc.reference}
+                    <Icon size={16} aria-hidden="true" />
                   </button>
                 ))}
                 <button
+                  type="button" title="WhatsApp / copiar link" aria-label={`WhatsApp / copiar link ${doc.reference}`}
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
                       setShare(await api.share(doc.id));
                     })
                   }
-                  className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold"
+                  className={iconButton}
                 >
-                  WhatsApp / copiar link {doc.reference}
+                  <Link2 size={16} aria-hidden="true" />
                 </button>
                 <button
+                  type="button" title="Enviar por e-mail" aria-label={`Enviar por e-mail ${doc.reference}`}
                   disabled={busy}
                   onClick={() =>
                     setEmail({ doc, to: "", requestId: crypto.randomUUID() })
                   }
-                  className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold"
+                  className={iconButton}
                 >
-                  Enviar por e-mail {doc.reference}
+                  <Mail size={16} aria-hidden="true" />
                 </button>
                 <button
+                  type="button" title="Revogar links" aria-label={`Revogar links ${doc.reference}`}
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
@@ -297,9 +226,9 @@ export default function StaffDocuments({
                       );
                     })
                   }
-                  className="rounded-lg border border-red-800 px-4 py-2 text-xs"
+                  className={deleteButton}
                 >
-                  Revogar links {doc.reference}
+                  <Unlink size={16} aria-hidden="true" />
                 </button>
               </div>
             ) : (
@@ -308,6 +237,7 @@ export default function StaffDocuments({
                   Geração ainda não finalizada.
                 </span>
                 <button
+                  type="button" title="Descartar geração" aria-label={`Descartar geração ${doc.reference}`}
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
@@ -315,9 +245,9 @@ export default function StaffDocuments({
                       await load();
                     })
                   }
-                  className="text-xs text-red-400"
+                  className={deleteButton}
                 >
-                  Descartar geração {doc.reference}
+                  <Trash2 size={16} aria-hidden="true" />
                 </button>
               </div>
             )}
@@ -328,79 +258,6 @@ export default function StaffDocuments({
         <p className="text-sm text-gray-400">
           Nenhum documento salvo disponível.
         </p>
-      )}
-      {visible && editor && (
-        <TextCustomizationDrawer
-          productName={editor.template.name}
-          template={editor.template}
-          printProfile={editor.product.printProfile}
-          previewImage={editor.template.pages[0]}
-          previewSource={editor.front}
-          fieldLabel="Texto da personalização"
-          fonts={fonts}
-          initialValue={null}
-          lockAutomaticBack
-          initialBack={{ mode: "automatic" }}
-          onClose={() => setEditor(null)}
-          onSave={async (value, front, back) => {
-            if (!value || !back)
-              throw new Error("Gere o texto e a contracapa automática.");
-            const batches = (libraryApi || staffPdfApi).batches;
-            if (batches) {
-              const batch = await batches.create(editor.requestId);
-              const barcode = automaticStaffBarcode(editor.requestId);
-              const recipe = await batches.save(batch.id, {
-                kind: "simple", productId: editor.product.id, templateId: editor.template.id,
-                customization: value, barcode, barcodeVersion: STAFF_BARCODE_VERSION,
-                outputName: staffPdfDefaultFilename(editor.template.name, value.texto, barcode),
-              }, editor.requestId);
-              await renderStaffPdfRecipe(recipe);
-              await batches.complete(batch.id, recipe.item.id);
-              if (alive.current) {
-                setEditor(null);
-                setMessage(`${batch.reference} disponível por três dias em Lotes anteriores.`);
-                setBatchRevision((old) => old + 1);
-                await load();
-              }
-              return;
-            }
-            const initial = selectedInitial(editor.template, value.texto);
-            const blob = await exportPersonalizationPdf({
-              title: editor.template.name,
-              originalPdf: editor.original,
-              repeatFrontForBack: true,
-              customization: value,
-              fonts,
-              ...(initial
-                ? {
-                    initial: {
-                      source: initial.url,
-                      sizePercent: initial.sizePercent,
-                    },
-                  }
-                : {}),
-              ...(editor.product.printProfile
-                ? { printProfile: editor.product.printProfile }
-                : {}),
-              pages: [
-                { label: "Capa", blob: front.blob },
-                { label: "Contracapa", blob: back.blob },
-              ],
-            });
-            const saved = await api.generate(
-              editor.product.id,
-              editor.template.id,
-              value,
-              blob,
-              editor.requestId,
-            );
-            if (alive.current) {
-              setEditor(null);
-              setMessage(`${saved.reference} salvo por sete dias.`);
-              await load();
-            }
-          }}
-        />
       )}
       {visible && preview && (
         <EditorModal

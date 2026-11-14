@@ -231,6 +231,40 @@ test("PDF-library access is independent from products/orders and template permis
     );
     assert.equal((await request("/documents", "manager", {})).status, 403);
   }));
+test("saving a mold publishes its changes to products and variations with the same layout ID", async () =>
+  scenario(async ({ request, docs }) => {
+    const name = "Vinculado_template";
+    const first = await request("/library/layouts", "manager", { name, layout: defaultPdfLayout() });
+    assert.equal(first.status, 200);
+    const { id } = await first.json();
+    const ref = `_staffPdfLayouts/${id}`;
+    const previous = docs.get(ref);
+    const pdf = { id: "a".repeat(32), path: "catalog/templates/example/base.pdf" };
+    const bound = { revision: "b".repeat(32), layoutId: id, layoutRevision: previous.revision, layout: previous.layout, fonts: [], pdf };
+    const other = { ...bound, layoutId: "c".repeat(32) };
+    docs.set("anuncios/linked", { nome: "Produto", moldePdf: bound, atributos: [{
+      nome: "Estilo", opcoes: ["A", "B"], configuracao: { A: { moldePdf: bound }, B: { moldePdf: other } },
+    }] });
+    docs.set("orders/paid", { itens: [{ moldePedido: { layout: previous.layout } }] });
+    const response = await request("/library/layouts", "manager", {
+      name, revision: previous.revision,
+      layout: { ...previous.layout, font_name: "FreeMono", font_size: 222, initial_size_percent: 49 },
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).updatedProducts, 1);
+    const stored = docs.get("anuncios/linked"), current = docs.get(ref);
+    for (const binding of [stored.moldePdf, stored.atributos[0].configuracao.A.moldePdf]) {
+      assert.notEqual(binding.revision, bound.revision);
+      assert.equal(binding.layoutRevision, current.revision);
+      assert.equal(binding.layout.font_size, 222);
+      assert.equal(binding.layout.initial_size_percent, 49);
+      assert.equal(binding.fonts[0].id, "mono");
+      assert.deepEqual(binding.pdf, pdf);
+    }
+    assert.deepEqual(stored.atributos[0].configuracao.B.moldePdf, other);
+    assert.equal(docs.get("orders/paid").itens[0].moldePedido.layout.font_size, 150);
+  }));
+
 test("JSON imports preserve existing molds, malformed maps have no writes, edits and deletions use revision checks", async () =>
   scenario(async ({ request, docs }) => {
     let response = await request("/library/layouts/import", "manager", {
@@ -979,49 +1013,8 @@ test("product binding copies catalog PDF, previews and initials without client d
         ],
       });
       const base = await resolveStaffPdfBase(services, `catalog_source_${id}`);
-      const sizePath = `/library/bases/${base.id}/initial-size`;
-      assert.equal(
-        (
-          await request(sizePath, "generator", {
-            sizePercent: 48,
-            baseRevision: base.revision,
-          })
-        ).status,
-        403,
-      );
-      assert.equal(
-        (
-          await request(sizePath, "root", {
-            sizePercent: 104,
-            baseRevision: base.revision,
-          })
-        ).status,
-        422,
-      );
-      assert.equal(
-        (
-          await request(sizePath, "root", {
-            sizePercent: 48,
-            baseRevision: "stale",
-          })
-        ).status,
-        409,
-      );
-      assert.equal(
-        (
-          await request(sizePath, "root", {
-            sizePercent: 48,
-            baseRevision: base.revision,
-          })
-        ).status,
-        200,
-      );
-      const resized = await resolveStaffPdfBase(services, base.id);
-      assert.equal(resized.alphabet.sizePercent, 48);
-      assert.equal(resized.initialFolderName, "Flores");
-      assert.equal(resized.alphabet.letters.É.path, letterPath);
       const path = `/library/bases/${base.id}/product-copy`;
-      const body = { productId: "target", baseRevision: resized.revision };
+      const body = { productId: "target", baseRevision: base.revision };
       assert.equal((await request(path, "generator", body)).status, 403);
       assert.equal(
         (await request(path, "root", { ...body, baseRevision: "stale" }))
@@ -1038,7 +1031,7 @@ test("product binding copies catalog PDF, previews and initials without client d
         decodeURIComponent(template.pages[0]),
         /catalog\/products\/target\//,
       );
-      assert.equal(template.alphabet.sizePercent, 48);
+      assert.equal(template.alphabet.sizePercent, 70);
       assert.equal(assets.length, 3);
       assert.equal(
         [...docs.keys()].filter((key) =>

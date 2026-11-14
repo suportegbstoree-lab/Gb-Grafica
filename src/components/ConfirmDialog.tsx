@@ -68,6 +68,7 @@ export default function ConfirmDialog({
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
       <button
+        data-admin-backdrop
         type="button"
         aria-label="Cancelar confirmação"
         className="absolute inset-0 bg-black/80 backdrop-blur-sm"

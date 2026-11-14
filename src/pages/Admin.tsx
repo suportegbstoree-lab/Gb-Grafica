@@ -1296,7 +1296,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   };
 
   return (
-    <div className="min-h-screen bg-[#060606] text-white flex flex-col lg:flex-row">
+    <div className="admin-controls min-h-screen bg-[#060606] text-white flex flex-col lg:flex-row">
       <a
         href="#admin-main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[120] focus:rounded-lg focus:bg-white focus:px-4 focus:py-3 focus:text-xs focus:font-bold focus:text-black"
@@ -1356,7 +1356,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         <WorkdayBar api={workClient} />
         {(activeTab === 'documents' || pdfOpened) && tabAllowed('documents') && (
           <div hidden={activeTab !== 'documents'}>
-            <StaffDocuments products={products} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
+            <StaffDocuments fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
           </div>
         )}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
@@ -1513,7 +1513,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
 
         {activeTab === 'shipment-labels' && tabAllowed('shipment-labels') && (
           <ShipmentLabelsPanel orders={orders} ready={ordersReady} ordersError={ordersError}
-            canManage={can('orders.fulfillment')} api={orderOperations} />
+            canManage={can('shipments.manage')} api={orderOperations} />
         )}
         {activeTab === 'orders' && tabAllowed('orders') && (
           <div className="space-y-8">
@@ -1550,7 +1550,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                         <OrderCard
                           key={order.id}
                           order={order}
-                          canFulfill={can('orders.fulfillment')} canRetryEmail={fullAdmin}
+                          canFulfill={can('orders.fulfillment')} canManageShipments={can('shipments.manage')} canRetryEmail={fullAdmin}
                           operations={orderOperations}
                           onOperationError={setErrorMessage}
                           onOperationSuccess={setSuccessMessage}
@@ -2479,7 +2479,7 @@ function formatAdminDate(value: string): string {
 }
 
 function OrderCard({
-  canFulfill, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
+  canFulfill, canManageShipments, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
   order,
   handleStatusChange,
   handleOpenArtwork,
@@ -2487,6 +2487,7 @@ function OrderCard({
 }: {
   order: Order;
   canFulfill: boolean;
+  canManageShipments: boolean;
   canRetryEmail: boolean;
   operations: OrderOperationsApi;
   onOperationError: (message: string) => void;
@@ -2576,7 +2577,7 @@ function OrderCard({
       </div>
 
       <OrderDocuments order={order} staff canRetry={canRetryEmail} />
-      {canFulfill && <OrderActions order={order} api={operations} onError={onOperationError} onSuccess={onOperationSuccess} />}
+      {(canFulfill || canManageShipments) && <OrderActions order={order} api={operations} canFulfill={canFulfill} canManageShipments={canManageShipments} onError={onOperationError} onSuccess={onOperationSuccess} />}
       {order.tracking && <p className="break-words text-xs text-cyan-300">{order.tracking.code ? `Rastreio: ${order.tracking.code} · ` : ''}{order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
       {sheetOpen && <OrderProductionSheet canOpenFiles={canOpenFiles} order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}

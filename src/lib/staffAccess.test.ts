@@ -21,7 +21,7 @@ test('staff permissions require a live role, registry and matching non-admin tok
   assert.deepEqual(staffPermissions(access, undefined, claims), []);
 });
 test('permission input cannot add unknown privileges, duplicate entries or inconsistent order access', () => {
-  for (const value of [null, {}, ['staff.manage'], ['orders.artwork'], ['orders.fulfillment'], ['products.manage', 'products.manage']]) assert.equal(parseStaffPermissions(value), null);
+  for (const value of [null, {}, ['staff.manage'], ['orders.artwork'], ['orders.fulfillment'], ['shipments.read'], ['orders.read', 'shipments.manage'], ['products.manage', 'products.manage']]) assert.equal(parseStaffPermissions(value), null);
   assert.deepEqual(parseStaffPermissions([]), []);
   assert.deepEqual(parseStaffPermissions(['orders.artwork', 'orders.read']), ['orders.read', 'orders.artwork']);
 });

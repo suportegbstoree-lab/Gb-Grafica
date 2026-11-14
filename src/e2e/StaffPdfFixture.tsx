@@ -141,11 +141,6 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         );
         progress?.(letters.length, letters.length);
       },
-      saveCatalogInitialSize: async ({ id }, initialSizePercent) => {
-        bases = bases.map((base) =>
-          base.id === id ? { ...base, initialSizePercent } : base,
-        );
-      },
       uploadBase: async (file, _requestId, replacement, category) => {
         const d = await PDFDocument.load(await file.arrayBuffer()),
           id = replacement?.id || crypto.randomUUID().replaceAll("-", "");
@@ -326,7 +321,7 @@ export default function StaffPdfFixture() {
   const params = new URLSearchParams(location.search);
   const { api, documents } = useStaffPdfFixture(params.has("batches"));
   return (
-    <main className="min-h-screen bg-[#111] p-3 text-white sm:p-8">
+    <main className="admin-controls min-h-screen bg-[#111] p-3 text-white sm:p-8">
       <div className="mx-auto max-w-6xl">
         <StaffPdfWorkspace
           fonts={[

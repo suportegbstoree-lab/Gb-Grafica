@@ -1,4 +1,5 @@
 import React from "react";
+import StaffSpreadsheetPicker from "./StaffSpreadsheetPicker";
 import {
   parseStaffXlsx,
   selectedColumnsCsv,
@@ -162,19 +163,7 @@ export default function StaffSpreadsheetCsv({
   return (
     <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
       <h3 className="text-lg font-bold">Converter XLSX para CSV</h3>
-      <label className="block text-sm">
-        Arquivo XLSX
-        <input
-          disabled={busy}
-          type="file"
-          accept=".xlsx"
-          className="mt-2 block max-w-full"
-          onChange={(e) => {
-            void load(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-      </label>
+      <StaffSpreadsheetPicker format="XLSX" disabled={busy} onFile={(file) => void load(file)} />
       {error && (
         <p role="alert" className="text-red-300">
           {error}

@@ -1,5 +1,19 @@
 import { test, expect } from '@playwright/test';
 
+test('the orders and workday controls show a visible hover state', async ({ page }) => {
+  await page.goto('/__e2e/admin');
+  await page.getByRole('button', { name: 'Pedidos', exact: true }).click();
+  const queue = page.getByRole('button', { name: /^Pagamento confirmado/ });
+  await queue.hover();
+  await expect(queue).toHaveCSS('cursor', 'pointer');
+  await expect(queue).not.toHaveCSS('box-shadow', 'none');
+  const workday = page.getByRole('button', { name: 'Iniciar intervalo' });
+  await workday.hover();
+  await expect(workday).not.toHaveCSS('box-shadow', 'none');
+  await workday.click();
+  await expect(page.getByRole('button', { name: 'Retornar do intervalo' })).toBeVisible();
+});
+
 test('production labels start production, can be reprinted and explicit pickup action moves the queue', async ({ page }) => {
   await page.goto('/__e2e/admin');
   await page.getByRole('button', { name: 'Pedidos', exact: true }).click();

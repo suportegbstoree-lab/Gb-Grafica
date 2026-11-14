@@ -1,6 +1,6 @@
 import React from 'react';
 import ConfirmDialog from './ConfirmDialog';
-import { STAFF_PERMISSIONS, staffRoleName, type StaffRoleView, type StaffOverview, type AssignedRole, type StaffPermission } from '../lib/staffAccess';
+import { STAFF_PERMISSIONS, STAFF_PERMISSION_DEPENDENCIES, staffRoleName, type StaffRoleView, type StaffOverview, type AssignedRole, type StaffPermission } from '../lib/staffAccess';
 import { staffAdministrationApi, type StaffAdministrationApi } from '../services/staffService';
 
 export default function StaffManagement({ api = staffAdministrationApi }: { api?: StaffAdministrationApi }) {
@@ -51,8 +51,15 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
   const changePermission = (id: string, permission: StaffPermission, checked: boolean) => { dirtyRoles.current.add(id); setOverview(current => current && ({ ...current, roles: current.roles.map(value => {
     if (value.id !== id) return value;
     const permissions = new Set(value.permissions);
-    if (checked) { permissions.add(permission); if (permission === 'orders.artwork' || permission === 'orders.fulfillment') permissions.add('orders.read'); }
-    else { permissions.delete(permission); if (permission === 'orders.read') { permissions.delete('orders.artwork'); permissions.delete('orders.fulfillment'); } }
+    if (checked) {
+      permissions.add(permission);
+      STAFF_PERMISSION_DEPENDENCIES[permission]?.forEach(dependency => permissions.add(dependency));
+    } else {
+      permissions.delete(permission);
+      for (const { id } of STAFF_PERMISSIONS) {
+        if (STAFF_PERMISSION_DEPENDENCIES[id]?.includes(permission)) permissions.delete(id);
+      }
+    }
     return { ...value, permissions: STAFF_PERMISSIONS.map(item => item.id).filter(item => permissions.has(item)) };
   }) })); };
   return <section className="max-w-5xl space-y-6">

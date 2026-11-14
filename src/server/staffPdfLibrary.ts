@@ -24,6 +24,7 @@ import {
   STAFF_PDF_LAYOUT_PERMISSION,
   STAFF_PDF_MAX_PAGES,
   baseForPdfLayout,
+  layoutFont,
   normalizePdfLayout,
   parsePdfLayoutMap,
   staffPdfName,
@@ -37,6 +38,9 @@ import {
   isSafeCatalogProductId,
 } from "../lib/catalogImage.js";
 import { retainedAssetPath } from "../lib/catalogRetention.js";
+import { normalizePersonalizationFonts } from "../lib/textCustomization.js";
+import type { ProductPdfBinding } from "../lib/productCustomization.js";
+import type { ProductAttribute } from "../types.js";
 import { uploadBatch } from "../lib/uploadBatch.js";
 import {
   DEFAULT_DECORATIVE_INITIAL_PERCENT,
@@ -790,51 +794,6 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     }),
   );
   router.post(
-    "/bases/:id/initial-size",
-    action(async (req, res) => {
-      manage(res);
-      const base = await resolveStaffPdfBase(services(), req.params.id);
-      const { sizePercent, baseRevision } = req.body || {};
-      if (
-        base.source !== "catalog" ||
-        !base.productId ||
-        !base.templateId ||
-        !base.alphabet ||
-        typeof sizePercent !== "number" ||
-        !Number.isFinite(sizePercent) ||
-        sizePercent < 5 ||
-        sizePercent > 100
-      )
-        throw new OperationsError(
-          "Escolha um modelo de produto com letras e informe um tamanho de 5% a 100%.",
-        );
-      const productId = base.productId;
-      const ref = services().db.collection("anuncios").doc(productId);
-      await services().db.runTransaction(async (tx) => {
-        const product = (await tx.get(ref)).data();
-        const templates: ProductPdfTemplate[] = product?.modelosPdf || [];
-        const template = templates.find((item) => item.id === base.templateId);
-        if (
-          !template?.alphabet ||
-          !isTemplatePath(template.path, productId) ||
-          catalogPdfBase(productId, template).revision !== baseRevision
-        )
-          throw new OperationsError(
-            "O modelo mudou. Atualize a biblioteca antes de salvar.",
-            409,
-          );
-        tx.update(ref, {
-          modelosPdf: templates.map((item) =>
-            item.id === template.id
-              ? { ...template, alphabet: { ...template.alphabet, sizePercent } }
-              : item,
-          ),
-        });
-      });
-      res.json({ saved: true });
-    }),
-  );
-  router.post(
     "/bases/:id/alphabet-upload/delete",
     action(async (req, res) => {
       const actor = manage(res),
@@ -1079,21 +1038,48 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         name = input(() => staffPdfName(req.body?.name)),
         layout = input(() => normalizePdfLayout(req.body?.layout)),
         id = pdfLibraryId(name),
-        ref = services().db.collection("_staffPdfLayouts").doc(id);
-      await services().db.runTransaction(async (tx) => {
+        { db, bucket } = services(),
+        ref = db.collection("_staffPdfLayouts").doc(id);
+      const layoutRevision = revision();
+      const updatedProducts = await db.runTransaction(async (tx) => {
         const old = (await tx.get(ref)).data();
         if (old?.enabled && old.revision !== req.body?.revision)
           throw new OperationsError(
             "O molde foi alterado. Atualize antes de salvar.",
             409,
           );
+        const [config, products] = await Promise.all([
+          tx.get(db.collection("config").doc("main")),
+          tx.get(db.collection("anuncios").select("moldePdf", "atributos")),
+        ]);
+        const font = layoutFont(layout, normalizePersonalizationFonts(config.data()?.fontes_personalizacao));
+        const bindings = products.docs.flatMap(product => {
+          const { moldePdf, atributos } = product.data() as { moldePdf?: ProductPdfBinding; atributos?: ProductAttribute[] };
+          const patch: { moldePdf?: ProductPdfBinding; atributos?: ProductAttribute[] } = {};
+          const update = (binding: ProductPdfBinding): ProductPdfBinding => ({
+            ...binding, revision: revision(), layoutRevision, layout, fonts: font ? [font] : [],
+          });
+          if (moldePdf?.layoutId === id) patch.moldePdf = update(moldePdf);
+          if (atributos?.some(attribute => Object.values(attribute.configuracao || {}).some(option => option.moldePdf?.layoutId === id))) {
+            patch.atributos = atributos.map(attribute => {
+              if (!attribute.configuracao) return attribute;
+              const configuracao = Object.fromEntries(Object.entries(attribute.configuracao).map(([key, option]) => [
+                key, option.moldePdf?.layoutId === id ? { ...option, moldePdf: update(option.moldePdf) } : option,
+              ]));
+              return { ...attribute, configuracao };
+            });
+          }
+          return Object.keys(patch).length ? [{ ref: product.ref, patch }] : [];
+        });
+        if (bindings.length && layout.font_name && !font)
+          throw new OperationsError("Cadastre a fonte do molde antes de atualizar os produtos vinculados.");
         const retain = await prepareCatalogRetention(
-          services().db,
+          db,
           tx,
           ref.path,
           old,
           { name, layout, enabled: true },
-          services().bucket.name,
+          bucket.name,
           now(),
         );
         retain();
@@ -1101,12 +1087,14 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           name,
           layout,
           enabled: true,
-          revision: revision(),
+          revision: layoutRevision,
           updatedAt: new Date(now()).toISOString(),
           updatedBy: actor.uid,
         });
+        for (const product of bindings) tx.update(product.ref, product.patch);
+        return bindings.length;
       });
-      res.json({ id });
+      res.json({ id, updatedProducts });
     }),
   );
   router.post(

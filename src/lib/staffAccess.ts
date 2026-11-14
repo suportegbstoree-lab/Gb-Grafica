@@ -15,12 +15,15 @@ export const STAFF_PERMISSIONS = [
   { id: 'products.personalization', label: 'Alterar opções de personalização dos produtos' },
   { id: 'categories.manage', label: 'Gerenciar categorias' },
   { id: 'promotions.manage', label: 'Gerenciar promoções' },
+  { id: 'coupons.manage', label: 'Criar, editar e excluir cupons da loja e de frete' },
   { id: 'branding.manage', label: 'Gerenciar identidade visual e banners' },
   { id: 'fonts.manage', label: 'Gerenciar fontes da personalização' },
   { id: 'settings.manage', label: 'Gerenciar atendimento e configurações comerciais' },
   { id: 'orders.read', label: 'Consultar pedidos e fichas de produção' },
   { id: 'orders.artwork', label: 'Consultar e baixar artes dos pedidos' },
   { id: 'orders.fulfillment', label: 'Alterar etapas de produção e envio' },
+  { id: 'shipments.read', label: 'Consultar etiquetas de postagem' },
+  { id: 'shipments.manage', label: 'Comprar, emitir, imprimir e cancelar etiquetas de postagem' },
   { id: 'ai.generate', label: 'Usar IA para textos dos produtos' },
 ] as const;
 export type StaffPermission = typeof STAFF_PERMISSIONS[number]['id'];
@@ -32,7 +35,7 @@ export const STAFF_ROLE_LABELS: Record<AssignedRole, string> = {
 };
 export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRoleId, StaffPermission[]> = {
   designer: ['products.images', 'products.personalization', 'branding.manage', 'fonts.manage', 'orders.read', 'orders.artwork'],
-  'product-manager': ['products.manage', 'categories.manage', 'promotions.manage', 'ai.generate'],
+  'product-manager': ['products.manage', 'categories.manage', 'promotions.manage', 'coupons.manage', 'ai.generate'],
 };
 
 export interface StaffAccessRecord {
@@ -49,10 +52,18 @@ export interface StaffMember { uid: string; email: string; name?: string; role: 
 export interface StaffOverview { notifications?: Array<{ id: string; email: string; createdAt: string }>; roles: StaffRoleView[]; members: StaffMember[]; emailConfigured: boolean; truncated: boolean; }
 
 export function isStaffRoleId(value: unknown): value is StaffRoleId { return typeof value === 'string' && /^[a-z][a-z0-9-]{1,63}$/.test(value) && !['admin', 'administrator', 'administrador', 'none', 'owner', 'root', 'constructor', 'prototype'].includes(value); }
+export const STAFF_PERMISSION_DEPENDENCIES: Partial<Record<StaffPermission, StaffPermission[]>> = {
+  'orders.artwork': ['orders.read'],
+  'orders.fulfillment': ['orders.read'],
+  'shipments.read': ['orders.read'],
+  'shipments.manage': ['orders.read', 'shipments.read'],
+};
+
 export function parseStaffPermissions(value: unknown): StaffPermission[] | null {
   if (!Array.isArray(value) || value.length > ALL_STAFF_PERMISSIONS.length || new Set(value).size !== value.length ||
       value.some(entry => !ALL_STAFF_PERMISSIONS.includes(entry as StaffPermission))) return null;
-  if ((value.includes('orders.artwork') || value.includes('orders.fulfillment')) && !value.includes('orders.read')) return null;
+  if (ALL_STAFF_PERMISSIONS.some(permission => value.includes(permission) &&
+    STAFF_PERMISSION_DEPENDENCIES[permission]?.some(dependency => !value.includes(dependency)))) return null;
   return ALL_STAFF_PERMISSIONS.filter(permission => value.includes(permission));
 }
 export function validStaffAccess(value: unknown): value is StaffAccessRecord {

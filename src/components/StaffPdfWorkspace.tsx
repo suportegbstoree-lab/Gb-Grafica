@@ -15,7 +15,7 @@ import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
 import { STAFF_PDF_BATCH_MAX_ITEMS, STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
-import { Search } from "lucide-react";
+import { Edit2, Search, Trash2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import {
@@ -80,7 +80,6 @@ const csvRowKey = ({ sourceId, index }: StaffPdfCsvOrder["csvRow"]) =>
   `${sourceId}:${index}`;
 export default function StaffPdfWorkspace({
   fonts,
-  externalBatchRevision = 0,
   canManage = false,
   canGenerate = true,
   api = staffPdfApi,
@@ -90,7 +89,6 @@ export default function StaffPdfWorkspace({
   onProgress,
 }: {
   fonts: PersonalizationFont[];
-  externalBatchRevision?: number;
   canManage?: boolean;
   canGenerate?: boolean;
   api?: StaffPdfApi;
@@ -1331,20 +1329,26 @@ export default function StaffPdfWorkspace({
                           {item.reference}
                         </p>
                       )}
-                      <div className="flex gap-4">
+                      <div className="flex gap-1">
                         <button
+                          type="button"
+                          aria-label="Editar item da fila"
+                          title="Editar item da fila"
                           disabled={busy || item.status === "ready"}
                           onClick={() => void choose(item.job.baseId, item)}
-                          className="text-sm disabled:opacity-40"
+                          className="rounded-md p-2 text-gray-500 hover:text-[#ff4d79] disabled:opacity-40"
                         >
-                          Editar item da fila
+                          <Edit2 size={16} aria-hidden="true" />
                         </button>
                         <button
+                          type="button"
+                          aria-label="Excluir da fila"
+                          title="Excluir da fila"
                           disabled={busy}
                           onClick={() => setRemoveId(item.id)}
-                          className="text-sm text-red-300 disabled:opacity-40"
+                          className="rounded-md p-2 text-gray-500 hover:text-red-500 disabled:opacity-40"
                         >
-                          Excluir da fila
+                          <Trash2 size={16} aria-hidden="true" />
                         </button>
                       </div>
                     </article>
@@ -1511,7 +1515,7 @@ export default function StaffPdfWorkspace({
       {visible && api.batches && canGenerate && (
         <StaffPdfBatches
           api={api.batches}
-          revision={batchRevision + externalBatchRevision}
+          revision={batchRevision}
         />
       )}
       {visible && barcodeEditor && (

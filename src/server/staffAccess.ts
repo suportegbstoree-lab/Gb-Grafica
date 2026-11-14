@@ -65,7 +65,7 @@ export function createStaffBackend(): StaffBackend {
 export async function updateStaffRole(backend: StaffBackend, roleId: StaffRoleId, input: unknown, expectedRevision: string | null, actor: string, name?: unknown): Promise<StaffRoleRecord> {
   if (!isStaffRoleId(roleId)) throw new StaffAccessError(422, 'A função de administrador é protegida.');
   const permissions = parseStaffPermissions(input);
-  if (!permissions) throw new StaffAccessError(422, 'Permissões inválidas. Artes e produção precisam da consulta de pedidos.');
+  if (!permissions) throw new StaffAccessError(422, 'Permissões inválidas. Confira os acessos de consulta de pedidos e etiquetas exigidos pelas ações selecionadas.');
   const previous: Array<StaffRoleRecord | null> = [];
   for (const target of backend.stores) previous.push(await target.readRole(roleId));
   if ((previous[0]?.revision ?? null) !== expectedRevision) throw new StaffAccessError(409, 'Esta função mudou. Atualize a lista antes de salvar.');

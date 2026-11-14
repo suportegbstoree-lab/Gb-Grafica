@@ -11,8 +11,8 @@ test('each permission exposes only its own administrative section; order artwork
     'emails.manage': ['email'],
     'operations.manage': ['operations'],
     'products.manage': ['products', 'variation-types'], 'products.images': ['products'], 'products.personalization': ['products'],
-    'categories.manage': ['categories'], 'promotions.manage': ['coupons', 'promotions'], 'branding.manage': ['branding'],
-    'fonts.manage': ['fonts'], 'settings.manage': ['config'], 'orders.read': ['orders', 'shipment-labels'],
+    'categories.manage': ['categories'], 'promotions.manage': ['promotions'], 'coupons.manage': ['coupons'], 'branding.manage': ['branding'],
+    'fonts.manage': ['fonts'], 'settings.manage': ['config'], 'orders.read': ['orders'], 'shipments.read': ['shipment-labels'], 'shipments.manage': [],
     'orders.artwork': [], 'orders.fulfillment': [], 'ai.generate': [],
   };
   for (const permission of ALL_STAFF_PERMISSIONS) assert.deepEqual(allowedPanelSections(false, [permission]), expected[permission], permission);

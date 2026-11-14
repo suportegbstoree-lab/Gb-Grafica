@@ -2481,7 +2481,7 @@ app.post('/api/admin/orders/:orderId/retry-email', requireAppCheck, async (req, 
 
 app.post('/api/admin/shipment-labels/status', requireAppCheck, async (req, res) => {
   try {
-    const user = await requirePermissionUser(req, 'orders.read');
+    const user = await requirePermissionUser(req, 'shipments.read');
     const { db } = getAdminServices();
     enforceRateLimit(`shipment-labels:${user.uid}`, 40, 60_000);
     await enforceDistributedRateLimit(db, `shipment-labels:${user.uid}`, 80, 60_000);
@@ -2496,7 +2496,7 @@ app.post('/api/admin/shipment-labels/status', requireAppCheck, async (req, res) 
 
 app.post('/api/admin/orders/:orderId/shipment-label', requireAppCheck, async (req, res) => {
   try {
-    const user = await requirePermissionUser(req, 'orders.fulfillment');
+    const user = await requirePermissionUser(req, 'shipments.manage');
     const { db } = getAdminServices(), orderId = req.params.orderId;
     enforceRateLimit(`shipment-label:${user.uid}`, 20, 60_000);
     await enforceDistributedRateLimit(db, `shipment-label:${user.uid}`, 40, 60_000);
@@ -2519,7 +2519,7 @@ app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (
 
 app.post('/api/admin/orders/:orderId/shipment-tracking', requireAppCheck, async (req, res) => {
   try {
-    const user = await requirePermissionUser(req, 'orders.fulfillment');
+    const user = await requirePermissionUser(req, 'shipments.manage');
     const { db, auth } = getAdminServices(), orderId = req.params.orderId;
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId)) throw new HttpError(422, 'Pedido inválido.');
     enforceRateLimit(`melhor-envio-tracking:${user.uid}`, 12, 60_000);

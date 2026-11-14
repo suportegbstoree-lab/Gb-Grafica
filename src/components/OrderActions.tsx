@@ -6,7 +6,7 @@ import type { OrderOperationsApi } from '../services/orderService';
 import EditorModal from './EditorModal';
 import ShipmentLabelEditor from './ShipmentLabelEditor';
 
-export default function OrderActions({ order, api, onError, onSuccess }: { order: Order; api: OrderOperationsApi; onError: (message: string) => void; onSuccess: (message: string) => void }) {
+export default function OrderActions({ order, api, canFulfill, canManageShipments, onError, onSuccess }: { order: Order; api: OrderOperationsApi; canFulfill: boolean; canManageShipments: boolean; onError: (message: string) => void; onSuccess: (message: string) => void }) {
   const [busy, setBusy] = React.useState(false), [shippingOpen, setShippingOpen] = React.useState(false), [code, setCode] = React.useState('');
   const [shipmentLabelOpen, setShipmentLabelOpen] = React.useState(false);
   const [operationError, setOperationError] = React.useState('');
@@ -29,17 +29,17 @@ export default function OrderActions({ order, api, onError, onSuccess }: { order
     labelId.current = null;
   }, stage === 'pagamento_confirmado' ? 'Etiqueta gerada. Pedido em produção.' : 'Etiqueta de produção gerada.');
   return <div className="flex flex-wrap gap-2">
-    {paid && !['aguardando_pagamento', 'cancelado'].includes(stage) && <button type="button" disabled={busy} onClick={label} className="rounded-lg bg-pink-500 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{busy ? 'Processando...' : stage === 'pagamento_confirmado' ? 'Gerar etiqueta e iniciar produção' : 'Gerar etiqueta de produção'}</button>}
-    {paid && melhorEnvio && ['pagamento_confirmado', 'em_producao', 'enviado', 'entregue'].includes(stage) &&
+    {canFulfill && paid && !['aguardando_pagamento', 'cancelado'].includes(stage) && <button type="button" disabled={busy} onClick={label} className="rounded-lg bg-pink-500 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{busy ? 'Processando...' : stage === 'pagamento_confirmado' ? 'Gerar etiqueta e iniciar produção' : 'Gerar etiqueta de produção'}</button>}
+    {canManageShipments && paid && melhorEnvio && ['pagamento_confirmado', 'em_producao', 'enviado', 'entregue'].includes(stage) &&
       <button type="button" disabled={busy} onClick={() => setShipmentLabelOpen(true)}
         className="rounded-lg border border-cyan-500/40 px-4 py-2 text-xs font-bold text-cyan-300 disabled:opacity-50">
         Etiqueta de postagem
       </button>}
     {shipmentLabelOpen && <ShipmentLabelEditor order={order} api={api} onClose={() => setShipmentLabelOpen(false)} />}
-    {paid && stage === 'em_producao' && <button type="button" disabled={busy} onClick={() => order.metodoEntrega === 'retirada'
+    {canFulfill && paid && stage === 'em_producao' && <button type="button" disabled={busy} onClick={() => order.metodoEntrega === 'retirada'
       ? void run(() => api.updateFulfillment(order.id, 'pronto_retirada'), 'Pedido pronto para retirada.') : setShippingOpen(true)} className="rounded-lg border border-cyan-500/40 px-4 py-2 text-xs font-bold text-cyan-300 disabled:opacity-50">{order.metodoEntrega === 'retirada' ? 'Marcar pronto para retirada' : 'Marcar A Caminho'}</button>}
-    {paid && stage === 'enviado' && <button type="button" disabled={busy} onClick={() => { setCode(order.tracking?.code || ''); setShippingOpen(true); }} className="rounded-lg border border-gray-600 px-4 py-2 text-xs font-bold disabled:opacity-50">Corrigir rastreio</button>}
-    {stage === 'enviado' && order.tracking?.provider === 'correios' && <button type="button" disabled={busy} onClick={() => void run(() => api.refreshTracking(order.id), 'Rastreio consultado. A entrega depende da confirmação dos Correios.')} className="rounded-lg border border-cyan-500/40 px-4 py-2 text-xs font-bold text-cyan-300 disabled:opacity-50">Consultar rastreio</button>}
+    {canFulfill && paid && stage === 'enviado' && <button type="button" disabled={busy} onClick={() => { setCode(order.tracking?.code || ''); setShippingOpen(true); }} className="rounded-lg border border-gray-600 px-4 py-2 text-xs font-bold disabled:opacity-50">Corrigir rastreio</button>}
+    {canFulfill && stage === 'enviado' && order.tracking?.provider === 'correios' && <button type="button" disabled={busy} onClick={() => void run(() => api.refreshTracking(order.id), 'Rastreio consultado. A entrega depende da confirmação dos Correios.')} className="rounded-lg border border-cyan-500/40 px-4 py-2 text-xs font-bold text-cyan-300 disabled:opacity-50">Consultar rastreio</button>}
     {shippingOpen && <EditorModal title={`Enviar pedido ${order.id}`} onClose={() => setShippingOpen(false)} busy={busy} closeLabel="Fechar envio" doneLabel="Cancelar" footerText="Confirme a postagem antes de marcar A Caminho. A etiqueta de produção é apenas para uso interno.">
       <form className="space-y-4" onSubmit={event => { event.preventDefault(); if ((order.shipping || code) && !(melhorEnvio ? validMelhorEnvioTrackingCode(code) : validTrackingCode(code))) { onError(melhorEnvio ? 'Informe o código de rastreio fornecido pela transportadora.' : 'Informe um código válido, como AA123456789BR.'); return; }
         void run(async () => { await api.updateFulfillment(order.id, 'enviado', code || undefined); setShippingOpen(false); }, 'Pedido A Caminho.'); }}>

@@ -25,8 +25,8 @@ export default function EditorModal({ title, children, onClose, busy = false, fo
     const first = [...(dialog.current?.querySelectorAll<HTMLButtonElement>('button:not([disabled])') || [])].find(button => button.getClientRects().length);
     first?.focus();
   }, [compact]);
-  return createPortal(<div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
-    <button type="button" tabIndex={-1} aria-label={`Fechar ${title}`} disabled={busy} onClick={onClose} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+  return createPortal(<div className="admin-controls fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6">
+    <button data-admin-backdrop type="button" tabIndex={-1} aria-label={`Fechar ${title}`} disabled={busy} onClick={onClose} className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
     <section ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-busy={busy} className={`relative flex max-h-[92dvh] w-full ${compact ? "max-w-lg" : wide ? "max-w-6xl" : "max-w-4xl"} flex-col overflow-hidden rounded-2xl border border-gray-800 bg-[#111111] text-white shadow-2xl`}>
       <header className={`${compact ? "hidden" : "flex"} items-center justify-between gap-3 border-b border-gray-800 px-6 py-4`}><h2 id={titleId} className="text-lg font-bold">{title}</h2><button type="button" aria-label={closeLabel} onClick={onClose} disabled={busy} className="rounded-lg p-2 hover:bg-gray-800 disabled:opacity-40"><X size={20} /></button></header>
       <div className="min-h-0 overflow-y-auto p-5 sm:p-6">{children}</div>

@@ -1,4 +1,5 @@
 import React from "react";
+import { Download, Printer, TextCursorInput } from "lucide-react";
 import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
 import { staffPdfOutputName } from "../lib/staffPdf";
 import type {
@@ -11,6 +12,7 @@ import { downloadPersonalization } from "../services/personalizationExport";
 
 const button =
   "rounded-lg border border-gray-700 px-3 py-2 text-sm disabled:opacity-40";
+const iconButton = "inline-flex rounded-md p-2 text-gray-500 hover:text-[#ff4d79] disabled:opacity-40";
 const searchable = (value: string) =>
   value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 export default function StaffPdfBatches({
@@ -150,13 +152,14 @@ export default function StaffPdfBatches({
                 <button type="button" className={button} disabled={busy} onClick={() => setRenaming(undefined)}>Cancelar</button>
               </form>
             ) : (
-              <button type="button" className={`${button} mr-2`} disabled={busy}
+              <button type="button" className={`${iconButton} mr-2`} disabled={busy}
+                aria-label="Renomear lote" title="Renomear lote"
                 onClick={() => setRenaming({ id: batch.id, name: batch.name || "" })}>
-                Renomear lote
+                <TextCursorInput size={16} aria-hidden="true" />
               </button>
             )}
             <button
-              className={button}
+              type="button" className={iconButton} aria-label="Baixar lote" title="Baixar lote"
               disabled={busy || !batch.count}
               onClick={() =>
                 void run(async () => {
@@ -188,7 +191,7 @@ export default function StaffPdfBatches({
                 })
               }
             >
-              Baixar lote
+              <Download size={16} aria-hidden="true" />
             </button>
             {items[batch.id] && (
               <label className="mt-3 block max-w-md text-sm">
@@ -221,7 +224,7 @@ export default function StaffPdfBatches({
                     {item.outputName}.pdf
                   </span>
                   <button
-                    className={button}
+                    type="button" className={iconButton} aria-label="Baixar" title="Baixar"
                     disabled={busy}
                     onClick={() =>
                       void run(async () => {
@@ -230,10 +233,10 @@ export default function StaffPdfBatches({
                       })
                     }
                   >
-                    Baixar
+                    <Download size={16} aria-hidden="true" />
                   </button>
                   <button
-                    className={button}
+                    type="button" className={iconButton} aria-label="Reimprimir" title="Reimprimir"
                     disabled={busy}
                     onClick={() => {
                       const popup = window.open("about:blank", "_blank");
@@ -256,7 +259,7 @@ export default function StaffPdfBatches({
                       });
                     }}
                   >
-                    Reimprimir
+                    <Printer size={16} aria-hidden="true" />
                   </button>
                 </li>
               ))}

@@ -3,10 +3,11 @@ import { createPortal } from "react-dom";
 type Props = React.InputHTMLAttributes<HTMLInputElement> & {
   originalPdf?: boolean;
   maxFiles?: number;
+  showDropHint?: boolean;
 };
 /** Batch slots accept every file. Single slots require an explicit choice from a batch. */
 export default forwardRef<HTMLInputElement, Props>(function UploadInput(
-  { multiple, onChange, originalPdf = false, maxFiles = 50, ...props },
+  { multiple, onChange, originalPdf = false, maxFiles = 50, showDropHint = true, ...props },
   forwarded,
 ) {
   const input = useRef<HTMLInputElement>(null),
@@ -94,9 +95,9 @@ export default forwardRef<HTMLInputElement, Props>(function UploadInput(
             void receive(files);
           }}
         />
-        <span className="ml-2 text-[10px] font-normal">
+        {showDropHint && <span className="ml-2 text-[10px] font-normal">
           ou arraste arquivos aqui
-        </span>
+        </span>}
       </span>
       {error && (
         <span role="alert" className="block text-xs text-red-500">
@@ -116,7 +117,7 @@ export default forwardRef<HTMLInputElement, Props>(function UploadInput(
                 input.current?.focus();
               }
             }}
-            className="fixed inset-0 z-[200] grid place-items-center bg-black/70 p-4"
+            className="admin-controls fixed inset-0 z-[200] grid place-items-center bg-black/70 p-4"
           >
             <div className="max-h-[80vh] w-full max-w-lg space-y-3 overflow-auto rounded-xl bg-gray-900 p-6 text-white">
               <h3 className="font-bold">Escolha o arquivo para este campo</h3>

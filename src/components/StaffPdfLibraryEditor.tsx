@@ -1,4 +1,5 @@
 import React from "react";
+import { Edit2, FolderOpen, TextCursorInput, Trash2 } from "lucide-react";
 import EditorModal from "./EditorModal";
 import ConfirmDialog from "./ConfirmDialog";
 import StaffPdfBaseImport from "./StaffPdfBaseImport";
@@ -30,6 +31,8 @@ import type { StaffPdfApi, StaffPdfLibrary } from "../services/staffPdfService";
 import { downloadPersonalization } from "../services/personalizationExport";
 const searchKey = (value: string) =>
   value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
+const iconButton = "rounded-md p-2 text-gray-500 transition-colors hover:text-[#ff4d79] disabled:opacity-30";
+const deleteIconButton = "rounded-md p-2 text-gray-500 transition-colors hover:text-red-500 disabled:opacity-30";
 const input =
   "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-2";
 export default function StaffPdfLibraryEditor({
@@ -49,7 +52,6 @@ export default function StaffPdfLibraryEditor({
     [query, setQuery] = React.useState(""),
     [baseQueries, setBaseQueries] = React.useState(() => new Map<string, string>()),
     [importBusy, setImportBusy] = React.useState(false),
-    [catalogBaseId, setCatalogBaseId] = React.useState(""),
     [alphabetUpload, setAlphabetUpload] = React.useState<{
       id: string;
       status: "Importando..." | "Em andamento..." | "Finalizado!" | "Erro!";
@@ -178,12 +180,6 @@ export default function StaffPdfLibraryEditor({
       old ? { ...old, layout: { ...old.layout, ...value } } : old,
     );
   const base = data.bases.find((b) => b.id === baseId);
-  const catalogAlphabets = data.bases.filter(
-    (item) => item.source === "catalog" && item.initialFolderName,
-  );
-  const catalogBase = catalogAlphabets.find(
-    (item) => item.id === catalogBaseId,
-  );
   const { initial, initialError } = useStaffPdfInitial(
     api,
     editing && original && base?.initialLetters?.length ? base.id : "",
@@ -230,15 +226,17 @@ export default function StaffPdfLibraryEditor({
       }
     });
   }
-  function alphabetPicker(target: StaffPdfBase) {
+  function alphabetPicker(target: StaffPdfBase, iconOnly = false) {
     return (
       <>
-        <label className="inline-flex cursor-pointer rounded-lg border border-gray-700 p-2 text-sm">
-          Importar pasta de letras
+        <label title="Importar pasta de letras" className={iconOnly ? `${iconButton} inline-flex` : "inline-flex items-center gap-2 rounded-lg border border-gray-700 p-2 text-sm"}>
+          <FolderOpen size={16} aria-hidden="true" />
+          {!iconOnly && "Importar pasta de letras"}
           <input
             type="file"
             multiple
             accept="image/png"
+            aria-label="Importar pasta de letras"
             ref={(el) => {
               el?.setAttribute("webkitdirectory", "");
             }}
@@ -374,36 +372,24 @@ export default function StaffPdfLibraryEditor({
                             </span>
                           )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            className="rounded-lg border border-gray-700 p-2 text-sm"
-                            onClick={() => edit(b)}
-                          >
-                            Editar {b.name}
+                        <div className="flex flex-wrap items-center gap-1">
+                          <button type="button" disabled={busy} className={iconButton}
+                            title="Editar molde" aria-label={`Editar ${b.name}`} onClick={() => edit(b)}>
+                            <Edit2 size={16} aria-hidden="true" />
                           </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            aria-label={`Renomear ${b.name}`}
-                            className="rounded-lg border border-gray-700 p-2 text-sm"
+                          <button type="button" disabled={busy} className={iconButton}
+                            title="Renomear base" aria-label={`Renomear ${b.name}`}
                             onClick={() => {
                               setError("");
                               setRenaming({ base: b, name: b.name });
-                            }}
-                          >
-                            Renomear
+                            }}>
+                            <TextCursorInput size={16} aria-hidden="true" />
                           </button>
-                          {alphabetPicker(b)}
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              setConfirm({ kind: "base", id: b.id, name: b.name })
-                            }
-                            className="text-sm text-red-300"
-                          >
-                            Excluir base
+                          {alphabetPicker(b, true)}
+                          <button type="button" disabled={busy} className={deleteIconButton}
+                            title="Excluir base" aria-label={`Excluir base ${b.name}`}
+                            onClick={() => setConfirm({ kind: "base", id: b.id, name: b.name })}>
+                            <Trash2 size={16} aria-hidden="true" />
                           </button>
                         </div>
                       </div>
@@ -414,71 +400,6 @@ export default function StaffPdfLibraryEditor({
             })}
         </div>
       </div>
-      {!!catalogAlphabets.length && (
-        <details className="space-y-3 rounded-2xl border border-gray-800 p-5">
-          <summary className="cursor-pointer font-bold">
-            Iniciais dos modelos de produtos
-          </summary>
-          <label className="block text-sm">
-            Modelo de produto com letras
-            <select
-              className={input}
-              disabled={busy}
-              value={catalogBaseId}
-              onChange={(event) => setCatalogBaseId(event.target.value)}
-            >
-              <option value="">Selecione um PDF</option>
-              {catalogAlphabets.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} · {item.productId}
-                </option>
-              ))}
-            </select>
-          </label>
-          {catalogBase && (
-            <form
-              key={catalogBase.revision}
-              className="space-y-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const size = Number(
-                  new FormData(event.currentTarget).get("initialSize"),
-                );
-                void run(async () => {
-                  await api.saveCatalogInitialSize(catalogBase, size);
-                  await reload();
-                  setMessage("Tamanho da inicial salvo no modelo de produto.");
-                });
-              }}
-            >
-              <p className="text-xs text-gray-300">
-                Pasta vinculada · {catalogBase.initialFolderName}
-              </p>
-              <label className="block max-w-xs text-sm">
-                Tamanho da inicial do modelo (% da página)
-                <input
-                  className={input}
-                  type="number"
-                  name="initialSize"
-                  min={5}
-                  max={100}
-                  step="any"
-                  defaultValue={catalogBase.initialSizePercent ?? DEFAULT_DECORATIVE_INITIAL_PERCENT}
-                  required
-                  disabled={busy}
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={busy}
-                className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
-              >
-                Salvar tamanho no modelo de produto
-              </button>
-            </form>
-          )}
-        </details>
-      )}
       <div className="space-y-4 rounded-2xl border border-gray-800 p-5">
         <h3 className="font-bold">Moldes de edição · templates.json</h3>
         <p className="text-sm text-gray-400">
@@ -559,13 +480,14 @@ export default function StaffPdfLibraryEditor({
                     {t.layout.font_size}px · {t.layout.color}
                   </p>
                 </div>
-                <div className="flex gap-3">
-                  <button disabled={busy} onClick={() => open(t)}>
-                    Editar molde
+                <div className="flex gap-1">
+                  <button type="button" disabled={busy} className={iconButton} title="Editar molde"
+                    aria-label={`Editar molde ${t.name}`} onClick={() => open(t)}>
+                    <Edit2 size={16} aria-hidden="true" />
                   </button>
                   <button
-                    disabled={busy}
-                    className="text-red-300"
+                    type="button" disabled={busy} className={deleteIconButton} title="Excluir molde"
+                    aria-label={`Excluir molde ${t.name}`}
                     onClick={() =>
                       setConfirm({
                         kind: "layout",
@@ -575,7 +497,7 @@ export default function StaffPdfLibraryEditor({
                       })
                     }
                   >
-                    Excluir molde
+                    <Trash2 size={16} aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -600,7 +522,7 @@ export default function StaffPdfLibraryEditor({
           onClose={() => setEditing(null)}
           closeLabel="Fechar editor de molde"
           doneLabel="Voltar"
-          footerText="Salvar altera o molde para novas edições. Itens já na fila precisam ser abertos novamente."
+          footerText="Salvar atualiza o molde dos produtos vinculados. Itens já na fila precisam ser abertos novamente."
         >
           <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
             <div className="min-w-0 space-y-4 lg:max-h-[67vh] lg:overflow-y-auto lg:pr-2">

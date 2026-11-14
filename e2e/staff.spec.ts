@@ -42,6 +42,21 @@ test('product manager has the full product form and promotion/category areas wit
   await expect(editor.getByLabel('Preço base sem opções', { exact: true })).toBeVisible();
 });
 
+test('shipment access can be delegated independently from fulfillment and coupons', async ({ page }) => {
+  await page.goto('/__e2e/team/admin?shipping-label=1&permissions=orders.read,shipments.read');
+  const nav = page.getByRole('navigation', { name: 'Seções administrativas' });
+  await nav.getByRole('button', { name: 'Etiquetas', exact: true }).click();
+  await expect(page.getByText('Sem etiqueta', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Abrir etiqueta' })).toHaveCount(0);
+  await expect(nav.getByRole('button', { name: 'Cupons', exact: true })).toHaveCount(0);
+
+  await page.goto('/__e2e/team/admin?shipping-label=1&permissions=orders.read,shipments.read,shipments.manage');
+  await nav.getByRole('button', { name: 'Etiquetas', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Abrir etiqueta' })).toBeVisible();
+  await nav.getByRole('button', { name: 'Pedidos', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Gerar etiqueta de produção', exact: true })).toHaveCount(0);
+});
+
 test('administrator assigns registered email, edits role permissions and sees pending email status', async ({ page }) => {
   await page.goto('/__e2e/admin');
   await page.getByRole('button', { name: 'Funcionários', exact: true }).click();

@@ -12,6 +12,7 @@ import { layoutFont } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import StaffPdfImportTable from "./StaffPdfImportTable";
 import StaffSpreadsheetCsv from "./StaffSpreadsheetCsv";
+import StaffSpreadsheetPicker from "./StaffSpreadsheetPicker";
 
 export interface StaffPdfCsvOrder {
   baseId: string;
@@ -369,31 +370,19 @@ export default function StaffPdfCsvImport({
             pedido na fila principal.
           </p>
         </div>
-        <label className="block text-sm">
-          Arquivo CSV
-          <input
-            className="mt-2 block max-w-full"
-            disabled={block}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={async (e) => {
-              const file = e.currentTarget.files?.[0];
-              e.currentTarget.value = "";
-              if (!file) return;
-              setReading(true);
-              setError("");
-              try {
-                if (file.size > 10 * 1024 * 1024)
-                  throw new Error("Envie um CSV de até 10 MB.");
-                useCsv(await file.text(), file.name);
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setReading(false);
-              }
-            }}
-          />
-        </label>
+        <StaffSpreadsheetPicker format="CSV" disabled={block} onFile={async (file) => {
+          setReading(true);
+          setError("");
+          try {
+            if (file.size > 10 * 1024 * 1024)
+              throw new Error("Envie um CSV de até 10 MB.");
+            useCsv(await file.text(), file.name);
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setReading(false);
+          }
+        }} />
         {error && (
           <p role="alert" className="text-red-300">
             {error}

@@ -65,10 +65,6 @@ export interface StaffPdfApi {
     progress?: (completed: number, total: number) => void,
     mold?: Pick<StaffPdfLayoutView, "id" | "name">,
   ): Promise<void>;
-  saveCatalogInitialSize(
-    base: StaffPdfBase,
-    sizePercent: number,
-  ): Promise<void>;
   generate(
     job: StaffPdfJob,
     pdf: Blob,
@@ -239,15 +235,6 @@ export const staffPdfApi: StaffPdfApi = {
       await Promise.allSettled(uploaded.map(rollback));
       throw e;
     }
-  },
-  saveCatalogInitialSize: async (base, sizePercent) => {
-    await staffPdfRequest(
-      `/bases/${encodeURIComponent(base.id)}/initial-size`,
-      {
-        baseRevision: base.revision,
-        sizePercent,
-      },
-    );
   },
   generate: async (staffJob, pdf, requestId) => {
     const user = auth.currentUser;

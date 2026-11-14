@@ -178,9 +178,13 @@ abre o arquivo no ADM quando o provedor entrega o PDF. **Cancelar etiqueta**
 solicita o cancelamento ao Melhor Envio antes da postagem. O status é confirmado
 consultando a etiqueta na API. Eventual estorno da venda é tratado no PagBank.
 
-Em **Cupons**, escolha **Aplicar em → Frete** para criar um desconto percentual
+Em **Cupons → Novo cupom → Aplicar em → Frete**, crie um desconto percentual
 ou fixo sobre a entrega. Um cupom de 100% oferece frete grátis ao cliente. A loja
 continua comprando a etiqueta com o saldo do Melhor Envio.
+
+Em **Funcionários**, configure separadamente o acesso à consulta de etiquetas,
+às operações de postagem e ao cadastro de cupons. Para cargos já salvos,
+marque as novas permissões conforme a função de cada pessoa.
 
 Para ativar a consulta automática, configure `MELHOR_ENVIO_TRACKING_ENABLED=true`
 e `CRON_SECRET` para a rota `/api/internal/maintenance`. O agendamento consulta
@@ -224,6 +228,28 @@ o frete real, valide as permissões, o saldo, o remetente e a emissão na conta
 apropriada.
 [Compra de etiquetas](https://docs.melhorenvio.com.br/reference/compra-de-fretes-1) ·
 [Impressão em PDF](https://docs.melhorenvio.com.br/reference/impressao-de-etiquetas-em-arquivo)
+
+### Limpeza dos pedidos de teste
+
+Durante a limpeza, mantenha o checkout e as rotinas de envio da loja sem
+atividade. Rode na raiz do projeto com as credenciais locais do Firebase Admin
+apontando para o ambiente que você quer limpar.
+
+```sh
+npm run orders:reset
+```
+
+A prévia mostra o projeto, banco, bucket e as contagens. Se todo o histórico
+desse destino for de teste, use o comando `--apply` exibido pela prévia.
+Ele apaga todos os pedidos, inclusive fichas, subcoleções, artes, etiquetas,
+rastreios, e-mails de pedido e avaliações vinculadas a compras. Também libera
+as reservas de primeira compra e zera o contador de usos dos cupons cadastrados.
+A rotina verifica o Firestore e as versões de artes acessíveis no Storage ao
+terminar. A retenção do bucket continua aplicável a arquivos excluídos.
+
+O procedimento preserva contas, produtos, cupons, moldes e campanhas. Para
+cancelar um envio já comprado ou tratar um pagamento real, use o painel do
+Melhor Envio ou do PagBank antes de limpar o histórico local.
 
 ### App Check
 

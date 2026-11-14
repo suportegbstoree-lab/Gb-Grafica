@@ -21,7 +21,7 @@ const resources = {
     collection: VARIATION_TYPES,
     permission: "products.manage",
   },
-  coupons: { collection: COUPONS, permission: "promotions.manage" },
+  coupons: { collection: COUPONS, permission: "coupons.manage" },
 } as const;
 
 export function createSalesAdminRouter(deps: {

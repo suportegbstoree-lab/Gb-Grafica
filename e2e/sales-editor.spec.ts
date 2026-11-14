@@ -120,6 +120,19 @@ test("cadastro combina dois tipos, preserva uma referência própria e salva pre
   ).toBeVisible();
 });
 
+test("cupom de frete pode ser cadastrado no ADM", async ({ page }) => {
+  await page.goto("/__e2e/admin");
+  await page.getByRole("button", { name: "Cupons", exact: true }).click();
+  await page.getByRole("button", { name: "Novo cupom", exact: true }).click();
+  await page.getByLabel("Código do cupom").fill("frete50");
+  await page.getByLabel("Descrição do cupom").fill("Metade do frete");
+  await page.getByLabel("Desconto (%)", { exact: true }).fill("50");
+  await page.getByLabel("Válido até", { exact: true }).fill("2099-12-31");
+  await page.getByRole("combobox", { name: "Aplicar em", exact: true }).selectOption({ label: "Frete" });
+  await page.getByRole("button", { name: "Salvar cupom", exact: true }).click();
+  await expect(page.getByRole("listitem").filter({ hasText: "FRETE50" })).toContainText("50% no frete");
+});
+
 test("cupom pode ser cadastrado, aplicado automaticamente e enviado no total conferido", async ({
   page,
 }) => {

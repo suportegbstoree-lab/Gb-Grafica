@@ -376,9 +376,8 @@ export default function ProductProductionEditor({
               </p>
             )}
           <p className="mt-2 text-xs text-gray-400">
-            Posição, fonte, tamanho e cor seguem o molde. Para publicar mudanças
-            da oficina, atualize este vínculo. Pedidos anteriores mantêm a
-            versão comprada.
+            Alterações de posição, fonte, tamanho e cor no molde são publicadas
+            automaticamente. Pedidos anteriores mantêm a versão comprada.
           </p>
           <button
             type="button"
