@@ -4,8 +4,7 @@ import { DEFAULT_LOGO_URL } from "./lib/seo";
 export const INITIAL_CONFIG: SiteConfig = {
   logo_url: DEFAULT_LOGO_URL,
   telefone1: "(16) 98801-6792",
-  // TODO: Adicionar o segundo telefone verdadeiro e remover o placeholder abaixo
-  telefone2: "(16) 3333-3333", // Placeholder, substituir pelo telefone real
+  telefone2: "",
   banner_principal: "https://picsum.photos/seed/grafica-banner/1920/600",
   beneficio1_titulo: "ATENDIMENTO RÁPIDO",
   beneficio1_desc: "FALE DIRETO COM NOSSA EQUIPE",

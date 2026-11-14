@@ -30,6 +30,8 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import type { Anuncio, CartItem, Category, Order, Promocao, SiteConfig } from '../types';
 import Home, { type PersonalizationModelStorage } from '../pages/Home';
 import Admin, { type AdminAssetStorage, type AdminCatalogImageStorage, type AdminPersistence } from '../pages/Admin';
+import LegalPage from '../pages/LegalPage';
+import { LEGAL_ROUTES, type LegalDocumentId } from '../lib/legal';
 
 const productPdfLibraryFixture: StaffPdfApi = {
   ...emptyPdfLibrary,
@@ -511,6 +513,11 @@ export default function E2EHarness() {
         <Route path="/promocoes" element={<StoreFixture />} />
         <Route path="/lancamentos" element={<StoreFixture />} />
         <Route path="/minha-conta" element={<StoreFixture />} />
+        {(Object.keys(LEGAL_ROUTES) as LegalDocumentId[]).map(id => (
+          <React.Fragment key={id}>
+            <Route path={LEGAL_ROUTES[id]} element={<LegalPage documentId={id} config={config} />} />
+          </React.Fragment>
+        ))}
         <Route path="*" element={<Navigate to="/__e2e/store" replace />} />
       </Routes></StoreThemeProvider>
     </BrowserRouter>

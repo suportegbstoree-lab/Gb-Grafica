@@ -53,6 +53,8 @@ test('customers can read detailed saved order options without model download con
   const dialog = page.getByRole('dialog', { name: 'Detalhes do pedido GB-E2E-PAGO', exact: true });
   await expect(dialog).toBeVisible(); await expect(dialog.getByText('Capa e contracapa', { exact: true })).toBeVisible();
   await expect(dialog.getByText(/Arte aprovada na compra/)).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Como solicitar troca, cancelamento ou reembolso' }))
+    .toHaveAttribute('href', '/trocas-cancelamentos-e-reembolsos');
   await expect(dialog.getByRole('button', { name: /JPG|PDF|Baixar|etiqueta/i })).toHaveCount(0);
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog', { name: 'Meus Pedidos', exact: true })).toBeVisible();
 });

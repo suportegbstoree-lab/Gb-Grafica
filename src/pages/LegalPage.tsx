@@ -1,11 +1,11 @@
-import { storeContacts } from '../lib/storePresentation';
 import { useEffect, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, FileText, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, FileText } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { StoreThemeControl } from '../components/StoreTheme';
 import type { SiteConfig } from '../types';
+import { contactHref, storeContacts } from '../lib/storePresentation';
 import {
-  LEGAL_EFFECTIVE_DATE,
-  PRIVACY_EFFECTIVE_DATE,
+  LEGAL_REVIEW_DATE,
   LEGAL_ROUTES,
   type LegalDocumentId,
   missingLegalBusinessFields,
@@ -48,36 +48,55 @@ const MISSING_FIELD_LABELS: Record<string, string> = {
 };
 
 function valueOrPending(value: string | undefined): string {
-  return value?.trim() || 'A confirmar antes da publicação comercial';
+  return value?.trim() || 'A confirmar com a loja';
 }
 
 function ExternalLegalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="font-bold text-pink-600 hover:underline">
+    <a href={href} target="_blank" rel="noopener noreferrer" className={inlineLink}>
       {children}
     </a>
   );
+}
+
+const inlineLink = 'break-words font-semibold text-[var(--legal-accent)] underline underline-offset-2 hover:decoration-2';
+const panel = 'rounded-2xl border border-[var(--legal-border)] bg-[var(--legal-surface)]';
+const reviewDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'UTC' })
+  .format(new Date(LEGAL_REVIEW_DATE));
+
+function EmailLink({ address, subject }: { address?: string; subject?: string }) {
+  if (!address) return <>E-mail a confirmar no cadastro da loja</>;
+  const mailto = `mailto:${encodeURIComponent(address).replace('%40', '@')}`;
+  const query = subject ? `?subject=${encodeURIComponent(subject)}` : '';
+  return <a className={inlineLink} href={mailto + query}>{address}</a>;
 }
 
 function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDocument {
   const providerName = valueOrPending(config.razao_social);
   const taxId = valueOrPending(config.documento_fiscal);
   const address = valueOrPending(config.endereco_comercial);
-  const serviceEmail = valueOrPending(storeContacts(config).find(contact => contact.type === 'email')?.value || config.email_atendimento);
-  const privacyEmail = valueOrPending(config.email_privacidade || config.email_atendimento);
+  const contacts = storeContacts(config);
+  const serviceEmail = config.email_atendimento?.trim() || contacts.find(contact => contact.type === 'email')?.value;
+  const privacyEmail = config.email_privacidade?.trim() || serviceEmail;
+  const phoneContacts = contacts.filter(contact => contact.type !== 'email');
   const productionDeadline = valueOrPending(config.prazo_producao);
 
   const providerSection: LegalSection = {
     title: 'Identificação do fornecedor',
     content: (
-      <dl className="grid gap-3 sm:grid-cols-[12rem_1fr]">
-        <dt className="font-bold text-gray-900">Nome fantasia</dt><dd>GB Gráfica</dd>
-        <dt className="font-bold text-gray-900">Razão social</dt><dd>{providerName}</dd>
-        <dt className="font-bold text-gray-900">CNPJ ou CPF</dt><dd>{taxId}</dd>
-        <dt className="font-bold text-gray-900">Endereço</dt><dd>{address}</dd>
-        <dt className="font-bold text-gray-900">Atendimento</dt><dd>{serviceEmail}</dd>
-        <dt className="font-bold text-gray-900">Privacidade e LGPD</dt><dd>{privacyEmail}</dd>
-        <dt className="font-bold text-gray-900">Telefones</dt><dd>{storeContacts(config).filter(contact => contact.type !== 'email').map(contact => contact.value).join(' / ') || 'Não informado'}</dd>
+      <dl className="space-y-3 [&_dd]:min-w-0 [&_dd]:break-words [&_dt]:font-bold [&_dt]:text-[var(--legal-text)]">
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>Nome fantasia</dt><dd>GB Gráfica</dd></div>
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>Razão social</dt><dd>{providerName}</dd></div>
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>CNPJ ou CPF</dt><dd>{taxId}</dd></div>
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>Endereço</dt><dd>{address}</dd></div>
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>Atendimento</dt><dd><EmailLink address={serviceEmail} /></dd></div>
+        <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]"><dt>Privacidade e LGPD</dt><dd><EmailLink address={privacyEmail} /></dd></div>
+        {phoneContacts.length > 0 && <div className="grid gap-x-3 sm:grid-cols-[11rem_minmax(0,1fr)]">
+          <dt>Telefones e WhatsApp</dt>
+          <dd><ul>{phoneContacts.map(contact => <li key={contact.id}>
+            <a className={inlineLink} href={contactHref(contact)}>{contact.label} · {contact.value}</a>
+          </li>)}</ul></dd>
+        </div>}
       </dl>
     ),
   };
@@ -104,9 +123,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
             <div className="space-y-3">
               <p>
                 Solicitações sobre pedidos, dúvidas, reclamações, cancelamentos e arrependimento podem ser encaminhadas
-                pelos telefones exibidos nesta página ou pelo e-mail {serviceEmail}.
+                pelos canais exibidos nesta página. Para falar sobre uma compra, tenha o número do pedido em mãos.
               </p>
-              <p>O recebimento da solicitação deve ser confirmado e a resposta será encaminhada em até cinco dias.</p>
+              <p>A loja confirma o recebimento pelo mesmo canal e responde em até cinco dias.</p>
             </div>
           ),
         },
@@ -122,12 +141,13 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <ul className="list-disc space-y-2 pl-5">
               <li>dados da conta Google, como identificador, nome, e-mail e fotografia de perfil;</li>
-              <li>nome, CPF, telefone e endereço informados para compra, entrega e faturamento;</li>
+              <li>nome, CPF do pagador, telefone e endereço para compra, entrega e faturamento, além do CPF ou CNPJ do destinatário quando necessário para expedir o pedido;</li>
               <li>itens do pedido, personalizações, histórico de pagamento e andamento da produção;</li>
               <li>arquivos de arte, nomes de arquivo e metadados necessários à produção;</li>
-              <li>registros técnicos de acesso, segurança, prevenção a fraude, rate limit e funcionamento da aplicação;</li>
+              <li>registros técnicos de acesso, segurança, prevenção a fraude e funcionamento do site;</li>
               <li>mensagens e solicitações enviadas aos canais de atendimento;</li>
-              <li>preferências de e-mail e registros de autorização ou descadastro de mensagens opcionais.</li>
+              <li>preferências de e-mail e registros de autorização ou descadastro de mensagens opcionais;</li>
+              <li>nota, comentário e nome exibido nas avaliações de produtos, se você optar por publicar uma avaliação.</li>
             </ul>
           ),
         },
@@ -158,13 +178,14 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Compartilhamento e operadores',
           content: (
             <div className="space-y-3">
-              <p>Dados podem ser compartilhados somente na medida necessária com:</p>
+              <p>Compartilhamos os dados necessários com os seguintes serviços, conforme a operação:</p>
               <ul className="list-disc space-y-2 pl-5">
-                <li>Google Firebase, para autenticação, banco de dados e armazenamento privado de artes;</li>
+                <li>Google, para autenticação, banco de dados e armazenamento de artes no Firebase e verificações de segurança do site;</li>
                 <li>Vercel, para hospedagem e execução da aplicação;</li>
                 <li>PagBank, para criação, processamento e confirmação do pagamento;</li>
                 <li>Resend, para envio dos e-mails autorizados e dos avisos de conta e pedidos;</li>
-                <li>transportadoras ou serviços de frete, quando houver entrega;</li>
+                <li>ViaCEP, para consulta do endereço a partir do CEP;</li>
+                <li>Melhor Envio, para cotação pelo CEP e dados dos volumes e, na entrega, emissão de etiqueta com dados do destinatário, do pedido e da nota fiscal. A transportadora recebe os dados necessários à entrega e ao rastreamento;</li>
                 <li>autoridades públicas, quando houver obrigação legal ou ordem válida.</li>
               </ul>
               <p>
@@ -187,10 +208,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Armazenamento local e tecnologias essenciais',
           content: (
             <p>
-              O site utiliza armazenamento do navegador e tecnologias estritamente necessárias para manter sessão,
-              autenticação, carrinho e segurança. Caso sejam adicionadas ferramentas de publicidade, perfilamento ou
-              análise não essencial, esta política será atualizada e os controles de consentimento aplicáveis serão
-              apresentados antes da ativação.
+              O site usa o armazenamento do navegador para manter a sessão, o carrinho, a referência do pedido durante
+              o pagamento e a preferência de tema. A autenticação e a proteção contra abuso também usam tecnologias
+              do navegador.
             </p>
           ),
         },
@@ -219,9 +239,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Direitos do titular',
           content: (
             <p>
-              O titular pode solicitar confirmação do tratamento, acesso, correção, anonimização, bloqueio ou eliminação
-              de dados inadequados, portabilidade quando regulamentada, informação sobre compartilhamentos, oposição e
-              revogação do consentimento. Solicitações devem ser enviadas para {privacyEmail}.
+              Consulte <Link to={LEGAL_ROUTES.lgpd} className={inlineLink}>LGPD e Direitos do Titular</Link> para saber
+              quais direitos você pode exercer. Envie sua solicitação para <EmailLink address={privacyEmail} subject="Solicitação de privacidade" />.
             </p>
           ),
         },
@@ -257,8 +276,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               As características essenciais, combinações, quantidade e preço aparecem no catálogo e no carrinho. Frete
-              e eventuais despesas adicionais devem ser apresentados separadamente antes do pagamento. O pedido é
-              registrado após a solicitação de checkout e somente avança à produção depois da confirmação do pagamento
+              e eventuais despesas adicionais são apresentados separadamente antes do pagamento. O carrinho mostra
+              o desconto de um cupom aplicável e o total a pagar. O pedido é registrado ao finalizar a compra no site
+              e avança à produção depois da confirmação do pagamento
               e do recebimento de uma arte utilizável, quando aplicável.
             </p>
           ),
@@ -268,8 +288,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               O pagamento ocorre no checkout hospedado do PagBank, por uma das modalidades exibidas naquela página. A
-              volta ao site não representa confirmação: o pedido é considerado pago somente após a notificação validada
-              do PagBank. Tentativas recusadas, expiradas ou não concluídas não autorizam o início da produção.
+              loja confirma o pagamento com o PagBank e mostra a situação em Meus Pedidos. Tentativas recusadas,
+              expiradas ou não concluídas não autorizam o início da produção.
             </p>
           ),
         },
@@ -280,7 +300,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
               O cliente é responsável por revisar textos, nomes, datas, medidas, opções e arquivos enviados. Ao fornecer
               uma arte, declara possuir autorização para sua reprodução no pedido. A GB Gráfica poderá recusar conteúdo
               ilegal, discriminatório, ofensivo ou que aparente violar direitos de terceiros. Detalhes adicionais estão
-              na <Link to={LEGAL_ROUTES.artwork} className="font-bold text-pink-600 hover:underline">Política de Artes Personalizadas</Link>.
+              na <Link to={LEGAL_ROUTES.artwork} className={inlineLink}>Política de Artes Personalizadas</Link>.
             </p>
           ),
         },
@@ -290,7 +310,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
             <div className="space-y-3">
               <p>Prazo padrão informado pela loja: <strong>{productionDeadline}</strong>.</p>
               <p>
-                O prazo de produção é diferente do prazo de transporte. Ele começa após pagamento confirmado e, quando
+                O prazo de produção começa após o pagamento confirmado e, quando
                 necessário, após recebimento ou aprovação da arte. A modalidade, o endereço e o valor de entrega são
                 apresentados no carrinho. Pedidos de retirada serão disponibilizados no local e horário informados pelo
                 atendimento.
@@ -304,7 +324,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
             <p>
               Solicitações serão tratadas conforme o Código de Defesa do Consumidor e a política específica da loja.
               A personalização não implica renúncia automática ao direito de arrependimento nem limita a garantia legal
-              por defeito, dano ou divergência. Consulte a <Link to={LEGAL_ROUTES.exchanges} className="font-bold text-pink-600 hover:underline">Política de Trocas, Cancelamentos e Reembolsos</Link>.
+              por defeito, dano ou divergência. Consulte a <Link to={LEGAL_ROUTES.exchanges} className={inlineLink}>Política de Trocas, Cancelamentos e Reembolsos</Link>.
             </p>
           ),
         },
@@ -341,8 +361,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Como solicitar',
           content: (
             <p>
-              Envie a solicitação para {serviceEmail} ou utilize um dos telefones informados nesta página. Informe o
-              número do pedido e descreva o motivo. A loja confirmará imediatamente o recebimento e encaminhará resposta
+              Envie a solicitação para <EmailLink address={serviceEmail} subject="Troca, cancelamento ou reembolso" /> ou use
+              outro canal de atendimento desta página. Informe o número que aparece em Meus Pedidos e o que deseja solicitar.
+              A loja confirma imediatamente o recebimento pelo mesmo canal e encaminha resposta
               em até cinco dias, sem impedir providências urgentes exigidas pela legislação.
             </p>
           ),
@@ -352,9 +373,10 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               Nas compras feitas fora do estabelecimento comercial, o consumidor pode exercer o direito de
-              arrependimento no prazo de sete dias contado da assinatura ou do recebimento do produto ou serviço. Os
-              valores pagos serão devolvidos na forma e no prazo legais, sem custo ao consumidor, e a solicitação será
-              comunicada imediatamente ao PagBank para cancelamento ou estorno.
+              arrependimento em sete dias corridos, contados da assinatura ou do recebimento do produto ou serviço,
+              conforme o caso. O consumidor pode desistir sem precisar justificar. A loja orienta a devolução sem
+              custo, comunica imediatamente o PagBank para cancelamento ou estorno e restitui os valores pagos,
+              inclusive o frete, conforme a legislação.
             </p>
           ),
         },
@@ -362,9 +384,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Produtos personalizados',
           content: (
             <p>
-              A fabricação sob encomenda pode impedir o reaproveitamento comercial do produto, mas isso não cria uma
-              exclusão automática do direito de arrependimento previsto no CDC. Cada solicitação será analisada conforme
-              o estágio do pedido e a legislação aplicável, sem cláusula de renúncia prévia a direitos do consumidor.
+              A loja recebe solicitações de arrependimento também para produtos personalizados e as analisa conforme
+              a legislação aplicável. A garantia legal por defeito, dano ou divergência vale para esses produtos.
             </p>
           ),
         },
@@ -426,8 +447,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Prazo padrão',
           content: (
             <p>
-              Prazo padrão informado pela loja: <strong>{productionDeadline}</strong>. Quando um produto possuir prazo
-              específico, prevalecerá a informação apresentada na oferta e no resumo do pedido antes do pagamento.
+              Prazo padrão informado pela loja: <strong>{productionDeadline}</strong>. Confira o prazo de produção
+              no resumo do pedido antes de seguir para o pagamento.
             </p>
           ),
         },
@@ -435,7 +456,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Início da contagem',
           content: (
             <p>
-              A produção começa somente após a confirmação automática do pagamento e, para itens personalizados, depois
+              A produção começa após a confirmação do pagamento e, para itens personalizados, depois
               do recebimento de arquivo utilizável e das informações necessárias. Se a loja solicitar correção ou
               aprovação, a contagem começa ou recomeça após a resposta do cliente, desde que isso seja comunicado de
               forma clara.
@@ -447,8 +468,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               Salvo indicação diferente na oferta, prazos em dias úteis não incluem sábados, domingos e feriados do local
-              de produção. Em pedidos com vários produtos, a retirada ou postagem pode aguardar a conclusão do item de
-              maior prazo, o que deve ser informado antes da contratação.
+              de produção. Em pedidos com vários produtos, a retirada ou postagem pode aguardar a conclusão de todos os itens.
             </p>
           ),
         },
@@ -456,8 +476,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Entrega e retirada',
           content: (
             <p>
-              O prazo de transporte é adicional ao prazo de produção e depende do CEP, serviço contratado e operação da
-              transportadora. Para retirada, o cliente deve aguardar a confirmação de que o pedido está pronto. Pedido
+              O prazo de transporte é adicional ao prazo de produção. O carrinho mostra a estimativa em dias úteis
+              após a postagem, conforme o CEP e o serviço selecionado. Acompanhe o andamento e, quando disponível,
+              o rastreio em Meus Pedidos. Para retirada, aguarde a confirmação de que o pedido está pronto. Pedido
               urgente somente será considerado quando houver confirmação expressa da loja antes do pagamento.
             </p>
           ),
@@ -483,9 +504,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Formatos e envio',
           content: (
             <p>
-              O site aceita PDF, PNG, JPG e WebP com até 50 MB por arquivo. O envio bem-sucedido não significa aprovação
-              técnica automática. Arquivos corrompidos, ilegíveis, incompletos ou incompatíveis com o produto poderão ser
-              devolvidos para correção antes do início da produção.
+              Os formatos disponíveis aparecem no campo de envio de cada produto. São aceitos PDF, PNG, JPG e WebP,
+              com até 50 MB por arquivo. No campo de imagem para um molde vinculado, envie PNG, JPG ou WebP.
+              Arquivos corrompidos, ilegíveis, incompletos ou incompatíveis podem precisar de correção antes da produção.
             </p>
           ),
         },
@@ -524,9 +545,9 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Privacidade e acesso',
           content: (
             <p>
-              Artes são armazenadas em área privada. O cliente proprietário e administradores autorizados podem receber
-              um link temporário para download. Os arquivos não devem ser usados para publicidade, portfólio ou finalidade
-              diferente da execução do pedido sem uma autorização específica e separada.
+              As artes enviadas pelo cliente são armazenadas em área privada. A equipe autorizada pode acessar os
+              originais por meio de links temporários para produzir o pedido. A loja solicita autorização separada
+              antes de usar uma arte em publicidade ou portfólio.
             </p>
           ),
         },
@@ -536,7 +557,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
             <p>
               Os arquivos serão mantidos pelo tempo necessário à produção, atendimento, garantia e defesa de direitos,
               e depois eliminados ou anonimizados quando não houver outra base legal para conservação. O cliente pode
-              solicitar informações ou eliminação pelo canal {privacyEmail}, observadas as obrigações legais da loja.
+              solicitar informações ou eliminação pelo canal <EmailLink address={privacyEmail} subject="Solicitação sobre arquivos de arte" />,
+              observadas as obrigações legais da loja.
             </p>
           ),
         },
@@ -551,10 +573,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Controlador e canal de privacidade',
           content: (
             <p>
-              O controlador dos dados tratados para operação da loja é {providerName}, inscrito sob {taxId}. Solicitações
-              relacionadas à proteção de dados devem ser enviadas para {privacyEmail}. Se a empresa estiver enquadrada
-              como agente de tratamento de pequeno porte, este canal também cumprirá a função de comunicação simplificada
-              com titulares e com a ANPD, ainda que não haja encarregado formalmente indicado.
+              O controlador dos dados da loja é {providerName}, inscrito sob {taxId}. Para falar sobre seus dados,
+              escreva para <EmailLink address={privacyEmail} subject="Solicitação de privacidade" />.
             </p>
           ),
         },
@@ -568,8 +588,10 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
               <li>portabilidade, quando aplicável e regulamentada;</li>
               <li>informação sobre entidades com as quais houve compartilhamento;</li>
               <li>informação sobre consentimento, consequências da negativa e possibilidade de revogação;</li>
+              <li>eliminação de dados tratados com consentimento, observadas as hipóteses legais de conservação;</li>
+              <li>revisão de decisões tomadas unicamente com base em tratamento automatizado que afetem seus interesses;</li>
               <li>oposição a tratamento realizado em desconformidade com a LGPD;</li>
-              <li>peticionamento perante a ANPD e órgãos de defesa do consumidor.</li>
+              <li>peticionamento perante a <ExternalLegalLink href="https://www.gov.br/anpd/pt-br/canais_atendimento/cidadao-titular-de-dados/denuncia-peticao-de-titular-referente-lgpd">ANPD</ExternalLegalLink> e órgãos de defesa do consumidor.</li>
             </ul>
           ),
         },
@@ -577,7 +599,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           title: 'Como exercer seus direitos',
           content: (
             <p>
-              Envie a solicitação para {privacyEmail}, descrevendo o direito que pretende exercer. Para impedir acesso
+              Envie a solicitação pelo canal de privacidade acima, descrevendo o direito que pretende exercer. Para impedir acesso
               indevido, poderão ser solicitadas informações proporcionais para confirmar a identidade do requerente. A
               resposta explicará eventual impossibilidade de atendimento, inclusive quando a manutenção do dado for
               necessária para cumprir obrigação legal ou exercer direitos.
@@ -589,7 +611,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               Categorias de dados, finalidades, compartilhamentos, transferência internacional, segurança e retenção são
-              detalhados na <Link to={LEGAL_ROUTES.privacy} className="font-bold text-pink-600 hover:underline">Política de Privacidade</Link>.
+              detalhados na <Link to={LEGAL_ROUTES.privacy} className={inlineLink}>Política de Privacidade</Link>.
             </p>
           ),
         },
@@ -616,11 +638,14 @@ export default function LegalPage({ documentId, config }: LegalPageProps) {
   }, [documentId]);
 
   return (
-    <div className="min-h-screen bg-[#fcfcfd] text-gray-800">
-      <div className="h-2 bg-[#cf4784]" />
-      <header className="border-b border-pink-100 bg-[#fffed8] px-4 py-6 md:px-10">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <Link to="/" className="flex items-center gap-3 font-black tracking-tight text-gray-900">
+    <div className="legal-page store-shell min-h-screen bg-[#fcfcfd] font-sans">
+      <a href="#conteudo-institucional" className="sr-only focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-10 focus:rounded-lg focus:bg-[var(--legal-surface)] focus:p-3">
+        Ir para o conteúdo
+      </a>
+      <div className="h-2 bg-[#d14d8c]" />
+      <header className="store-header border-b border-[var(--legal-border)] bg-[#fffdd6] px-4 py-4 md:px-10 md:py-6">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+          <Link to="/" className="flex items-center rounded-lg">
             <img
               src={resolvePublicImage(config.logo_url || DEFAULT_LOGO_URL)}
               alt="GB Gráfica"
@@ -629,27 +654,34 @@ export default function LegalPage({ documentId, config }: LegalPageProps) {
               referrerPolicy="no-referrer"
             />
           </Link>
-          <Link to="/" className="flex items-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-pink-500">
-            <ArrowLeft size={15} /> Voltar à loja
-          </Link>
+          <div className="legal-header-actions flex flex-wrap items-center gap-2">
+            <StoreThemeControl />
+            <Link to="/" className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition-colors">
+              <ArrowLeft size={16} aria-hidden="true" /> Voltar à loja
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-10 px-4 py-12 md:px-8 lg:grid-cols-[17rem_minmax(0,1fr)] lg:py-16">
-        <aside>
-          <nav aria-label="Documentos institucionais" className="sticky top-6 rounded-3xl border border-pink-100 bg-white p-4 shadow-sm">
-            <div className="mb-3 flex items-center gap-2 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-pink-500">
-              <FileText size={14} /> Institucional
+      <main className="mx-auto grid max-w-7xl gap-6 px-4 py-8 md:px-8 lg:grid-cols-[17rem_minmax(0,1fr)] lg:gap-x-10 lg:py-12">
+        <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+          <h1 id="titulo-institucional" className="text-3xl font-black tracking-tight md:text-5xl">{legalDocument.title}</h1>
+          <p className="mt-3 max-w-3xl text-base leading-relaxed text-[var(--legal-muted)]">{legalDocument.description}</p>
+          <time dateTime={LEGAL_REVIEW_DATE} className="mt-3 block text-sm text-[var(--legal-muted)]">Atualizado em {reviewDate}</time>
+        </div>
+
+        <aside className="lg:col-start-1 lg:row-span-2 lg:row-start-1">
+          <nav aria-label="Documentos institucionais" className={`${panel} p-3 lg:sticky lg:top-6`}>
+            <div className="mb-2 flex items-center gap-2 px-3 py-2 text-sm font-bold">
+              <FileText size={16} aria-hidden="true" /> Institucional
             </div>
-            <ul className="space-y-1">
+            <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-1">
               {(Object.keys(LEGAL_ROUTES) as LegalDocumentId[]).map(id => (
                 <li key={id}>
                   <Link
                     to={LEGAL_ROUTES[id]}
                     aria-current={id === documentId ? 'page' : undefined}
-                    className={`block rounded-xl px-3 py-2.5 text-sm font-bold transition-colors ${
-                      id === documentId ? 'bg-pink-50 text-pink-600' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
+                    className="legal-nav-link block rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors"
                   >
                     {DOCUMENT_LABELS[id]}
                   </Link>
@@ -659,48 +691,35 @@ export default function LegalPage({ documentId, config }: LegalPageProps) {
           </nav>
         </aside>
 
-        <article className="min-w-0">
-          <div className="mb-10">
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-pink-50 px-4 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-pink-600">
-              <ShieldCheck size={14} /> Vigente desde {documentId === 'privacy' ? PRIVACY_EFFECTIVE_DATE : LEGAL_EFFECTIVE_DATE}
-            </div>
-            <h1 className="text-3xl font-black tracking-tight text-gray-950 md:text-5xl">{legalDocument.title}</h1>
-            <p className="mt-4 max-w-3xl text-base leading-relaxed text-gray-500">{legalDocument.description}</p>
-          </div>
-
+        <article id="conteudo-institucional" aria-labelledby="titulo-institucional" tabIndex={-1} className="min-w-0 lg:col-start-2 lg:row-start-2">
           {missingFields.length > 0 && (
-            <div role="alert" className="mb-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-relaxed text-amber-900">
-              <div className="mb-2 flex items-center gap-2 font-black"><AlertTriangle size={18} /> Documento em preparação</div>
-              <p>
-                Este texto ainda não deve ser usado para contratação comercial. Faltam confirmar no painel: {' '}
-                {missingFields.map(field => MISSING_FIELD_LABELS[field]).join(', ')}.
-              </p>
+            <div role="alert" className="mb-6 rounded-2xl border border-[var(--legal-warning-border)] bg-[var(--legal-warning-surface)] p-5 text-sm leading-relaxed text-[var(--legal-warning-text)]">
+              <div className="mb-1 flex items-center gap-2 font-bold"><AlertTriangle size={18} aria-hidden="true" /> Dados comerciais a confirmar</div>
+              <p>Campos pendentes no cadastro da loja: {missingFields.map(field => MISSING_FIELD_LABELS[field]).join(', ')}.</p>
             </div>
           )}
 
           <div className="space-y-6">
             {legalDocument.sections.map(section => (
-              <section key={section.title} className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm md:p-8">
-                <h2 className="mb-4 text-xl font-black tracking-tight text-gray-950">{section.title}</h2>
-                <div className="text-sm leading-7 text-gray-600">{section.content}</div>
+              <section key={section.title} className={`${panel} p-5 md:p-7`}>
+                <h2 className="mb-3 text-xl font-bold tracking-tight">{section.title}</h2>
+                <div className="text-base leading-relaxed text-[var(--legal-muted)]">{section.content}</div>
               </section>
             ))}
           </div>
 
-          <section className="mt-8 rounded-3xl bg-gray-950 p-6 text-sm leading-7 text-gray-300 md:p-8">
-            <h2 className="mb-3 text-lg font-black text-white">Referências legais</h2>
-            <p>
-              Estes documentos foram estruturados com base no {' '}
-              <ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/leis/l8078compilado.htm">Código de Defesa do Consumidor</ExternalLegalLink>, no {' '}
-              <ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2013/decreto/d7962.htm">Decreto do Comércio Eletrônico</ExternalLegalLink> e na {' '}
-              <ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709compilado.htm">Lei Geral de Proteção de Dados</ExternalLegalLink>.
-              Em caso de conflito, prevalecem a legislação vigente e os direitos do consumidor.
-            </p>
+          <section className={`${panel} mt-6 p-5 md:p-7`}>
+            <h2 className="mb-3 text-lg font-bold">Referências legais</h2>
+            <ul className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+              <li><ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/leis/l8078compilado.htm">Código de Defesa do Consumidor</ExternalLegalLink></li>
+              <li><ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/_ato2011-2014/2013/decreto/d7962.htm">Decreto do Comércio Eletrônico</ExternalLegalLink></li>
+              <li><ExternalLegalLink href="https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709compilado.htm">Lei Geral de Proteção de Dados</ExternalLegalLink></li>
+            </ul>
           </section>
         </article>
       </main>
 
-      <footer className="border-t border-gray-100 bg-white px-4 py-8 text-center text-xs text-gray-400">
+      <footer className="border-t border-[var(--legal-border)] bg-[var(--legal-surface)] px-4 py-6 text-center text-sm text-[var(--legal-muted)]">
         © {new Date().getFullYear()} GB Gráfica. Todos os direitos reservados.
       </footer>
     </div>

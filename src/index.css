@@ -86,3 +86,46 @@
 [data-store-theme="dark"] [class*="bg-white/"] { background-color: var(--store-surface); }
 [data-store-theme="dark"] [class*="bg-pink-50/"] { background-color: var(--store-raised); }
 [data-store-theme="dark"] [class~="fill-[#fffdd6]"] { fill: var(--store-surface); }
+
+.legal-page {
+  --legal-surface: #fff;
+  --legal-border: var(--color-gray-200);
+  --legal-text: var(--color-gray-900);
+  --legal-muted: var(--color-gray-600);
+  --legal-accent: #a82160;
+  --legal-highlight: var(--color-pink-50);
+  --legal-warning-surface: var(--color-amber-50);
+  --legal-warning-border: var(--color-amber-200);
+  --legal-warning-text: var(--color-amber-900);
+  color: var(--legal-text);
+}
+
+[data-store-theme="dark"] .legal-page {
+  --legal-surface: var(--store-surface);
+  --legal-border: var(--store-border);
+  --legal-text: var(--store-text);
+  --legal-muted: var(--store-muted);
+  --legal-accent: #ffa9d0;
+  --legal-highlight: var(--store-raised);
+  --legal-warning-surface: #322719;
+  --legal-warning-border: #86612e;
+  --legal-warning-text: #ffe1a3;
+}
+
+.legal-page a:focus-visible, .legal-page button:focus-visible {
+  outline: 2px solid var(--legal-accent);
+  outline-offset: 3px;
+}
+
+.legal-header-actions > :is(a, button) {
+  min-height: 40px;
+  cursor: pointer;
+  color: var(--legal-accent);
+}
+
+.legal-header-actions > :is(a, button):hover,
+.legal-nav-link:hover,
+.legal-nav-link[aria-current="page"] {
+  background-color: var(--legal-highlight);
+  color: var(--legal-accent);
+}

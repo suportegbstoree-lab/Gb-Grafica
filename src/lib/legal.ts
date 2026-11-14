@@ -1,10 +1,9 @@
-export const LEGAL_EFFECTIVE_DATE = '2 de setembro de 2026';
-export const PRIVACY_EFFECTIVE_DATE = '31 de outubro de 2026';
+export const LEGAL_REVIEW_DATE = '2026-11-14';
 
 export const LEGAL_VERSIONS = {
-  terms: '2026-09-02',
-  privacy: '2026-10-31',
-  exchanges: '2026-09-02',
+  terms: LEGAL_REVIEW_DATE,
+  privacy: LEGAL_REVIEW_DATE,
+  exchanges: LEGAL_REVIEW_DATE,
 } as const;
 
 export const LEGAL_ROUTES = {
