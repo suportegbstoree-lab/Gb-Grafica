@@ -709,6 +709,17 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
     assert.equal(recipe.job.barcode, barcode);
     assert.equal(recipe.job.barcodeVersion, 2);
     assert.equal(recipe.job.outputName, "Kit ANA BR2684621549924");
+    const withoutBarcode = {
+      job: { ...job, barcode: "", barcodeVersion: undefined, outputName: "Kit ANA" },
+      requestId: "f".repeat(36),
+    };
+    const optional = await request(`/library/batches/${batch.id}/items`, "generator", withoutBarcode);
+    assert.equal(optional.status, 201);
+    const optionalRecipe = await optional.json();
+    assert.equal(optionalRecipe.job.barcode, undefined);
+    assert.equal(optionalRecipe.item.outputName, "Kit ANA");
+    assert.equal(optionalRecipe.item.barcode, undefined);
+    assert.equal((await request(`/library/batches/${batch.id}/items`, "generator", withoutBarcode)).status, 200);
     assert.match(
       recipe.originalUrl,
       new RegExp(`staff-pdf-batches/${batch.id}/assets/`),

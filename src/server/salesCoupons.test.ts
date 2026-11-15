@@ -91,6 +91,28 @@ test("coupon inputs reject out of range rates, missing scope targets and invalid
   assert.throws(() =>
     normalizeCouponDraft({ ...draft, value: "15", targets: [] }),
   );
+  const valid = { ...draft, value: "10" };
+  assert.equal(normalizeCouponDraft({ ...valid, minimumSubtotal: "200,00" }).minimumSubtotalCents, 20000);
+  assert.equal(normalizeCouponDraft({ ...valid, minimumSubtotal: "" }).minimumSubtotalCents, undefined);
+  for (const minimumSubtotal of ["-200", "R$/200", "200,001"]) {
+    assert.throws(() => normalizeCouponDraft({ ...valid, minimumSubtotal }), /valor mínimo/);
+  }
+});
+
+test("coupon minimum uses the products subtotal before the discount and includes its boundary", async () => {
+  const { db } = memoryFirestore([
+    [`${COUPONS}/${code}`, { ...coupon, kind: "percent", amount: 1000, minimumSubtotalCents: 20000 }],
+    [`${COUPONS}/AUTO10`, { ...coupon, code: "AUTO10", firstPurchase: true, minimumSubtotalCents: 20000 }],
+  ]);
+  const cart = [
+    { ...lines[0], unitCents: 9500 },
+    { ...lines[1], unitCents: 999 },
+  ];
+  await assert.rejects(selectCoupon(db, buyer, cart, code, undefined, 1500), /pelo menos R\$\s200,00/);
+  assert.equal(await selectCoupon(db, buyer, cart, undefined), null);
+  cart[1].unitCents = 1000;
+  assert.equal((await selectCoupon(db, buyer, cart, code))?.applied.discountCents, 1900);
+  assert.equal((await selectCoupon(db, buyer, cart, undefined))?.applied.code, "AUTO10");
 });
 
 test("a use is reserved atomically, retained after payment and released only once after definitive failure", async () => {

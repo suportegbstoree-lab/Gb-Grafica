@@ -579,7 +579,7 @@ export function normalizeStaffPdfJob(
     ...(value.barcodeSize === undefined
       ? {}
       : { barcodeSize: normalizeStaffBarcodeSize(value.barcodeSize) }),
-    ...(value.barcode === undefined
+    ...(value.barcode === undefined || (typeof value.barcode === "string" && !value.barcode.trim())
       ? {}
       : { barcode: normalizeStaffBarcode(value.barcode) }),
     ...(value.outputName ? { outputName: value.outputName } : {}),

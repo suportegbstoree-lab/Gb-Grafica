@@ -1,6 +1,5 @@
 import React from "react";
 import {
-  automaticStaffBarcode,
   DEFAULT_STAFF_BARCODE_SIZE,
   normalizeStaffBarcode,
   normalizeStaffBarcodeSize,
@@ -285,9 +284,7 @@ export default function StaffPdfWorkspace({
     allowEmptyText = false,
     size?: StaffBarcodeSize,
   ): QueueItem {
-    const resolvedCode = normalizeStaffBarcode(
-      code || automaticStaffBarcode(id),
-    );
+    const resolvedCode = code.trim() ? normalizeStaffBarcode(code) : undefined;
     const filename =
       staffPdfOutputName(name) ||
       staffPdfDefaultFilename(
@@ -299,9 +296,11 @@ export default function StaffPdfWorkspace({
       {
         schemaVersion: 1,
         ...(allowEmptyText ? { allowEmptyText: true } : {}),
-        barcode: resolvedCode,
-        barcodeVersion: STAFF_BARCODE_VERSION,
-        ...(size ? { barcodeSize: size } : {}),
+        ...(resolvedCode ? {
+          barcode: resolvedCode,
+          barcodeVersion: STAFF_BARCODE_VERSION,
+          ...(size ? { barcodeSize: size } : {}),
+        } : {}),
         baseId: source.base.id,
         baseRevision: source.base.revision,
         layoutId: layout.id,
@@ -447,7 +446,6 @@ export default function StaffPdfWorkspace({
         const code = job.barcode;
         const outputName =
           name &&
-          code &&
           job.outputName === staffPdfDefaultFilename(name, main.text, code)
             ? staffPdfDefaultFilename(name, text, code)
             : job.outputName;
@@ -646,9 +644,7 @@ export default function StaffPdfWorkspace({
           : undefined);
       if (alive.current && version === revision.current) {
         setLoaded(source);
-        setBarcode(
-          item?.job.barcode || automaticStaffBarcode(crypto.randomUUID()),
-        );
+        setBarcode(item?.job.barcode ?? "");
         if (item) setBarcodeOverride(barcodeOverrideOf(item));
         setLayoutId(layout?.id || "");
         loadLines(
@@ -669,14 +665,11 @@ export default function StaffPdfWorkspace({
         );
         if (item) {
           setEditingId(item.id);
-          const automaticName =
-            item.job.barcode && layout
-              ? staffPdfDefaultFilename(
-                  layout.name,
-                  item.job.lines[0]?.text || "",
-                  item.job.barcode,
-                )
-              : undefined;
+          const automaticName = layout && staffPdfDefaultFilename(
+            layout.name,
+            item.job.lines[0]?.text || "",
+            item.job.barcode,
+          );
           setOutputName(
             item.job.outputName === automaticName
               ? ""
@@ -805,24 +798,16 @@ export default function StaffPdfWorkspace({
             );
           let reference: string;
           const effectiveJob =
-            !item.batchId && item.job.barcodeVersion === STAFF_BARCODE_VERSION
+            !item.batchId && item.job.barcode && item.job.barcodeVersion === STAFF_BARCODE_VERSION
               ? { ...item.job, barcodeSize: barcodeOverrideOf(item) ?? current.barcodeDefault ?? STAFF_PDF_BARCODE_DEFAULT }
               : item.job;
           if (api.batches) {
-            const prepared = effectiveJob.barcode
-              ? effectiveJob
-              : {
-                  ...effectiveJob,
-                  barcode: automaticStaffBarcode(item.requestId),
-                  barcodeVersion: STAFF_BARCODE_VERSION,
-                  barcodeSize: effectiveJob.barcodeSize ?? current.barcodeDefault ?? STAFF_PDF_BARCODE_DEFAULT,
-                  outputName: staffPdfDefaultFilename(
-                    t?.name || item.base.name,
-                    item.job.lines[0]?.text || "",
-                    automaticStaffBarcode(item.requestId),
-                  ),
-                };
-            const job = item.batchId ? prepared : normalizeStaffPdfJob(prepared, fonts);
+            const job = item.batchId ? effectiveJob : normalizeStaffPdfJob({
+              ...effectiveJob,
+              outputName: effectiveJob.outputName || staffPdfDefaultFilename(
+                t?.name || item.base.name, effectiveJob.lines[0]?.text || "", effectiveJob.barcode,
+              ),
+            }, fonts);
             let batchId = item.batchId;
             if (!batchId) {
               const plan = item.batchPlan!;
@@ -960,7 +945,7 @@ export default function StaffPdfWorkspace({
       }
       loadLines(linesFrom(mold));
       setOutputName("");
-      setBarcode(automaticStaffBarcode(crypto.randomUUID()));
+      setBarcode("");
       setBarcodeOverride(undefined);
       setEditingId(null);
       setMessage(
@@ -1050,7 +1035,7 @@ export default function StaffPdfWorkspace({
   function openBarcodeEditor(target: BarcodeEditorTarget) {
     const item = typeof target === "object" ? target : undefined;
     const override = item ? barcodeOverrideOf(item) : target === "draft" ? barcodeOverride : undefined;
-    setBarcodeDraft(item?.job.barcode ?? barcode);
+    setBarcodeDraft(item ? item.job.barcode ?? "" : barcode);
     setBarcodeSizeDraft(override ?? barcodeDefault);
     setBarcodeInherits(!override);
     setError("");
@@ -1061,24 +1046,26 @@ export default function StaffPdfWorkspace({
     running.current = true;
     setBusy(true);
     try {
-      const size = normalizeStaffBarcodeSize(resetDefault ? STAFF_PDF_BARCODE_DEFAULT : barcodeSizeDraft);
       if (barcodeEditor === "default") {
+        const size = normalizeStaffBarcodeSize(resetDefault ? STAFF_PDF_BARCODE_DEFAULT : barcodeSizeDraft);
         const barcodeDefault = await api.saveBarcodeDefault(size);
         setData((current) => ({ ...current, barcodeDefault }));
         setMessage("Padrão de código de barras atualizado.");
       } else {
-        const code = normalizeStaffBarcode(barcodeDraft);
-        const override = barcodeInherits ? undefined : size;
+        const code = barcodeDraft.trim() ? normalizeStaffBarcode(barcodeDraft) : undefined;
+        const override = code && !barcodeInherits ? normalizeStaffBarcodeSize(barcodeSizeDraft) : undefined;
         const item = typeof barcodeEditor === "object" ? barcodeEditor : undefined;
         const base = item?.base ?? loaded?.base;
-        for (const [index, page] of (base?.pages ?? []).entries()) {
-          if (index === 0 || (base?.pageCount === 4 && index === 2))
-            staffBarcodeBoxes(page.width, page.height, code, STAFF_BARCODE_VERSION, override ?? barcodeDefault);
+        if (code) {
+          for (const [index, page] of (base?.pages ?? []).entries()) {
+            if (index === 0 || (base?.pageCount === 4 && index === 2))
+              staffBarcodeBoxes(page.width, page.height, code, STAFF_BARCODE_VERSION, override ?? barcodeDefault);
+          }
         }
         if (item) {
           const name = data.layouts.find(({ id }) => id === item.job.layoutId)?.name ?? item.base.name;
           const text = item.job.lines[0]?.text || "";
-          const automaticName = item.job.barcode && staffPdfDefaultFilename(name, text, item.job.barcode);
+          const automaticName = staffPdfDefaultFilename(name, text, item.job.barcode);
           await setQueue((queue) => queue.map((row) =>
             row.id === item.id ? {
               ...row,
@@ -1086,7 +1073,7 @@ export default function StaffPdfWorkspace({
               job: {
                 ...row.job,
                 barcode: code,
-                barcodeVersion: STAFF_BARCODE_VERSION,
+                barcodeVersion: code ? STAFF_BARCODE_VERSION : undefined,
                 barcodeSize: override,
                 outputName: !row.job.outputName || row.job.outputName === automaticName
                   ? staffPdfDefaultFilename(name, text, code) : row.job.outputName,
@@ -1095,7 +1082,7 @@ export default function StaffPdfWorkspace({
           ));
         }
         if (!item || item.id === editingId) {
-          setBarcode(code);
+          setBarcode(code ?? "");
           setBarcodeOverride(override);
         }
       }
@@ -1553,6 +1540,16 @@ export default function StaffPdfWorkspace({
                   </button>
                 )}
               </div>
+              {loaded && mold && (lines.length > 1 || mainFormatting) && (
+                <StaffPdfTextEditor
+                  lines={lines}
+                  selected={selected}
+                  fonts={fonts}
+                  disabled={busy}
+                  onSelect={setSelected}
+                  onChange={updateLine}
+                />
+              )}
               {loaded ? (
                 <StaffPdfPreview
                   original={loaded.original}
@@ -1584,16 +1581,6 @@ export default function StaffPdfWorkspace({
                 <p role="alert" className="text-red-300">
                   {initialError}
                 </p>
-              )}
-              {loaded && mold && (lines.length > 1 || mainFormatting) && (
-                <StaffPdfTextEditor
-                  lines={lines}
-                  selected={selected}
-                  fonts={fonts}
-                  disabled={busy}
-                  onSelect={setSelected}
-                  onChange={updateLine}
-                />
               )}
             </div>
           </div>
@@ -1720,6 +1707,7 @@ export default function StaffPdfWorkspace({
               className={input}
               maxLength={80}
               disabled={busy}
+              placeholder="Opcional"
               value={barcodeDraft}
               onChange={(e) => setBarcodeDraft(e.target.value)}
             />
@@ -1830,7 +1818,7 @@ export default function StaffPdfWorkspace({
               setEditingId(null);
               setOutputName("");
               loadLines(mold ? linesFrom(mold) : []);
-              setBarcode(loaded ? automaticStaffBarcode(crypto.randomUUID()) : "");
+              setBarcode("");
               setBarcodeOverride(undefined);
               setProgress(undefined);
               onProgress?.(undefined);

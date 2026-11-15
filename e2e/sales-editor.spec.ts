@@ -133,6 +133,45 @@ test("cupom de frete pode ser cadastrado no ADM", async ({ page }) => {
   await expect(page.getByRole("listitem").filter({ hasText: "FRETE50" })).toContainText("50% no frete");
 });
 
+test("cupom com valor mínimo pode ser cadastrado, aplicado no limite e editado", async ({ page }) => {
+  await page.goto("/__e2e/admin");
+  await page.getByRole("button", { name: "Cupons", exact: true }).click();
+  await page.getByRole("button", { name: "Novo cupom", exact: true }).click();
+  await page.getByLabel("Código do cupom").fill("MINIMO200");
+  await page.getByLabel("Descrição do cupom").fill("Desconto por valor da compra");
+  await page.getByLabel("Desconto (%)", { exact: true }).fill("10");
+  await page.getByLabel("Válido até", { exact: true }).fill("2099-12-31");
+  const minimum = page.getByLabel("Valor mínimo da compra (R$)");
+  await minimum.fill("200,00");
+  const save = page.getByRole("button", { name: "Salvar cupom", exact: true });
+  await save.click();
+  const row = page.getByRole("listitem").filter({ hasText: "MINIMO200" });
+  await expect(row).toContainText(/A partir de R\$\s200,00/);
+
+  const quote = (expectedUnitAmountCents: number) => page.request.post("/api/checkout/coupon", {
+    headers: { authorization: "Bearer e2e-id-token" },
+    data: {
+      couponCode: "MINIMO200",
+      items: [{ productId: "1yi50l93z", quantidade: 1, expectedUnitAmountCents }],
+    },
+  });
+  const below = await quote(19_999);
+  expect(below.status()).toBe(422);
+  expect((await below.json()).error).toMatch(/pelo menos R\$\s200,00/);
+  const atMinimum = await quote(20_000);
+  expect(atMinimum.ok()).toBe(true);
+  expect((await atMinimum.json()).coupon.discountCents).toBe(2_000);
+
+  await page.getByRole("button", { name: "Editar cupom MINIMO200" }).click();
+  await expect(minimum).toHaveValue("200.00");
+  await minimum.clear();
+  await save.click();
+  await expect(row).not.toContainText("A partir de");
+  const withoutMinimum = await quote(19_999);
+  expect(withoutMinimum.ok()).toBe(true);
+  expect((await withoutMinimum.json()).coupon.discountCents).toBe(2_000);
+});
+
 test("cupom pode ser cadastrado, aplicado automaticamente e enviado no total conferido", async ({
   page,
 }) => {

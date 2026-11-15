@@ -317,7 +317,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
               item: {
                 id: requestId.replaceAll("-", ""),
                 outputName: job.outputName!,
-                barcode: job.barcode!,
+                barcode: job.barcode,
                 status: "pending",
               },
             });

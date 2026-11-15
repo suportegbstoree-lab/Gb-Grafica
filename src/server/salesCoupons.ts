@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Firestore, Transaction } from "firebase-admin/firestore";
+import { formatMoney } from "../lib/commerce.js";
 import {
   allocateCoupon,
   couponAvailable,
@@ -83,7 +84,16 @@ export async function selectCoupon(
     );
   }
 
-  const available = candidates.filter((coupon) => couponAvailable(coupon, Date.now()));
+  const subtotal = lines.reduce((sum, line) => sum + line.unitCents * line.quantity, 0);
+  const now = Date.now();
+  const available = candidates.filter((coupon) => {
+    if (!couponAvailable(coupon, now)) return false;
+    const minimum = coupon.minimumSubtotalCents ?? 0;
+    if (subtotal >= minimum) return true;
+    if (code)
+      throw new CouponError(`Este cupom exige um subtotal de produtos de pelo menos ${formatMoney(minimum / 100)}.`);
+    return false;
+  });
   const freightCents = typeof freight === "number" ? freight
     : available.some(coupon => coupon.scope === "shipping") ? await freight() : 0;
   const applicable = available

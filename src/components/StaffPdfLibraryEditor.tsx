@@ -873,6 +873,18 @@ export default function StaffPdfLibraryEditor({
                   {initialError}
                 </p>
               )}
+              {extraLines.length > 0 && (
+                <StaffPdfTextEditor lines={previewLines} selected={previewSelection} fonts={fonts}
+                  disabled={busy} allowTextEditing={false} onSelect={setPreviewSelection}
+                  onChange={(id, update) => {
+                    if (id !== "sample") changeExtra(id, update);
+                    else patch({
+                      ...(update.fontId !== undefined ? { font_name: update.fontId === STAFF_PDF_SYSTEM_FONT.id ? "" : update.fontId } : {}),
+                      ...(update.fontSize !== undefined ? { font_size: update.fontSize } : {}),
+                    });
+                  }}
+                />
+              )}
               {original && base ? (
                 <StaffPdfPreview
                   original={original}
@@ -890,18 +902,6 @@ export default function StaffPdfLibraryEditor({
                 <p className="grid min-h-56 place-items-center rounded-xl bg-gray-950 p-3 text-sm text-gray-400">
                   Selecione um PDF para ajustar o molde sobre a página.
                 </p>
-              )}
-              {extraLines.length > 0 && (
-                <StaffPdfTextEditor lines={previewLines} selected={previewSelection} fonts={fonts}
-                  disabled={busy} allowTextEditing={false} onSelect={setPreviewSelection}
-                  onChange={(id, update) => {
-                    if (id !== "sample") changeExtra(id, update);
-                    else patch({
-                      ...(update.fontId !== undefined ? { font_name: update.fontId === STAFF_PDF_SYSTEM_FONT.id ? "" : update.fontId } : {}),
-                      ...(update.fontSize !== undefined ? { font_size: update.fontSize } : {}),
-                    });
-                  }}
-                />
               )}
             </div>
           </div>

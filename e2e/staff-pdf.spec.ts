@@ -5,7 +5,9 @@ import { join } from "node:path";
 import {
   decodePDFRawStream,
   PDFArray,
+  PDFDict,
   PDFDocument,
+  PDFName,
   PDFRawStream,
 } from "pdf-lib";
 import { zipSync, unzipSync, strToU8 } from "fflate";
@@ -358,14 +360,14 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   const measure = () => toolbar.evaluate((bar) => {
     const canvas = document.querySelector('canvas[aria-label="Prévia do PDF interno"]')!;
     return {
-      belowCanvas: bar.getBoundingClientRect().top >= canvas.parentElement!.getBoundingClientRect().bottom,
+      aboveCanvas: bar.getBoundingClientRect().bottom <= canvas.parentElement!.getBoundingClientRect().top,
       canvasY: canvas.getBoundingClientRect().y + window.scrollY,
       barY: bar.getBoundingClientRect().y,
       barHeight: bar.getBoundingClientRect().height,
     };
   });
   const before = await measure();
-  expect(before.belowCanvas).toBe(true);
+  expect(before.aboveCanvas).toBe(true);
   await toolbar.getByRole("button", { name: "Efeitos" }).click();
   const effects = toolbar.getByRole("group", { name: "Efeitos", exact: true });
   await expect(effects).toBeVisible();
@@ -776,8 +778,20 @@ test("barcode defaults reach queued PDFs, individual sizes win, and clearing kee
   await defaults.getByRole("button", { name: "Salvar padrão" }).click();
 
   await page.getByLabel("Base PDF da equipe").selectOption("a".repeat(32));
-  for (const name of ["HERDADO", "INDIVIDUAL"]) {
+  const codeField = individual.getByLabel("Código de barras", { exact: true });
+  const editDraftCode = page.getByRole("button", { name: "Editar código de barras", exact: true })
+    .filter({ hasText: /^Editar código de barras$/ });
+  for (const [name, code] of [["HERDADO", "BR2684621549924"], ["INDIVIDUAL", "BR2684621549925"], ["SEM CODIGO", ""]]) {
     await page.getByLabel("Texto principal", { exact: true }).fill(name);
+    await editDraftCode.click();
+    await expect(codeField).toHaveValue("");
+    await codeField.fill(code || "REMOVER123");
+    await individual.getByRole("button", { name: "Aplicar código" }).click();
+    if (!code) {
+      await editDraftCode.click();
+      await codeField.clear();
+      await individual.getByRole("button", { name: "Aplicar código" }).click();
+    }
     await page.getByRole("button", { name: "Adicionar à fila", exact: true }).click();
   }
   const editCode = (name: string) => page.getByRole("article").filter({ hasText: name })
@@ -797,14 +811,21 @@ test("barcode defaults reach queued PDFs, individual sizes win, and clearing kee
   }
 
   await page.getByRole("button", { name: "Processar fila", exact: true }).click();
-  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(2);
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(3);
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
-  await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
+  await page.getByText(/^LOTE-TESTE ·.*3 arquivo/).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar lote" }).click();
   const files = Object.entries(unzipSync(await readFile((await (await download).path())!)));
-  expect(files).toHaveLength(2);
+  expect(files).toHaveLength(3);
   for (const [filename, contents] of files) {
+    if (filename.includes("SEM CODIGO")) {
+      expect(filename).toBe("Kit de teste SEM CODIGO.pdf");
+      const pdf = await PDFDocument.load(contents);
+      const resources = pdf.getPage(0).node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+      expect(resources.keys()).toHaveLength(2);
+      continue;
+    }
     const expected = filename.includes("HERDADO") ? 19 : 10;
     const streams = (await PDFDocument.load(contents)).getPage(0).node.Contents() as PDFArray;
     const commands = Array.from({ length: streams.size() }, (_, i) =>
@@ -828,13 +849,13 @@ test("barcode defaults reach queued PDFs, individual sizes win, and clearing kee
   await page.getByLabel("Texto principal", { exact: true }).fill("PENDENTE");
   await page.getByRole("button", { name: "Adicionar à fila", exact: true }).click();
   await page.getByRole("button", { name: "Excluir fila atual" }).click();
-  const confirmation = page.getByRole("alertdialog", { name: "Excluir 3 itens da fila atual?" });
+  const confirmation = page.getByRole("alertdialog", { name: "Excluir 4 itens da fila atual?" });
   await confirmation.getByRole("button", { name: "Voltar" }).click();
-  await expect(page.getByRole("article")).toHaveCount(3);
+  await expect(page.getByRole("article")).toHaveCount(4);
   await page.getByRole("button", { name: "Excluir fila atual" }).click();
   await confirmation.getByRole("button", { name: "Excluir fila", exact: true }).click();
   await expect(page.getByText("Nenhum arquivo na fila.")).toBeVisible();
-  await expect(page.getByText(/^LOTE-TESTE ·.*2 arquivo/)).toBeVisible();
+  await expect(page.getByText(/^LOTE-TESTE ·.*3 arquivo/)).toBeVisible();
 });
 
 test("mold extra lines keep their formatting and start blank in CSV orders", async ({ page }) => {
@@ -1060,6 +1081,17 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   await expect(
     page.getByRole("article").filter({ hasText: "Concluído" }),
   ).toHaveCount(2);
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
+  const archive = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar lote" }).click();
+  const files = unzipSync(await readFile((await (await archive).path())!));
+  expect(Object.keys(files).sort()).toEqual(["Kit de teste ANA BR2684621549924.pdf", "Kit de teste.pdf"]);
+  for (const [name, bytes] of Object.entries(files)) {
+    const pdf = await PDFDocument.load(bytes);
+    const resources = pdf.getPage(0).node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);
+    expect(resources.keys()).toHaveLength(name.includes("BR2684621549924") ? 4 : 2);
+  }
 });
 
 test("uploading an individual PDF asks for a category and offers direct template editing", async ({

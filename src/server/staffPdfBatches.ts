@@ -372,8 +372,8 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         } catch (error) {
           throw new OperationsError((error as Error).message);
         }
-        if (!job.barcode || !job.outputName)
-          throw new OperationsError("Informe o código e o nome do arquivo.");
+        if (!job.outputName)
+          throw new OperationsError("Informe o nome do arquivo.");
         base = await resolveStaffPdfBase(services(), job.baseId);
         const layout = (
           await services()

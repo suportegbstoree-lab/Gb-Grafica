@@ -38,7 +38,7 @@ export interface StaffPdfBatchView {
 export interface StaffPdfBatchItemView {
   id: string;
   outputName: string;
-  barcode: string;
+  barcode?: string;
   status: "pending" | "ready";
 }
 export interface StaffPdfRecipe {

@@ -152,12 +152,13 @@ export function staffBarcodeBoxes(
 export function staffPdfDefaultFilename(
   variation: string,
   text: string,
-  barcode: string,
+  barcode?: string,
 ) {
-  const suffix = staffPdfOutputName(normalizeStaffBarcode(barcode)) || "codigo";
   const prefix = staffPdfOutputName(
     `${variation.replace(/\.pdf$/i, "").replace(/_template(?:__?\d+p)?$/i, "")} ${text.replace(/\s+/g, " ")}`,
   );
+  if (!barcode) return prefix || "Documento";
+  const suffix = staffPdfOutputName(normalizeStaffBarcode(barcode)) || "codigo";
   const room = 120 - suffix.length - 1;
   return `${prefix.slice(0, room).trim()} ${suffix}`.trim();
 }

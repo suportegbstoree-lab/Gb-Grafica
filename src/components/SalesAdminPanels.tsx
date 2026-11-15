@@ -173,6 +173,7 @@ const emptyCoupon: CouponDraft = {
   description: "",
   kind: "percent",
   value: "",
+  minimumSubtotal: "",
   expiresOn: "",
   limit: 1,
   active: true,
@@ -383,6 +384,19 @@ export function CouponsPanel({
               />
             </label>
             <label className="text-sm sm:col-span-2">
+              Valor mínimo da compra (R$)
+              <input
+                className={field}
+                inputMode="decimal"
+                placeholder="Sem valor mínimo"
+                value={draft.minimumSubtotal ?? ""}
+                onChange={(event) => change({ minimumSubtotal: event.target.value })}
+              />
+              <span className="mt-1 block text-xs text-gray-400">
+                Subtotal dos produtos antes do cupom, sem frete.
+              </span>
+            </label>
+            <label className="text-sm sm:col-span-2">
               Aplicar em
               <select
                 className={field}
@@ -489,6 +503,7 @@ export function CouponsPanel({
                 {row.kind === "fixed"
                   ? formatMoney(row.amount / 100)
                   : `${row.amount / 100}%`}{row.scope === "shipping" ? " no frete" : ""}
+                {row.minimumSubtotalCents ? ` · A partir de ${formatMoney(row.minimumSubtotalCents / 100)}` : ""}
               </p>
               <p className="text-xs text-gray-400">
                 {couponAvailable(row, Date.now())
@@ -510,7 +525,11 @@ export function CouponsPanel({
                 aria-label={`Editar cupom ${row.code}`}
                 onClick={() => {
                   setPrevious(row);
-                  setDraft({ ...row, value: (row.amount / 100).toFixed(2) });
+                  setDraft({
+                    ...row,
+                    value: (row.amount / 100).toFixed(2),
+                    minimumSubtotal: row.minimumSubtotalCents ? (row.minimumSubtotalCents / 100).toFixed(2) : "",
+                  });
                 }}
               >
                 Editar

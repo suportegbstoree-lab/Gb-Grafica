@@ -11,6 +11,7 @@ export interface CouponDraft {
   description: string;
   kind: "percent" | "fixed";
   value: string;
+  minimumSubtotal?: string;
   expiresOn: string;
   limit: number;
   active: boolean;
@@ -19,9 +20,10 @@ export interface CouponDraft {
   targets: string[];
 }
 
-export interface SalesCoupon extends Omit<CouponDraft, "value"> {
+export interface SalesCoupon extends Omit<CouponDraft, "value" | "minimumSubtotal"> {
   code: string;
   amount: number;
+  minimumSubtotalCents?: number;
   used: number;
   revision: string;
   instanceId?: string;
@@ -102,10 +104,26 @@ export function normalizeCouponDraft(
       "Informe um desconto válido. O percentual deve ser maior que zero e de até 100%.",
     );
   }
+  const minimum = value.minimumSubtotal;
+  let minimumSubtotalCents = 0;
+  if (minimum !== undefined) {
+    if (typeof minimum !== "string")
+      throw new Error("Informe um valor mínimo de compra válido.");
+    const raw = minimum.trim();
+    if (raw) {
+      const cents = /^(?:\d+(?:[,.]\d{1,2})?|\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?)$/.test(raw)
+        ? parseMoneyToCents(raw)
+        : null;
+      if (cents === null)
+        throw new Error("Informe um valor mínimo de compra válido.");
+      minimumSubtotalCents = cents;
+    }
+  }
   return {
     description: value.description.trim(),
     kind: value.kind!,
     amount,
+    ...(minimumSubtotalCents ? { minimumSubtotalCents } : {}),
     expiresOn: value.expiresOn,
     limit: value.limit!,
     active: value.active,
