@@ -28,7 +28,7 @@ const timing: WorkApi = {
   post: async () => ({ taskId: "f".repeat(32) }),
   csv: async () => new Blob(),
 };
-export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
+export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, resume = false) {
   const [documents, setDocuments] = React.useState<
     Array<{ doc: StaffDocumentView; blob: Blob }>
   >([]);
@@ -222,10 +222,28 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
       },
     };
     if (batchesEnabled) {
+      const fixtureStorageKey = "staff-pdf-batches-resume-fixture";
+      type Batch = { view: StaffPdfBatchView; records: Map<string, StaffPdfRecipe> };
       const batches = new Map<
         string,
-        { view: StaffPdfBatchView; records: Map<string, StaffPdfRecipe> }
+        Batch
       >();
+      const saved = resume ? JSON.parse(sessionStorage.getItem(fixtureStorageKey) || "[]") : [];
+      for (const { view, records } of saved) {
+        batches.set(view.id, { view, records: new Map(records) });
+      }
+      function persistBatches() {
+        if (resume) sessionStorage.setItem(fixtureStorageKey, JSON.stringify(
+          [...batches.values()].map(({ view, records }) => ({
+            view,
+            records: [...records].map(([id, recipe]) => [id, { ...recipe, originalUrl: "" }]),
+          })),
+        ));
+      }
+      async function recipeWithAsset(recipe: StaffPdfRecipe) {
+        if (recipe.originalUrl || "kind" in recipe.job) return recipe;
+        return { ...recipe, originalUrl: URL.createObjectURL(await value.baseFile(recipe.job.baseId)) };
+      }
       value.batches = {
         list: async () => ({
           batches: [...batches.values()].map(({ view, records }) => ({
@@ -236,6 +254,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
         rename: async (id, name) => {
           const batch = batches.get(id)!;
           batch.view = { ...batch.view, name, count: batch.records.size };
+          persistBatches();
           return batch.view;
         },
         create: async (requestId, name) => {
@@ -254,6 +273,8 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             count: 0,
           };
           batches.set(id, { view, records: new Map() });
+          persistBatches();
+          if (resume && batches.size === 1) throw new TypeError("Failed to fetch");
           return view;
         },
         items: async (batchId) => ({
@@ -293,7 +314,8 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
                 status: "pending",
               },
             });
-          return records.get(requestId)!;
+          persistBatches();
+          return recipeWithAsset(records.get(requestId)!);
         },
         recipe: async (batchId, itemId) => {
           const { records } = batches.get(batchId)!;
@@ -301,7 +323,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             (recipe) => recipe.item.id === itemId,
           );
           if (!record) throw new Error("Item não encontrado.");
-          return record;
+          return recipeWithAsset(record);
         },
         complete: async (batchId, itemId) => {
           const { records } = batches.get(batchId)!;
@@ -309,17 +331,24 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false) {
             (recipe) => recipe.item.id === itemId,
           )!;
           record.item.status = "ready";
+          persistBatches();
+          if (resume) {
+            const key = "staff-pdf-resume-completions";
+            const completed = JSON.parse(sessionStorage.getItem(key) || "[]");
+            sessionStorage.setItem(key, JSON.stringify([...completed, itemId]));
+            if (completed.length === 1) throw new TypeError("Failed to fetch");
+          }
         },
       };
     }
     return value;
-  }, [batchesEnabled, smallPdf]);
+  }, [batchesEnabled, smallPdf, resume]);
   return { api, documents };
 }
 
 export default function StaffPdfFixture() {
   const params = new URLSearchParams(location.search);
-  const { api, documents } = useStaffPdfFixture(params.has("batches"));
+  const { api, documents } = useStaffPdfFixture(params.has("batches"), false, params.has("resume"));
   return (
     <main className="admin-controls min-h-screen bg-[#111] p-3 text-white sm:p-8">
       <div className="mx-auto max-w-6xl">
@@ -338,6 +367,7 @@ export default function StaffPdfFixture() {
           api={api}
           timingApi={timing}
           onGenerated={async () => {}}
+          storageOwner={params.has("resume") ? params.get("owner") || "fixture-owner" : undefined}
         />
         <section className="mt-5 space-y-3">
           <h2>Documentos salvos · teste</h2>

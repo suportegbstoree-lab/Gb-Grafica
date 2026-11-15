@@ -14,15 +14,16 @@ import { defaultPdfLayout, type StaffPdfBase } from "./staffPdf.js";
 
 test("the office CSV accepts its desktop header, quoted delimiters and multiline names", () => {
   const csv =
-    '\ufeffpedido_plataforma,barcode,af_clean,nome,prazo_envio\r\n00123,999,Teste,"Ana, \"\"Nina\"\"\nMaria",2026-10-10\r\n';
+    '\ufeffpedido_plataforma,barcode,af_clean,base,nome,prazo_envio\r\n00123,999,Ignorar,Teste,"Ana, \"\"Nina\"\"\nMaria",2026-10-10\r\n';
   const [header, row] = parseStaffPdfCsv(csv);
   assert.deepEqual(defaultStaffPdfCsvColumns(header), {
     reference: 0,
-    template: 2,
-    text: 3,
+    template: 3,
+    text: 4,
   });
+  assert.equal(defaultStaffPdfCsvColumns(["af_clean", "nome"]).template, -1);
   assert.equal(row[0], "00123");
-  assert.equal(row[3], 'Ana, "Nina"\nMaria');
+  assert.equal(row[4], 'Ana, "Nina"\nMaria');
   assert.deepEqual(
     parseStaffPdfCsv('"Nome";"Modelo"\r\n"Ana";"Kit"\r\n', ";"),
     [
@@ -31,6 +32,42 @@ test("the office CSV accepts its desktop header, quoted delimiters and multiline
     ],
   );
   assert.throws(() => parseStaffPdfCsv('Nome;Modelo\n"Ana;Kit', ";"), /aspas/);
+});
+
+test("CSV resolves the longest whole-word model prefix with or without a name option", () => {
+  const bases: StaffPdfBase[] = [
+    { id: "generic", name: "Livro Receitas.pdf", pageCount: 2, revision: "v1", pages: [] },
+    { id: "lemon", name: "Livro Receitas limão.pdf", pageCount: 2, revision: "v1", pages: [] },
+    { id: "sicilian", name: "Livro Receitas Limão Siciliano.pdf", pageCount: 2, revision: "v1", pages: [] },
+  ];
+  const layouts = [
+    { id: "generic", name: "Livro Receitas_template", revision: "v1", layout: defaultPdfLayout() },
+    { id: "lemon", name: "livro Receitas limao_template", revision: "v1", layout: defaultPdfLayout() },
+    { id: "sicilian", name: "Livro Receitas Limão Siciliano_template", revision: "v1", layout: defaultPdfLayout() },
+  ];
+  for (const label of [
+    "livro de receita limao COM NOME",
+    "LIVRO DE RECEITA LIMÃO sem nome",
+    "Livro Receitas limão.pdf",
+    "Livro de Receita Limão - Personalizado SEM NOME",
+  ]) {
+    assert.deepEqual(resolveStaffPdfCsvModel(label, bases, layouts), {
+      baseId: "lemon",
+      layoutId: "lemon",
+    });
+  }
+  assert.deepEqual(
+    resolveStaffPdfCsvModel("livro de receita limao siciliano COM NOME", bases, layouts),
+    { baseId: "sicilian", layoutId: "sicilian" },
+  );
+  assert.equal(resolveStaffPdfCsvModel("kit livro de receita limao COM NOME", bases, layouts), undefined);
+  assert.equal(resolveStaffPdfCsvModel("livro de receita limaozinho", [bases[1]], layouts), undefined);
+  assert.equal(
+    resolveStaffPdfCsvModel("livro de receita limao SEM NOME", [
+      ...bases, { ...bases[1], name: "Livro da Receita Limão.pdf", id: "duplicate" },
+    ], layouts),
+    undefined,
+  );
 });
 
 test("CSV model association honors four-page templates and leaves ambiguous bases for review", () => {
@@ -133,6 +170,7 @@ test("staff workbook mapping uses explicit letters or headers and cleans SKUs ag
     },
   ]);
   assert.equal(match("KIT-Floral Xadrez-A5"), "Floral Xadrez");
+  assert.equal(match("Floral Xadrez SEM NOME"), "Floral Xadrez SEM NOME");
   assert.equal(match("Desconhecido"), "Desconhecido");
 });
 

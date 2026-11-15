@@ -10,6 +10,7 @@ import {
   type StaffBarcodeSize,
 } from "../lib/staffPdfBarcode";
 import { renderStaffPdfRecipe } from "../services/staffPdfBatchService";
+import { useStaffPdfDraft, useStaffPdfQueue } from "../services/staffPdfLocalState";
 import StaffPdfBatches from "./StaffPdfBatches";
 import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
@@ -65,9 +66,10 @@ interface QueueItem {
   requestId: string;
   job: StaffPdfJob;
   base: StaffPdfBase;
-  original: Blob;
+  original?: Blob;
   fitMargin: number;
   batchId?: string;
+  batchPlan?: { requestId: string; name?: string };
   csvRow?: StaffPdfCsvOrder["csvRow"];
   csvWarning?: string;
   status: "queued" | "processing" | "ready" | "error";
@@ -78,6 +80,10 @@ const input =
   "mt-1 block w-full min-w-0 rounded-lg border border-gray-700 bg-black p-3";
 const csvRowKey = ({ sourceId, index }: StaffPdfCsvOrder["csvRow"]) =>
   `${sourceId}:${index}`;
+const wasDisconnected = (error: unknown) =>
+  !navigator.onLine ||
+  (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) ||
+  (error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name));
 export default function StaffPdfWorkspace({
   fonts,
   canManage = false,
@@ -87,6 +93,7 @@ export default function StaffPdfWorkspace({
   timingApi = workApi,
   visible = true,
   onProgress,
+  storageOwner,
 }: {
   fonts: PersonalizationFont[];
   canManage?: boolean;
@@ -96,7 +103,12 @@ export default function StaffPdfWorkspace({
   timingApi?: WorkApi;
   visible?: boolean;
   onProgress?: (value: StaffPdfQueueProgressValue) => void;
+  storageOwner?: string;
 }) {
+  const { queue, current: savedQueue, update: setQueue, flush: flushQueue, ready: queueReady, error: queueError } =
+    useStaffPdfQueue<QueueItem>(canGenerate ? storageOwner : undefined);
+  const batchDraft = useStaffPdfDraft(canGenerate ? storageOwner : undefined, "batchName", "");
+  const batchName = batchDraft.value;
   const [library, setData] = React.useState<StaffPdfLibrary>({
       bases: [],
       layouts: [],
@@ -138,16 +150,13 @@ export default function StaffPdfWorkspace({
     [barcodeSizeDraft, setBarcodeSizeDraft] = React.useState<StaffBarcodeSize>(
       DEFAULT_STAFF_BARCODE_SIZE,
     ),
-    [batchName, setBatchName] = React.useState(""),
     [batchRevision, setBatchRevision] = React.useState(0),
     [outputName, setOutputName] = React.useState(""),
     [processing, setProcessing] = React.useState(false),
     [progress, setProgress] = React.useState<StaffPdfQueueProgressValue>(),
     [stopRequested, setStopRequested] = React.useState(false),
-    [csvOpened, setCsvOpened] = React.useState(false),
     [csvReview, setCsvReview] = React.useState(0),
     [confirmBlanks, setConfirmBlanks] = React.useState(false),
-    [queue, setQueue] = React.useState<QueueItem[]>([]),
     [queuePage, setQueuePage] = React.useState(0),
     [editingId, setEditingId] = React.useState<string | null>(null),
     [removeId, setRemoveId] = React.useState<string | null>(null);
@@ -161,6 +170,11 @@ export default function StaffPdfWorkspace({
   const csvImport = React.useRef<StaffPdfCsvImportHandle>(null);
   const generationAllowed = React.useRef(canGenerate);
   generationAllowed.current = canGenerate;
+  const queuedRows = React.useMemo(() => new Set(
+    queue.flatMap(({ csvRow }) => csvRow ? [csvRowKey(csvRow)] : []),
+  ), [queue]);
+  const canResume = queue.some((item) => item.status !== "ready" &&
+    (item.status === "error" || item.batchId || item.batchPlan));
   const pendingBlanks = queue.filter(
     (item) =>
       (item.status === "queued" || item.status === "error") &&
@@ -184,21 +198,15 @@ export default function StaffPdfWorkspace({
     void reload().catch((e) => {
       if (alive.current) setError(e.message);
     });
+    const reconnect = () => void reload().catch(() => undefined);
+    window.addEventListener("online", reconnect);
     return () => {
+      window.removeEventListener("online", reconnect);
       alive.current = false;
       revision.current++;
       wakeProcessing.current?.();
     };
   }, [reload]);
-  React.useEffect(() => {
-    if (!queue.some((q) => q.status !== "ready")) return;
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [queue]);
   const mold = data.layouts.find((t) => t.id === layoutId);
   const baseName = loaded && staffPdfSourceName(loaded.base);
   const compatibleMolds = data.layouts.filter(
@@ -307,7 +315,7 @@ export default function StaffPdfWorkspace({
     orders: StaffPdfCsvOrder[],
     replacing?: QueueItem,
   ) {
-    if (running.current) throw new Error("Aguarde a operação atual.");
+    if (running.current || !queueReady) throw new Error("Aguarde a operação atual.");
     running.current = true;
     setBusy(true);
     try {
@@ -315,14 +323,14 @@ export default function StaffPdfWorkspace({
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
       if (
-        replacing &&
+        replacing?.original &&
         library.bases.some(
           (base) =>
             base.id === replacing.base.id &&
             base.revision === replacing.base.revision,
         )
       )
-        sources.set(replacing.base.id, replacing);
+        sources.set(replacing.base.id, { base: replacing.base, original: replacing.original });
       const items: QueueItem[] = [];
       for (const order of orders) {
         if (!alive.current) return;
@@ -361,11 +369,16 @@ export default function StaffPdfWorkspace({
         });
       }
       if (alive.current) {
-        setQueue((old) =>
+        await setQueue((old) => {
+          const importedRows = new Set(old.flatMap(({ csvRow }) => csvRow ? [csvRowKey(csvRow)] : []));
+          return (
           replacing
             ? old.map((item) => (item.id === replacing.id ? items[0] : item))
-            : [...old, ...items],
-        );
+            : [...old, ...items.filter((item) =>
+                !item.csvRow || !importedRows.has(csvRowKey(item.csvRow)),
+              )]
+          );
+        });
         setMessage(
           replacing
             ? "Pedido da fila atualizado pela planilha."
@@ -429,7 +442,7 @@ export default function StaffPdfWorkspace({
           allowEmptyText: undefined,
         };
       }
-      setQueue((old) =>
+      await setQueue((old) =>
         old.map((item) =>
           item.id === existing.id ? { ...item, job, csvRow, csvWarning } : item,
         ),
@@ -438,17 +451,18 @@ export default function StaffPdfWorkspace({
       return true;
     }
     if (replacement) await importOrders([replacement], existing);
-    else setQueue((old) => old.filter((item) => item.id !== existing.id));
+    else await setQueue((old) => old.filter((item) => item.id !== existing.id));
     if (editingId === existing.id) setEditingId(null);
     return !!replacement;
   }
   function saveQueue() {
     const items = queue
       .filter((item) => item.status !== "ready")
-      .map(({ requestId, job, batchId, csvWarning, csvRow }) => ({
+      .map(({ requestId, job, batchId, batchPlan, csvWarning, csvRow }) => ({
         requestId,
         job,
         ...(batchId ? { batchId } : {}),
+        ...(batchPlan ? { batchPlan } : {}),
         ...(csvWarning ? { csvWarning } : {}),
         ...(csvRow ? { csvRow } : {}),
       }));
@@ -460,7 +474,7 @@ export default function StaffPdfWorkspace({
     );
   }
   async function loadQueue(file: File) {
-    if (running.current) return;
+    if (running.current || !queueReady) return;
     running.current = true;
     setBusy(true);
     setError("");
@@ -470,9 +484,10 @@ export default function StaffPdfWorkspace({
       const value = JSON.parse(await file.text());
       if (value?.schemaVersion !== 1 || !Array.isArray(value.items))
         throw new Error("Selecione um JSON de fila salvo na oficina.");
-      const seen = new Set(queue.map((item) => item.requestId));
+      await flushQueue();
+      const seen = new Set(savedQueue.current.map((item) => item.requestId));
       const seenRows = new Set(
-        queue.flatMap((item) => (item.csvRow ? [csvRowKey(item.csvRow)] : [])),
+        savedQueue.current.flatMap((item) => (item.csvRow ? [csvRowKey(item.csvRow)] : [])),
       );
       const incoming = [];
       for (const item of value.items) {
@@ -509,8 +524,15 @@ export default function StaffPdfWorkspace({
             !/^[a-f0-9]{32}$/.test(item.batchId))
         )
           throw new Error("Lote inválido no arquivo da fila.");
+        const plan = item.batchPlan;
+        if (plan !== undefined &&
+          (typeof plan?.requestId !== "string" || !/^[a-f0-9-]{36}$/.test(plan.requestId) ||
+            (plan.name !== undefined && (typeof plan.name !== "string" || plan.name.length > STAFF_PDF_BATCH_NAME_MAX)))) {
+          throw new Error("Identificador de retomada inválido no arquivo da fila.");
+        }
         incoming.push({
           ...(item.batchId ? { batchId: item.batchId } : {}),
+          ...(plan ? { batchPlan: { requestId: plan.requestId, name: plan.name } } : {}),
           csvWarning:
             typeof item.csvWarning === "string"
               ? item.csvWarning.slice(0, 800)
@@ -524,7 +546,7 @@ export default function StaffPdfWorkspace({
       if (alive.current) setData(library);
       const sources = new Map<string, NonNullable<typeof loaded>>();
       const items: QueueItem[] = [];
-      for (const { requestId, job, batchId, csvWarning, csvRow } of incoming) {
+      for (const { requestId, job, batchId, batchPlan, csvWarning, csvRow } of incoming) {
         if (!alive.current) return;
         const base = library.bases.find((b) => b.id === job.baseId);
         const layout = library.layouts.find((t) => t.id === job.layoutId);
@@ -544,6 +566,7 @@ export default function StaffPdfWorkspace({
           id: crypto.randomUUID(),
           requestId,
           ...(batchId ? { batchId } : {}),
+          ...(batchPlan ? { batchPlan } : {}),
           csvWarning,
           csvRow,
           job,
@@ -560,7 +583,7 @@ export default function StaffPdfWorkspace({
         });
       }
       if (alive.current) {
-        setQueue((old) => [...old, ...items]);
+        await setQueue((old) => [...old, ...items]);
         setMessage(`${items.length} pedido(s) recuperado(s) do JSON da fila.`);
       }
     } catch (e) {
@@ -589,7 +612,7 @@ export default function StaffPdfWorkspace({
       const previousLayout =
         item && data.layouts.find((t) => t.id === item.job.layoutId);
       const source =
-        item && b.revision === item.base.revision
+        item?.original && b.revision === item.base.revision
           ? { base: b, original: item.original }
           : await readBase(b);
       const layout =
@@ -654,10 +677,11 @@ export default function StaffPdfWorkspace({
     }
   }
   async function process() {
-    if (running.current) return;
+    if (running.current || !queueReady) return;
     const pending = queue.filter(
       (item) => item.status === "queued" || item.status === "error",
     );
+    const pendingIds = new Set(pending.map((item) => item.id));
     if (!pending.length) return;
     running.current = true;
     stop.current = false;
@@ -667,6 +691,7 @@ export default function StaffPdfWorkspace({
     setError("");
     let successes = 0;
     let failures = 0;
+    let disconnected = false;
     const report = (status: StaffPdfQueueProgressValue["status"]) => {
       if (!alive.current) return;
       const value = {
@@ -680,11 +705,41 @@ export default function StaffPdfWorkspace({
     };
     report("processing");
     try {
-      const current = await api.list();
+      if (!navigator.onLine) throw new Error("Sem conexão. Volte à fila para continuar quando a internet retornar.");
+      if (api.batches) {
+        const unassigned = pending.filter((item) => !item.batchId && !item.batchPlan);
+        if (unassigned.length) {
+          const plans = new Map<string, NonNullable<QueueItem["batchPlan"]>>();
+          for (let offset = 0; offset < unassigned.length; offset += STAFF_PDF_BATCH_MAX_ITEMS) {
+            const part = offset / STAFF_PDF_BATCH_MAX_ITEMS + 1;
+            const suffix = part > 1 ? ` (${part})` : "";
+            const name = batchName.trim();
+            const plan = {
+              requestId: crypto.randomUUID(),
+              name: name ? name.slice(0, STAFF_PDF_BATCH_NAME_MAX - suffix.length) + suffix : undefined,
+            };
+            for (const item of unassigned.slice(offset, offset + STAFF_PDF_BATCH_MAX_ITEMS)) {
+              plans.set(item.id, plan);
+            }
+          }
+          await setQueue((old) => old.map((item) => {
+            const batchPlan = plans.get(item.id);
+            return batchPlan ? { ...item, batchPlan } : item;
+          }));
+        }
+      }
+      const current = pending.every((item) => api.batches && item.batchId)
+        ? data : await api.list();
       if (alive.current) setData(current);
-      let batch = { requestId: crypto.randomUUID(), id: "", count: 0, part: 1 };
-      for (const item of pending) {
+      const batchIds = new Map<string, string>();
+      for (const item of savedQueue.current.filter(
+        (item) => pendingIds.has(item.id),
+      )) {
         if (!alive.current || stop.current || !generationAllowed.current) break;
+        if (!navigator.onLine) {
+          disconnected = true;
+          break;
+        }
         attempts.current = attempts.current.filter(
           (time) => Date.now() - time < 61000,
         );
@@ -708,13 +763,14 @@ export default function StaffPdfWorkspace({
           setMessage("");
           report("processing");
         }
-        setQueue((old) =>
+        await setQueue((old) =>
           old.map((q) =>
             q.id === item.id
               ? { ...q, status: "processing", error: undefined }
               : q,
           ),
         );
+        if (!alive.current || !generationAllowed.current) return;
         try {
           const b = current.bases.find((b) => b.id === item.job.baseId),
             t = current.layouts.find((t) => t.id === item.job.layoutId);
@@ -744,31 +800,29 @@ export default function StaffPdfWorkspace({
                 };
             let batchId = item.batchId;
             if (!batchId) {
-              if (batch.count === STAFF_PDF_BATCH_MAX_ITEMS)
-                batch = { requestId: crypto.randomUUID(), id: "", count: 0, part: batch.part + 1 };
-              const suffix = batch.part > 1 ? ` (${batch.part})` : "";
-              const name = batchName.trim();
-              batch.id ||= (await api.batches.create(
-                batch.requestId,
-                name ? name.slice(0, STAFF_PDF_BATCH_NAME_MAX - suffix.length) + suffix : undefined,
-              )).id;
-              batchId = batch.id;
-              batch.count++;
+              const plan = item.batchPlan!;
+              batchId = batchIds.get(plan.requestId);
+              if (!batchId) {
+                batchId = (await api.batches.create(plan.requestId, plan.name)).id;
+                batchIds.set(plan.requestId, batchId);
+              }
               if (item.csvRow)
                 lockedCsvRows.current.add(csvRowKey(item.csvRow));
-              if (alive.current)
-                setQueue((old) =>
-                  old.map((row) =>
-                    row.id === item.id ? { ...row, batchId, job } : row,
-                  ),
-                );
+              await setQueue((old) =>
+                old.map((row) => row.id === item.id ? { ...row, batchId, job } : row),
+              );
             }
+            if (!alive.current || !generationAllowed.current) return;
             attempts.current.push(Date.now());
             const recipe = await api.batches.save(batchId, job, item.requestId);
-            const rendered = await renderStaffPdfRecipe(recipe);
-            if (rendered.size > 50 * 1024 * 1024)
-              throw new Error("O PDF excede 50 MB.");
-            await api.batches.complete(batchId, recipe.item.id);
+            if (!alive.current || !generationAllowed.current) return;
+            if (recipe.item.status !== "ready") {
+              const rendered = await renderStaffPdfRecipe(recipe);
+              if (rendered.size > 50 * 1024 * 1024)
+                throw new Error("O PDF excede 50 MB.");
+              if (!alive.current || !generationAllowed.current) return;
+              await api.batches.complete(batchId, recipe.item.id);
+            }
             reference = recipe.item.outputName;
           } else {
             const initial = await api.initial(
@@ -779,50 +833,58 @@ export default function StaffPdfWorkspace({
               initial.sizePercent =
                 staffPdfInitialSize(t?.layout) ?? initial.sizePercent;
             const blob = await exportStaffPdf(
-              item.original,
+              item.original ?? await api.baseFile(item.job.baseId),
               item.job,
               fonts,
               item.fitMargin,
               initial,
             );
+            if (!alive.current || !generationAllowed.current) return;
             attempts.current.push(Date.now());
             const doc = await api.generate(item.job, blob, item.requestId);
             reference = doc.reference;
           }
+          await setQueue((old) =>
+            old.map((q) =>
+              q.id === item.id ? { ...q, status: "ready", reference } : q,
+            ),
+          );
           successes++;
           if (item.csvRow) lockedCsvRows.current.add(csvRowKey(item.csvRow));
-          if (alive.current)
-            setQueue((old) =>
-              old.map((q) =>
-                q.id === item.id ? { ...q, status: "ready", reference } : q,
-              ),
-            );
         } catch (e) {
+          disconnected = wasDisconnected(e);
+          await setQueue((old) =>
+            old.map((q) =>
+              q.id === item.id
+                ? { ...q, status: disconnected ? "queued" : "error", error: disconnected ? undefined : (e as Error).message }
+                : q,
+            ),
+          );
+          if (disconnected) break;
           failures++;
-          if (alive.current)
-            setQueue((old) =>
-              old.map((q) =>
-                q.id === item.id
-                  ? { ...q, status: "error", error: (e as Error).message }
-                  : q,
-              ),
-            );
         }
         report("processing");
       }
       if (alive.current) {
         setBatchRevision((old) => old + 1);
         report(
-          stop.current || !generationAllowed.current ? "paused" : "completed",
+          disconnected || stop.current || !generationAllowed.current ? "paused" : "completed",
         );
-        await onGenerated();
+        await onGenerated().catch(() => undefined);
         setMessage(
-          `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Lotes anteriores.`,
+          disconnected
+            ? `${successes} documento(s) concluído(s). A conexão foi interrompida. Use Continuar lote quando voltar.`
+            : `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Lotes anteriores.`,
         );
       }
     } catch (e) {
-      report("error");
-      if (alive.current) setError((e as Error).message);
+      if (wasDisconnected(e)) {
+        report("paused");
+        if (alive.current) setMessage("Sem conexão. Volte à fila para continuar quando a internet retornar.");
+      } else {
+        report("error");
+        if (alive.current) setError((e as Error).message);
+      }
     } finally {
       running.current = false;
       if (alive.current) {
@@ -831,7 +893,10 @@ export default function StaffPdfWorkspace({
       }
     }
   }
-  function add() {
+  async function add() {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true);
     try {
       if (!loaded || !mold) throw new Error("Escolha uma base e um molde.");
       const item = queueItem(
@@ -858,15 +923,16 @@ export default function StaffPdfWorkspace({
                 ?.split(", ")
                 .filter((label) => label.toLowerCase() !== "nome")
                 .join(", ");
-        if (text !== editingItem.job.lines[0].text)
-          csvImport.current?.updateText(csvRow, text);
         Object.assign(item, { csvRow, csvWarning });
       }
-      setQueue((old) =>
+      await setQueue((old) =>
         editingId
           ? old.map((q) => (q.id === editingId ? item : q))
           : [...old, item],
       );
+      if (item.csvRow && editingItem && item.job.lines[0].text !== editingItem.job.lines[0].text) {
+        csvImport.current?.updateText(item.csvRow, item.job.lines[0].text);
+      }
       loadLines([mainFrom(mold)]);
       setOutputName("");
       setBarcode(automaticStaffBarcode(crypto.randomUUID()));
@@ -880,6 +946,9 @@ export default function StaffPdfWorkspace({
       setError("");
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      running.current = false;
+      if (alive.current) setBusy(false);
     }
   }
   const move = React.useCallback(
@@ -985,10 +1054,7 @@ export default function StaffPdfWorkspace({
         {canGenerate && (
           <button
             disabled={busy}
-            onClick={() => {
-              setCsvOpened(true);
-              setTab("csv");
-            }}
+            onClick={() => setTab("csv")}
             aria-pressed={tab === "csv"}
             className="rounded-lg border border-gray-700 px-4 py-2"
           >
@@ -1003,9 +1069,9 @@ export default function StaffPdfWorkspace({
           Atualizar biblioteca
         </button>
       </nav>
-      {error && (
+      {(error || queueError || batchDraft.error) && (
         <p role="alert" className="text-red-300">
-          {error}
+          {queueError || batchDraft.error || error}
         </p>
       )}
       {message && (
@@ -1028,19 +1094,21 @@ export default function StaffPdfWorkspace({
           reload={reload}
         />
       )}
-      {csvOpened && canGenerate && (
+      {canGenerate && (
         <div hidden={tab !== "csv"}>
           <StaffPdfCsvImport
             ref={csvImport}
             data={data}
             fonts={fonts}
-            busy={busy}
+            busy={busy || !queueReady}
             visible={visible && tab === "csv"}
             fallback={{ baseId: loaded?.base.id || "", layoutId }}
             onAdd={importOrders}
             onReviewQueue={() => setTab("edit")}
             onReviseRow={reviseCsvRow}
             reviewRequest={csvReview}
+            storageOwner={storageOwner}
+            queuedRows={queuedRows}
           />
         </div>
       )}
@@ -1229,10 +1297,7 @@ export default function StaffPdfWorkspace({
                 type="button"
                 disabled={busy}
                 className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
-                onClick={() => {
-                  setCsvOpened(true);
-                  setTab("csv");
-                }}
+                onClick={() => setTab("csv")}
               >
                 Importar CSV ou XLSX
               </button>
@@ -1247,9 +1312,9 @@ export default function StaffPdfWorkspace({
                       className="text-xs text-gray-300"
                       disabled={busy}
                       onClick={() =>
-                        setQueue((old) =>
+                        void setQueue((old) =>
                           old.filter((q) => q.status !== "ready"),
-                        )
+                        ).catch(() => undefined)
                       }
                     >
                       Limpar concluídos
@@ -1257,10 +1322,14 @@ export default function StaffPdfWorkspace({
                   )}
                 </div>
                 <p className="text-xs text-gray-400">
-                  A fila fica nesta sessão. Revise antes de processar. Fechar ou
-                  recarregar a página descarta os itens ainda não gerados.
+                  {storageOwner
+                    ? "A fila é salva neste navegador. Revise antes de processar."
+                    : "Revise os arquivos antes de processar a fila."}
                 </p>
-                {!queue.length && (
+                {!queueReady && !queueError && (
+                  <p role="status" className="text-sm text-gray-400">Recuperando fila salva…</p>
+                )}
+                {queueReady && !queue.length && (
                   <p className="text-sm text-gray-400">
                     Nenhum arquivo na fila.
                   </p>
@@ -1440,21 +1509,21 @@ export default function StaffPdfWorkspace({
             <button
               type="button"
               disabled={
-                busy ||
+                busy || !queueReady ||
                 !mold ||
                 (!editingItem?.csvRow &&
                   !editingItem?.job.allowEmptyText &&
                   !lines.some((line) => line.text.trim()))
               }
               className="rounded-xl bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"
-              onClick={add}
+              onClick={() => void add()}
             >
               {editingId ? "Atualizar item da fila" : "Adicionar à fila"}
             </button>
             {editingId && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={busy || !batchDraft.ready}
                 className="rounded-xl border border-gray-700 px-4 py-2"
                 onClick={() => {
                   setEditingId(null);
@@ -1474,13 +1543,16 @@ export default function StaffPdfWorkspace({
                 value={batchName}
                 disabled={busy}
                 maxLength={STAFF_PDF_BATCH_NAME_MAX}
-                onChange={(event) => setBatchName(event.target.value)}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  void batchDraft.save(() => name);
+                }}
               />
             )}
             <button
               type="button"
               disabled={
-                busy ||
+                busy || !queueReady ||
                 !queue.some(
                   (item) => item.status === "queued" || item.status === "error",
                 )
@@ -1491,7 +1563,7 @@ export default function StaffPdfWorkspace({
                 else void process();
               }}
             >
-              Processar fila
+              {canResume ? "Continuar lote" : "Processar fila"}
             </button>
             {processing && (
               <button
@@ -1651,9 +1723,10 @@ export default function StaffPdfWorkspace({
           confirmLabel="Excluir da fila"
           onCancel={() => setRemoveId(null)}
           onConfirm={() => {
-            setQueue((old) => old.filter((q) => q.id !== removeId));
-            if (editingId === removeId) setEditingId(null);
-            setRemoveId(null);
+            void setQueue((old) => old.filter((q) => q.id !== removeId)).then(() => {
+              if (editingId === removeId) setEditingId(null);
+              setRemoveId(null);
+            }).catch(() => setRemoveId(null));
           }}
         />
       )}
@@ -1664,7 +1737,6 @@ export default function StaffPdfWorkspace({
           confirmLabel="Gerar mesmo assim"
           onCancel={() => {
             setConfirmBlanks(false);
-            setCsvOpened(true);
             setTab("csv");
             setCsvReview((value) => value + 1);
           }}

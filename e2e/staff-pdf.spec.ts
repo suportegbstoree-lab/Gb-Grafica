@@ -173,7 +173,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     name: "pedidos.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,af_clean,nome,observacao,barcode\n001,Kit de teste,,,BR2684621549924\n002,Kit de teste,Luísa,,BR2684621549925",
+      "pedido_plataforma,modelo,nome,observacao,barcode\n001,Kit de teste,,,BR2684621549924\n002,Kit de teste,Luísa,,BR2684621549925",
     ),
   });
   await page
@@ -431,6 +431,7 @@ test("template and generation tools are independently hidden", async ({
 });
 test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   page,
+  context,
 }) => {
   const ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
   const bytes = zipSync({
@@ -444,7 +445,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2</v></c></row></sheetData></worksheet>`,
     ),
   });
-  await page.goto("/__e2e/staff-pdf");
+  await page.goto("/__e2e/staff-pdf?resume");
   await page
     .getByRole("button", { name: "Planilha e CSV", exact: true })
     .click();
@@ -454,7 +455,12 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(bytes),
   });
-  await page.getByLabel("SKU", { exact: true }).fill("C");
+  await context.setOffline(true);
+  await page.getByLabel("SKU", { exact: true }).fill("Modelo do SKU");
+  await context.setOffline(false);
+  await page.reload();
+  await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
+  await expect(page.getByLabel("SKU", { exact: true })).toHaveValue("Modelo do SKU");
   const downloading = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Baixar CSV selecionado", exact: true })
@@ -463,9 +469,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   const csv = await readFile((await file.path())!, "utf8");
   expect(csv).toContain("00123");
   expect(csv).toContain(
-    '"pedido_plataforma","barcode","af_clean","nome","prazo_envio","quantidade_itens"',
+    '"pedido_plataforma","barcode","af_clean","modelo","nome","prazo_envio","quantidade_itens"',
   );
-  expect(csv).toContain('"00123",,"Kit de teste","Ana",,"2"');
+  expect(csv).toContain('"00123",,,"Kit de teste","Ana",,"2"');
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
 
@@ -476,6 +482,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await page
     .getByRole("button", { name: "Converter e revisar pedidos" })
     .click();
+  await expect(page.getByRole("row").filter({ hasText: "00123" })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
   const record = page.getByRole("row").filter({ hasText: "00123" });
   await expect(record).toContainText("Ana");
   await expect(record).toContainText("Campos em branco: barcode, prazo_envio.");
@@ -490,6 +499,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     "pedido_plataforma",
     "barcode",
     "af_clean",
+    "modelo",
     "nome",
     "prazo_envio",
     "quantidade_itens",
@@ -508,6 +518,8 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       exact: true,
     })
     .click();
+  await expect(page.getByText("Planilha enviada à fila para revisão.")).toBeVisible();
+  await expect(page.getByLabel("SKU", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toContainText(
     "Kit de teste Ana BR2684621549924",
@@ -520,6 +532,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await expect(text).toHaveValue("Ana");
   await text.fill("ANA REVISADA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
+  await expect(page.getByRole("article")).toContainText("ANA REVISADA");
   const savingQueue = page.waitForEvent("download");
   await page.getByRole("button", { name: "Salvar fila em JSON" }).click();
   const queueFile = await savingQueue;
@@ -528,6 +541,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     .getByRole("alertdialog")
     .getByRole("button", { name: "Excluir da fila" })
     .click();
+  await expect(page.getByRole("article")).toHaveCount(0);
   await page
     .getByLabel("Carregar fila JSON")
     .setInputFiles((await queueFile.path())!);
@@ -545,7 +559,43 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   );
 });
 
-test("desktop CSV matches its model and flags unknown records before processing", async ({
+test("interrupted batches resume after reload without completing the same PDF twice", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches&resume");
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "lote.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "pedido_plataforma,modelo,nome,barcode\n" +
+      "001,Kit de teste,Ana,BR2684621549924\n" +
+      "002,Kit de teste,Bia,BR2684621549925\n" +
+      "003,Kit de teste,Clara,BR2684621549926",
+    ),
+  });
+  await page.getByRole("button", { name: "Adicionar 3 pedido(s) da página à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Lote retomado");
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await expect(page.getByText(/0 documento\(s\) concluído\(s\)\. A conexão foi interrompida/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Continuar lote", exact: true }).click();
+  await expect(page.getByText(/A conexão foi interrompida/)).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(1);
+  await page.goto("/__e2e/staff-pdf?batches&resume&owner=outra-conta");
+  await expect(page.getByText("Nenhum arquivo na fila.")).toBeVisible();
+  await page.goto("/__e2e/staff-pdf?batches&resume");
+  await expect(page.getByRole("heading", { name: "Fila principal · 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Continuar lote", exact: true }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(3);
+  await expect(page.getByText("Lotes anteriores · 1")).toBeVisible();
+  const completed = await page.evaluate(() =>
+    JSON.parse(sessionStorage.getItem("staff-pdf-resume-completions") || "[]"),
+  );
+  expect(completed).toHaveLength(3);
+  expect(new Set(completed).size).toBe(3);
+});
+
+test("CSV matches model prefixes, leaves af_clean blank, and flags unknown models", async ({
   page,
 }) => {
   await page.goto("/__e2e/staff-pdf");
@@ -554,7 +604,10 @@ test("desktop CSV matches its model and flags unknown records before processing"
     name: "pedidos.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,af_clean,nome,prazo_envio\r\n00123,BR2684621549924,Kit de teste,ANA,\r\n00124,BR263172448223P,Desconhecido,BIA,",
+      "pedido_plataforma,barcode,base,af_clean,nome\r\n" +
+      "00123,BR2684621549924,Kit de teste COM NOME,Ignorar,ANA\r\n" +
+      "00124,BR263172448223P,Desconhecido,Kit de teste,BIA\r\n" +
+      "00125,BR2684621549925,Kit de teste SEM NOME,Ignorar,CARLA\r\n",
     ),
   });
   const known = page.getByRole("row").filter({ hasText: "00123" });
@@ -562,17 +615,38 @@ test("desktop CSV matches its model and flags unknown records before processing"
   await expect(known.getByLabel("Molde do registro 2")).toHaveValue(
     "b".repeat(32),
   );
+  await expect(page.getByLabel("Molde do registro 4")).toHaveValue("b".repeat(32));
   await expect(unknown).toContainText("Confira a base e o molde.");
+  await expect(known).not.toContainText("Campos em branco");
+  await expect(
+    page.getByLabel("Coluna do modelo").locator("option").filter({ hasText: "af_clean" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
+  const review = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
+  await expect(review.getByRole("columnheader", { name: "af_clean" })).toBeVisible();
+  const row = review.getByRole("row").filter({ hasText: "00123" });
+  await row.getByRole("button", { name: "Editar linha" }).click();
+  await expect(row.getByRole("textbox", { name: /af_clean/ })).toHaveCount(0);
+  await row.getByRole("button", { name: "Salvar linha" }).click();
+  const downloading = page.waitForEvent("download");
+  await review.getByRole("button", { name: "Baixar CSV revisado" }).click();
+  const csv = await readFile((await (await downloading).path())!, "utf8");
+  expect(csv).toContain('"base","af_clean","nome"');
+  expect(csv).toContain('"Kit de teste COM NOME",,"ANA"');
+  expect(csv).toContain('"Desconhecido",,"BIA"');
+  expect(csv).not.toContain("Ignorar");
+  await review.getByRole("button", { name: "Fechar", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Adicionar 1 pedido(s) da página à fila",
+      name: "Adicionar 2 pedido(s) da página à fila",
       exact: true,
     })
     .click();
   await expect(unknown).toBeVisible();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
-  await expect(page.getByRole("article")).toHaveCount(1);
-  await expect(page.getByRole("article")).toContainText("ANA");
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article").filter({ hasText: "ANA" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "CARLA" })).toBeVisible();
 });
 
 test("the workshop saves recipes in previous batches and reconstructs its PDF for download", async ({
@@ -671,7 +745,7 @@ test("admin keeps 51 PDFs processing across sections and splits them into batche
     name: "lote.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      ["pedido_plataforma,barcode,af_clean,nome", ...rows].join("\n"),
+      ["pedido_plataforma,barcode,modelo,nome", ...rows].join("\n"),
     ),
   });
   await page
@@ -715,7 +789,7 @@ test("equal tracking codes remain separate orders and are highlighted in the imp
     name: "mesma-entrega.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,af_clean,nome\n001,BR264979796804XSPXLM14002828,Kit de teste,ANA\n001,BR264979796804XSPXLM14002828,Kit de teste,BIA",
+      "pedido_plataforma,barcode,modelo,nome\n001,BR264979796804XSPXLM14002828,Kit de teste,ANA\n001,BR264979796804XSPXLM14002828,Kit de teste,BIA",
     ),
   });
   await page
@@ -759,7 +833,7 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
     name: "revisar.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,,af_clean,nome,barcode\n" +
+      "pedido_plataforma,,modelo,nome,barcode\n" +
         "001,,Kit de teste,,BR2684621549924\n" +
         "002,,Kit de teste,BIA,BR2684621549925\n" +
         "003,,Kit de teste,,",

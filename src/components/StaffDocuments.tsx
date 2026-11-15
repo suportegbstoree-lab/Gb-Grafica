@@ -30,6 +30,7 @@ export default function StaffDocuments({
   libraryApi,
   visible = true,
   onProgress,
+  storageOwner,
 }: {
   fonts: PersonalizationFont[];
   api?: StaffDocumentApi;
@@ -39,6 +40,7 @@ export default function StaffDocuments({
   libraryApi?: StaffPdfApi;
   visible?: boolean;
   onProgress?: (value: StaffPdfQueueProgressValue) => void;
+  storageOwner?: string;
 }) {
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
     [truncated, setTruncated] = React.useState(false),
@@ -133,7 +135,9 @@ export default function StaffDocuments({
           Biblioteca, edição e lotes da equipe. Os novos lotes ficam disponíveis por três dias.
         </p>
       </header>
-      <StaffPdfWorkspace fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} onGenerated={load} timingApi={timingApi} api={libraryApi} visible={visible} onProgress={onProgress}/>
+      <React.Fragment key={String(canGenerate)}>
+        <StaffPdfWorkspace storageOwner={storageOwner} fonts={fonts} canGenerate={canGenerate} canManage={canManageTemplates} onGenerated={load} timingApi={timingApi} api={libraryApi} visible={visible} onProgress={onProgress}/>
+      </React.Fragment>
       {error && (
         <p role="alert" className="rounded-xl bg-red-950 p-4 text-red-200">
           {error}

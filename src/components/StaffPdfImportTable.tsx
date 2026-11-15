@@ -7,6 +7,7 @@ export default function StaffPdfImportTable({
   rows,
   barcodeColumn,
   nameColumn,
+  ignoredColumns,
   onRevise,
   onDownload,
   onClose,
@@ -16,6 +17,7 @@ export default function StaffPdfImportTable({
   rows: { index: number; cells: string[] }[];
   barcodeColumn: number;
   nameColumn: number;
+  ignoredColumns: number[];
   onRevise: (
     index: number,
     cells: string[] | null,
@@ -189,7 +191,9 @@ export default function StaffPdfImportTable({
                           key={column}
                           className="max-w-sm whitespace-pre-wrap break-words p-2"
                         >
-                          {draft ? (
+                          {ignoredColumns.includes(position) ? (
+                            <span aria-label="Coluna ignorada">—</span>
+                          ) : draft ? (
                             <textarea
                               rows={2}
                               disabled={applying}

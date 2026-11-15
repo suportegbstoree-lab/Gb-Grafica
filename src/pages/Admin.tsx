@@ -124,6 +124,7 @@ export interface AdminProps {
   workClient?:WorkApi;
   documentApi?:StaffDocumentApi;
   pdfLibraryApi?:StaffPdfApi;
+  pdfStorageOwner?: string;
   emailApi?: EmailApi;
   activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
@@ -202,7 +203,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
 }
 
 export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
-  fullAdmin = false, workClient=workApi, documentApi, pdfLibraryApi,
+  fullAdmin = false, workClient=workApi, documentApi, pdfLibraryApi, pdfStorageOwner,
   permissions = [],
   staffApi = staffAdministrationApi,
   products,
@@ -1356,7 +1357,9 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         <WorkdayBar api={workClient} />
         {(activeTab === 'documents' || pdfOpened) && tabAllowed('documents') && (
           <div hidden={activeTab !== 'documents'}>
-            <StaffDocuments fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
+            <React.Fragment key={pdfStorageOwner}>
+              <StaffDocuments storageOwner={pdfStorageOwner} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
+            </React.Fragment>
           </div>
         )}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}

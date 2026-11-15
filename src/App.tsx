@@ -298,6 +298,7 @@ export default function App() {
             <PanelAccessGate user={user} ready={isAuthReady && (isAdmin || staffAccessState.ready)} allowed={canAccessPanel} issue={staffAccessState.issue} diagnostic={staffAccessState.diagnostic}>
               <Suspense fallback={<LoadingScreen />}>
                 <Admin
+                  pdfStorageOwner={user?.uid}
                   fullAdmin={isAdmin}
                   permissions={staffPermissions}
                   products={products}

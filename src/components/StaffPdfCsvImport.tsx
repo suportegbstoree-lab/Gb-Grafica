@@ -3,6 +3,7 @@ import { staffTrackingBarcode } from "../lib/staffPdfBarcode";
 import type { StaffPdfLibrary } from "../services/staffPdfService";
 import {
   defaultStaffPdfCsvColumns,
+  isIgnoredStaffPdfCsvColumn,
   readStaffPdfCsv,
   resolveStaffPdfCsvModel,
 } from "../lib/staffPdfCsv";
@@ -11,8 +12,9 @@ import { downloadPersonalization } from "../services/personalizationExport";
 import { layoutFont } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import StaffPdfImportTable from "./StaffPdfImportTable";
-import StaffSpreadsheetCsv from "./StaffSpreadsheetCsv";
+import StaffSpreadsheetCsv, { type StaffWorkbookDraft } from "./StaffSpreadsheetCsv";
 import StaffSpreadsheetPicker from "./StaffSpreadsheetPicker";
+import { useStaffPdfDraft } from "../services/staffPdfLocalState";
 
 export interface StaffPdfCsvOrder {
   baseId: string;
@@ -39,6 +41,29 @@ export interface StaffPdfCsvNamePaste {
   ) => NonNullable<StaffPdfCsvOrder["csvRow"]["textWarnings"]>;
 }
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
+interface CsvDraft {
+  source?: {
+    id: string;
+    name: string;
+    rows: (string[] | null)[];
+    width: number;
+    separator: string;
+    ignoredColumns: number[];
+    workbookId?: string;
+  };
+  hasHeader: boolean;
+  columns: ReturnType<typeof defaultStaffPdfCsvColumns>;
+  overrides: Record<number, { baseId: string; layoutId: string }>;
+  codes: Record<number, string>;
+  added: number[];
+}
+const emptyDraft: CsvDraft = {
+  hasHeader: true,
+  columns: { text: -1, template: -1, reference: -1 },
+  overrides: {},
+  codes: {},
+  added: [],
+};
 
 function blankWarning(fields: string[]) {
   const shown = fields.slice(0, 8).map((header) => header.slice(0, 80));
@@ -61,6 +86,8 @@ export default function StaffPdfCsvImport({
   onReviewQueue,
   onReviseRow,
   reviewRequest,
+  storageOwner,
+  queuedRows,
 }: {
   ref?: React.Ref<StaffPdfCsvImportHandle>;
   data: StaffPdfLibrary;
@@ -76,78 +103,85 @@ export default function StaffPdfCsvImport({
     pastedName?: StaffPdfCsvNamePaste,
   ) => Promise<boolean>;
   reviewRequest: number;
+  storageOwner?: string;
+  queuedRows: ReadonlySet<string>;
 }) {
-  const [source, setSource] = React.useState<{
-      id: string;
-      name: string;
-      rows: (string[] | null)[];
-      width: number;
-      separator: string;
-    }>(),
-    [table, setTable] = React.useState(false),
-    [hasHeader, setHasHeader] = React.useState(true),
-    [columns, setColumns] = React.useState({
-      text: -1,
-      template: -1,
-      reference: -1,
-    }),
-    [overrides, setOverrides] = React.useState<
-      Record<number, { baseId: string; layoutId: string }>
-    >({}),
-    [codes, setCodes] = React.useState<Record<number, string>>({}),
-    [added, setAdded] = React.useState(new Set<number>()),
+  const csv = useStaffPdfDraft(storageOwner, "csv", emptyDraft);
+  const workbook = useStaffPdfDraft<StaffWorkbookDraft | null>(storageOwner, "workbook", null);
+  const { source, hasHeader, columns, overrides, codes } = csv.value;
+  const [table, setTable] = React.useState(false),
     [page, setPage] = React.useState(0),
     [message, setMessage] = React.useState(""),
     [error, setError] = React.useState(""),
     [reading, setReading] = React.useState(false);
-  const lastReview = React.useRef(reviewRequest);
+  const lastReview = React.useRef(0);
   React.useEffect(() => {
-    if (reviewRequest !== lastReview.current) {
+    if (reviewRequest !== lastReview.current && source) {
       lastReview.current = reviewRequest;
-      if (source) setTable(true);
+      setTable(true);
     }
   }, [reviewRequest, source]);
-  const block = busy || reading;
+  const block = busy || reading || !csv.ready || !workbook.ready;
+  const resolveModel = React.useMemo(() => {
+    const models = new Map<string, ReturnType<typeof resolveStaffPdfCsvModel>>();
+    return (name: string) => {
+      if (!models.has(name)) {
+        models.set(name, resolveStaffPdfCsvModel(name, data.bases, data.layouts));
+      }
+      return models.get(name);
+    };
+  }, [data.bases, data.layouts, source?.id]);
   React.useImperativeHandle(
     ref,
     () => ({
       updateText({ sourceId, index, textColumn }, text) {
         if (textColumn === undefined) return;
-        setSource((current) => {
-          const row = current?.rows[index];
-          if (current?.id !== sourceId || !row || textColumn >= current.width)
+        void csv.save((current) => {
+          const source = current.source;
+          const row = source?.rows[index];
+          if (source?.id !== sourceId || !row || textColumn >= source.width)
             return current;
           const cells = [...row];
           cells[textColumn] = text;
-          const rows = [...current.rows];
+          const rows = [...source.rows];
           rows[index] = cells;
-          return { ...current, rows };
+          return { ...current, source: { ...source, rows } };
         });
       },
     }),
     [],
   );
-  function useCsv(csv: string, name: string, separator?: string) {
-    const parsed = readStaffPdfCsv(csv, separator);
-    const { rows } = parsed;
-    const columns = defaultStaffPdfCsvColumns(rows[0]);
-    setSource({
+  async function useCsv(input: string, name: string, separator?: string, workbookId?: string) {
+    const parsed = readStaffPdfCsv(input, separator);
+    const [header, ...records] = parsed.rows;
+    const ignoredColumns = header.flatMap((cell, index) =>
+      isIgnoredStaffPdfCsvColumn(cell) ? [index] : [],
+    );
+    const columns = defaultStaffPdfCsvColumns(header);
+    for (const cells of records) {
+      for (const column of ignoredColumns) {
+        if (column < cells.length) cells[column] = "";
+      }
+    }
+    const source = {
       id: crypto.randomUUID(),
       name,
-      rows,
-      width: Math.max(...rows.map((row) => row.length)),
+      rows: parsed.rows,
+      width: Math.max(...parsed.rows.map((row) => row.length)),
       separator: parsed.separator,
-    });
-    setHasHeader(Object.values(columns).some((value) => value >= 0));
-    setColumns(columns);
-    setAdded(new Set());
-    setCodes({});
-    setOverrides({});
+      ignoredColumns,
+      workbookId,
+    };
+    await csv.save(() => ({
+      ...emptyDraft, source, columns,
+      hasHeader: ignoredColumns.length > 0 || Object.values(columns).some((value) => value >= 0),
+    }));
     setPage(0);
     setMessage("");
     setError("");
   }
   const headerIndex = source?.rows.findIndex((row) => row !== null) ?? -1;
+  const ignoredColumns = source?.ignoredColumns ?? [];
   const headers = source
     ? Array.from(
         { length: source.width },
@@ -160,7 +194,17 @@ export default function StaffPdfCsvImport({
     source?.rows.flatMap((row, index) =>
       row && !(hasHeader && index === headerIndex) ? [{ row, index }] : [],
     ) ?? [];
-  const pending = imported.filter(({ index }) => !added.has(index));
+  const added = new Set(csv.value.added);
+  const pending = imported.filter(({ index }) =>
+    !added.has(index) && !queuedRows.has(`${source?.id}:${index}`),
+  );
+  const transferred = imported.length > 0 && pending.length === 0;
+  const handedOffWorkbook = !busy && transferred && source?.workbookId;
+  React.useEffect(() => {
+    if (handedOffWorkbook && workbook.value?.id === handedOffWorkbook) {
+      void workbook.save((current) => current?.id === handedOffWorkbook ? null : current);
+    }
+  }, [handedOffWorkbook, workbook.value?.id]);
   const barcodeIndex =
     (hasHeader
       ? source?.rows[headerIndex]?.findIndex((header) =>
@@ -179,10 +223,12 @@ export default function StaffPdfCsvImport({
   const pageIndex = Math.min(page, lastPage);
   function rowWarnings(row: string[], barcode: string, textColumn: number) {
     const missingFields = (blankText: boolean) =>
-      headers.filter((_, column) =>
-        column === textColumn
-          ? blankText
-          : !(column === barcodeIndex ? barcode : row[column]?.trim()),
+      headers.filter(
+        (_, column) =>
+          !ignoredColumns.includes(column) &&
+          (column === textColumn
+            ? blankText
+            : !(column === barcodeIndex ? barcode : row[column]?.trim())),
       );
     return {
       blank: blankWarning(missingFields(true)),
@@ -200,7 +246,7 @@ export default function StaffPdfCsvImport({
     const model =
       override ??
       (template
-        ? resolveStaffPdfCsvModel(template, data.bases, data.layouts)
+        ? resolveModel(template)
         : fallback);
     const base = data.bases.find((base) => base.id === model?.baseId);
     const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
@@ -251,7 +297,10 @@ export default function StaffPdfCsvImport({
     }
     try {
       await onAdd(orders);
-      setAdded((old) => new Set([...old, ...orders.map((row) => row.index)]));
+      await csv.save((current) => ({
+        ...current,
+        added: [...new Set([...current.added, ...orders.map((row) => row.index)])],
+      }));
       setMessage(`${orders.length} pedido(s) adicionado(s) à fila principal.`);
     } catch (error) {
       setError((error as Error).message);
@@ -292,9 +341,9 @@ export default function StaffPdfCsvImport({
       order && !order.issue ? order : undefined,
       pastedName,
     );
-    setSource({
-      ...source,
-      rows: source.rows.map((row, i) => {
+    await csv.save((current) => {
+      if (current.source?.id !== source.id) return current;
+      const rows = current.source.rows.map((row, i) => {
         if (i !== index) return row;
         if (pastedName && row) {
           const next = [...row];
@@ -302,21 +351,18 @@ export default function StaffPdfCsvImport({
           return next;
         }
         return cells?.slice(0, source.width) ?? null;
-      }),
-    });
-    if (!pastedName) {
-      if (!sameModel) setOverrides(({ [index]: _, ...rest }) => rest);
-      setCodes(({ [index]: _, ...rest }) =>
-        cells && barcodeIndex < 0
-          ? { ...rest, [index]: cells[source.width] ?? "" }
-          : rest,
-      );
-    }
-    setAdded((old) => {
-      const next = new Set(old);
-      if (updated) next.add(index);
-      else next.delete(index);
-      return next;
+      });
+      const overrides = { ...current.overrides };
+      const codes = { ...current.codes };
+      if (!pastedName) {
+        if (!sameModel) delete overrides[index];
+        delete codes[index];
+        if (cells && barcodeIndex < 0) codes[index] = cells[source.width] ?? "";
+      }
+      const added = new Set(current.added);
+      if (updated) added.add(index);
+      else added.delete(index);
+      return { ...current, source: { ...current.source, rows }, overrides, codes, added: [...added] };
     });
     setMessage(
       cells
@@ -341,11 +387,14 @@ export default function StaffPdfCsvImport({
       const cells = row.slice();
       if (hasHeader && index === headerIndex) {
         if (includeBarcode) cells[source.width] = "barcode";
-      } else if (barcodeIndex >= 0 || includeBarcode) {
-        cells[barcodeIndex < 0 ? source.width : barcodeIndex] = getBarcode(
-          row,
-          index,
-        );
+      } else {
+        for (const column of ignoredColumns) cells[column] = "";
+        if (barcodeIndex >= 0 || includeBarcode) {
+          cells[barcodeIndex < 0 ? source.width : barcodeIndex] = getBarcode(
+            row,
+            index,
+          );
+        }
       }
       return [cells];
     });
@@ -361,7 +410,8 @@ export default function StaffPdfCsvImport({
   }
   return (
     <section className="space-y-4">
-      <StaffSpreadsheetCsv onUseCsv={useCsv} layouts={data.layouts} />
+      <StaffSpreadsheetCsv onUseCsv={useCsv} layouts={data.layouts}
+        draft={workbook.value} save={workbook.save} disabled={block} />
       <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
         <div>
           <h3 className="text-lg font-bold">Importar pedidos do CSV</h3>
@@ -376,16 +426,16 @@ export default function StaffPdfCsvImport({
           try {
             if (file.size > 10 * 1024 * 1024)
               throw new Error("Envie um CSV de até 10 MB.");
-            useCsv(await file.text(), file.name);
+            await useCsv(await file.text(), file.name);
           } catch (e) {
             setError((e as Error).message);
           } finally {
             setReading(false);
           }
         }} />
-        {error && (
+        {(error || csv.error || workbook.error) && (
           <p role="alert" className="text-red-300">
-            {error}
+            {error || csv.error || workbook.error}
           </p>
         )}
         {message && (
@@ -405,16 +455,25 @@ export default function StaffPdfCsvImport({
             >
               Visualizar planilha importada
             </button>
+            {transferred ? (
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span>Planilha enviada à fila para revisão.</span>
+                <button type="button" className="rounded-lg border border-gray-700 px-4 py-2"
+                  onClick={onReviewQueue}>Revisar fila principal</button>
+              </div>
+            ) : <>
             <label className="flex gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={hasHeader}
                 onChange={(e) => {
-                  setHasHeader(e.target.checked);
-                  if (e.target.checked)
-                    setColumns(
-                      defaultStaffPdfCsvColumns(source.rows[headerIndex] || []),
-                    );
+                  const checked = e.target.checked;
+                  void csv.save((current) => ({
+                    ...current, hasHeader: checked,
+                    columns: checked
+                      ? defaultStaffPdfCsvColumns(source.rows[headerIndex] || [])
+                      : current.columns,
+                  }));
                 }}
               />
               A primeira linha é o cabeçalho
@@ -432,23 +491,25 @@ export default function StaffPdfCsvImport({
                   <select
                     className={input}
                     value={columns[field]}
-                    onChange={(e) =>
-                      setColumns({
-                        ...columns,
-                        [field]: Number(e.target.value),
-                      })
-                    }
+                    onChange={(e) => {
+                      const column = Number(e.target.value);
+                      void csv.save((current) => ({
+                        ...current, columns: { ...current.columns, [field]: column },
+                      }));
+                    }}
                   >
                     <option value={-1}>
                       {field === "template"
                         ? "Usar base e molde do pedido aberto"
                         : "Selecione a coluna"}
                     </option>
-                    {headers.map((header, index) => (
-                      <option key={index} value={index}>
-                        {header}
-                      </option>
-                    ))}
+                    {headers.map((header, index) =>
+                      !ignoredColumns.includes(index) && (
+                        <option key={index} value={index}>
+                          {header}
+                        </option>
+                      ),
+                    )}
                   </select>
                 </label>
               ))}
@@ -458,6 +519,11 @@ export default function StaffPdfCsvImport({
               selecionada em Edição e fila. Confira as associações antes de
               adicionar.
             </p>
+            {ignoredColumns.length > 0 && (
+              <p className="text-xs text-gray-400">
+                A coluna af_clean fica vazia. Use a coluna do modelo, base ou SKU para associar os pedidos.
+              </p>
+            )}
             {!!preview.length && (
               <div className="max-h-[30rem] overflow-auto rounded-lg border border-gray-800">
                 <table className="w-full min-w-[44rem] table-fixed text-left text-sm">
@@ -489,12 +555,12 @@ export default function StaffPdfCsvImport({
                               maxLength={80}
                               value={codes[row.index] ?? row.barcode}
                               aria-label={`Rastreio do registro ${row.index + 1}`}
-                              onChange={(e) =>
-                                setCodes({
-                                  ...codes,
-                                  [row.index]: e.target.value,
-                                })
-                              }
+                              onChange={(e) => {
+                                const code = e.target.value;
+                                void csv.save((current) => ({
+                                  ...current, codes: { ...current.codes, [row.index]: code },
+                                }));
+                              }}
                             />
                           </label>
                           {row.issue && (
@@ -531,13 +597,13 @@ export default function StaffPdfCsvImport({
                                   [base],
                                   data.layouts,
                                 );
-                              setOverrides({
-                                ...overrides,
+                              void csv.save((current) => ({ ...current, overrides: {
+                                ...current.overrides,
                                 [row.index]: {
                                   baseId: id,
                                   layoutId: layout?.layoutId || "",
                                 },
-                              });
+                              } }));
                             }}
                           >
                             <option value="">
@@ -555,15 +621,16 @@ export default function StaffPdfCsvImport({
                             className={input}
                             aria-label={`Molde do registro ${row.index + 1}`}
                             value={row.layoutId}
-                            onChange={(e) =>
-                              setOverrides({
-                                ...overrides,
+                            onChange={(e) => {
+                              const layoutId = e.target.value;
+                              void csv.save((current) => ({ ...current, overrides: {
+                                ...current.overrides,
                                 [row.index]: {
                                   baseId: row.baseId,
-                                  layoutId: e.target.value,
+                                  layoutId,
                                 },
-                              })
-                            }
+                              } }));
+                            }}
                           >
                             <option value="">Selecione o molde</option>
                             {data.layouts.map((item) => (
@@ -642,6 +709,7 @@ export default function StaffPdfCsvImport({
                 Revisar fila principal
               </button>
             </div>
+            </>}
           </fieldset>
         )}
       </section>
@@ -651,6 +719,7 @@ export default function StaffPdfCsvImport({
           onClose={() => setTable(false)}
           headers={barcodeIndex < 0 ? [...headers, "Rastreio"] : headers}
           barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
+          ignoredColumns={ignoredColumns}
           nameColumn={headers.findIndex(
             (header) => header.toLowerCase() === "nome",
           )}

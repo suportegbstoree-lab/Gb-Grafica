@@ -81,6 +81,7 @@ export function parseStaffPdfCsv(input: string, separator?: string) {
 
 function key(value: string) {
   return value
+    .trim()
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .toLowerCase()
@@ -136,21 +137,30 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
     template: find([
       "template",
       "modelo",
+      "base",
+      "base_pdf",
+      "nome_base",
+      "nome_da_base",
       "tema",
       "ae",
       "sku",
       "modelo_do_sku",
       "sku_do_produto",
-      "af_clean",
       "af",
       "arte",
       "design",
+      "nome_do_produto",
+      "produto",
     ]),
     reference:
       staffOrderColumn(headers) >= 0
         ? staffOrderColumn(headers)
         : find(["codigo", "serial", "rastreio", "barcode", "tracking"]),
   };
+}
+
+export function isIgnoredStaffPdfCsvColumn(header: string) {
+  return key(header) === "af_clean";
 }
 
 export function staffSheetOrders(
@@ -178,6 +188,19 @@ export function staffSheetOrders(
 const modelStem = (name: string) =>
   key(name).replace(/_template(?:_\d+p)?$/, "");
 
+const modelPageCount = (normalizedName: string) =>
+  Number(/_template_(\d+)p$/.exec(normalizedName)?.[1]) || undefined;
+
+const withoutNameOption = (value: string) =>
+  value.trim().replace(/[\s_-]+(?:com|sem)[\s_-]+nome(?:\.pdf)?$/i, "");
+
+function csvModelStem(value: string) {
+  return modelStem(withoutNameOption(value))
+    .replace(/(?:^|_)(?:de|da|do|das|dos)(?=_|$)/g, "")
+    .replace(/(^|_)receitas(?=_|$)/g, "$1receita")
+    .replace(/^_/, "");
+}
+
 export function createStaffSkuMatcher(layouts: StaffPdfLayoutView[]) {
   const candidates = layouts
     .map(({ name, layout }) => ({
@@ -194,25 +217,27 @@ export function createStaffSkuMatcher(layouts: StaffPdfLayoutView[]) {
       pattern: new RegExp(`(?:^|_)${item.match}(?:_|$)`),
     }));
   return (value: string) => {
-    const sku = key(value);
+    const label = value.trim();
+    if (withoutNameOption(label) !== label) return label;
+    const sku = key(label);
     const explicit = candidates.find((item) => item.explicit === sku);
     if (explicit) return explicit.name;
     const hits = candidates.filter(({ pattern }) => pattern.test(sku));
-    if (!hits.length) return value.trim();
+    if (!hits.length) return label;
     const top = hits.filter(
       (item) => item.match.length === hits[0].match.length,
     );
     return new Set(top.map((item) => item.name)).size === 1
       ? top[0].name
-      : value.trim();
+      : label;
   };
 }
 
 export const STAFF_SHEET_FIELDS = [
   {
-    key: "af_clean",
+    key: "modelo",
     label: "SKU",
-    aliases: ["sku", "af_clean", "sku_do_produto", "modelo_do_sku"],
+    aliases: ["sku", "sku_do_produto", "modelo_do_sku", "modelo", "base"],
   },
   {
     key: "nome",
@@ -270,7 +295,7 @@ export function staffSheetColumn(
   return column < width ? column : -1;
 }
 
-export function resolveStaffPdfCsvModel(
+function resolveExactModel(
   value: string,
   bases: StaffPdfBase[],
   layouts: StaffPdfLayoutView[],
@@ -292,13 +317,77 @@ export function resolveStaffPdfCsvModel(
     : bases.filter((base) => matchesName(base.name));
   const internal = matching.filter((base) => base.source === "internal");
   const choices = internal.length ? internal : matching;
-  if (choices.length !== 1) return;
+  if (!choices.length) return;
+  if (choices.length !== 1) return null;
   const [base] = choices;
-  const variant = /_template(?:_(\d+)p)?$/.exec(exact);
-  const layout =
-    named.length === 1 &&
-    (!variant?.[1] || Number(variant[1]) === base.pageCount)
-      ? named[0]
-      : matchPdfLayout(staffPdfSourceName(base), base.pageCount, layouts, base.id);
-  return { baseId: base.id, layoutId: layout?.id || "" };
+  const variantPages = modelPageCount(exact);
+  const sourceName = staffPdfSourceName(base);
+  const layout = named.length === 1 &&
+    (!variantPages || variantPages === base.pageCount)
+    ? named[0]
+    : matchPdfLayout(sourceName, base.pageCount, layouts, base.id);
+  if (layout) return { baseId: base.id, layoutId: layout.id };
+
+  const stem = csvModelStem(sourceName);
+  const equivalent = layouts.filter((mold) => {
+    const pages = modelPageCount(key(mold.name));
+    return (
+      csvModelStem(mold.name) === stem &&
+      (!pages || pages === base.pageCount) &&
+      (mold.layout.base_id
+        ? mold.layout.base_id === base.id
+        : !mold.layout.base_pdf_name ||
+          key(mold.layout.base_pdf_name) === key(sourceName))
+    );
+  });
+  const sized = equivalent.filter(
+    (mold) => modelPageCount(key(mold.name)) === base.pageCount,
+  );
+  const compatible = sized.length ? sized : equivalent;
+  return {
+    baseId: base.id,
+    layoutId: compatible.length === 1 ? compatible[0].id : "",
+  };
+}
+
+export function resolveStaffPdfCsvModel(
+  value: string,
+  bases: StaffPdfBase[],
+  layouts: StaffPdfLayoutView[],
+) {
+  const name = withoutNameOption(value);
+  const exact = resolveExactModel(name, bases, layouts);
+  if (exact !== undefined) return exact ?? undefined;
+
+  const stem = csvModelStem(name);
+  if (!stem) return;
+  const aliases = new Set([
+    ...bases.flatMap((base) => [base.name, staffPdfSourceName(base)]),
+    ...layouts
+      .filter(({ layout }) => layout.base_id || layout.base_pdf_name)
+      .map(({ name }) => name),
+  ]);
+  let longest = 0;
+  let matches: string[] = [];
+  for (const alias of aliases) {
+    const prefix = csvModelStem(alias);
+    if (!prefix || (stem !== prefix && !stem.startsWith(prefix + "_"))) continue;
+    if (prefix.length > longest) {
+      longest = prefix.length;
+      matches = [];
+    }
+    if (prefix.length === longest) matches.push(alias);
+  }
+
+  const resolved = matches.map((alias) =>
+    resolveExactModel(alias, bases, layouts),
+  );
+  if (resolved.some((match) => match === null)) return;
+  const choices = resolved.filter((match) => match != null);
+  const baseIds = new Set(choices.map((match) => match.baseId));
+  const layoutIds = new Set(
+    choices.map((match) => match.layoutId).filter(Boolean),
+  );
+  if (baseIds.size !== 1 || layoutIds.size > 1) return;
+  return { baseId: choices[0].baseId, layoutId: [...layoutIds][0] ?? "" };
 }
