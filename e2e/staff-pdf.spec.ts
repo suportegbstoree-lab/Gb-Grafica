@@ -665,7 +665,7 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
     .selectOption({ label: "Kit de teste.pdf · Sem categoria" });
   await page.getByLabel("Texto principal", { exact: true }).fill("ANA");
   await page
-    .getByRole("button", { name: "Adicionar código de barras", exact: true })
+    .getByRole("button", { name: "Editar código de barras", exact: true })
     .click();
   const barcode = page.getByRole("dialog", {
     name: "Código de barras do pedido",
@@ -733,6 +733,111 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await expect(
     page.getByRole("heading", { name: /Documentos salvos · teste/ }),
   ).toBeVisible();
+});
+
+test("barcode defaults reach queued PDFs, individual sizes win, and clearing keeps previous batches", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches=true");
+  const editDefault = page.getByRole("button", { name: "Editar código de barras padrão", exact: true });
+  const defaults = page.getByRole("dialog", { name: "Editar código de barras padrão" });
+  const individual = page.getByRole("dialog", { name: "Código de barras do pedido" });
+  const height = "Altura (mm)";
+  await editDefault.click();
+  await expect(defaults.getByLabel(height, { exact: true })).toHaveValue("12");
+  await expect(defaults.getByRole("textbox")).toHaveCount(0);
+  await defaults.getByLabel(height, { exact: true }).fill("16");
+  await defaults.getByRole("button", { name: "Salvar padrão" }).click();
+
+  await page.getByLabel("Base PDF da equipe").selectOption("a".repeat(32));
+  for (const name of ["HERDADO", "INDIVIDUAL"]) {
+    await page.getByLabel("Texto principal", { exact: true }).fill(name);
+    await page.getByRole("button", { name: "Adicionar à fila", exact: true }).click();
+  }
+  const editCode = (name: string) => page.getByRole("article").filter({ hasText: name })
+    .getByRole("button", { name: "Editar código de barras", exact: true });
+  await editCode("INDIVIDUAL").click();
+  await expect(individual.getByLabel(height, { exact: true })).toHaveValue("16");
+  await individual.getByLabel(height, { exact: true }).fill("10");
+  await individual.getByRole("button", { name: "Aplicar código" }).click();
+
+  await editDefault.click();
+  await defaults.getByLabel(height, { exact: true }).fill("19");
+  await defaults.getByRole("button", { name: "Salvar padrão" }).click();
+  for (const [name, expected] of [["HERDADO", "19"], ["INDIVIDUAL", "10"]]) {
+    await editCode(name).click();
+    await expect(individual.getByLabel(height, { exact: true })).toHaveValue(expected);
+    await individual.getByRole("button", { name: "Fechar código de barras" }).click();
+  }
+
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(2);
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar lote" }).click();
+  const files = Object.entries(unzipSync(await readFile((await (await download).path())!)));
+  expect(files).toHaveLength(2);
+  for (const [filename, contents] of files) {
+    const expected = filename.includes("HERDADO") ? 19 : 10;
+    const streams = (await PDFDocument.load(contents)).getPage(0).node.Contents() as PDFArray;
+    const commands = Array.from({ length: streams.size() }, (_, i) =>
+      Buffer.from(decodePDFRawStream(streams.lookup(i, PDFRawStream)).decode()).toString(),
+    ).join("\n");
+    const heights = [...commands.matchAll(/^[\d.]+ 0 0 ([\d.]+) 0 0 cm$/gm)];
+    expect(heights.filter(([, h]) => Math.abs(Number(h) - (expected * 72) / 25.4) < 0.001)).toHaveLength(2);
+  }
+
+  await editDefault.click();
+  await defaults.getByLabel("Largura de referência (mm)").fill("55");
+  await defaults.getByLabel("Escala horizontal").fill("1.2");
+  await defaults.getByRole("button", { name: "Salvar padrão" }).click();
+  await editDefault.click();
+  await defaults.getByRole("button", { name: "Restaurar valores originais" }).click();
+  await editDefault.click();
+  await expect(defaults.getByLabel("Largura de referência (mm)")).toHaveValue("45");
+  await expect(defaults.getByLabel(height, { exact: true })).toHaveValue("12");
+  await expect(defaults.getByLabel("Escala horizontal")).toHaveValue("1.8");
+  await defaults.getByRole("button", { name: "Fechar código de barras" }).click();
+  await page.getByLabel("Texto principal", { exact: true }).fill("PENDENTE");
+  await page.getByRole("button", { name: "Adicionar à fila", exact: true }).click();
+  await page.getByRole("button", { name: "Excluir fila atual" }).click();
+  const confirmation = page.getByRole("alertdialog", { name: "Excluir 3 itens da fila atual?" });
+  await confirmation.getByRole("button", { name: "Voltar" }).click();
+  await expect(page.getByRole("article")).toHaveCount(3);
+  await page.getByRole("button", { name: "Excluir fila atual" }).click();
+  await confirmation.getByRole("button", { name: "Excluir fila", exact: true }).click();
+  await expect(page.getByText("Nenhum arquivo na fila.")).toBeVisible();
+  await expect(page.getByText(/^LOTE-TESTE ·.*2 arquivo/)).toBeVisible();
+});
+
+test("mold extra lines keep their formatting and start blank in CSV orders", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page.getByRole("button", { name: "Bases e moldes" }).click();
+  await page.getByRole("button", { name: "Criar molde", exact: true }).click();
+  const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
+  await mold.getByLabel("Nome do molde").fill("Molde Duas Linhas");
+  await mold.getByLabel("Base para associar e testar").selectOption("a".repeat(32));
+  await mold.getByRole("button", { name: "Adicionar linha de texto extra" }).click();
+  const toolbar = page.getByRole("group", { name: "Formatação do texto" });
+  await toolbar.getByLabel("Tamanho (px)", { exact: true }).fill("87");
+  await toolbar.getByRole("button", { name: "Aumentar tamanho" }).click();
+  await toolbar.getByRole("button", { name: "Negrito", exact: true }).click();
+  await expect(toolbar.getByLabel("Texto da linha extra")).toHaveCount(0);
+  await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
+
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "linhas.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("pedido_plataforma,af_clean,texto,linha_extra,barcode\n001,Molde Duas Linhas,ANA,IGNORAR,BR2684621549924"),
+  });
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await page.getByRole("button", { name: "Editar item da fila", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Texto principal", exact: true })).toHaveValue("ANA");
+  await toolbar.getByLabel("Texto selecionado").selectOption({ label: "Linha extra 1" });
+  await expect(toolbar.getByLabel("Texto da linha extra")).toHaveValue("");
+  await expect(toolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue("88");
+  await expect(toolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("admin keeps 51 PDFs processing across sections and splits them into batches of 50", async ({

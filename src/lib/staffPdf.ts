@@ -43,6 +43,7 @@ export interface StaffPdfLayout {
   imagem_full_page: boolean;
   text_rotation: number;
   fit_margin: number;
+  extra_lines?: StaffPdfExtraLine[];
 }
 export interface StaffPdfBase {
   initialLetters?: string[];
@@ -84,6 +85,7 @@ export interface StaffPdfLine {
   portrait: PdfTextBox;
   landscape: PdfTextBox;
 }
+export type StaffPdfExtraLine = Omit<StaffPdfLine, "kind" | "text">;
 export interface StaffPdfTextEffects {
   bold: boolean;
   opacity: number;
@@ -303,6 +305,19 @@ export function normalizePdfLayout(value: unknown): StaffPdfLayout {
       throw new Error("Informe um tamanho de inicial entre 5% e 100%.");
     output.initial_size_percent = value.initial_size_percent;
   }
+  if (value.extra_lines !== undefined) {
+    if (!Array.isArray(value.extra_lines) || value.extra_lines.length >= STAFF_PDF_MAX_LINES)
+      throw new Error(`Cadastre até ${STAFF_PDF_MAX_LINES - 1} linhas extras por molde.`);
+    const extras = value.extra_lines.map((line) => {
+      const { text, kind, ...definition } = normalizeStaffPdfLine({
+        ...line, kind: "extra", text: "",
+      });
+      return definition;
+    });
+    if (new Set(extras.map((line) => line.id)).size !== extras.length)
+      throw new Error("Use linhas extras distintas no molde.");
+    if (extras.length) output.extra_lines = extras;
+  }
   return output;
 }
 
@@ -456,6 +471,68 @@ export function fixedStaffPdfMain(
   };
 }
 
+export function staffPdfLayoutLines(
+  layout: StaffPdfLayout,
+  fonts: PersonalizationFont[],
+  mainText = "",
+): StaffPdfLine[] {
+  return [
+    fixedStaffPdfMain(layout, { ...newPdfLine(layout, fonts), text: mainText }),
+    ...(layout.extra_lines || []).map((line): StaffPdfLine => ({
+      ...line,
+      kind: "extra",
+      text: "",
+      fontId: staffPdfFont(line.fontId, fonts)?.id || STAFF_PDF_SYSTEM_FONT.id,
+    })),
+  ];
+}
+
+function normalizeStaffPdfLine(line: unknown, fonts?: PersonalizationFont[]): StaffPdfLine {
+  if (
+    !object(line) ||
+    typeof line.id !== "string" ||
+    !/^[a-f0-9-]{36}$/.test(line.id) ||
+    typeof line.text !== "string" ||
+    line.text.length > 500 ||
+    /[\x00-\x08\x0b-\x1f\x7f]/.test(line.text) ||
+    (line.kind !== undefined && !["main", "extra"].includes(line.kind)) ||
+    typeof line.fontId !== "string" ||
+    !/^[A-Za-z0-9_-]{1,100}$/.test(line.fontId) ||
+    (fonts !== undefined && !staffPdfFont(line.fontId, fonts)) ||
+    !number(line.fontSize, 1, 4000) ||
+    !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
+    !["left", "center", "right"].includes(line.align) ||
+    !number(line.rotation, -180, 180)
+  )
+    throw new Error("Revise as linhas, as fontes, as cores e os tamanhos.");
+  const box = (v: any): PdfTextBox => {
+    if (
+      !object(v) ||
+      !number(v.x, 0, 60000) ||
+      !number(v.y, 0, 60000) ||
+      !number(v.width, 1, 60000) ||
+      !number(v.height, 1, 60000)
+    )
+      throw new Error("Posição de texto inválida.");
+    return { x: v.x, y: v.y, width: v.width, height: v.height };
+  };
+  return {
+    id: line.id,
+    ...(line.kind === undefined ? {} : { kind: line.kind }),
+    text: line.text,
+    fontId: line.fontId,
+    fontSize: line.fontSize,
+    color: line.color.toLowerCase(),
+    align: line.align,
+    rotation: line.rotation,
+    ...(line.effects === undefined
+      ? {}
+      : { effects: normalizePdfTextEffects(line.effects) }),
+    portrait: box(line.portrait),
+    landscape: box(line.landscape),
+  };
+}
+
 export function normalizeStaffPdfJob(
   value: unknown,
   fonts: PersonalizationFont[],
@@ -478,49 +555,7 @@ export function normalizeStaffPdfJob(
     value.lines.length > STAFF_PDF_MAX_LINES
   )
     throw new Error("Edição do PDF inválida.");
-  const lines = value.lines.map((line: any): StaffPdfLine => {
-    if (
-      !object(line) ||
-      typeof line.id !== "string" ||
-      !/^[a-f0-9-]{36}$/.test(line.id) ||
-      typeof line.text !== "string" ||
-      line.text.length > 500 ||
-      /[\x00-\x08\x0b-\x1f\x7f]/.test(line.text) ||
-      (line.kind !== undefined && !["main", "extra"].includes(line.kind)) ||
-      !staffPdfFont(line.fontId, fonts) ||
-      !number(line.fontSize, 1, 4000) ||
-      !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
-      !["left", "center", "right"].includes(line.align) ||
-      !number(line.rotation, -180, 180)
-    )
-      throw new Error("Revise as linhas, as fontes, as cores e os tamanhos.");
-    const box = (v: any): PdfTextBox => {
-      if (
-        !object(v) ||
-        !number(v.x, 0, 60000) ||
-        !number(v.y, 0, 60000) ||
-        !number(v.width, 1, 60000) ||
-        !number(v.height, 1, 60000)
-      )
-        throw new Error("Posição de texto inválida.");
-      return { x: v.x, y: v.y, width: v.width, height: v.height };
-    };
-    return {
-      id: line.id,
-      ...(line.kind === undefined ? {} : { kind: line.kind }),
-      text: line.text,
-      fontId: line.fontId,
-      fontSize: line.fontSize,
-      color: line.color.toLowerCase(),
-      align: line.align,
-      rotation: line.rotation,
-      ...(line.effects === undefined
-        ? {}
-        : { effects: normalizePdfTextEffects(line.effects) }),
-      portrait: box(line.portrait),
-      landscape: box(line.landscape),
-    };
-  });
+  const lines = value.lines.map((line) => normalizeStaffPdfLine(line, fonts));
   if (
     (lines.some((line) => line.kind) &&
       (lines[0].kind !== "main" ||

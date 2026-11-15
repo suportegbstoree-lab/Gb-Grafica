@@ -231,6 +231,20 @@ test("PDF-library access is independent from products/orders and template permis
     );
     assert.equal((await request("/documents", "manager", {})).status, 403);
   }));
+test("the barcode default is shared and validates generator access and dimensions", async () =>
+  scenario(async ({ request, docs }) => {
+    const original = { widthMm: 45, heightMm: 12, horizontalScale: 1.8 };
+    const changed = { widthMm: 60, heightMm: 14, horizontalScale: 1.2 };
+    assert.deepEqual((await (await request("/library", "generator")).json()).barcodeDefault, original);
+    const route = "/library/barcode-default";
+    assert.equal((await request(route, "manager", { size: changed })).status, 403);
+    assert.equal((await request(route, "generator", { size: { ...changed, heightMm: 0 } })).status, 422);
+    assert.equal((await request(route, "generator", { size: { ...changed, barcode: "ignored" } })).status, 200);
+    assert.deepEqual(docs.get("_staffPdfSettings/barcode"), changed);
+    assert.deepEqual((await (await request("/library", "manager")).json()).barcodeDefault, changed);
+    assert.equal((await request(route, "generator", { size: original })).status, 200);
+    assert.deepEqual(docs.get("_staffPdfSettings/barcode"), original);
+  }));
 test("saving a mold publishes its changes to products and variations with the same layout ID", async () =>
   scenario(async ({ request, docs }) => {
     const name = "Vinculado_template";

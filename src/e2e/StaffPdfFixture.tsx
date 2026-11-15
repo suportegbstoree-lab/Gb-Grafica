@@ -7,6 +7,7 @@ import {
   type StaffPdfRecipe,
 } from "../lib/staffPdfBatch";
 import type { StaffPdfApi } from "../services/staffPdfService";
+import type { StaffBarcodeSize } from "../lib/staffPdfBarcode";
 import {
   DEFAULT_DECORATIVE_INITIAL_PERCENT,
   findAlphabetLetter,
@@ -75,12 +76,18 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
     const files = new Map<string, Blob>(),
       alphabets = new Map<string, Record<string, File>>(),
       saved = new Map<string, StaffDocumentView>();
+    let barcodeDefault: StaffBarcodeSize | undefined;
     const value: StaffPdfApi = {
       list: async () => ({
         bases: structuredClone(bases),
         layouts: structuredClone(layouts),
         truncated: false,
+        barcodeDefault,
       }),
+      saveBarcodeDefault: async (size) => {
+        barcodeDefault = { ...size };
+        return barcodeDefault;
+      },
       prepareProductCopy: async () => {
         throw new Error("Use o editor de produtos para vincular.");
       },

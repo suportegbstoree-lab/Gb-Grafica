@@ -24,6 +24,11 @@ export const DEFAULT_STAFF_BARCODE_SIZE: Readonly<StaffBarcodeSize> = {
   heightMm: 18,
   horizontalScale: STAFF_BARCODE_HORIZONTAL_SCALE,
 };
+// Previously saved recipes without a size still use the renderer default above.
+export const STAFF_PDF_BARCODE_DEFAULT: Readonly<StaffBarcodeSize> = {
+  ...DEFAULT_STAFF_BARCODE_SIZE,
+  heightMm: 12,
+};
 
 export function isStaffBarcodeVersion(
   value: unknown,

@@ -1,4 +1,5 @@
 import React from "react";
+import { AlignCenter, AlignLeft, AlignRight, Bold, Grid2X2, Minus, Plus, TextCursorInput } from "lucide-react";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
   STAFF_PDF_SYSTEM_FONT,
@@ -8,8 +9,7 @@ import {
 import type { PersonalizationFont } from "../lib/textCustomization";
 
 const field = "rounded border border-gray-700 bg-black px-2 py-1 text-sm";
-const button =
-  "rounded border border-gray-700 px-2 py-1 text-sm hover:bg-gray-800";
+const control = "inline-flex h-8 min-w-7 items-center justify-center rounded-md bg-[#1d5f94] px-1.5 text-sm text-white hover:bg-[#2679b9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 disabled:opacity-50";
 
 function Slider({
   label,
@@ -67,6 +67,7 @@ export default function StaffPdfTextEditor({
   disabled,
   onSelect,
   onChange,
+  allowTextEditing = true,
 }: {
   lines: StaffPdfLine[];
   selected?: string;
@@ -74,6 +75,7 @@ export default function StaffPdfTextEditor({
   disabled: boolean;
   onSelect: (id: string) => void;
   onChange: (id: string, patch: Partial<StaffPdfLine>) => void;
+  allowTextEditing?: boolean;
 }) {
   const [panel, setPanel] = React.useState<"effects" | "spacing" | "opacity">();
   const line = lines.find((item) => item.id === selected) ?? lines[0];
@@ -85,20 +87,23 @@ export default function StaffPdfTextEditor({
     change({ effects: { ...effects, ...patch } });
   const toggle = (next: typeof panel) =>
     setPanel(panel === next ? undefined : next);
+  const AlignmentIcon = { left: AlignLeft, center: AlignCenter, right: AlignRight }[line.align];
+  const resize = (amount: number) =>
+    change({ fontSize: Math.max(1, Math.min(4000, line.fontSize + amount)) });
   return (
     <fieldset
       disabled={disabled}
-      className="min-w-0 space-y-3 rounded-lg border border-gray-700 bg-[#17191f] p-2"
+      className="min-w-0 space-y-2 rounded-lg border border-[#38516d] bg-[#21242d] p-2"
     >
-      <legend className="px-1 text-xs font-semibold text-gray-300">
+      <legend className="sr-only">
         Formatação do texto
       </legend>
-      <div className="flex flex-wrap items-end gap-2">
+      <div className="flex flex-wrap items-center gap-1">
         {lines.length > 1 && (
-          <label className="grid text-xs">
-            Texto selecionado
+          <label className="min-w-0">
+            <span className="sr-only">Texto selecionado</span>
             <select
-              className={field}
+              className={`${control} w-32 max-w-full`}
               value={line.id}
               onChange={(e) => onSelect(e.target.value)}
             >
@@ -110,11 +115,11 @@ export default function StaffPdfTextEditor({
             </select>
           </label>
         )}
-        <label className="grid min-w-0 max-w-full text-xs">
-          Fonte
+        <label className="min-w-0 max-w-full">
+          <span className="sr-only">Fonte</span>
           <select
             value={line.fontId}
-            className={`${field} max-w-full`}
+            className={`${control} max-w-40`}
             onChange={(e) => change({ fontId: e.target.value })}
           >
             {[
@@ -127,34 +132,45 @@ export default function StaffPdfTextEditor({
             ))}
           </select>
         </label>
-        <label className="grid text-xs">
-          Tamanho (px)
+        <div className="flex items-center gap-1">
+          <button type="button" className={control} aria-label="Diminuir tamanho"
+            title="Diminuir tamanho" disabled={line.fontSize <= 1} onClick={() => resize(-1)}>
+            <Minus size={14} aria-hidden="true" />
+          </button>
           <input
+            aria-label="Tamanho (px)"
             type="number"
             min={1}
             max={4000}
-            className={`${field} w-24`}
+            className="h-8 w-14 rounded-md border border-[#596371] bg-[#323741] px-1 text-center text-sm text-white"
             value={line.fontSize}
             onChange={(e) => {
               const n = e.target.valueAsNumber;
               if (n >= 1 && n <= 4000) change({ fontSize: n });
             }}
           />
-        </label>
+          <button type="button" className={control} aria-label="Aumentar tamanho"
+            title="Aumentar tamanho" disabled={line.fontSize >= 4000} onClick={() => resize(1)}>
+            <Plus size={14} aria-hidden="true" />
+          </button>
+        </div>
         {extra && (
           <>
             <button
               type="button"
-              className={button}
+              className={`${control} aria-pressed:bg-blue-400 aria-pressed:text-gray-950`}
+              aria-label="Negrito"
+              title="Negrito"
               aria-pressed={effects.bold}
               onClick={() => style({ bold: !effects.bold })}
             >
-              Negrito
+              <Bold size={16} aria-hidden="true" />
             </button>
-            <label className="grid text-xs">
-              Alinhamento
+            <label className={`${control} relative focus-within:ring-2 focus-within:ring-blue-300`} title="Alinhamento">
+              <span className="sr-only">Alinhamento</span>
+              <AlignmentIcon size={16} aria-hidden="true" />
               <select
-                className={field}
+                className="absolute inset-0 cursor-pointer opacity-0"
                 value={line.align}
                 onChange={(e) =>
                   change({ align: e.target.value as StaffPdfLine["align"] })
@@ -165,10 +181,10 @@ export default function StaffPdfTextEditor({
                 <option value="right">Direita</option>
               </select>
             </label>
-            <label className="grid text-xs">
-              Cor
+            <label className="inline-flex" title="Cor">
+              <span className="sr-only">Cor</span>
               <input
-                className={`${field} h-8 w-11`}
+                className="h-8 w-9 cursor-pointer rounded-md border border-[#596371] bg-[#151820] p-0.5"
                 type="color"
                 value={line.color}
                 onChange={(e) => change({ color: e.target.value })}
@@ -176,7 +192,7 @@ export default function StaffPdfTextEditor({
             </label>
             <button
               type="button"
-              className={button}
+              className={control}
               aria-expanded={panel === "effects"}
               onClick={() => toggle("effects")}
             >
@@ -184,24 +200,28 @@ export default function StaffPdfTextEditor({
             </button>
             <button
               type="button"
-              className={button}
+              className={control}
+              aria-label="Opções de letra"
+              title="Opções de letra"
               aria-expanded={panel === "spacing"}
               onClick={() => toggle("spacing")}
             >
-              Opções de letra
+              <TextCursorInput size={16} aria-hidden="true" />
             </button>
             <button
               type="button"
-              className={button}
+              className={control}
+              aria-label="Transparência"
+              title="Transparência"
               aria-expanded={panel === "opacity"}
               onClick={() => toggle("opacity")}
             >
-              Transparência
+              <Grid2X2 size={16} aria-hidden="true" />
             </button>
           </>
         )}
       </div>
-      {extra && (
+      {extra && allowTextEditing && (
         <label className="grid text-xs">
           Texto da linha extra
           <textarea

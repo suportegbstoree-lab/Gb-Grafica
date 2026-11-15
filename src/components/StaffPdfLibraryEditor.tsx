@@ -11,6 +11,7 @@ import {
   DEFAULT_DECORATIVE_INITIAL_PERCENT,
 } from "../lib/decorativeInitial";
 import StaffPdfPreview from "./StaffPdfPreview";
+import StaffPdfTextEditor from "./StaffPdfTextEditor";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
   baseForPdfLayout,
@@ -21,10 +22,15 @@ import {
   normalizePdfLayout,
   parsePdfLayoutMap,
   newPdfLine,
+  staffPdfLayoutLines,
+  STAFF_PDF_MAX_LINES,
+  STAFF_PDF_SYSTEM_FONT,
   matchPdfLayout,
   type StaffPdfBase,
   type StaffPdfLayout,
   type StaffPdfLayoutView,
+  type StaffPdfLine,
+  type PdfTextLayout,
 } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
 import type { StaffPdfApi, StaffPdfLibrary } from "../services/staffPdfService";
@@ -71,6 +77,7 @@ export default function StaffPdfLibraryEditor({
     [baseId, setBaseId] = React.useState(""),
     [original, setOriginal] = React.useState<Blob | null>(null),
     [sample, setSample] = React.useState("Texto de exemplo"),
+    [previewSelection, setPreviewSelection] = React.useState("sample"),
     [confirm, setConfirm] = React.useState<{
       kind: "base" | "layout";
       id: string;
@@ -165,6 +172,7 @@ export default function StaffPdfLibraryEditor({
           },
     );
     setBaseId(linked ? linked.id : "");
+    setPreviewSelection("sample");
     setOriginal(null);
     setError("");
     if (linked)
@@ -179,6 +187,34 @@ export default function StaffPdfLibraryEditor({
     setEditing((old) =>
       old ? { ...old, layout: { ...old.layout, ...value } } : old,
     );
+  function changeExtra(id: string, update: Partial<StaffPdfLine>) {
+    const { text, kind, ...style } = update;
+    setEditing((old) => old && ({
+      ...old,
+      layout: {
+        ...old.layout,
+        extra_lines: old.layout.extra_lines?.map((line) =>
+          line.id === id ? { ...line, ...style } : line,
+        ),
+      },
+    }));
+  }
+  function changePreviewBox(id: string, orientation: PdfTextLayout, update: { x: number; y: number } | { width: number; height: number }) {
+    if (id === "sample") {
+      const geometry = "x" in update ? { pos_x: update.x, pos_y: update.y }
+        : { max_width_pixels: update.width, max_height_pixels: update.height };
+      patch(orientation === "portrait" ? geometry : Object.fromEntries(
+        Object.entries(geometry).map(([key, value]) => [`${key}_landscape`, value]),
+      ) as Partial<StaffPdfLayout>);
+    } else {
+      const line = editing?.layout.extra_lines?.find((line) => line.id === id);
+      if (line) changeExtra(id, { [orientation]: { ...line[orientation], ...update } });
+    }
+  }
+  const extraLines = editing?.layout.extra_lines ?? [];
+  const previewLines = editing ? staffPdfLayoutLines(editing.layout, fonts, sample).map((line, index) =>
+    index ? { ...line, text: `Linha extra ${index}` } : { ...line, id: "sample", kind: undefined },
+  ) : [];
   const base = data.bases.find((b) => b.id === baseId);
   const { initial, initialError } = useStaffPdfInitial(
     api,
@@ -684,6 +720,38 @@ export default function StaffPdfLibraryEditor({
                   </div>
                 </fieldset>
               ))}
+              <fieldset className="space-y-2 rounded-xl border border-gray-700 p-3">
+                <legend>Linhas extras do molde</legend>
+                {extraLines.map((line, index) => (
+                  <div key={line.id} className="flex items-center justify-between gap-2">
+                    <button type="button" className="rounded-lg px-2 py-1 text-sm aria-pressed:bg-blue-900"
+                      aria-pressed={previewSelection === line.id}
+                      onClick={() => setPreviewSelection(line.id)} disabled={busy}>
+                      Linha extra {index + 1}
+                    </button>
+                    <button type="button" className={deleteIconButton} disabled={busy}
+                      aria-label={`Excluir linha extra ${index + 1}`}
+                      onClick={() => {
+                        patch({ extra_lines: extraLines.filter(({ id }) => id !== line.id) });
+                        if (previewSelection === line.id) setPreviewSelection("sample");
+                      }}>
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="rounded-lg border border-gray-700 px-3 py-2 text-sm"
+                  disabled={busy || extraLines.length + 1 >= STAFF_PDF_MAX_LINES}
+                  onClick={() => {
+                    const { text, kind, ...line } = newPdfLine(editing.layout, fonts, extraLines.length + 1);
+                    patch({ extra_lines: [...extraLines, line] });
+                    setPreviewSelection(line.id);
+                  }}>
+                  Adicionar linha de texto extra
+                </button>
+                {extraLines.length > 0 && (
+                  <p className="text-xs text-gray-400">Posicione as linhas na prévia. Elas começam vazias em cada pedido.</p>
+                )}
+              </fieldset>
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -799,7 +867,19 @@ export default function StaffPdfLibraryEditor({
                 Salvar molde
               </button>
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 space-y-3">
+              {extraLines.length > 0 && (
+                <StaffPdfTextEditor lines={previewLines} selected={previewSelection} fonts={fonts}
+                  disabled={busy} allowTextEditing={false} onSelect={setPreviewSelection}
+                  onChange={(id, update) => {
+                    if (id !== "sample") changeExtra(id, update);
+                    else patch({
+                      ...(update.fontId !== undefined ? { font_name: update.fontId === STAFF_PDF_SYSTEM_FONT.id ? "" : update.fontId } : {}),
+                      ...(update.fontSize !== undefined ? { font_size: update.fontSize } : {}),
+                    });
+                  }}
+                />
+              )}
               {initialError && (
                 <p role="alert" className="mb-2 text-sm text-red-300">
                   {initialError}
@@ -810,33 +890,13 @@ export default function StaffPdfLibraryEditor({
                   original={original}
                   initial={initial}
                   pageCount={base.pageCount}
-                  lines={[
-                    {
-                      ...newPdfLine(editing.layout, fonts),
-                      id: "sample",
-                      text: sample,
-                    },
-                  ]}
+                  lines={previewLines}
                   fonts={fonts}
-                  selected="sample"
+                  selected={previewSelection}
+                  onSelect={setPreviewSelection}
                   fitMargin={editing.layout.fit_margin}
-                  onMove={(_, x, y, orientation) =>
-                    patch(
-                      orientation === "portrait"
-                        ? { pos_x: x, pos_y: y }
-                        : { pos_x_landscape: x, pos_y_landscape: y },
-                    )
-                  }
-                  onResize={(_, width, height, orientation) =>
-                    patch(
-                      orientation === "portrait"
-                        ? { max_width_pixels: width, max_height_pixels: height }
-                        : {
-                            max_width_pixels_landscape: width,
-                            max_height_pixels_landscape: height,
-                          },
-                    )
-                  }
+                  onMove={(id, x, y, orientation) => changePreviewBox(id, orientation, { x, y })}
+                  onResize={(id, width, height, orientation) => changePreviewBox(id, orientation, { width, height })}
                 />
               ) : (
                 <p className="grid min-h-56 place-items-center rounded-xl bg-gray-950 p-3 text-sm text-gray-400">

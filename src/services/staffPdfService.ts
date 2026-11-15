@@ -1,6 +1,7 @@
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { staffPdfBatchApi } from "./staffPdfBatchService";
 import type { StaffPdfBatchApi } from "../lib/staffPdfBatch";
+import type { StaffBarcodeSize } from "../lib/staffPdfBarcode";
 import { ref, uploadBytesResumable } from "firebase/storage";
 import { auth, storage } from "../firebase";
 import {
@@ -27,10 +28,12 @@ export interface StaffPdfLibrary {
   layouts: StaffPdfLayoutView[];
   truncated: boolean;
   pendingUploads?: Array<{ id: string; name: string }>;
+  barcodeDefault?: StaffBarcodeSize;
 }
 export interface StaffPdfApi {
   batches?: StaffPdfBatchApi;
   list(): Promise<StaffPdfLibrary>;
+  saveBarcodeDefault(size: StaffBarcodeSize): Promise<StaffBarcodeSize>;
   baseFile(id: string): Promise<Blob>;
   prepareProductCopy(
     productId: string,
@@ -77,6 +80,8 @@ import { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 export const staffPdfApi: StaffPdfApi = {
   batches: staffPdfBatchApi,
   list: () => staffPdfRequest(""),
+  saveBarcodeDefault: async (size) =>
+    (await staffPdfRequest("/barcode-default", { size })).barcodeDefault,
   baseFile: async (id) =>
     readStaffPdf(
       (await staffPdfRequest(`/bases/${encodeURIComponent(id)}/file`)).url,

@@ -16,6 +16,7 @@ import { PDFDocument, degrees } from "pdf-lib";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
 import type { WorkActor } from "./workRouter.js";
 import { OperationsError } from "../lib/operations.js";
+import { normalizeStaffBarcodeSize, staffBarcodeSizePixels, STAFF_PDF_BARCODE_DEFAULT } from "../lib/staffPdfBarcode.js";
 import {
   STAFF_DOCUMENT_MAX_BYTES,
   validDocumentId,
@@ -233,10 +234,23 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     return actor;
   };
   router.use("/batches", createStaffPdfBatchRouter(deps));
+  const barcodeSettings = () => services().db.collection("_staffPdfSettings").doc("barcode");
+  router.post("/barcode-default", action(async (req, res) => {
+    const actor = res.locals.user as WorkActor;
+    if (!actor.admin && !actor.permissions?.includes("documents.generate"))
+      throw new OperationsError("Sua função não permite editar o padrão de código de barras.", 403);
+    const barcodeDefault = input(() => {
+      const size = normalizeStaffBarcodeSize(req.body?.size);
+      staffBarcodeSizePixels("GB0000000000000", size);
+      return size;
+    });
+    await barcodeSettings().set(barcodeDefault);
+    res.json({ barcodeDefault });
+  }));
   router.get(
     "/",
     action(async (_req, res) => {
-      const [bases, layouts, products] = await Promise.all([
+      const [bases, layouts, products, barcode] = await Promise.all([
         services()
           .db.collection("_staffPdfBases")
           .where("status", "==", "ready")
@@ -248,6 +262,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           .limit(1001)
           .get(),
         services().db.collection("anuncios").limit(501).get(),
+        barcodeSettings().get(),
       ]);
       const internal = bases.docs.slice(0, 500).map((d) => {
         const b = d.data();
@@ -286,6 +301,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
                 .get()
             : undefined;
       res.json({
+        barcodeDefault: barcode.data() ?? STAFF_PDF_BARCODE_DEFAULT,
         bases: [...internal, ...catalog],
         pendingUploads:
           pending?.docs.map((d) => ({ id: d.id, name: d.data().name })) || [],
