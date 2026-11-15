@@ -353,15 +353,44 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   await toolbar.getByLabel("Texto da linha extra").fill("SEGUNDA");
   await toolbar.getByLabel("Tamanho (px)", { exact: true }).fill("90");
   await toolbar.getByRole("button", { name: "Negrito" }).click();
+  await expect(page.locator('canvas[aria-label="Prévia do PDF interno"]')).toBeVisible();
+  await toolbar.scrollIntoViewIfNeeded();
+  const measure = () => toolbar.evaluate((bar) => {
+    const canvas = document.querySelector('canvas[aria-label="Prévia do PDF interno"]')!;
+    return {
+      belowCanvas: bar.getBoundingClientRect().top >= canvas.parentElement!.getBoundingClientRect().bottom,
+      canvasY: canvas.getBoundingClientRect().y + window.scrollY,
+      barY: bar.getBoundingClientRect().y,
+      barHeight: bar.getBoundingClientRect().height,
+    };
+  });
+  const before = await measure();
+  expect(before.belowCanvas).toBe(true);
   await toolbar.getByRole("button", { name: "Efeitos" }).click();
+  const effects = toolbar.getByRole("group", { name: "Efeitos", exact: true });
+  await expect(effects).toBeVisible();
+  await expect(effects).toHaveCSS("position", "fixed");
   await toolbar.getByLabel("Contorno", { exact: true }).check();
   await toolbar.getByLabel("Sombra", { exact: true }).check();
   await toolbar.getByLabel("Brilho", { exact: true }).check();
+  await expect(effects.getByLabel("Espessura do contorno", { exact: true })).toHaveCount(0);
+  expect(await measure()).toEqual(before);
+  await effects.getByRole("button", { name: "Ajustes do contorno" }).click();
+  await effects.getByLabel("Espessura do contorno", { exact: true }).fill("6");
+  expect(await measure()).toEqual(before);
+  await effects.getByRole("button", { name: "Cor do contorno", exact: true }).click();
+  const palette = effects.getByRole("group", { name: "Cor do contorno", exact: true });
+  await palette.getByLabel("Cor do contorno (HEX)").fill("#243a56");
+  await page.keyboard.press("Escape");
+  await expect(palette).toBeHidden();
+  await expect(effects).toBeVisible();
+  await effects.getByRole("button", { name: "Curvar", exact: true }).click();
   await toolbar.getByLabel("Curvatura", { exact: true }).fill("20");
+  expect(await measure()).toEqual(before);
   await page.getByLabel("Página da prévia interna").selectOption("3");
-  await toolbar
-    .getByLabel("Texto selecionado")
-    .selectOption({ label: "Texto principal" });
+  const selectText = toolbar.getByRole("button", { name: "Texto selecionado" });
+  await selectText.click();
+  await toolbar.getByRole("option", { name: "Texto principal", exact: true }).click();
   await expect(toolbar.getByRole("button", { name: "Efeitos" })).toHaveCount(0);
   await expect(toolbar.getByRole("button", { name: "Negrito" })).toHaveCount(0);
   await page
@@ -371,9 +400,8 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   await page
     .getByRole("button", { name: "Editar item da fila", exact: true })
     .click();
-  await toolbar
-    .getByLabel("Texto selecionado")
-    .selectOption({ label: "Linha extra 1" });
+  await selectText.click();
+  await toolbar.getByRole("option", { name: "Linha extra 1", exact: true }).click();
   await expect(toolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue(
     "90",
   );
@@ -821,6 +849,15 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await toolbar.getByLabel("Tamanho (px)", { exact: true }).fill("87");
   await toolbar.getByRole("button", { name: "Aumentar tamanho" }).click();
   await toolbar.getByRole("button", { name: "Negrito", exact: true }).click();
+  await toolbar.getByRole("button", { name: "Fonte", exact: true }).click();
+  await toolbar.getByRole("searchbox", { name: "Buscar fonte" }).fill("Serif");
+  await toolbar.getByRole("searchbox", { name: "Buscar fonte" }).press("ArrowDown");
+  await toolbar.getByRole("option", { name: "Serif", exact: true }).press("Enter");
+  await expect(toolbar.getByRole("button", { name: "Fonte", exact: true })).toHaveText("Serif");
+  await toolbar.getByRole("button", { name: "Efeitos", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(toolbar.getByRole("group", { name: "Efeitos", exact: true })).toBeHidden();
+  await expect(mold).toBeVisible();
   await expect(toolbar.getByLabel("Texto da linha extra")).toHaveCount(0);
   await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
 
@@ -834,7 +871,8 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await page.getByRole("button", { name: "Editar item da fila", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Texto principal", exact: true })).toHaveValue("ANA");
-  await toolbar.getByLabel("Texto selecionado").selectOption({ label: "Linha extra 1" });
+  await toolbar.getByRole("button", { name: "Texto selecionado" }).click();
+  await toolbar.getByRole("option", { name: "Linha extra 1", exact: true }).click();
   await expect(toolbar.getByLabel("Texto da linha extra")).toHaveValue("");
   await expect(toolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue("88");
   await expect(toolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");

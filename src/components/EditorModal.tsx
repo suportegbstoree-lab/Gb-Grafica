@@ -11,7 +11,11 @@ export default function EditorModal({ title, children, onClose, busy = false, fo
     const overflow = document.body.style.overflow; document.body.style.overflow = 'hidden';
     dialog.current?.querySelector<HTMLElement>('button')?.focus();
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); if (!blocked.current) close.current(); }
+      if (event.key === 'Escape') {
+        if (dialog.current?.querySelector(':popover-open')) return;
+        event.preventDefault();
+        if (!blocked.current) close.current();
+      }
       if (event.key !== 'Tab') return;
       const items = [...(dialog.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') || [])].filter(item => item.getClientRects().length);
       const first = items[0], last = items.at(-1);

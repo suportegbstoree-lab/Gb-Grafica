@@ -1553,16 +1553,6 @@ export default function StaffPdfWorkspace({
                   </button>
                 )}
               </div>
-              {mold && lines.length > 1 && (
-                <StaffPdfTextEditor
-                  lines={lines}
-                  selected={selected}
-                  fonts={fonts}
-                  disabled={busy}
-                  onSelect={setSelected}
-                  onChange={updateLine}
-                />
-              )}
               {loaded ? (
                 <StaffPdfPreview
                   original={loaded.original}
@@ -1594,6 +1584,16 @@ export default function StaffPdfWorkspace({
                 <p role="alert" className="text-red-300">
                   {initialError}
                 </p>
+              )}
+              {loaded && mold && (lines.length > 1 || mainFormatting) && (
+                <StaffPdfTextEditor
+                  lines={lines}
+                  selected={selected}
+                  fonts={fonts}
+                  disabled={busy}
+                  onSelect={setSelected}
+                  onChange={updateLine}
+                />
               )}
             </div>
           </div>
@@ -1782,24 +1782,6 @@ export default function StaffPdfWorkspace({
               {error}
             </p>
           )}
-        </EditorModal>
-      )}
-      {visible && mainFormatting && mold && lines.length === 1 && (
-        <EditorModal
-          title="Fonte e tamanho do texto principal"
-          onClose={() => setMainFormatting(false)}
-          closeLabel="Fechar formatação principal"
-          doneLabel="Concluir"
-          footerText=""
-        >
-          <StaffPdfTextEditor
-            lines={lines}
-            selected={selected}
-            fonts={fonts}
-            disabled={busy}
-            onSelect={setSelected}
-            onChange={updateLine}
-          />
         </EditorModal>
       )}
       {visible && picker && (
