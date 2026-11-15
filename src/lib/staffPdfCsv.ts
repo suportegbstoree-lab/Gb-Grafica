@@ -6,6 +6,7 @@ import {
 } from "./staffPdf.js";
 
 const separators = [";", ",", "\t", "|"];
+const MAX_CSV_RECORDS = 10_000;
 
 function readRows(csv: string, separator: string, limit: number): string[][] {
   const rows: string[][] = [];
@@ -69,8 +70,9 @@ export function readStaffPdfCsv(input: string, separator?: string) {
   }
   if (!separators.includes(separator))
     throw new Error("Separador CSV inválido.");
-  const rows = readRows(csv, separator, 10002);
-  if (rows.length > 10001) throw new Error("O CSV excede 10.000 registros.");
+  const rows = readRows(csv, separator, MAX_CSV_RECORDS + 2);
+  if (rows.length > MAX_CSV_RECORDS + 1)
+    throw new Error("O CSV excede 10.000 registros.");
   if (!rows.length) throw new Error("O CSV está vazio.");
   return { rows, separator };
 }
@@ -138,6 +140,7 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
       "template",
       "modelo",
       "base",
+      "af_clean",
       "base_pdf",
       "nome_base",
       "nome_da_base",
@@ -159,30 +162,36 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
   };
 }
 
-export function isIgnoredStaffPdfCsvColumn(header: string) {
-  return key(header) === "af_clean";
+export function staffPdfNameColumn(headers: string[]) {
+  return headers.findIndex((header) => key(header) === "nome");
 }
 
-export function staffSheetOrders(
+export function expandStaffPdfQuantities(
   rows: string[][],
-  columns: { reference: number; template: number; text: number },
-  matchSku: (sku: string) => string,
+  quantityColumn: number,
+  firstRow = 2,
 ) {
-  const seen = new Set<string>();
-  return rows
-    .filter((row) => row.some((cell) => cell.trim()))
-    .map((row) => {
-      const result = row.slice();
-      const reference = row[columns.reference]?.trim();
-      const sku = row[columns.template]?.trim() || "";
-      if (reference && sku) {
-        const key = JSON.stringify([reference, sku]);
-        if (seen.has(key)) result[columns.text] = "";
-        seen.add(key);
+  if (quantityColumn < 0) return rows;
+  const expanded: string[][] = [];
+  for (const [index, row] of rows.entries()) {
+    const value = row[quantityColumn]?.trim() || "";
+    const quantity = value ? Number(value.replace(",", ".")) : 1;
+    if ((value && !/^\d+(?:[.,]0+)?$/.test(value)) ||
+      !Number.isSafeInteger(quantity) || quantity < 1) {
+      throw new Error(`Informe uma quantidade inteira maior que zero na linha ${firstRow + index}.`);
+    }
+    if (expanded.length + quantity > MAX_CSV_RECORDS)
+      throw new Error("O CSV excede 10.000 registros após separar as quantidades.");
+    if (quantity === 1) expanded.push(row);
+    else {
+      for (let copy = 0; copy < quantity; copy++) {
+        const unit = row.slice();
+        unit[quantityColumn] = "1";
+        expanded.push(unit);
       }
-      result[columns.template] = matchSku(sku);
-      return result;
-    });
+    }
+  }
+  return expanded;
 }
 
 const modelStem = (name: string) =>
@@ -233,16 +242,18 @@ export function createStaffSkuMatcher(layouts: StaffPdfLayoutView[]) {
   };
 }
 
+const quantityHeaders = [
+  "quantidade_de_itens",
+  "quantidade_itens",
+  "qtd_do_produto",
+  "quantidade",
+];
+
 export const STAFF_SHEET_FIELDS = [
   {
     key: "modelo",
     label: "SKU",
-    aliases: ["sku", "sku_do_produto", "modelo_do_sku", "modelo", "base"],
-  },
-  {
-    key: "nome",
-    label: "Notas do comprador",
-    aliases: ["notas_do_comprador", "nota_do_comprador", "nome"],
+    aliases: ["sku", "sku_do_produto", "modelo_do_sku", "modelo", "base", "af_clean"],
   },
   {
     key: "barcode",
@@ -264,15 +275,13 @@ export const STAFF_SHEET_FIELDS = [
   {
     key: "quantidade_itens",
     label: "Quantidade de itens",
-    aliases: [
-      "quantidade_de_itens",
-      "quantidade_itens",
-      "qtd_do_produto",
-      "quantidade",
-    ],
+    aliases: quantityHeaders,
   },
 ] as const;
 export type StaffSheetField = (typeof STAFF_SHEET_FIELDS)[number]["key"];
+export function staffPdfQuantityColumn(headers: string[]) {
+  return headers.findIndex((header) => quantityHeaders.includes(key(header)));
+}
 
 export function staffSheetColumn(
   value: string,

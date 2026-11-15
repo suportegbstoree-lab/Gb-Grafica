@@ -8,7 +8,7 @@ import {
   PDFDocument,
   PDFRawStream,
 } from "pdf-lib";
-import { zipSync, strToU8 } from "fflate";
+import { zipSync, unzipSync, strToU8 } from "fflate";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
 test("renames an uploaded PDF and reopens its existing mold", async ({ page }) => {
@@ -177,7 +177,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     ),
   });
   await page
-    .getByRole("button", { name: "Adicionar 2 pedido(s) da página à fila" })
+    .getByRole("button", { name: "Enviar todos os pedidos válidos à fila" })
     .click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   const order = page
@@ -212,13 +212,13 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     table
       .getByRole("row")
       .filter({ hasText: "002" })
-      .getByText("Luísa", { exact: true }),
+      .getByRole("button", { name: "Colar nome na linha 3" }),
   ).toBeVisible();
   const download = page.waitForEvent("download");
   await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const csv = await readFile((await (await download).path())!, "utf8");
   expect(csv).toContain('"001","Kit de teste","Érica",,"BR2684621549924"');
-  expect(csv).toContain('"002","Kit de teste","Luísa",,"BR2684621549925"');
+  expect(csv).toContain('"002","Kit de teste",,,"BR2684621549925"');
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await order.getByRole("button", { name: "Editar item da fila" }).click();
@@ -244,7 +244,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
   );
   await expect(
     table.getByRole("button", { name: "Colar nome na linha 3" }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.evaluate(() =>
     navigator.clipboard.writeText("  Poliana Vitória\n"),
   );
@@ -442,7 +442,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2</v></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2.0</v></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf?resume");
@@ -469,9 +469,10 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   const csv = await readFile((await file.path())!, "utf8");
   expect(csv).toContain("00123");
   expect(csv).toContain(
-    '"pedido_plataforma","barcode","af_clean","modelo","nome","prazo_envio","quantidade_itens"',
+    '"pedido_plataforma","barcode","af_clean","nome","prazo_envio","quantidade_itens"',
   );
-  expect(csv).toContain('"00123",,,"Kit de teste","Ana",,"2"');
+  expect(csv.split(/\r?\n/).filter((line) => line === '"00123",,"Kit de teste",,,"1"'))
+    .toHaveLength(2);
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
 
@@ -482,12 +483,11 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await page
     .getByRole("button", { name: "Converter e revisar pedidos" })
     .click();
-  await expect(page.getByRole("row").filter({ hasText: "00123" })).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "00123" })).toHaveCount(2);
   await page.reload();
   await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
-  const record = page.getByRole("row").filter({ hasText: "00123" });
-  await expect(record).toContainText("Ana");
-  await expect(record).toContainText("Campos em branco: barcode, prazo_envio.");
+  const record = page.getByRole("row").filter({ has: page.getByLabel("Base do registro 2") });
+  await expect(record).toContainText("Campos em branco: barcode, nome, prazo_envio.");
   await page
     .getByRole("button", { name: "Visualizar planilha importada" })
     .click();
@@ -499,13 +499,17 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     "pedido_plataforma",
     "barcode",
     "af_clean",
-    "modelo",
     "nome",
     "prazo_envio",
     "quantidade_itens",
     "Entrega",
     "Ações",
   ]);
+  const copies = review.getByRole("row").filter({ hasText: "00123" });
+  await expect(copies).toHaveCount(2);
+  await copies.nth(1).getByRole("button", { name: "Excluir linha" }).click();
+  await copies.nth(1).getByRole("button", { name: "Confirmar exclusão" }).click();
+  await expect(copies).toHaveCount(1);
   await review.getByRole("button", { name: "Fechar", exact: true }).click();
   await record.getByLabel("Rastreio do registro 2").fill("BR2684621549924");
   await record.getByLabel("Base do registro 2").selectOption("a".repeat(32));
@@ -514,7 +518,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   );
   await page
     .getByRole("button", {
-      name: "Adicionar 1 pedido(s) da página à fila",
+      name: "Enviar todos os pedidos válidos à fila",
       exact: true,
     })
     .click();
@@ -522,14 +526,14 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await expect(page.getByLabel("SKU", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toContainText(
-    "Kit de teste Ana BR2684621549924",
+    "Kit de teste BR2684621549924",
   );
   await page.getByRole("button", { name: "Editar item da fila" }).click();
   const text = page.getByRole("textbox", {
     name: "Texto principal",
     exact: true,
   });
-  await expect(text).toHaveValue("Ana");
+  await expect(text).toHaveValue("");
   await text.fill("ANA REVISADA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
   await expect(page.getByRole("article")).toContainText("ANA REVISADA");
@@ -566,13 +570,13 @@ test("interrupted batches resume after reload without completing the same PDF tw
     name: "lote.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,modelo,nome,barcode\n" +
+      "pedido_plataforma,modelo,texto,barcode\n" +
       "001,Kit de teste,Ana,BR2684621549924\n" +
       "002,Kit de teste,Bia,BR2684621549925\n" +
       "003,Kit de teste,Clara,BR2684621549926",
     ),
   });
-  await page.getByRole("button", { name: "Adicionar 3 pedido(s) da página à fila" }).click();
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Lote retomado");
   await page.getByRole("button", { name: "Processar fila", exact: true }).click();
@@ -595,7 +599,7 @@ test("interrupted batches resume after reload without completing the same PDF tw
   expect(new Set(completed).size).toBe(3);
 });
 
-test("CSV matches model prefixes, leaves af_clean blank, and flags unknown models", async ({
+test("CSV matches model prefixes from af_clean, starts with empty names, and flags unknown models", async ({
   page,
 }) => {
   await page.goto("/__e2e/staff-pdf");
@@ -604,10 +608,10 @@ test("CSV matches model prefixes, leaves af_clean blank, and flags unknown model
     name: "pedidos.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,base,af_clean,nome\r\n" +
-      "00123,BR2684621549924,Kit de teste COM NOME,Ignorar,ANA\r\n" +
-      "00124,BR263172448223P,Desconhecido,Kit de teste,BIA\r\n" +
-      "00125,BR2684621549925,Kit de teste SEM NOME,Ignorar,CARLA\r\n",
+      "pedido_plataforma,barcode,af_clean,nome\r\n" +
+      "00123,BR2684621549924,Kit de teste COM NOME,ANA\r\n" +
+      "00124,BR263172448223P,Desconhecido,BIA\r\n" +
+      "00125,BR2684621549925,Kit de teste SEM NOME,CARLA\r\n",
     ),
   });
   const known = page.getByRole("row").filter({ hasText: "00123" });
@@ -617,28 +621,30 @@ test("CSV matches model prefixes, leaves af_clean blank, and flags unknown model
   );
   await expect(page.getByLabel("Molde do registro 4")).toHaveValue("b".repeat(32));
   await expect(unknown).toContainText("Confira a base e o molde.");
-  await expect(known).not.toContainText("Campos em branco");
+  await expect(known).toContainText("Campos em branco: nome.");
   await expect(
     page.getByLabel("Coluna do modelo").locator("option").filter({ hasText: "af_clean" }),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
   const review = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
   await expect(review.getByRole("columnheader", { name: "af_clean" })).toBeVisible();
   const row = review.getByRole("row").filter({ hasText: "00123" });
   await row.getByRole("button", { name: "Editar linha" }).click();
-  await expect(row.getByRole("textbox", { name: /af_clean/ })).toHaveCount(0);
+  await expect(row.getByRole("textbox", { name: /af_clean/ })).toHaveValue("Kit de teste COM NOME");
+  await expect(row.getByRole("textbox", { name: "nome, linha 2" })).toHaveValue("");
+  await row.getByRole("textbox", { name: "nome, linha 2" }).fill("ANA");
   await row.getByRole("button", { name: "Salvar linha" }).click();
   const downloading = page.waitForEvent("download");
   await review.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const csv = await readFile((await (await downloading).path())!, "utf8");
-  expect(csv).toContain('"base","af_clean","nome"');
-  expect(csv).toContain('"Kit de teste COM NOME",,"ANA"');
-  expect(csv).toContain('"Desconhecido",,"BIA"');
-  expect(csv).not.toContain("Ignorar");
+  expect(csv).toContain('"af_clean","nome"');
+  expect(csv).toContain('"Kit de teste COM NOME","ANA"');
+  expect(csv).toContain('"00124","BR263172448223P","Desconhecido",');
+  expect(csv).not.toContain("BIA");
   await review.getByRole("button", { name: "Fechar", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Adicionar 2 pedido(s) da página à fila",
+      name: "Enviar todos os pedidos válidos à fila",
       exact: true,
     })
     .click();
@@ -646,7 +652,8 @@ test("CSV matches model prefixes, leaves af_clean blank, and flags unknown model
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toHaveCount(2);
   await expect(page.getByRole("article").filter({ hasText: "ANA" })).toBeVisible();
-  await expect(page.getByRole("article").filter({ hasText: "CARLA" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "BR2684621549925" }))
+    .toContainText("Campos em branco no CSV: nome.");
 });
 
 test("the workshop saves recipes in previous batches and reconstructs its PDF for download", async ({
@@ -745,11 +752,11 @@ test("admin keeps 51 PDFs processing across sections and splits them into batche
     name: "lote.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      ["pedido_plataforma,barcode,modelo,nome", ...rows].join("\n"),
+      ["pedido_plataforma,barcode,modelo,texto", ...rows].join("\n"),
     ),
   });
   await page
-    .getByRole("button", { name: "Adicionar todos os pedidos válidos à fila" })
+    .getByRole("button", { name: "Enviar todos os pedidos válidos à fila" })
     .click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(
@@ -778,10 +785,10 @@ test("admin keeps 51 PDFs processing across sections and splits them into batche
   await expect(page.getByText(/^LOTE-TESTE-2 ·.*1 arquivo/)).toBeVisible();
 });
 
-test("equal tracking codes remain separate orders and are highlighted in the import table", async ({
+test("quantity two creates two separate PDFs with the same order, model and tracking", async ({
   page,
 }) => {
-  await page.goto("/__e2e/staff-pdf");
+  await page.goto("/__e2e/staff-pdf?batches=true");
   await page
     .getByRole("button", { name: "Importar CSV ou XLSX", exact: true })
     .click();
@@ -789,7 +796,7 @@ test("equal tracking codes remain separate orders and are highlighted in the imp
     name: "mesma-entrega.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,modelo,nome\n001,BR264979796804XSPXLM14002828,Kit de teste,ANA\n001,BR264979796804XSPXLM14002828,Kit de teste,BIA",
+      "pedido_plataforma,barcode,af_clean,nome,quantidade_itens\n001,BR264979796804XSPXLM14002828,Kit de teste,IGNORAR,2.0",
     ),
   });
   await page
@@ -801,10 +808,12 @@ test("equal tracking codes remain separate orders and are highlighted in the imp
   await expect(
     table.getByText("Código repetido · 2 itens", { exact: true }),
   ).toHaveCount(2);
+  await expect(table.getByRole("button", { name: "1", exact: true })).toHaveCount(2);
+  await expect(table.getByRole("button", { name: /^Colar nome na linha/ })).toHaveCount(2);
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
   await page
     .getByRole("button", {
-      name: "Adicionar 2 pedido(s) da página à fila",
+      name: "Enviar todos os pedidos válidos à fila",
       exact: true,
     })
     .click();
@@ -812,12 +821,21 @@ test("equal tracking codes remain separate orders and are highlighted in the imp
     .getByRole("button", { name: "Revisar fila principal", exact: true })
     .click();
   await expect(page.getByRole("article")).toHaveCount(2);
-  await expect(
-    page.getByRole("article").filter({ hasText: "ANA" }),
-  ).toContainText("BR264979796804XSPXLM14002828");
-  await expect(
-    page.getByRole("article").filter({ hasText: "BIA" }),
-  ).toContainText("BR264979796804XSPXLM14002828");
+  await expect(page.getByRole("article").filter({ hasText: "BR264979796804XSPXLM14002828" })).toHaveCount(2);
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await page.getByRole("button", { name: "Gerar mesmo assim", exact: true }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(2);
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
+  const downloading = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar lote", exact: true }).click();
+  const pdfs = unzipSync(await readFile((await (await downloading).path())!));
+  expect(Object.keys(pdfs).sort()).toEqual([
+    "Kit de teste BR264979796804XSPXLM14002828 (2).pdf",
+    "Kit de teste BR264979796804XSPXLM14002828.pdf",
+  ]);
+  for (const bytes of Object.values(pdfs))
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(4);
 });
 
 test("CSV review corrects and deletes queued rows and confirms remaining blanks before generation", async ({
@@ -839,15 +857,12 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
         "003,,Kit de teste,,",
     ),
   });
-  const add = (count: number) =>
-    page.getByRole("button", {
-      name: `Adicionar ${count} pedido(s) da página à fila`,
-      exact: true,
-    });
+  const add = page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila", exact: true });
   await expect(
-    page.getByText("Campos em branco: Coluna B, nome.", { exact: true }),
+    page.getByRole("row").filter({ hasText: "001" })
+      .getByText("Campos em branco: Coluna B, nome.", { exact: true }),
   ).toBeVisible();
-  await add(3).click();
+  await add.click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toHaveCount(3);
   await expect(

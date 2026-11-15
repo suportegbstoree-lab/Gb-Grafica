@@ -8,10 +8,9 @@ import {
 } from "../lib/spreadsheetCsv";
 import {
   createStaffSkuMatcher,
-  isIgnoredStaffPdfCsvColumn,
+  expandStaffPdfQuantities,
   staffOrderColumn,
   staffSheetColumn,
-  staffSheetOrders,
   STAFF_SHEET_FIELDS,
   type StaffSheetField,
 } from "../lib/staffPdfCsv";
@@ -102,8 +101,7 @@ export default function StaffSpreadsheetCsv({
       const entries = STAFF_SHEET_FIELDS.map(({ key, label }) => {
         const index = staffSheetColumn(mapping[key], current.columns, header);
         if (
-          (mapping[key].trim() || key === "modelo" || key === "nome") &&
-          (index < 0 || isIgnoredStaffPdfCsvColumn(header[index] ?? ""))
+          (mapping[key].trim() || key === "modelo") && index < 0
         )
           throw new Error(`Informe uma coluna válida para ${label}.`);
         return [key, index] as const;
@@ -119,7 +117,6 @@ export default function StaffSpreadsheetCsv({
         "pedido_plataforma",
         "barcode",
         "af_clean",
-        "modelo",
         "nome",
         ...optional,
       ];
@@ -129,30 +126,21 @@ export default function StaffSpreadsheetCsv({
       );
       if (new Set(mapped).size !== mapped.length)
         throw new Error("Use uma coluna diferente para cada campo.");
-      const fields = {
-        reference: orderIndex,
-        template: columns.modelo,
-        text: columns.nome,
-      };
-      const data = staffSheetOrders(
-        current.rows.slice(start - 1),
-        fields,
-        match,
-      );
+      const data = current.rows.slice(start - 1)
+        .filter((row) => row.some((cell) => cell.trim()));
       if (!data.length)
         throw new Error("Nenhum pedido encontrado nas linhas selecionadas.");
-      const sourceColumns = [
-        orderIndex,
-        columns.barcode,
-        -1,
-        columns.modelo,
-        columns.nome,
-        ...optional.map((key) => columns[key]),
-      ];
+      const rows = expandStaffPdfQuantities(data, columns.quantidade_itens, start);
       const csv = selectedColumnsCsv(
         [
           headers,
-          ...data.map((row) => sourceColumns.map((index) => row[index] ?? "")),
+          ...rows.map((row) => [
+            row[orderIndex] ?? "",
+            row[columns.barcode] ?? "",
+            match(row[columns.modelo] ?? ""),
+            "",
+            ...optional.map((key) => row[columns[key]] ?? ""),
+          ]),
         ],
         headers.map((_, i) => i),
         ",",

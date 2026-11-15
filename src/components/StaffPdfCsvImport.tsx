@@ -3,9 +3,11 @@ import { staffTrackingBarcode } from "../lib/staffPdfBarcode";
 import type { StaffPdfLibrary } from "../services/staffPdfService";
 import {
   defaultStaffPdfCsvColumns,
-  isIgnoredStaffPdfCsvColumn,
+  expandStaffPdfQuantities,
   readStaffPdfCsv,
   resolveStaffPdfCsvModel,
+  staffPdfNameColumn,
+  staffPdfQuantityColumn,
 } from "../lib/staffPdfCsv";
 import { excelColumn, selectedColumnsCsv } from "../lib/spreadsheetCsv";
 import { downloadPersonalization } from "../services/personalizationExport";
@@ -48,7 +50,8 @@ interface CsvDraft {
     rows: (string[] | null)[];
     width: number;
     separator: string;
-    ignoredColumns: number[];
+    quantityColumn?: number;
+    ignoredColumns?: number[];
     workbookId?: string;
   };
   hasHeader: boolean;
@@ -154,34 +157,31 @@ export default function StaffPdfCsvImport({
   async function useCsv(input: string, name: string, separator?: string, workbookId?: string) {
     const parsed = readStaffPdfCsv(input, separator);
     const [header, ...records] = parsed.rows;
-    const ignoredColumns = header.flatMap((cell, index) =>
-      isIgnoredStaffPdfCsvColumn(cell) ? [index] : [],
-    );
     const columns = defaultStaffPdfCsvColumns(header);
-    for (const cells of records) {
-      for (const column of ignoredColumns) {
-        if (column < cells.length) cells[column] = "";
-      }
-    }
+    const nameColumn = staffPdfNameColumn(header);
+    const quantityColumn = staffPdfQuantityColumn(header);
+    const rows = [header, ...expandStaffPdfQuantities(records, quantityColumn)];
+    if (nameColumn >= 0)
+      for (const cells of rows.slice(1)) cells[nameColumn] = "";
     const source = {
       id: crypto.randomUUID(),
       name,
-      rows: parsed.rows,
-      width: Math.max(...parsed.rows.map((row) => row.length)),
+      rows,
+      width: Math.max(...rows.map((row) => row.length)),
       separator: parsed.separator,
-      ignoredColumns,
+      quantityColumn,
       workbookId,
     };
     await csv.save(() => ({
       ...emptyDraft, source, columns,
-      hasHeader: ignoredColumns.length > 0 || Object.values(columns).some((value) => value >= 0),
+      hasHeader: quantityColumn >= 0 || Object.values(columns).some((value) => value >= 0),
     }));
     setPage(0);
     setMessage("");
     setError("");
   }
   const headerIndex = source?.rows.findIndex((row) => row !== null) ?? -1;
-  const ignoredColumns = source?.ignoredColumns ?? [];
+  const quantityColumn = hasHeader ? source?.quantityColumn ?? -1 : -1;
   const headers = source
     ? Array.from(
         { length: source.width },
@@ -190,6 +190,25 @@ export default function StaffPdfCsvImport({
           `Coluna ${excelColumn(index)}`,
       )
     : [];
+  React.useEffect(() => {
+    if (!source?.ignoredColumns || !hasHeader) return;
+    void csv.save((current) => {
+      if (current.source?.id !== source.id || !current.source.ignoredColumns) return current;
+      const { ignoredColumns, ...restored } = current.source;
+      const header = restored.rows[headerIndex] || [];
+      const model = header.findIndex((cell) => cell.trim().toLowerCase() === "modelo");
+      // Older XLSX drafts kept their SKU in modelo while af_clean was blank.
+      if (restored.workbookId && model >= 0 && ignoredColumns.length) {
+        restored.rows = restored.rows.map((row, index) => {
+          if (!row || index === headerIndex || !row[model]) return row;
+          const cells = [...row];
+          for (const column of ignoredColumns) cells[column] ||= row[model];
+          return cells;
+        });
+      }
+      return { ...current, source: restored };
+    });
+  }, [source, hasHeader, headerIndex]);
   const imported =
     source?.rows.flatMap((row, index) =>
       row && !(hasHeader && index === headerIndex) ? [{ row, index }] : [],
@@ -225,10 +244,9 @@ export default function StaffPdfCsvImport({
     const missingFields = (blankText: boolean) =>
       headers.filter(
         (_, column) =>
-          !ignoredColumns.includes(column) &&
-          (column === textColumn
+          column === textColumn
             ? blankText
-            : !(column === barcodeIndex ? barcode : row[column]?.trim())),
+            : !(column === barcodeIndex ? barcode : row[column]?.trim()),
       );
     return {
       blank: blankWarning(missingFields(true)),
@@ -288,9 +306,11 @@ export default function StaffPdfCsvImport({
     .map(({ row, index }) =>
       inspectRow(row, index, getBarcode(row, index), overrides[index]),
     );
-  const ready = preview.filter((row) => !row.issue);
-  async function addOrders(orders: typeof ready) {
+  async function addOrders() {
     setError("");
+    const orders = pending
+      .map(({ row, index }) => inspectRow(row, index, getBarcode(row, index), overrides[index]))
+      .filter((row) => !row.issue);
     if (!orders.length) {
       setError("Revise os pedidos pendentes antes de adicionar à fila.");
       return;
@@ -388,7 +408,6 @@ export default function StaffPdfCsvImport({
       if (hasHeader && index === headerIndex) {
         if (includeBarcode) cells[source.width] = "barcode";
       } else {
-        for (const column of ignoredColumns) cells[column] = "";
         if (barcodeIndex >= 0 || includeBarcode) {
           cells[barcodeIndex < 0 ? source.width : barcodeIndex] = getBarcode(
             row,
@@ -503,13 +522,11 @@ export default function StaffPdfCsvImport({
                         ? "Usar base e molde do pedido aberto"
                         : "Selecione a coluna"}
                     </option>
-                    {headers.map((header, index) =>
-                      !ignoredColumns.includes(index) && (
-                        <option key={index} value={index}>
-                          {header}
-                        </option>
-                      ),
-                    )}
+                    {headers.map((header, index) => (
+                      <option key={index} value={index}>
+                        {header}
+                      </option>
+                    ))}
                   </select>
                 </label>
               ))}
@@ -519,11 +536,6 @@ export default function StaffPdfCsvImport({
               selecionada em Edição e fila. Confira as associações antes de
               adicionar.
             </p>
-            {ignoredColumns.length > 0 && (
-              <p className="text-xs text-gray-400">
-                A coluna af_clean fica vazia. Use a coluna do modelo, base ou SKU para associar os pedidos.
-              </p>
-            )}
             {!!preview.length && (
               <div className="max-h-[30rem] overflow-auto rounded-lg border border-gray-800">
                 <table className="w-full min-w-[44rem] table-fixed text-left text-sm">
@@ -673,34 +685,12 @@ export default function StaffPdfCsvImport({
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                disabled={!ready.length}
+                disabled={!pending.length}
                 className="rounded-lg bg-pink-600 px-4 py-2 font-bold disabled:opacity-40"
-                onClick={() => void addOrders(ready)}
+                onClick={() => void addOrders()}
               >
-                Adicionar {ready.length} pedido(s) da página à fila
+                Enviar todos os pedidos válidos à fila
               </button>
-              {lastPage > 0 && (
-                <button
-                  type="button"
-                  className="rounded-lg border border-gray-700 px-4 py-2"
-                  onClick={() =>
-                    void addOrders(
-                      pending
-                        .map(({ row, index }) =>
-                          inspectRow(
-                            row,
-                            index,
-                            getBarcode(row, index),
-                            overrides[index],
-                          ),
-                        )
-                        .filter((row) => !row.issue),
-                    )
-                  }
-                >
-                  Adicionar todos os pedidos válidos à fila
-                </button>
-              )}
               <button
                 type="button"
                 className="rounded-lg border border-gray-700 px-4 py-2"
@@ -719,10 +709,8 @@ export default function StaffPdfCsvImport({
           onClose={() => setTable(false)}
           headers={barcodeIndex < 0 ? [...headers, "Rastreio"] : headers}
           barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
-          ignoredColumns={ignoredColumns}
-          nameColumn={headers.findIndex(
-            (header) => header.toLowerCase() === "nome",
-          )}
+          quantityColumn={quantityColumn}
+          nameColumn={staffPdfNameColumn(headers)}
           onRevise={reviseRow}
           onDownload={downloadReviewed}
           rows={imported.map(({ row, index }) => {
