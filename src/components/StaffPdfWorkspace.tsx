@@ -9,13 +9,18 @@ import {
   STAFF_BARCODE_VERSION,
   type StaffBarcodeSize,
 } from "../lib/staffPdfBarcode";
-import { loadStaffPdfArchive, renderStaffPdfRecipe } from "../services/staffPdfBatchService";
+import {
+  createStaffPdfAssetCache,
+  loadStaffPdfArchive,
+  renderStaffPdfRecipe,
+  retryStaffPdfRateLimit,
+} from "../services/staffPdfBatchService";
 import { useStaffPdfDraft, useStaffPdfQueue } from "../services/staffPdfLocalState";
 import StaffPdfBatches from "./StaffPdfBatches";
 import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
-import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
+import { STAFF_PDF_BATCH_NAME_MAX, type StaffPdfRecipe } from "../lib/staffPdfBatch";
 import { Barcode, Edit2, Search, Trash2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
@@ -97,6 +102,10 @@ const wasDisconnected = (error: unknown) =>
   !navigator.onLine ||
   (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) ||
   (error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name));
+const BATCH_RENDER_LIMIT = 4;
+// A new PDF normally uses three requests and the library allows 90 per minute.
+const BATCH_ATTEMPTS_PER_WINDOW = 26;
+const GENERATION_WINDOW_MS = 61000;
 export default function StaffPdfWorkspace({
   fonts,
   canManage = false,
@@ -690,35 +699,76 @@ export default function StaffPdfWorkspace({
   }
   async function process() {
     if (running.current || !queueReady) return;
-    const pending = queue.filter(
-      (item) => item.status === "queued" || item.status === "error",
-    );
-    const pendingIds = new Set(pending.map((item) => item.id));
+    const pending = queue.filter((item) => item.status === "queued" || item.status === "error");
     if (!pending.length) return;
+    const pendingIds = new Set(pending.map((item) => item.id));
     running.current = true;
     stop.current = false;
     setStopRequested(false);
     setProcessing(true);
     setBusy(true);
     setError("");
+
+    const batches = api.batches;
+    const inFlight = new Set<Promise<void>>();
+    const completedBatches = new Set<string>();
+    const assets = createStaffPdfAssetCache();
     let successes = 0;
     let failures = 0;
     let disconnected = false;
+    let waitingForQuota = false;
+    let persistenceError: unknown;
+    const canFinish = () => alive.current && generationAllowed.current && !disconnected && !persistenceError;
+    const canStart = () => canFinish() && !stop.current;
     const report = (status: StaffPdfQueueProgressValue["status"]) => {
       if (!alive.current) return;
-      const value = {
-        status,
-        total: pending.length,
-        completed: successes,
-        failed: failures,
-      };
+      const value = { status, total: pending.length, completed: successes, failed: failures };
       setProgress(value);
       onProgress?.(value);
     };
+    const updateProgress = () => report(waitingForQuota ? "waiting" : "processing");
+
+    async function markReady(item: QueueItem, reference: string) {
+      if (!alive.current || !generationAllowed.current) return;
+      await setQueue((old) => old.map((row) =>
+        row.id === item.id ? { ...row, status: "ready", reference } : row,
+      ));
+      successes++;
+      if (item.csvRow) lockedCsvRows.current.add(csvRowKey(item.csvRow));
+      updateProgress();
+    }
+
+    async function markFailed(item: QueueItem, error: unknown) {
+      if (!alive.current || !generationAllowed.current) return;
+      const offline = wasDisconnected(error);
+      disconnected ||= offline;
+      if (offline) wakeProcessing.current?.();
+      const message = error instanceof Error ? error.message : String(error);
+      await setQueue((old) => old.map((row) => row.id === item.id
+        ? { ...row, status: offline ? "queued" : "error", error: offline ? undefined : message }
+        : row));
+      if (!offline) failures++;
+      updateProgress();
+    }
+
+    async function renderAndSave(item: QueueItem, batchId: string, recipe: StaffPdfRecipe) {
+      if (recipe.item.status !== "ready") {
+        if (!recipe.uploadExists) {
+          const rendered = await renderStaffPdfRecipe(recipe, assets);
+          if (!canFinish()) return;
+          await retryStaffPdfRateLimit(() => batches!.upload(batchId, recipe.item.id, rendered), canFinish);
+        }
+        if (!canFinish()) return;
+        await retryStaffPdfRateLimit(() => batches!.complete(batchId, recipe.item.id), canFinish);
+      }
+      completedBatches.add(batchId);
+      await markReady(item, recipe.item.outputName);
+    }
+
     report("processing");
     try {
-      if (!navigator.onLine) throw new Error("Sem conexão. Volte à fila para continuar quando a internet retornar.");
-      if (api.batches) {
+      if (!navigator.onLine) throw new TypeError("Network offline");
+      if (batches) {
         const unassigned = new Set(pending.filter((item) => !item.batchId && !item.batchPlan).map((item) => item.id));
         if (unassigned.size) {
           const batchPlan = { requestId: crypto.randomUUID(), name: batchName.trim() || undefined };
@@ -727,69 +777,51 @@ export default function StaffPdfWorkspace({
           ));
         }
       }
-      const current = pending.every((item) => api.batches && item.batchId)
-        ? data : await api.list();
+      const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
       if (alive.current) setData(current);
       const batchIds = new Map<string, string>();
-      const completedBatches = new Set<string>();
-      for (const item of savedQueue.current.filter(
-        (item) => pendingIds.has(item.id),
-      )) {
-        if (!alive.current || stop.current || !generationAllowed.current) break;
+      const attemptLimit = batches ? BATCH_ATTEMPTS_PER_WINDOW : 20;
+      for (const item of savedQueue.current.filter((row) => pendingIds.has(row.id))) {
+        if (inFlight.size >= BATCH_RENDER_LIMIT) await Promise.race(inFlight);
+        if (!canStart()) break;
         if (!navigator.onLine) {
           disconnected = true;
           break;
         }
-        attempts.current = attempts.current.filter(
-          (time) => Date.now() - time < 61000,
-        );
-        if (attempts.current.length >= 20) {
-          report("waiting");
+        attempts.current = attempts.current.filter((time) => Date.now() - time < GENERATION_WINDOW_MS);
+        if (attempts.current.length >= attemptLimit) {
+          waitingForQuota = true;
+          updateProgress();
           setMessage("Aguardando o limite de geração para continuar a fila.");
           await new Promise<void>((resolve) => {
-            const timer = window.setTimeout(
-              resolve,
-              61000 - (Date.now() - attempts.current[0]),
-            );
+            const timer = window.setTimeout(resolve, GENERATION_WINDOW_MS - (Date.now() - attempts.current[0]));
             wakeProcessing.current = () => {
               window.clearTimeout(timer);
               resolve();
             };
           });
           wakeProcessing.current = undefined;
-          if (!alive.current || stop.current || !generationAllowed.current)
-            break;
-          attempts.current.shift();
+          waitingForQuota = false;
+          if (!canStart()) break;
+          attempts.current = attempts.current.filter((time) => Date.now() - time < GENERATION_WINDOW_MS);
           setMessage("");
-          report("processing");
+          updateProgress();
         }
-        await setQueue((old) =>
-          old.map((q) =>
-            q.id === item.id
-              ? { ...q, status: "processing", error: undefined }
-              : q,
-          ),
-        );
-        if (!alive.current || !generationAllowed.current) return;
+        await setQueue((old) => old.map((row) => row.id === item.id
+          ? { ...row, status: "processing", error: undefined } : row));
+        if (!canStart()) break;
         try {
-          const b = current.bases.find((b) => b.id === item.job.baseId),
-            t = current.layouts.find((t) => t.id === item.job.layoutId);
-          if (
-            !(api.batches && item.batchId) &&
-            (!b ||
-              b.revision !== item.job.baseRevision ||
-              !t ||
-              t.revision !== item.job.layoutRevision)
-          )
-            throw new Error(
-              "A base ou o molde mudou. Edite este item novamente.",
-            );
-          let reference: string;
+          const b = current.bases.find((base) => base.id === item.job.baseId);
+          const t = current.layouts.find((layout) => layout.id === item.job.layoutId);
+          if (!(batches && item.batchId) &&
+              (!b || b.revision !== item.job.baseRevision || !t || t.revision !== item.job.layoutRevision)) {
+            throw new Error("A base ou o molde mudou. Edite este item novamente.");
+          }
           const effectiveJob =
             !item.batchId && item.job.barcode && item.job.barcodeVersion === STAFF_BARCODE_VERSION
               ? { ...item.job, barcodeSize: barcodeOverrideOf(item) ?? current.barcodeDefault ?? STAFF_PDF_BARCODE_DEFAULT }
               : item.job;
-          if (api.batches) {
+          if (batches) {
             const job = item.batchId ? effectiveJob : normalizeStaffPdfJob({
               ...effectiveJob,
               outputName: effectiveJob.outputName || staffPdfDefaultFilename(
@@ -801,84 +833,58 @@ export default function StaffPdfWorkspace({
               const plan = item.batchPlan!;
               batchId = batchIds.get(plan.requestId);
               if (!batchId) {
-                batchId = (await api.batches.create(plan.requestId, plan.name)).id;
+                batchId = (await retryStaffPdfRateLimit(() => batches.create(plan.requestId, plan.name), canFinish)).id;
                 batchIds.set(plan.requestId, batchId);
               }
-              if (item.csvRow)
-                lockedCsvRows.current.add(csvRowKey(item.csvRow));
-              await setQueue((old) =>
-                old.map((row) => row.id === item.id ? { ...row, batchId, job } : row),
-              );
+              if (!alive.current || !generationAllowed.current) break;
+              if (item.csvRow) lockedCsvRows.current.add(csvRowKey(item.csvRow));
+              await setQueue((old) => old.map((row) => row.id === item.id ? { ...row, batchId, job } : row));
             }
-            if (!alive.current || !generationAllowed.current) return;
+            if (!canStart()) break;
             attempts.current.push(Date.now());
-            const recipe = await api.batches.save(batchId, job, item.requestId);
-            if (!alive.current || !generationAllowed.current) return;
-            if (recipe.item.status !== "ready") {
-              if (!recipe.uploadExists) {
-                const rendered = await renderStaffPdfRecipe(recipe);
-                if (!alive.current || !generationAllowed.current) return;
-                await api.batches.upload(batchId, recipe.item.id, rendered);
-              }
-              if (!alive.current || !generationAllowed.current) return;
-              await api.batches.complete(batchId, recipe.item.id);
-            }
-            completedBatches.add(batchId);
-            reference = recipe.item.outputName;
+            // Firestore assigns the final PDF order when each recipe is registered.
+            const recipe = await retryStaffPdfRateLimit(() => batches.save(batchId, job, item.requestId), canFinish);
+            if (!canFinish()) break;
+            const task = renderAndSave(item, batchId, recipe)
+              .catch((error) => markFailed(item, error))
+              .catch((error) => {
+                persistenceError = error;
+                wakeProcessing.current?.();
+              });
+            inFlight.add(task);
+            void task.then(() => inFlight.delete(task));
           } else {
-            const initial = await api.initial(
-              item.job.baseId,
-              item.job.lines[0]?.text || "",
-            );
-            if (initial)
-              initial.sizePercent =
-                staffPdfInitialSize(t?.layout) ?? initial.sizePercent;
+            const initial = await api.initial(item.job.baseId, item.job.lines[0]?.text || "");
+            if (initial) initial.sizePercent = staffPdfInitialSize(t?.layout) ?? initial.sizePercent;
             const blob = await exportStaffPdf(
-              item.original ?? await api.baseFile(item.job.baseId),
-              effectiveJob,
-              fonts,
-              item.fitMargin,
-              initial,
+              item.original ?? await api.baseFile(item.job.baseId), effectiveJob, fonts, item.fitMargin, initial,
             );
-            if (!alive.current || !generationAllowed.current) return;
+            if (!canFinish()) break;
             attempts.current.push(Date.now());
             const doc = await api.generate(effectiveJob, blob, item.requestId);
-            reference = doc.reference;
+            await markReady(item, doc.reference);
           }
-          await setQueue((old) =>
-            old.map((q) =>
-              q.id === item.id ? { ...q, status: "ready", reference } : q,
-            ),
-          );
-          successes++;
-          if (item.csvRow) lockedCsvRows.current.add(csvRowKey(item.csvRow));
-        } catch (e) {
-          disconnected = wasDisconnected(e);
-          await setQueue((old) =>
-            old.map((q) =>
-              q.id === item.id
-                ? { ...q, status: disconnected ? "queued" : "error", error: disconnected ? undefined : (e as Error).message }
-                : q,
-            ),
-          );
-          if (disconnected) break;
-          failures++;
+        } catch (error) {
+          await markFailed(item, error);
         }
-        report("processing");
       }
-      if (api.batches && completedBatches.size && alive.current && !disconnected && !stop.current && generationAllowed.current) {
+      await Promise.all(inFlight);
+      if (persistenceError) throw persistenceError;
+      if (alive.current && generationAllowed.current) {
+        const interrupted = (item: QueueItem) => pendingIds.has(item.id) && item.status === "processing";
+        await setQueue((old) => old.some(interrupted)
+          ? old.map((item) => interrupted(item) ? { ...item, status: "queued" } : item) : old);
+      }
+      if (batches && completedBatches.size && canStart()) {
         setMessage("Preparando o ZIP para download.");
         for (const batchId of completedBatches) {
-          await loadStaffPdfArchive(api.batches, batchId, false, () =>
-            alive.current && !stop.current && generationAllowed.current,
-          ).catch(() => undefined); // The download can resume archive preparation.
+          await loadStaffPdfArchive(batches, batchId, { active: canStart })
+            .catch(() => undefined); // The download can resume archive preparation.
         }
       }
       if (alive.current) {
         setBatchRevision((old) => old + 1);
-        report(
-          disconnected || stop.current || !generationAllowed.current ? "paused" : "completed",
-        );
+        report(disconnected || stop.current || !generationAllowed.current ? "paused" : "completed");
         await onGenerated().catch(() => undefined);
         setMessage(
           disconnected
@@ -886,13 +892,15 @@ export default function StaffPdfWorkspace({
             : `${successes} documento(s) concluído(s). ${stop.current ? "A fila foi pausada. " : ""}Veja os arquivos em Lotes anteriores.`,
         );
       }
-    } catch (e) {
-      if (wasDisconnected(e)) {
+    } catch (error) {
+      persistenceError = error;
+      await Promise.all(inFlight);
+      if (wasDisconnected(error)) {
         report("paused");
         if (alive.current) setMessage("Sem conexão. Volte à fila para continuar quando a internet retornar.");
       } else {
         report("error");
-        if (alive.current) setError((e as Error).message);
+        if (alive.current) setError((error as Error).message);
       }
     } finally {
       running.current = false;

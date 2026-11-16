@@ -345,6 +345,32 @@ export function drawStaffPdfImage(context:CanvasRenderingContext2D,width:number,
   const w=imageWidth*ratio,h=imageHeight*ratio;
   context.save();context.beginPath();context.rect(0,0,width,height);context.clip();context.drawImage(source,(width-w)/2,(height-h)/2,w,h);context.restore();
 }
+
+function textOverlayRegion(
+  width: number,
+  height: number,
+  lines: StaffPdfLine[],
+  orientation: PdfTextLayout,
+): PdfTextBox {
+  const visible = lines.filter((line) => line.text);
+  if (!visible.length) return { x: 0, y: 0, width: 1, height: 1 };
+  // The renderer clips the main text and its effects to the template box.
+  // Extra lines can extend beyond their anchors and still need the full page.
+  if (visible.length === 1 && visible[0].kind !== "extra") {
+    const box = visible[0][orientation];
+    const landscape = orientation === "landscape";
+    const x = landscape ? width - box.y - box.height : box.x;
+    const y = landscape ? box.x : box.y;
+    const left = Math.max(0, Math.floor(x) - 1);
+    const top = Math.max(0, Math.floor(y) - 1);
+    const right = Math.min(width, Math.ceil(x + (landscape ? box.height : box.width)) + 1);
+    const bottom = Math.min(height, Math.ceil(y + (landscape ? box.width : box.height)) + 1);
+    if (right > left && bottom > top)
+      return { x: left, y: top, width: right - left, height: bottom - top };
+  }
+  return { x: 0, y: 0, width, height };
+}
+
 export async function exportStaffPdf(
   original: Blob,
   job: StaffPdfJob,
@@ -434,21 +460,25 @@ export async function exportStaffPdf(
       }
       const orientation = editedStaffPdfPage(index, source.getPageCount());
       if (orientation) {
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.ceil((width * STAFF_PDF_DPI) / 72);
-        canvas.height = Math.ceil((height * STAFF_PDF_DPI) / 72);
+        const pixelWidth = Math.ceil((width * STAFF_PDF_DPI) / 72);
+        const pixelHeight = Math.ceil((height * STAFF_PDF_DPI) / 72);
         if (
-          canvas.width * canvas.height > 64_000_000 ||
-          Math.max(canvas.width, canvas.height) > 32767
+          pixelWidth * pixelHeight > 64_000_000 ||
+          Math.max(pixelWidth, pixelHeight) > 32767
         )
           throw new Error("Página excede a capacidade de edição a 300 DPI.");
+        const region = textOverlayRegion(pixelWidth, pixelHeight, job.lines, orientation);
+        const canvas = document.createElement("canvas");
+        canvas.width = region.width;
+        canvas.height = region.height;
         try {
           const context = canvas.getContext("2d");
           if (!context) throw new Error("Canvas indisponível.");
+          context.translate(-region.x, -region.y);
           drawStaffPdfText(
             context,
-            canvas.width,
-            canvas.height,
+            pixelWidth,
+            pixelHeight,
             job.lines,
             fonts,
             orientation,
@@ -464,10 +494,10 @@ export async function exportStaffPdf(
             ),
           );
           sheet.drawImage(await pdf.embedPng(await blob.arrayBuffer()), {
-            x: 0,
-            y: 0,
-            width,
-            height,
+            x: width * region.x / pixelWidth,
+            y: height * (pixelHeight - region.y - region.height) / pixelHeight,
+            width: width * region.width / pixelWidth,
+            height: height * region.height / pixelHeight,
           });
         } finally {
           canvas.width = canvas.height = 1;

@@ -843,15 +843,25 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       generation: "1000", size: bytes.length, contentType: "application/pdf", metadata: { zipcrc: upload.crc32 },
     } });
     assert.equal((await request(`/library/batches/${batch.id}/items/${legacyId}/complete`, "generator", {})).status, 200);
+    assert.equal((await request(archiveUrl, "customer", { format: "pdf" })).status, 403);
+    const direct = await (await request(archiveUrl, "generator", { format: "pdf" })).json();
+    assert.equal(direct.name, `${batch.reference}.pdf`);
+    const directPath = new URL(direct.url).pathname.slice(1);
+    const combined = objects.get(directPath)!.bytes;
+    assert.equal((await PDFDocument.load(combined)).getPageCount(), 4);
+    assert.ok(![...objects.keys()].some((path) => path.endsWith(".zip")));
+    const originalReads = downloads.filter((path) => path.includes("/files/")).length;
     const result = await (await request(archiveUrl, "generator", {})).json();
     assert.equal(result.name, `${batch.reference}.zip`);
     const zipPath = new URL(result.url).pathname.slice(1);
     const zip = unzipSync(objects.get(zipPath)!.bytes);
     assert.deepEqual(Buffer.from(zip["Kit ANA BR2684621549924.pdf"]), bytes);
     assert.deepEqual(Buffer.from(zip["Kit ANA.pdf"]), bytes);
-    assert.equal((await PDFDocument.load(zip["Lote completo.pdf"])).getPageCount(), 4);
+    assert.deepEqual(Buffer.from(zip["Lote completo.pdf"]), combined);
+    assert.equal(downloads.filter((path) => path.includes("/files/")).length, originalReads);
     const readCount = downloads.length;
     assert.equal((await (await request(archiveUrl, "generator", {})).json()).url, result.url);
+    assert.equal((await (await request(archiveUrl, "generator", { format: "pdf" })).json()).url, direct.url);
     assert.equal(downloads.length, readCount);
     const activities = [...docs.keys()].filter((key) =>
       key.startsWith("_operationsActivity/"),

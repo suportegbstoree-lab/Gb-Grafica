@@ -47,8 +47,9 @@ export interface StaffPdfRecipe {
   printProfile?: PrintProfile;
   fitMargin: number;
   originalUrl: string;
-  fonts: PersonalizationFont[];
-  initial?: { url: string; sizePercent: number };
+  originalKey?: string;
+  fonts: Array<PersonalizationFont & { assetKey?: string }>;
+  initial?: { url: string; sizePercent: number; assetKey?: string };
   rendererVersion: 1;
   uploadExists?: boolean;
 }
@@ -57,6 +58,7 @@ export interface StaffPdfArchiveProgress {
   cursor: number;
   fingerprint: string;
 }
+export type StaffPdfArchiveFormat = "zip" | "pdf";
 
 export type StaffPdfArchiveResult =
   | { url: string; name: string }
@@ -78,5 +80,5 @@ export interface StaffPdfBatchApi {
   upload(batchId: string, itemId: string, pdf: Blob): Promise<void>;
   complete(batchId: string, itemId: string): Promise<void>;
   file(batchId: string, itemId: string, inline?: boolean): Promise<{ url: string; name: string } | null>;
-  archive(batchId: string, progress?: StaffPdfArchiveProgress): Promise<StaffPdfArchiveResult>;
+  archive(batchId: string, progress?: StaffPdfArchiveProgress, format?: StaffPdfArchiveFormat): Promise<StaffPdfArchiveResult>;
 }

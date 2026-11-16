@@ -1,5 +1,6 @@
 import {
   isStaffPdfSimpleJob,
+  type StaffPdfArchiveFormat,
   type StaffPdfBatchApi,
   type StaffPdfRecipe,
   type StaffPdfArchiveProgress,
@@ -39,7 +40,7 @@ export const staffPdfBatchApi: StaffPdfBatchApi = {
   },
   file: async (batchId, itemId, inline) =>
     (await staffPdfRequest(`/batches/${batchId}/items/${itemId}/file${inline ? "?inline=true" : ""}`)).file,
-  archive: (batchId, progress) => staffPdfRequest(`/batches/${batchId}/archive`, progress ?? {}),
+  archive: (batchId, progress, format = "zip") => staffPdfRequest(`/batches/${batchId}/archive`, { ...progress, format }),
 };
 
 // ZIP stores the IEEE CRC-32 of each entry, distinct from Storage's CRC32C.
@@ -65,40 +66,54 @@ async function zipChecksum(pdf: Blob) {
   return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0");
 }
 
-export async function restoreStaffPdfBatchFile(api: StaffPdfBatchApi, batchId: string, itemId: string) {
+export async function restoreStaffPdfBatchFile(
+  api: StaffPdfBatchApi, batchId: string, itemId: string,
+  assets?: ReturnType<typeof createStaffPdfAssetCache>,
+) {
   const recipe = await api.recipe(batchId, itemId);
   if (!recipe.item.hasFile) {
     if (!recipe.uploadExists)
-      await api.upload(batchId, itemId, await renderStaffPdfRecipe(recipe));
+      await api.upload(batchId, itemId, await renderStaffPdfRecipe(recipe, assets));
     await api.complete(batchId, itemId);
+  }
+}
+
+export async function retryStaffPdfRateLimit<T>(request: () => Promise<T>, active: () => boolean) {
+  for (let retries = 0; ; retries++) {
+    try {
+      return await request();
+    } catch (error) {
+      if ((error as { status?: number })?.status !== 429 || retries >= 4 || !active()) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 15000));
+      if (!active()) throw error;
+    }
   }
 }
 
 export async function loadStaffPdfArchive(
   api: StaffPdfBatchApi,
   batchId: string,
-  restoreLegacy = false,
-  active = () => true,
+  { restoreLegacy = false, active = () => true, format = "zip" }: {
+    restoreLegacy?: boolean;
+    active?: () => boolean;
+    format?: StaffPdfArchiveFormat;
+  } = {},
 ) {
   let progress: StaffPdfArchiveProgress | undefined;
+  const assets = createStaffPdfAssetCache();
   while (active()) {
-    try {
-      const result = await api.archive(batchId, progress);
-      if ("url" in result) return result;
-      if ("empty" in result) return;
-      if ("legacy" in result) {
-        if (!restoreLegacy) return;
-        for (const itemId of result.legacy) {
-          if (!active()) return;
-          await restoreStaffPdfBatchFile(api, batchId, itemId);
-        }
-        progress = undefined;
-      } else {
-        progress = result.progress;
+    const result = await retryStaffPdfRateLimit(() => api.archive(batchId, progress, format), active);
+    if ("url" in result) return result;
+    if ("empty" in result) return;
+    if ("legacy" in result) {
+      if (!restoreLegacy) return;
+      for (const itemId of result.legacy) {
+        if (!active()) return;
+        await retryStaffPdfRateLimit(() => restoreStaffPdfBatchFile(api, batchId, itemId, assets), active);
       }
-    } catch (error) {
-      if (!restoreLegacy || (error as { status?: number })?.status !== 429) throw error;
-      await new Promise<void>((resolve) => setTimeout(resolve, 10000));
+      progress = undefined;
+    } else {
+      progress = result.progress;
     }
   }
 }
@@ -129,27 +144,49 @@ async function readAsset(url: string, type: string, limit: number) {
   return new Blob(chunks, { type });
 }
 
-export async function renderStaffPdfRecipe(recipe: StaffPdfRecipe) {
+export function createStaffPdfAssetCache() {
+  const limit = 96 * 1024 * 1024;
+  const entries = new Map<string, { result: Promise<Blob>; size?: number }>();
+  let bytes = 0;
+  return (key: string | undefined, fetchAsset: () => Promise<Blob>) => {
+    if (!key) return fetchAsset();
+    const cached = entries.get(key);
+    if (cached) {
+      entries.delete(key);
+      entries.set(key, cached);
+      return cached.result;
+    }
+    const entry: { result: Promise<Blob>; size?: number } = { result: fetchAsset() };
+    entries.set(key, entry);
+    void entry.result.then((blob) => {
+      entry.size = blob.size;
+      bytes += blob.size;
+      for (const [oldKey, old] of entries) {
+        if (bytes <= limit && entries.size <= 128) break;
+        if (old.size === undefined) continue;
+        entries.delete(oldKey);
+        bytes -= old.size;
+      }
+    }, () => { entries.delete(key); });
+    return entry.result;
+  };
+}
+
+export async function renderStaffPdfRecipe(
+  recipe: StaffPdfRecipe,
+  asset = (_key: string | undefined, download: () => Promise<Blob>) => download(),
+) {
   if (recipe.rendererVersion !== 1)
     throw new Error("Esta receita exige uma versão diferente do editor.");
-  const original = await readStaffPdf(recipe.originalUrl);
-  const initial = recipe.initial
-    ? {
-        source: await readAsset(
-          recipe.initial.url,
-          "image/png",
-          50 * 1024 * 1024,
-        ),
-        sizePercent: recipe.initial.sizePercent,
-      }
-    : undefined;
-  const fonts = await Promise.all(
-    recipe.fonts.map(async (font) => {
+  const [original, initial, fonts] = await Promise.all([
+    asset(recipe.originalKey, () => readStaffPdf(recipe.originalUrl)),
+    recipe.initial && asset(recipe.initial.assetKey, () =>
+      readAsset(recipe.initial!.url, "image/png", 50 * 1024 * 1024),
+    ).then((source) => ({ source, sizePercent: recipe.initial!.sizePercent })),
+    Promise.all(recipe.fonts.map(async (font) => {
       if (!font.arquivoUrl) return font;
-      const blob = await readAsset(
-        font.arquivoUrl,
-        `font/${font.arquivoFormato || "woff2"}`,
-        16 * 1024 * 1024,
+      const blob = await asset(font.assetKey, () =>
+        readAsset(font.arquivoUrl!, `font/${font.arquivoFormato || "woff2"}`, 16 * 1024 * 1024),
       );
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -158,9 +195,14 @@ export async function renderStaffPdfRecipe(recipe: StaffPdfRecipe) {
           reject(new Error("Não foi possível ler a fonte do lote."));
         reader.readAsDataURL(blob);
       });
-      return { ...font, arquivoUrl: data };
-    }),
-  );
+      return {
+        ...font,
+        arquivoUrl: data,
+        // Concurrent recipes can refer to different revisions of the same font.
+        ...(font.assetKey ? { cssFamily: `StaffPdf-${font.assetKey}` } : {}),
+      };
+    })),
+  ]);
   if (isStaffPdfSimpleJob(recipe.job)) {
     const { pdfPreviewPages } = await import("./pdfPreview");
     const { exportPersonalizationPdf } = await import(

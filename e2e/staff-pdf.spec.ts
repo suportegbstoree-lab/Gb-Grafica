@@ -768,7 +768,7 @@ test("the workshop downloads the stored PDF without rebuilding its recipe", asyn
     page.getByText("Nenhum arquivo encontrado neste lote."),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Baixar lote", exact: true }),
+    page.getByRole("button", { name: "Baixar ZIP completo", exact: true }),
   ).toBeEnabled();
   await filter.fill("TESTE ANA");
   const download = page.waitForEvent("download");
@@ -849,7 +849,7 @@ test("barcode defaults reach queued PDFs, individual sizes win, and clearing kee
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
   await page.getByText(/^LOTE-TESTE ·.*3 arquivo/).click();
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Baixar lote" }).click();
+  await page.getByRole("button", { name: "Baixar ZIP completo" }).click();
   const { "Lote completo.pdf": combined, ...files } = unzipSync(await readFile((await (await download).path())!));
   expect((await PDFDocument.load(combined)).getPageCount()).toBe(12);
   expect(Object.keys(files)).toHaveLength(3);
@@ -934,7 +934,7 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await expect(toolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("admin keeps 51 PDFs processing across sections and downloads one named ZIP", async ({
+test("admin keeps 100 PDFs processing across sections and downloads one ordered ZIP", async ({
   page,
 }) => {
   await page.clock.install();
@@ -944,7 +944,7 @@ test("admin keeps 51 PDFs processing across sections and downloads one named ZIP
     .getByRole("button", { name: "Planilha e CSV", exact: true })
     .click();
   const rows = Array.from(
-    { length: 51 },
+    { length: 100 },
     (_, index) => `PED-${index + 1},BR${100000 + index},Kit de teste,ANA`,
   );
   await page.getByLabel("Arquivo CSV", { exact: true }).setInputFiles({
@@ -959,7 +959,7 @@ test("admin keeps 51 PDFs processing across sections and downloads one named ZIP
     .click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(
-    page.getByRole("heading", { name: "Fila principal · 51" }),
+    page.getByRole("heading", { name: "Fila principal · 100" }),
   ).toBeVisible();
   await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Pedidos da semana");
   await page
@@ -969,26 +969,34 @@ test("admin keeps 51 PDFs processing across sections and downloads one named ZIP
   const progress = page.getByRole("region", {
     name: "Processamento da fila de PDFs",
   });
-  await expect(progress.getByRole("progressbar")).toHaveAttribute("max", "51");
-  for (const count of [20, 40]) {
+  await expect(progress.getByRole("progressbar")).toHaveAttribute("max", "100");
+  for (const count of [26, 52, 78]) {
     await expect(progress.getByRole("status")).toContainText(
-      `Aguardando o limite de geração · ${count} de 51`,
+      `Aguardando o limite de geração · ${count} de 100`,
     );
     await page.clock.fastForward(62000);
   }
   await expect(progress.getByRole("status")).toHaveText(
-    "Processamento de PDFs concluído · 51 de 51 processado(s)",
+    "Processamento de PDFs concluído · 100 de 100 processado(s)",
   );
   await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
-  await page.getByText(/^Pedidos da semana ·.*51 arquivo/).click();
+  await page.getByText(/^Pedidos da semana ·.*100 arquivo/).click();
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Baixar lote", exact: true }).click();
+  await page.getByRole("button", { name: "Baixar ZIP completo", exact: true }).click();
   const zip = await download;
   expect(zip.suggestedFilename()).toBe("Pedidos da semana.zip");
   const files = unzipSync(await readFile((await zip.path())!));
-  expect(Object.keys(files)).toHaveLength(52);
-  expect((await PDFDocument.load(files["Lote completo.pdf"])).getPageCount()).toBe(51);
+  expect(Object.keys(files)).toEqual([
+    "Lote completo.pdf",
+    ...rows.map((_, i) => `Kit de teste ANA BR${100000 + i}.pdf`),
+  ]);
+  expect((await PDFDocument.load(files["Lote completo.pdf"])).getPageCount()).toBe(100);
+  const pdfDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar PDF unido", exact: true }).click();
+  const pdf = await pdfDownload;
+  expect(pdf.suggestedFilename()).toBe("Pedidos da semana.pdf");
+  expect((await PDFDocument.load(await readFile((await pdf.path())!))).getPageCount()).toBe(100);
   expect(await page.evaluate(() => sessionStorage.getItem("staff-pdf-fixture-recipe-downloads"))).toBeNull();
 });
 
@@ -1035,7 +1043,7 @@ test("quantity two creates two separate PDFs with the same order, model and trac
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
   await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
   const downloading = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Baixar lote", exact: true }).click();
+  await page.getByRole("button", { name: "Baixar ZIP completo", exact: true }).click();
   const { "Lote completo.pdf": combined, ...pdfs } = unzipSync(await readFile((await (await downloading).path())!));
   expect(Object.keys(pdfs).sort()).toEqual([
     "Kit de teste BR264979796804XSPXLM14002828 (2).pdf",
@@ -1128,7 +1136,7 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   await page.getByText("Lotes anteriores · 1", { exact: true }).click();
   await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
   const archive = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Baixar lote" }).click();
+  await page.getByRole("button", { name: "Baixar ZIP completo" }).click();
   const { "Lote completo.pdf": combined, ...files } = unzipSync(await readFile((await (await archive).path())!));
   expect(Object.keys(files).sort()).toEqual(["Kit de teste ANA BR2684621549924.pdf", "Kit de teste.pdf"]);
   expect((await PDFDocument.load(combined)).getPageCount()).toBe(8);

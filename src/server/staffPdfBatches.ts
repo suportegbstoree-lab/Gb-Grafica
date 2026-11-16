@@ -133,30 +133,30 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         .getSignedUrl({ action: "read", expires: expiry });
       return value;
     };
-    const fonts = await Promise.all(
-      data.fonts.map(async (font: any) => {
+    const [originalUrl, fonts, initial, uploadExists] = await Promise.all([
+      url(data.original),
+      Promise.all(data.fonts.map(async (font: any) => {
         const { asset, ...value } = font;
-        return asset ? { ...value, arquivoUrl: await url(asset) } : value;
-      }),
-    );
+        return asset ? { ...value, arquivoUrl: await url(asset), assetKey: asset } : value;
+      })),
+      data.initial && (async () => ({
+        url: await url(data.initial.asset),
+        sizePercent: data.initial.sizePercent,
+        assetKey: data.initial.asset,
+      }))(),
+      data.pdf ? false : services().bucket.file(staffPdfBatchFilePath(batchId, itemId)).exists().then(([exists]) => exists),
+    ]);
     return {
       item: itemView(itemId, data),
       job: data.job,
       fitMargin: data.fitMargin,
-      originalUrl: await url(data.original),
+      originalUrl,
+      originalKey: data.original,
       fonts,
       rendererVersion: 1,
-      ...(!data.pdf && (await services().bucket.file(staffPdfBatchFilePath(batchId, itemId)).exists())[0]
-        ? { uploadExists: true } : {}),
+      ...(uploadExists ? { uploadExists: true } : {}),
       ...(data.printProfile ? { printProfile: data.printProfile } : {}),
-      ...(data.initial
-        ? {
-            initial: {
-              url: await url(data.initial.asset),
-              sizePercent: data.initial.sizePercent,
-            },
-          }
-        : {}),
+      ...(initial ? { initial } : {}),
     };
   }
   async function snapshot(
@@ -165,10 +165,11 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     limit: number,
     expected?: string,
   ) {
-    const file = services().bucket.file(
-      source,
-      expected ? { generation: expected } : undefined,
-    );
+    const { bucket } = services();
+    const knownKey = expected && hash(JSON.stringify([source, expected]));
+    const knownDestination = knownKey ? bucket.file(assetPath(batchId, knownKey)) : undefined;
+    if (knownKey && knownDestination && (await knownDestination.exists())[0]) return knownKey;
+    const file = bucket.file(source, expected ? { generation: expected } : undefined);
     const [meta] = await file.getMetadata();
     if (
       !Number(meta.size) ||
@@ -183,12 +184,10 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         "A base mudou durante a geração. Revise a fila.",
         409,
       );
-    const key = hash(JSON.stringify([source, String(meta.generation)]));
-    const dest = services().bucket.file(assetPath(batchId, key));
-    const [exists] = await dest.exists();
-    if (!exists) {
-      const [bytes] = await services()
-        .bucket.file(source, { generation: String(meta.generation) })
+    const key = knownKey || hash(JSON.stringify([source, String(meta.generation)]));
+    const dest = knownDestination ?? bucket.file(assetPath(batchId, key));
+    if (knownDestination || !(await dest.exists())[0]) {
+      const [bytes] = await bucket.file(source, { generation: String(meta.generation) })
         .download();
       if (bytes.length > limit)
         throw new OperationsError("Arquivo da receita maior que o permitido.");
@@ -421,62 +420,50 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         fitMargin = layout.layout.fit_margin;
         initialSize = staffPdfInitialSize(layout.layout);
       }
-      const original = await snapshot(
-        batchId,
-        base.path,
-        STAFF_DOCUMENT_MAX_BYTES,
-        base.generation,
-      );
-      const recipeFonts = [];
-      for (const id of new Set(
-        isStaffPdfSimpleJob(job)
+      async function snapshotFonts(job: StaffPdfBatchJob) {
+        const snapshots = [];
+        const ids = isStaffPdfSimpleJob(job)
           ? [
-              job.customization.fonte,
-              ...(job.customization.linhas || []).map(
-                (line) => line.fonte || job.customization.fonte,
-              ),
-            ]
-          : job.lines.map((line) => line.fontId),
-      )) {
-        const font = staffPdfFont(id, fonts) || STAFF_PDF_SYSTEM_FONT;
-        const { arquivoUrl, ...safe } = font;
-        if (arquivoUrl) {
-          const path = adminAssetPathFromUrl(
-            arquivoUrl,
-            services().bucket.name,
-          );
-          if (!path || !isAdminFontPath(path))
-            throw new OperationsError(
-              `Cadastre a fonte “${font.nome}” pelo upload de fontes para preservar este lote.`,
-            );
-          recipeFonts.push({
-            ...safe,
-            asset: await snapshot(batchId, path, 16 * 1024 * 1024),
-          });
-        } else recipeFonts.push(safe);
+            job.customization.fonte,
+            ...(job.customization.linhas || []).map((line) => line.fonte || job.customization.fonte),
+          ]
+          : job.lines.map((line) => line.fontId);
+        for (const id of new Set(ids)) {
+          const font = staffPdfFont(id, fonts) || STAFF_PDF_SYSTEM_FONT;
+          const { arquivoUrl, ...safe } = font;
+          if (arquivoUrl) {
+            const path = adminAssetPathFromUrl(arquivoUrl, services().bucket.name);
+            if (!path || !isAdminFontPath(path))
+              throw new OperationsError(
+                `Cadastre a fonte “${font.nome}” pelo upload de fontes para preservar este lote.`,
+              );
+            snapshots.push({ ...safe, asset: await snapshot(batchId, path, 16 * 1024 * 1024) });
+          } else snapshots.push(safe);
+        }
+        return snapshots;
       }
-      let initial: { asset: string; sizePercent: number } | undefined;
       const alphabet = base.alphabet;
       const letter = findAlphabetLetter(
         alphabet?.letters,
         isStaffPdfSimpleJob(job) ? job.customization.texto : job.lines[0].text,
       );
       const path = letter && alphabet?.letters?.[letter]?.path;
-      if (path && matchingAlphabetName(base.name, alphabet.folderName)) {
-        const valid =
-          base.source === "internal"
-            ? new RegExp(
-                `^staff-pdf-bases/${base.id}/letters/[a-f0-9]{32}[.]png$`,
-              ).test(path)
-            : new RegExp(
-                `^catalog/products/${base.productId}/[a-f0-9]{32}[.]png$`,
-              ).test(path);
+      const initialPath = path && matchingAlphabetName(base.name, alphabet.folderName) ? path : undefined;
+      if (initialPath) {
+        const valid = base.source === "internal"
+          ? new RegExp(`^staff-pdf-bases/${base.id}/letters/[a-f0-9]{32}[.]png$`).test(initialPath)
+          : new RegExp(`^catalog/products/${base.productId}/[a-f0-9]{32}[.]png$`).test(initialPath);
         if (!valid) throw new OperationsError("Inicial inválida.");
-        initial = {
-          asset: await snapshot(batchId, path, STAFF_DOCUMENT_MAX_BYTES),
-          sizePercent: initialSize ?? (alphabet.sizePercent || DEFAULT_DECORATIVE_INITIAL_PERCENT),
-        };
       }
+      const [original, recipeFonts, initialAsset] = await Promise.all([
+        snapshot(batchId, base.path, STAFF_DOCUMENT_MAX_BYTES, base.generation),
+        snapshotFonts(job),
+        initialPath && snapshot(batchId, initialPath, STAFF_DOCUMENT_MAX_BYTES),
+      ]);
+      const initial = initialAsset ? {
+        asset: initialAsset,
+        sizePercent: initialSize ?? (alphabet.sizePercent || DEFAULT_DECORATIVE_INITIAL_PERCENT),
+      } : undefined;
       const current = await deps.authorize(req);
       if (
         current.uid !== user.uid ||
@@ -647,6 +634,10 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const batchId = req.params.batchId;
       const { ref, data } = await access(batchId, actor(res));
       const { db, bucket } = services();
+      const format = req.body?.format ?? "zip";
+      if (format !== "zip" && format !== "pdf")
+        throw new OperationsError("Formato de download inválido.");
+      const cacheField = format === "pdf" ? "consolidatedArchive" : "archive";
       const count = data.fileCount ?? 0;
       const name = staffPdfOutputName(data.name || "") || data.reference;
       const sendArchive = async (path: string) => {
@@ -654,16 +645,18 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
           version: "v4",
           action: "read",
           expires: Math.min(now() + 300000, Date.parse(data.expiresAt)),
-          responseDisposition: staffPdfAttachment(name, "zip"),
+          responseDisposition: staffPdfAttachment(name, format),
         });
-        res.json({ url, name: `${name}.zip` });
+        res.json({ url, name: `${name}.${format}` });
       };
-      if (
-        data.archive?.version === STAFF_PDF_ARCHIVE_VERSION &&
-        data.archive.fileCount === count &&
-        /^[a-f0-9]{64}$/.test(data.archive.fingerprint)
-      ) {
-        await sendArchive(staffPdfBatchArchivePath(batchId, data.archive.fingerprint));
+      const candidates = format === "pdf" ? [data.archive, data.consolidatedArchive] : [data.archive];
+      const cached = candidates.find((entry) =>
+        entry?.version === STAFF_PDF_ARCHIVE_VERSION &&
+        entry.fileCount === count &&
+        /^[a-f0-9]{64}$/.test(entry.fingerprint),
+      );
+      if (cached) {
+        await sendArchive(staffPdfBatchArchivePath(batchId, cached.fingerprint, format));
         return;
       }
       const rows = await db.collection("_staffPdfBatchItems")
@@ -697,7 +690,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         crc32: row.data().pdf.crc32,
         generation: row.data().pdf.generation,
       }));
-      const result = await composeStaffPdfArchive(bucket, batchId, entries, progress);
+      const result = await composeStaffPdfArchive(bucket, batchId, entries, format, progress);
       if ("progress" in result) {
         res.json(result);
         return;
@@ -707,10 +700,10 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         const current = (await tx.get(ref)).data();
         if (current && (current.fileCount ?? 0) === count)
           tx.set(ref, {
-            archive: { version: STAFF_PDF_ARCHIVE_VERSION, fileCount: count, fingerprint: result.fingerprint },
+            [cacheField]: { version: STAFF_PDF_ARCHIVE_VERSION, fileCount: count, fingerprint: result.fingerprint },
           }, { merge: true });
       });
-      await sendArchive(result.archive.name);
+      await sendArchive(result.file.name);
     }),
   );
   return router;

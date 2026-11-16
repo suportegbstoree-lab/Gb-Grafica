@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { staffPdfOutputName } from "../lib/staffPdf.js";
-import type { StaffPdfArchiveProgress } from "../lib/staffPdfBatch.js";
+import type { StaffPdfArchiveFormat, StaffPdfArchiveProgress } from "../lib/staffPdfBatch.js";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
 import { finishStaffPdfMerge, writeStaffPdfMergePart, type StaffPdfMergePart } from "./staffPdfConsolidated.js";
 
@@ -111,8 +111,9 @@ export function staffPdfZipEntries(entries: Pick<StaffPdfArchiveEntry, "name" | 
   return { localHeaders, directory: Buffer.concat(directory) };
 }
 
-export function staffPdfBatchArchivePath(batchId: string, fingerprint: string) {
-  return `staff-pdf-batches/${batchId}/archives/${fingerprint}.zip`;
+export function staffPdfBatchArchivePath(batchId: string, fingerprint: string, format: StaffPdfArchiveFormat = "zip") {
+  const prefix = `staff-pdf-batches/${batchId}/archives/${fingerprint}`;
+  return format === "pdf" ? `${prefix}/consolidated.pdf` : `${prefix}.zip`;
 }
 
 export function staffPdfBatchFilePath(batchId: string, itemId: string) {
@@ -250,16 +251,18 @@ export async function composeStaffPdfArchive(
   bucket: StorageBucket,
   batchId: string,
   entries: StoredPdf[],
+  format: StaffPdfArchiveFormat,
   progress?: StaffPdfArchiveProgress,
-): Promise<{ archive: StorageFile; fingerprint: string } | { progress: StaffPdfArchiveProgress }> {
+): Promise<{ file: StorageFile; fingerprint: string } | { progress: StaffPdfArchiveProgress }> {
   const fingerprint = createHash("sha256").update(JSON.stringify([STAFF_PDF_ARCHIVE_VERSION, entries])).digest("hex");
   const archive = bucket.file(staffPdfBatchArchivePath(batchId, fingerprint));
   const prefix = archive.name.slice(0, -4);
-  if ((await archive.exists())[0]) return { archive, fingerprint };
+  if (format === "zip" && (await archive.exists())[0]) return { file: archive, fingerprint };
   const resume = progress?.fingerprint === fingerprint ? progress : undefined;
   const source = (row: StoredPdf) => bucket.file(staffPdfBatchFilePath(batchId, row.id), { generation: row.generation });
   const consolidated = await prepareConsolidatedPdf(bucket, prefix, entries, source, resume?.stage === "merge" ? resume.cursor : 0);
   if ("cursor" in consolidated) return { progress: { stage: "merge", cursor: consolidated.cursor, fingerprint } };
+  if (format === "pdf") return { file: consolidated.file, fingerprint };
   const zipEntries = [{ name: CONSOLIDATED_NAME, ...consolidated.metadata, file: consolidated.file },
     ...entries.map((entry) => ({ ...entry, file: source(entry) }))];
   const { localHeaders, directory } = staffPdfZipEntries(zipEntries);
@@ -292,5 +295,5 @@ export async function composeStaffPdfArchive(
   }
   if (end < parts) return { progress: { stage: "zip", cursor: end, fingerprint } };
   await combineParts(bucket, Array.from({ length: parts }, (_, index) => part(index)), archive);
-  return { archive, fingerprint };
+  return { file: archive, fingerprint };
 }

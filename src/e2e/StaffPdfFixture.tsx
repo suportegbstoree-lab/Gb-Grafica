@@ -309,6 +309,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
               rendererVersion: 1,
               job,
               fitMargin: 0.2,
+              originalKey: `${job.baseId}:${job.baseRevision}`,
               originalUrl: URL.createObjectURL(
                 await value.baseFile(job.baseId),
               ),
@@ -374,14 +375,15 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           const blob = savedPdf(itemId);
           return record && blob ? { url: URL.createObjectURL(blob), name: `${record.item.outputName}.pdf` } : null;
         },
-        archive: async (batchId) => {
+        archive: async (batchId, _progress, format = "zip") => {
           const { view, records } = batches.get(batchId)!;
           const ready = [...records.values()].filter(({ item }) => item.status === "ready");
           if (!ready.length) return { empty: true };
           const legacy = ready.filter(({ item }) => !savedPdf(item.id)).map(({ item }) => item.id);
           if (legacy.length) return { legacy };
-          const name = `${staffPdfOutputName(view.name || "") || view.reference}.zip`;
-          const prepared = preparedArchives.get(batchId);
+          const name = `${staffPdfOutputName(view.name || "") || view.reference}.${format}`;
+          const cacheKey = `${batchId}:${format}`;
+          const prepared = preparedArchives.get(cacheKey);
           if (prepared?.count === ready.length) return { name, url: prepared.url };
           const files: Record<string, Uint8Array> = { "Lote completo.pdf": new Uint8Array() };
           const combined = await PDFDocument.create();
@@ -395,9 +397,14 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
             for (const page of await combined.copyPages(pdf, pdf.getPageIndices())) combined.addPage(page);
           }
           files["Lote completo.pdf"] = await combined.save();
+          if (format === "pdf") {
+            const url = URL.createObjectURL(new Blob([new Uint8Array(files["Lote completo.pdf"])], { type: "application/pdf" }));
+            preparedArchives.set(cacheKey, { count: ready.length, url });
+            return { name, url };
+          }
           const { zipSync } = await import("fflate");
           const url = URL.createObjectURL(new Blob([new Uint8Array(zipSync(files, { level: 0 }))], { type: "application/zip" }));
-          preparedArchives.set(batchId, { count: ready.length, url });
+          preparedArchives.set(cacheKey, { count: ready.length, url });
           return { name, url };
         },
       };

@@ -1,8 +1,9 @@
 import React from "react";
-import { Download, Printer, TextCursorInput } from "lucide-react";
+import { Download, FileDown, Printer, TextCursorInput } from "lucide-react";
 import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
 import type {
   StaffPdfBatchApi,
+  StaffPdfArchiveFormat,
   StaffPdfBatchItemView,
   StaffPdfBatchView,
 } from "../lib/staffPdfBatch";
@@ -80,6 +81,18 @@ export default function StaffPdfBatches({
       running.current = false;
       if (alive.current) setBusy(false);
     }
+  }
+  function downloadBatch(batchId: string, format: StaffPdfArchiveFormat) {
+    return run(async () => {
+      const delivery = await loadStaffPdfArchive(api, batchId, {
+        format,
+        restoreLegacy: true,
+        active: () => alive.current,
+      });
+      if (!alive.current) return;
+      if (!delivery) throw new Error("O lote ainda não tem PDFs concluídos.");
+      downloadFile(delivery);
+    });
   }
   async function loadItems(id: string) {
     const version = listGeneration.current;
@@ -183,20 +196,16 @@ export default function StaffPdfBatches({
                 <TextCursorInput size={16} aria-hidden="true" />
               </button>
             )}
-            <button
-              type="button" className={iconButton} aria-label="Baixar lote" title="Baixar lote"
-              disabled={busy || !batch.count}
-              onClick={() =>
-                void run(async () => {
-                  const archive = await loadStaffPdfArchive(api, batch.id, true, () => alive.current);
-                  if (!alive.current) return;
-                  if (!archive) throw new Error("O lote ainda não tem PDFs concluídos.");
-                  downloadFile(archive);
-                })
-              }
-            >
-              <Download size={16} aria-hidden="true" />
-            </button>
+            <div className="inline-flex flex-wrap gap-2">
+              <button type="button" className={`${button} inline-flex items-center gap-2`}
+                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch.id, "zip")}>
+                <Download size={16} aria-hidden="true" /> Baixar ZIP completo
+              </button>
+              <button type="button" className={`${button} inline-flex items-center gap-2`}
+                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch.id, "pdf")}>
+                <FileDown size={16} aria-hidden="true" /> Baixar PDF unido
+              </button>
+            </div>
             {items[batch.id] && (
               <label className="mt-3 block max-w-md text-sm">
                 Buscar arquivo no lote
