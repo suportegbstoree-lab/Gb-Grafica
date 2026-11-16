@@ -36,7 +36,7 @@ import {
 } from "../lib/staffDocument.js";
 import { OperationsError } from "../lib/operations.js";
 import { resolveStaffPdfBase } from "./staffPdfLibrary.js";
-import { composeStaffPdfArchive, staffPdfAttachment, staffPdfBatchArchivePath, staffPdfBatchFilePath } from "./staffPdfArchive.js";
+import { composeStaffPdfArchive, staffPdfAttachment, staffPdfBatchArchivePath, staffPdfBatchFilePath, STAFF_PDF_ARCHIVE_VERSION } from "./staffPdfArchive.js";
 import { prepareWorkActivity } from "./workTracking.js";
 import { activityActor } from "./staffActivity.js";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
@@ -505,8 +505,9 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
             throw new OperationsError("O pedido mudou durante a geração.", 409);
           return;
         }
-        tx.create(itemRef, value);
-        tx.set(batchRef, { itemCount: (parent.itemCount ?? parent.itemIds?.length ?? 0) + 1 }, { merge: true });
+        const position = (parent.itemCount ?? parent.itemIds?.length ?? 0) + 1;
+        tx.create(itemRef, { ...value, position });
+        tx.set(batchRef, { itemCount: position }, { merge: true });
       });
       res
         .status(201)
@@ -662,13 +663,17 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         });
         res.json({ url, name: `${name}.zip` });
       };
-      if (data.archive?.fileCount === count && /^[a-f0-9]{64}$/.test(data.archive.fingerprint)) {
+      if (
+        data.archive?.version === STAFF_PDF_ARCHIVE_VERSION &&
+        data.archive.fileCount === count &&
+        /^[a-f0-9]{64}$/.test(data.archive.fingerprint)
+      ) {
         await sendArchive(staffPdfBatchArchivePath(batchId, data.archive.fingerprint));
         return;
       }
       const rows = await db.collection("_staffPdfBatchItems")
         .where("batchId", "==", batchId)
-        .select("ownerId", "status", "pdf", "job.outputName")
+        .select("ownerId", "status", "pdf", "job.outputName", "position", "completedAt")
         .get();
       const ready = rows.docs.filter((row) => row.data().status === "ready" && row.data().ownerId === data.ownerId);
       const legacy = ready.filter((row) => !row.get("pdf")).map((row) => row.id);
@@ -682,9 +687,15 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       }
       const cursor = req.body?.cursor;
       const fingerprint = req.body?.fingerprint;
-      const progress = Number.isSafeInteger(cursor) && cursor >= 0 && typeof fingerprint === "string"
-        ? { cursor, fingerprint } : undefined;
-      const entries = ready.map((row) => ({
+      const stage = req.body?.stage;
+      const progress = (stage === "merge" || stage === "zip") &&
+        Number.isSafeInteger(cursor) && cursor >= 0 && typeof fingerprint === "string"
+        ? { stage: stage as "merge" | "zip", cursor, fingerprint } : undefined;
+      const entries = ready.sort((a, b) =>
+        (a.get("position") ?? 0) - (b.get("position") ?? 0) ||
+        (a.get("completedAt") ?? "").localeCompare(b.get("completedAt") ?? "") ||
+        a.id.localeCompare(b.id),
+      ).map((row) => ({
         id: row.id,
         name: row.data().job.outputName,
         bytes: row.data().pdf.bytes,
@@ -692,15 +703,17 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         generation: row.data().pdf.generation,
       }));
       const result = await composeStaffPdfArchive(bucket, batchId, entries, progress);
-      if (!result.archive) {
-        res.json({ progress: { cursor: result.cursor, fingerprint: result.fingerprint } });
+      if ("progress" in result) {
+        res.json(result);
         return;
       }
       // New completions invalidate the archive. Retain the current snapshot for its caller.
       await db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data();
         if (current && (current.fileCount ?? 0) === count)
-          tx.set(ref, { archive: { fileCount: count, fingerprint: result.fingerprint } }, { merge: true });
+          tx.set(ref, {
+            archive: { version: STAFF_PDF_ARCHIVE_VERSION, fileCount: count, fingerprint: result.fingerprint },
+          }, { merge: true });
       });
       await sendArchive(result.archive.name);
     }),

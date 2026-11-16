@@ -383,13 +383,18 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           const name = `${staffPdfOutputName(view.name || "") || view.reference}.zip`;
           const prepared = preparedArchives.get(batchId);
           if (prepared?.count === ready.length) return { name, url: prepared.url };
-          const files: Record<string, Uint8Array> = {};
+          const files: Record<string, Uint8Array> = { "Lote completo.pdf": new Uint8Array() };
+          const combined = await PDFDocument.create();
           for (const { item } of ready) {
             let filename = `${item.outputName}.pdf`;
             let copy = 2;
             while (Object.hasOwn(files, filename)) filename = `${item.outputName} (${copy++}).pdf`;
-            files[filename] = new Uint8Array(await savedPdf(item.id)!.arrayBuffer());
+            const bytes = new Uint8Array(await savedPdf(item.id)!.arrayBuffer());
+            files[filename] = bytes;
+            const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
+            for (const page of await combined.copyPages(pdf, pdf.getPageIndices())) combined.addPage(page);
           }
+          files["Lote completo.pdf"] = await combined.save();
           const { zipSync } = await import("fflate");
           const url = URL.createObjectURL(new Blob([new Uint8Array(zipSync(files, { level: 0 }))], { type: "application/zip" }));
           preparedArchives.set(batchId, { count: ready.length, url });

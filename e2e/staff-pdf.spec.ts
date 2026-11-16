@@ -817,9 +817,10 @@ test("barcode defaults reach queued PDFs, individual sizes win, and clearing kee
   await page.getByText(/^LOTE-TESTE ·.*3 arquivo/).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar lote" }).click();
-  const files = Object.entries(unzipSync(await readFile((await (await download).path())!)));
-  expect(files).toHaveLength(3);
-  for (const [filename, contents] of files) {
+  const { "Lote completo.pdf": combined, ...files } = unzipSync(await readFile((await (await download).path())!));
+  expect((await PDFDocument.load(combined)).getPageCount()).toBe(12);
+  expect(Object.keys(files)).toHaveLength(3);
+  for (const [filename, contents] of Object.entries(files)) {
     if (filename.includes("SEM CODIGO")) {
       expect(filename).toBe("Kit de teste SEM CODIGO.pdf");
       const pdf = await PDFDocument.load(contents);
@@ -953,7 +954,8 @@ test("admin keeps 51 PDFs processing across sections and downloads one named ZIP
   const zip = await download;
   expect(zip.suggestedFilename()).toBe("Pedidos da semana.zip");
   const files = unzipSync(await readFile((await zip.path())!));
-  expect(Object.keys(files)).toHaveLength(51);
+  expect(Object.keys(files)).toHaveLength(52);
+  expect((await PDFDocument.load(files["Lote completo.pdf"])).getPageCount()).toBe(51);
   expect(await page.evaluate(() => sessionStorage.getItem("staff-pdf-fixture-recipe-downloads"))).toBeNull();
 });
 
@@ -1001,13 +1003,14 @@ test("quantity two creates two separate PDFs with the same order, model and trac
   await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
   const downloading = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar lote", exact: true }).click();
-  const pdfs = unzipSync(await readFile((await (await downloading).path())!));
+  const { "Lote completo.pdf": combined, ...pdfs } = unzipSync(await readFile((await (await downloading).path())!));
   expect(Object.keys(pdfs).sort()).toEqual([
     "Kit de teste BR264979796804XSPXLM14002828 (2).pdf",
     "Kit de teste BR264979796804XSPXLM14002828.pdf",
   ]);
   for (const bytes of Object.values(pdfs))
     expect((await PDFDocument.load(bytes)).getPageCount()).toBe(4);
+  expect((await PDFDocument.load(combined)).getPageCount()).toBe(8);
 });
 
 test("CSV review corrects and deletes queued rows and confirms remaining blanks before generation", async ({
@@ -1093,8 +1096,9 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   await page.getByText(/^LOTE-TESTE ·.*2 arquivo/).click();
   const archive = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar lote" }).click();
-  const files = unzipSync(await readFile((await (await archive).path())!));
+  const { "Lote completo.pdf": combined, ...files } = unzipSync(await readFile((await (await archive).path())!));
   expect(Object.keys(files).sort()).toEqual(["Kit de teste ANA BR2684621549924.pdf", "Kit de teste.pdf"]);
+  expect((await PDFDocument.load(combined)).getPageCount()).toBe(8);
   for (const [name, bytes] of Object.entries(files)) {
     const pdf = await PDFDocument.load(bytes);
     const resources = pdf.getPage(0).node.Resources()!.lookup(PDFName.of("XObject"), PDFDict);

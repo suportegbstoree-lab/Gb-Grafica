@@ -814,13 +814,14 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       generation: "1000", size: bytes.length, contentType: "application/pdf", metadata: { zipcrc: upload.crc32 },
     } });
     assert.equal((await request(`/library/batches/${batch.id}/items/${legacyId}/complete`, "generator", {})).status, 200);
-    const readCount = downloads.length;
     const result = await (await request(archiveUrl, "generator", {})).json();
     assert.equal(result.name, `${batch.reference}.zip`);
     const zipPath = new URL(result.url).pathname.slice(1);
     const zip = unzipSync(objects.get(zipPath)!.bytes);
     assert.deepEqual(Buffer.from(zip["Kit ANA BR2684621549924.pdf"]), bytes);
     assert.deepEqual(Buffer.from(zip["Kit ANA.pdf"]), bytes);
+    assert.equal((await PDFDocument.load(zip["Lote completo.pdf"])).getPageCount(), 4);
+    const readCount = downloads.length;
     assert.equal((await (await request(archiveUrl, "generator", {})).json()).url, result.url);
     assert.equal(downloads.length, readCount);
     const activities = [...docs.keys()].filter((key) =>
@@ -1152,26 +1153,45 @@ test("ZIP64 records offsets past 4 GiB with no total-byte cutoff", () => {
   assert.equal(zip64.readBigUInt64LE(32), 100n);
   assert.equal(zip64.readBigUInt64LE(48), BigInt(offset));
   assert.equal(directory.readUInt32LE(directory.length - 6), 0xffffffff);
+
+  const largeEntryBytes = 5 * 1024 ** 3;
+  const largeEntry = staffPdfZipEntries([{ name: "Lote completo", bytes: largeEntryBytes, crc32: 0 }]);
+  const local = largeEntry.localHeaders[0];
+  assert.equal(local.readUInt32LE(18), 0xffffffff);
+  assert.equal(local.readUInt16LE(28), 20);
+  assert.equal(local.readBigUInt64LE(local.length - 16), BigInt(largeEntryBytes));
+  assert.equal(local.readBigUInt64LE(local.length - 8), BigInt(largeEntryBytes));
+  assert.equal(largeEntry.directory.readUInt32LE(20), 0xffffffff);
+  const centralExtra = 46 + largeEntry.directory.readUInt16LE(28);
+  assert.equal(largeEntry.directory.readBigUInt64LE(centralExtra + 4), BigInt(largeEntryBytes));
 });
 
-test("an archive continues composition across requests and contains all 501 stored PDFs", async () =>
+test("an archive resumes both stages and preserves the page order of all 501 stored PDFs", async () =>
   scenario(async ({ request, docs, objects, downloads }) => {
     const create = await request("/library/batches", "generator", { requestId: "c".repeat(36), name: "Lote único" });
     assert.equal(create.status, 201);
     const { batch } = await create.json();
-    const bytes = Buffer.from(await pdf(1));
-    const output = { bytes: bytes.length, crc32: crc32(bytes), generation: "10" };
     const count = 501;
+    let lastBytes: Buffer;
     for (let i = 0; i < count; i++) {
-      const id = i.toString(16).padStart(32, "0");
+      const id = (count - i - 1).toString(16).padStart(32, "0");
+      const document = await PDFDocument.create();
+      document.addPage([600 + i, 840]);
+      document.addPage([600 + i, 841]);
+      const bytes = Buffer.from(await document.save());
+      lastBytes = bytes;
+      const output = { bytes: bytes.length, crc32: crc32(bytes), generation: "10" };
       docs.set(`_staffPdfBatchItems/${id}`, {
-        batchId: batch.id, ownerId: "generator", job: { outputName: "Álbum" }, status: "ready", pdf: output,
+        batchId: batch.id, ownerId: "generator", position: i + 1,
+        job: { outputName: "Álbum" }, status: "ready", pdf: output,
       });
       objects.set(staffPdfBatchFilePath(batch.id, id), {
         bytes, meta: { generation: output.generation },
       });
     }
-    Object.assign(docs.get(`_staffPdfBatches/${batch.id}`)!, { fileCount: count, itemCount: count });
+    Object.assign(docs.get(`_staffPdfBatches/${batch.id}`)!, {
+      fileCount: count, itemCount: count, archive: { fileCount: count, fingerprint: "a".repeat(64) },
+    });
     const items = `/library/batches/${batch.id}/items`;
     const firstPage = await (await request(items, "generator")).json();
     const lastPage = await (await request(`${items}?cursor=${firstPage.next}`, "generator")).json();
@@ -1180,15 +1200,28 @@ test("an archive continues composition across requests and contains all 501 stor
     assert.equal(lastPage.next, undefined);
     assert.equal(lastPage.items[0].id, (count - 1).toString(16).padStart(32, "0"));
     const endpoint = `/library/batches/${batch.id}/archive`;
-    const partial = await (await request(endpoint, "generator", {})).json();
-    assert.equal(partial.progress.cursor, 12);
-    const second = await (await request(endpoint, "generator", partial.progress)).json();
-    assert.equal(second.progress.cursor, 24);
-    const built = await (await request(endpoint, "generator", second.progress)).json();
+    const stages = new Set();
+    let built = await (await request(endpoint, "generator", {})).json();
+    assert.equal(built.progress.stage, "merge");
+    // A fresh caller can resume without the previous browser's cursor.
+    built = await (await request(endpoint, "generator", {})).json();
+    for (let i = 0; built.progress && i < 20; i++) {
+      stages.add(built.progress.stage);
+      built = await (await request(endpoint, "generator", built.progress)).json();
+    }
+    assert.deepEqual(stages, new Set(["merge", "zip"]));
     assert.equal(built.name, "Lote único.zip");
     const zipped = unzipSync(objects.get(new URL(built.url).pathname.slice(1))!.bytes);
-    assert.equal(Object.keys(zipped).length, count);
-    assert.deepEqual(Buffer.from(zipped["Álbum (501).pdf"]), bytes);
+    assert.equal(Object.keys(zipped).length, count + 1);
+    assert.deepEqual(Buffer.from(zipped["Álbum (501).pdf"]), lastBytes!);
+    const merged = await PDFDocument.load(zipped["Lote completo.pdf"]);
+    assert.equal(merged.getPageCount(), count * 2);
+    for (let i = 0; i < count; i++) {
+      assert.deepEqual(merged.getPage(i * 2).getSize(), { width: 600 + i, height: 840 });
+      assert.deepEqual(merged.getPage(i * 2 + 1).getSize(), { width: 600 + i, height: 841 });
+    }
+    assert.equal(downloads.filter((path) => path.includes("/files/")).length, count);
+    const readCount = downloads.length;
     assert.equal((await (await request(endpoint, "generator", {})).json()).url, built.url);
-    assert.deepEqual(downloads, []);
+    assert.equal(downloads.length, readCount);
   }));

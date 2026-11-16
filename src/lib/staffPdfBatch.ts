@@ -53,6 +53,7 @@ export interface StaffPdfRecipe {
   uploadExists?: boolean;
 }
 export interface StaffPdfArchiveProgress {
+  stage: "merge" | "zip";
   cursor: number;
   fingerprint: string;
 }
