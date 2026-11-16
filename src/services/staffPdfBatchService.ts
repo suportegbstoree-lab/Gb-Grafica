@@ -2,6 +2,7 @@ import {
   isStaffPdfSimpleJob,
   type StaffPdfBatchApi,
   type StaffPdfRecipe,
+  type StaffPdfArchiveProgress,
 } from "../lib/staffPdfBatch";
 import { readStaffPdf, staffPdfRequest } from "./staffPdfRequest";
 import { exportStaffPdf } from "./staffPdfRender";
@@ -12,15 +13,95 @@ export const staffPdfBatchApi: StaffPdfBatchApi = {
     (await staffPdfRequest("/batches", { requestId, name })).batch,
   rename: async (id, name) =>
     (await staffPdfRequest(`/batches/${id}/name`, { name })).batch,
-  items: (id) => staffPdfRequest(`/batches/${id}/items`),
+  items: (id, cursor) => staffPdfRequest(`/batches/${id}/items${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
   save: (id, job, requestId) =>
     staffPdfRequest(`/batches/${id}/items`, { job, requestId }),
   recipe: (batchId, itemId) =>
     staffPdfRequest(`/batches/${batchId}/items/${itemId}`),
+  upload: async (batchId, itemId, pdf) => {
+    const crc32 = await zipChecksum(pdf);
+    const target = await staffPdfRequest(`/batches/${batchId}/items/${itemId}/upload`, { size: pdf.size, crc32 });
+    if (target.uploaded) return;
+    const response = await fetch(target.url, {
+      method: "PUT",
+      headers: target.headers,
+      body: pdf,
+      credentials: "omit",
+      redirect: "error",
+      referrerPolicy: "no-referrer",
+      signal: AbortSignal.timeout(180000),
+    });
+    if (!response.ok && response.status !== 412)
+      throw new Error("Não foi possível armazenar o PDF no lote.");
+  },
   complete: async (batchId, itemId) => {
     await staffPdfRequest(`/batches/${batchId}/items/${itemId}/complete`, {});
   },
+  file: async (batchId, itemId, inline) =>
+    (await staffPdfRequest(`/batches/${batchId}/items/${itemId}/file${inline ? "?inline=true" : ""}`)).file,
+  archive: (batchId, progress) => staffPdfRequest(`/batches/${batchId}/archive`, progress ?? {}),
 };
+
+// ZIP stores the IEEE CRC-32 of each entry, distinct from Storage's CRC32C.
+const zipCrcTable = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit++)
+    value = (value >>> 1) ^ (value & 1 ? 0xedb88320 : 0);
+  return value;
+});
+
+async function zipChecksum(pdf: Blob) {
+  let crc = 0xffffffff;
+  const reader = pdf.stream().getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const byte of value) crc = (crc >>> 8) ^ zipCrcTable[(crc ^ byte) & 0xff];
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0");
+}
+
+export async function restoreStaffPdfBatchFile(api: StaffPdfBatchApi, batchId: string, itemId: string) {
+  const recipe = await api.recipe(batchId, itemId);
+  if (!recipe.item.hasFile) {
+    if (!recipe.uploadExists)
+      await api.upload(batchId, itemId, await renderStaffPdfRecipe(recipe));
+    await api.complete(batchId, itemId);
+  }
+}
+
+export async function loadStaffPdfArchive(
+  api: StaffPdfBatchApi,
+  batchId: string,
+  restoreLegacy = false,
+  active = () => true,
+) {
+  let progress: StaffPdfArchiveProgress | undefined;
+  while (active()) {
+    try {
+      const result = await api.archive(batchId, progress);
+      if ("url" in result) return result;
+      if ("empty" in result) return;
+      if ("legacy" in result) {
+        if (!restoreLegacy) return;
+        for (const itemId of result.legacy) {
+          if (!active()) return;
+          await restoreStaffPdfBatchFile(api, batchId, itemId);
+        }
+        progress = undefined;
+      } else {
+        progress = result.progress;
+      }
+    } catch (error) {
+      if (!restoreLegacy || (error as { status?: number })?.status !== 429) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 10000));
+    }
+  }
+}
 
 async function readAsset(url: string, type: string, limit: number) {
   const response = await fetch(url, {

@@ -15,7 +15,6 @@ import {
 import { parsePrintProfile } from "../lib/printProfile.js";
 import {
   isStaffPdfSimpleJob,
-  STAFF_PDF_BATCH_MAX_ITEMS,
   staffPdfBatchName,
   type StaffPdfBatchJob,
 } from "../lib/staffPdfBatch.js";
@@ -37,6 +36,7 @@ import {
 } from "../lib/staffDocument.js";
 import { OperationsError } from "../lib/operations.js";
 import { resolveStaffPdfBase } from "./staffPdfLibrary.js";
+import { composeStaffPdfArchive, staffPdfAttachment, staffPdfBatchArchivePath, staffPdfBatchFilePath } from "./staffPdfArchive.js";
 import { prepareWorkActivity } from "./workTracking.js";
 import { activityActor } from "./staffActivity.js";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
@@ -86,13 +86,14 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     createdAt: data.createdAt,
     expiresAt: data.expiresAt,
     ownerName: data.ownerName,
-    count: data.itemIds?.length || 0,
+    count: data.itemCount ?? data.itemIds?.length ?? 0,
   });
   const itemView = (id: string, data: any) => ({
     id,
     outputName: data.job.outputName,
     barcode: data.job.barcode,
     status: data.status,
+    hasFile: Boolean(data.pdf),
   });
   async function access(id: string, user: WorkActor) {
     if (!validDocumentId(id)) throw new OperationsError("Lote inválido.");
@@ -145,6 +146,8 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       originalUrl: await url(data.original),
       fonts,
       rendererVersion: 1,
+      ...(!data.pdf && (await services().bucket.file(staffPdfBatchFilePath(batchId, itemId)).exists())[0]
+        ? { uploadExists: true } : {}),
       ...(data.printProfile ? { printProfile: data.printProfile } : {}),
       ...(data.initial
         ? {
@@ -238,7 +241,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
           ownerId: user.uid,
           ownerName: owner.actorName,
           name,
-          itemIds: [],
+          itemCount: 0,
           createdAt: new Date(now()).toISOString(),
           expiresAt: new Date(now() + STAFF_BATCH_TTL_MS).toISOString(),
           reference: `LOTE-${id.slice(0, 10).toUpperCase()}`,
@@ -272,12 +275,23 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     "/:batchId/items",
     action(async (req, res) => {
       await access(req.params.batchId, actor(res));
-      const rows = await services()
-        .db.collection("_staffPdfBatchItems")
+      const collection = services().db.collection("_staffPdfBatchItems");
+      const pageSize = 500;
+      let query = collection
         .where("batchId", "==", req.params.batchId)
-        .limit(STAFF_PDF_BATCH_MAX_ITEMS)
-        .get();
-      res.json({ items: rows.docs.map((row) => itemView(row.id, row.data())) });
+        .select("job.outputName", "job.barcode", "status", "pdf")
+        .orderBy("__name__")
+        .limit(pageSize + 1);
+      if (req.query.cursor !== undefined) {
+        if (!validDocumentId(req.query.cursor)) throw new OperationsError("Página do lote inválida.");
+        query = query.startAfter(collection.doc(req.query.cursor));
+      }
+      const rows = await query.get();
+      const page = rows.docs.slice(0, pageSize);
+      res.json({
+        items: page.map((row) => itemView(row.id, row.data())),
+        ...(rows.size > pageSize ? { next: page[page.length - 1].id } : {}),
+      });
     }),
   );
   router.post(
@@ -491,12 +505,8 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
             throw new OperationsError("O pedido mudou durante a geração.", 409);
           return;
         }
-        if (parent.itemIds.length >= STAFF_PDF_BATCH_MAX_ITEMS)
-          throw new OperationsError(
-            `Este lote já possui ${STAFF_PDF_BATCH_MAX_ITEMS} pedidos.`,
-          );
         tx.create(itemRef, value);
-        tx.set(batchRef, { itemIds: [...parent.itemIds, id] }, { merge: true });
+        tx.set(batchRef, { itemCount: (parent.itemCount ?? parent.itemIds?.length ?? 0) + 1 }, { merge: true });
       });
       res
         .status(201)
@@ -529,43 +539,170 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     }),
   );
   router.post(
+    "/:batchId/items/:itemId/upload",
+    action(async (req, res) => {
+      const { batchId, itemId } = req.params;
+      const { data, item } = await itemAccess(batchId, itemId, actor(res));
+      const { size, crc32 } = req.body ?? {};
+      if (!Number.isSafeInteger(size) || size < 8 || size > STAFF_DOCUMENT_MAX_BYTES ||
+          typeof crc32 !== "string" || !/^[0-9a-f]{8}$/.test(crc32))
+        throw new OperationsError("PDF gerado inválido.");
+      const file = services().bucket.file(staffPdfBatchFilePath(batchId, itemId));
+      if (item.pdf || (await file.exists())[0]) {
+        res.json({ uploaded: true });
+        return;
+      }
+      const headers = {
+        "Content-Type": "application/pdf",
+        "x-goog-if-generation-match": "0",
+        "x-goog-meta-zipcrc": crc32,
+      };
+      const [url] = await file.getSignedUrl({
+        version: "v4",
+        action: "write",
+        expires: Math.min(now() + 300000, Date.parse(data.expiresAt)),
+        contentType: headers["Content-Type"],
+        extensionHeaders: {
+          "content-length": String(size),
+          "x-goog-if-generation-match": headers["x-goog-if-generation-match"],
+          "x-goog-meta-zipcrc": headers["x-goog-meta-zipcrc"],
+        },
+      });
+      res.json({ url, headers });
+    }),
+  );
+  router.post(
     "/:batchId/items/:itemId/complete",
     action(async (req, res) => {
       const user = actor(res);
-      const { itemRef, item } = await itemAccess(
-        req.params.batchId,
-        req.params.itemId,
-        user,
-      );
-      if (item.status !== "ready") {
-        const who = await activityActor(services().db, user);
+      const { batchId, itemId } = req.params;
+      const { ref: batchRef, itemRef, item } = await itemAccess(batchId, itemId, user);
+      if (!item.pdf) {
+        const file = services().bucket.file(staffPdfBatchFilePath(batchId, itemId));
+        const [meta] = await file.getMetadata().catch((error) => {
+          if (Number(error?.code) === 404) throw new OperationsError("O PDF do lote ainda não foi salvo.", 409);
+          throw error;
+        });
+        const generation = String(meta.generation);
+        const size = Number(meta.size);
+        const crc = meta.metadata?.zipcrc;
+        if (!/^\d+$/.test(generation) || meta.contentType !== "application/pdf" ||
+            !Number.isSafeInteger(size) || size < 8 || size > STAFF_DOCUMENT_MAX_BYTES ||
+            typeof crc !== "string" || !/^[0-9a-f]{8}$/.test(crc))
+          throw new OperationsError("O arquivo salvo não é um PDF válido.");
+        const [header] = await services().bucket.file(file.name, { generation }).download({ start: 0, end: 4 });
+        if (header.toString("ascii") !== "%PDF-")
+          throw new OperationsError("O arquivo salvo não é um PDF válido.");
+        const who = item.status !== "ready" ? await activityActor(services().db, user) : undefined;
+        const pdf = { bytes: size, crc32: Number.parseInt(crc, 16), generation };
         await services().db.runTransaction(async (tx) => {
           const current = (await tx.get(itemRef)).data();
-          if (current?.status === "ready") return;
           if (!current || Date.parse(current.expiresAt) <= now())
             throw new OperationsError("Lote expirado.", 410);
-          const audit = await prepareWorkActivity(
-            services().db,
-            who,
-            "document.generated",
-            req.params.itemId,
-            tx,
-            {
-              now: now(),
-              id: `batch-item-${req.params.itemId}`,
-              reference: current.job.outputName,
-              taskId: current.taskId,
-            },
-          );
-          tx.set(
-            itemRef,
-            { status: "ready", completedAt: new Date(now()).toISOString() },
-            { merge: true },
-          );
-          audit.write(tx);
+          if (current.pdf) return;
+          const batch = (await tx.get(batchRef)).data();
+          if (!batch || Date.parse(batch.expiresAt) <= now())
+            throw new OperationsError("Lote expirado.", 410);
+          if (current.status !== "ready" && who) {
+            const audit = await prepareWorkActivity(
+              services().db,
+              who,
+              "document.generated",
+              itemId,
+              tx,
+              { now: now(), id: `batch-item-${itemId}`, reference: current.job.outputName, taskId: current.taskId },
+            );
+            audit.write(tx);
+          }
+          tx.set(batchRef, { fileCount: (batch.fileCount ?? 0) + 1 }, { merge: true });
+          tx.set(itemRef, {
+            pdf,
+            ...(current.status === "ready" ? {} : { status: "ready", completedAt: new Date(now()).toISOString() }),
+          }, { merge: true });
         });
       }
       res.json({ ready: true });
+    }),
+  );
+  router.get(
+    "/:batchId/items/:itemId/file",
+    action(async (req, res) => {
+      const { batchId, itemId } = req.params;
+      const { item, data } = await itemAccess(batchId, itemId, actor(res));
+      if (item.status !== "ready")
+        throw new OperationsError("O PDF ainda está na fila.", 409);
+      if (!item.pdf) {
+        res.json({ file: null });
+        return;
+      }
+      const [url] = await services().bucket.file(staffPdfBatchFilePath(batchId, itemId)).getSignedUrl({
+        version: "v4",
+        action: "read",
+        expires: Math.min(now() + 300000, Date.parse(data.expiresAt)),
+        queryParams: { generation: item.pdf.generation },
+        responseDisposition: req.query.inline === "true" ? "inline" : staffPdfAttachment(item.job.outputName, "pdf"),
+      });
+      res.json({ file: { url, name: `${item.job.outputName}.pdf` } });
+    }),
+  );
+  router.post(
+    "/:batchId/archive",
+    action(async (req, res) => {
+      const batchId = req.params.batchId;
+      const { ref, data } = await access(batchId, actor(res));
+      const { db, bucket } = services();
+      const count = data.fileCount ?? 0;
+      const name = staffPdfOutputName(data.name || "") || data.reference;
+      const sendArchive = async (path: string) => {
+        const [url] = await bucket.file(path).getSignedUrl({
+          version: "v4",
+          action: "read",
+          expires: Math.min(now() + 300000, Date.parse(data.expiresAt)),
+          responseDisposition: staffPdfAttachment(name, "zip"),
+        });
+        res.json({ url, name: `${name}.zip` });
+      };
+      if (data.archive?.fileCount === count && /^[a-f0-9]{64}$/.test(data.archive.fingerprint)) {
+        await sendArchive(staffPdfBatchArchivePath(batchId, data.archive.fingerprint));
+        return;
+      }
+      const rows = await db.collection("_staffPdfBatchItems")
+        .where("batchId", "==", batchId)
+        .select("ownerId", "status", "pdf", "job.outputName")
+        .get();
+      const ready = rows.docs.filter((row) => row.data().status === "ready" && row.data().ownerId === data.ownerId);
+      const legacy = ready.filter((row) => !row.get("pdf")).map((row) => row.id);
+      if (legacy.length) {
+        res.json({ legacy });
+        return;
+      }
+      if (!ready.length) {
+        res.json({ empty: true });
+        return;
+      }
+      const cursor = req.body?.cursor;
+      const fingerprint = req.body?.fingerprint;
+      const progress = Number.isSafeInteger(cursor) && cursor >= 0 && typeof fingerprint === "string"
+        ? { cursor, fingerprint } : undefined;
+      const entries = ready.map((row) => ({
+        id: row.id,
+        name: row.data().job.outputName,
+        bytes: row.data().pdf.bytes,
+        crc32: row.data().pdf.crc32,
+        generation: row.data().pdf.generation,
+      }));
+      const result = await composeStaffPdfArchive(bucket, batchId, entries, progress);
+      if (!result.archive) {
+        res.json({ progress: { cursor: result.cursor, fingerprint: result.fingerprint } });
+        return;
+      }
+      // New completions invalidate the archive. Retain the current snapshot for its caller.
+      await db.runTransaction(async (tx) => {
+        const current = (await tx.get(ref)).data();
+        if (current && (current.fileCount ?? 0) === count)
+          tx.set(ref, { archive: { fileCount: count, fingerprint: result.fingerprint } }, { merge: true });
+      });
+      await sendArchive(result.archive.name);
     }),
   );
   return router;
@@ -589,14 +726,15 @@ export async function cleanupStaffPdfBatches(
       await services.bucket.deleteFiles({
         prefix: `staff-pdf-batches/${row.id}/`,
       });
-      const items = await services.db
-        .collection("_staffPdfBatchItems")
-        .where("batchId", "==", row.id)
-        .get();
-      const batch = services.db.batch();
-      items.docs.forEach((item) => batch.delete(item.ref));
-      batch.delete(row.ref);
-      await batch.commit();
+      const query = services.db.collection("_staffPdfBatchItems").where("batchId", "==", row.id);
+      for (;;) {
+        const items = await query.limit(450).get();
+        if (!items.size) break;
+        const batch = services.db.batch();
+        items.docs.forEach((item) => batch.delete(item.ref));
+        await batch.commit();
+      }
+      await row.ref.delete();
       deleted++;
     } catch {
       failed++;

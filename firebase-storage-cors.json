@@ -4,5 +4,11 @@
     "method": ["GET", "HEAD"],
     "responseHeader": ["Content-Type", "Content-Length", "ETag", "Access-Control-Allow-Origin", "Access-Control-Allow-Methods", "Access-Control-Allow-Headers", "Authorization"],
     "maxAgeSeconds": 3600
+  },
+  {
+    "origin": ["https://www.gblgrafica.com.br", "https://gblgrafica.com.br", "http://localhost:3000"],
+    "method": ["PUT"],
+    "responseHeader": ["Content-Type", "x-goog-if-generation-match", "x-goog-meta-zipcrc"],
+    "maxAgeSeconds": 3600
   }
 ]

@@ -2,7 +2,6 @@ import React from "react";
 import { PDFDocument, rgb } from "pdf-lib";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
 import {
-  STAFF_PDF_BATCH_MAX_ITEMS,
   type StaffPdfBatchView,
   type StaffPdfRecipe,
 } from "../lib/staffPdfBatch";
@@ -18,6 +17,7 @@ import {
   normalizePdfLayout,
   parsePdfLayoutMap,
   staffPdfSourceName,
+  staffPdfOutputName,
   type StaffPdfBase,
   type StaffPdfLayoutView,
 } from "../lib/staffPdf";
@@ -239,6 +239,17 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
       for (const { view, records } of saved) {
         batches.set(view.id, { view, records: new Map(records) });
       }
+      const outputFiles = new Map<string, Blob>();
+      const preparedArchives = new Map<string, { count: number; url: string }>();
+      function savedPdf(itemId: string) {
+        if (outputFiles.has(itemId)) return outputFiles.get(itemId);
+        const encoded = resume && sessionStorage.getItem(`staff-pdf-resume-file:${itemId}`);
+        if (!encoded) return undefined;
+        const bytes = Uint8Array.from(atob(encoded.split(",")[1]), (char) => char.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        outputFiles.set(itemId, blob);
+        return blob;
+      }
       function persistBatches() {
         if (resume) sessionStorage.setItem(fixtureStorageKey, JSON.stringify(
           [...batches.values()].map(({ view, records }) => ({
@@ -293,11 +304,6 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           if ("kind" in job)
             throw new Error("Este cenário usa o editor da oficina.");
           const { records } = batches.get(batchId)!;
-          if (
-            !records.has(requestId) &&
-            records.size >= STAFF_PDF_BATCH_MAX_ITEMS
-          )
-            throw new Error("Este lote já possui 50 pedidos.");
           if (!records.has(requestId))
             records.set(requestId, {
               rendererVersion: 1,
@@ -325,6 +331,8 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           return recipeWithAsset(records.get(requestId)!);
         },
         recipe: async (batchId, itemId) => {
+          const key = "staff-pdf-fixture-recipe-downloads";
+          sessionStorage.setItem(key, String(Number(sessionStorage.getItem(key) ?? 0) + 1));
           const { records } = batches.get(batchId)!;
           const record = [...records.values()].find(
             (recipe) => recipe.item.id === itemId,
@@ -332,12 +340,27 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           if (!record) throw new Error("Item não encontrado.");
           return recipeWithAsset(record);
         },
+        upload: async (_batchId, itemId, blob) => {
+          if (resume && !savedPdf(itemId)) {
+            const encoded = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result));
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(blob);
+            });
+            sessionStorage.setItem(`staff-pdf-resume-file:${itemId}`, encoded);
+          }
+          if (!outputFiles.has(itemId)) outputFiles.set(itemId, blob);
+        },
         complete: async (batchId, itemId) => {
           const { records } = batches.get(batchId)!;
           const record = [...records.values()].find(
             (recipe) => recipe.item.id === itemId,
           )!;
+          if (!savedPdf(itemId)) throw new Error("O PDF do lote ainda não foi salvo.");
+          if (record.item.status === "ready") return;
           record.item.status = "ready";
+          record.item.hasFile = true;
           persistBatches();
           if (resume) {
             const key = "staff-pdf-resume-completions";
@@ -345,6 +368,32 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
             sessionStorage.setItem(key, JSON.stringify([...completed, itemId]));
             if (completed.length === 1) throw new TypeError("Failed to fetch");
           }
+        },
+        file: async (batchId, itemId) => {
+          const record = [...batches.get(batchId)!.records.values()].find(({ item }) => item.id === itemId);
+          const blob = savedPdf(itemId);
+          return record && blob ? { url: URL.createObjectURL(blob), name: `${record.item.outputName}.pdf` } : null;
+        },
+        archive: async (batchId) => {
+          const { view, records } = batches.get(batchId)!;
+          const ready = [...records.values()].filter(({ item }) => item.status === "ready");
+          if (!ready.length) return { empty: true };
+          const legacy = ready.filter(({ item }) => !savedPdf(item.id)).map(({ item }) => item.id);
+          if (legacy.length) return { legacy };
+          const name = `${staffPdfOutputName(view.name || "") || view.reference}.zip`;
+          const prepared = preparedArchives.get(batchId);
+          if (prepared?.count === ready.length) return { name, url: prepared.url };
+          const files: Record<string, Uint8Array> = {};
+          for (const { item } of ready) {
+            let filename = `${item.outputName}.pdf`;
+            let copy = 2;
+            while (Object.hasOwn(files, filename)) filename = `${item.outputName} (${copy++}).pdf`;
+            files[filename] = new Uint8Array(await savedPdf(item.id)!.arrayBuffer());
+          }
+          const { zipSync } = await import("fflate");
+          const url = URL.createObjectURL(new Blob([new Uint8Array(zipSync(files, { level: 0 }))], { type: "application/zip" }));
+          preparedArchives.set(batchId, { count: ready.length, url });
+          return { name, url };
         },
       };
     }

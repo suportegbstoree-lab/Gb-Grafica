@@ -21,7 +21,7 @@ export async function staffPdfRequest(
   );
   const data = await response.json().catch(() => ({}));
   if (!response.ok)
-    throw new Error(data.error || "Não foi possível acessar os PDFs internos.");
+    throw Object.assign(new Error(data.error || "Não foi possível acessar os PDFs internos."), { status: response.status });
   return data;
 }
 export async function readStaffPdf(url: string) {

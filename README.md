@@ -317,7 +317,7 @@ O `firebase.json` aponta explicitamente para o banco Firestore nomeado usado pel
 npx firebase deploy --project gen-lang-client-0631415673 --only firestore:rules,storage
 ```
 
-A geração do modelo composto precisa ler os bytes da imagem pelo navegador. Configure uma vez o CORS do bucket usando o arquivo versionado `firebase-storage-cors.json`:
+A geração do modelo composto lê imagens pelo navegador e a oficina envia os PDFs finais diretamente ao bucket. Aplique o CORS versionado em `firebase-storage-cors.json`:
 
 ```bash
 gcloud storage buckets update \
@@ -329,7 +329,7 @@ gcloud storage buckets describe \
   --format="default(cors_config)"
 ```
 
-O CORS permite a leitura web; ele não torna arquivos privados públicos nem substitui `storage.rules`. A configuração usa `GET` e `HEAD`, enquanto as permissões de cada objeto continuam sendo decididas pelas regras e pelos links assinados.
+O CORS libera `GET` e `HEAD` para leitura web e `PUT` para os domínios do painel definidos no arquivo. Os PDFs da oficina são enviados por links assinados de escrita única. Inclua o domínio do ambiente de testes na regra de `PUT` se for diferente dos domínios listados.
 
 Os testes E2E usam persistência e uploads simulados. Portanto, um teste E2E aprovado não confirma as permissões do projeto real. Se o painel funcionar em `/__e2e/admin`, mas o upload real devolver `storage/unauthorized` ou a gravação devolver `permission-denied`, publique os dois arquivos de regras com o comando acima, saia da conta administrativa e entre novamente para renovar o token com a claim.
 

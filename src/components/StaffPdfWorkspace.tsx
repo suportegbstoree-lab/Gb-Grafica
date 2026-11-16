@@ -9,13 +9,13 @@ import {
   STAFF_BARCODE_VERSION,
   type StaffBarcodeSize,
 } from "../lib/staffPdfBarcode";
-import { renderStaffPdfRecipe } from "../services/staffPdfBatchService";
+import { loadStaffPdfArchive, renderStaffPdfRecipe } from "../services/staffPdfBatchService";
 import { useStaffPdfDraft, useStaffPdfQueue } from "../services/staffPdfLocalState";
 import StaffPdfBatches from "./StaffPdfBatches";
 import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
-import { STAFF_PDF_BATCH_MAX_ITEMS, STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
+import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
 import { Barcode, Edit2, Search, Trash2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
@@ -719,31 +719,19 @@ export default function StaffPdfWorkspace({
     try {
       if (!navigator.onLine) throw new Error("Sem conexão. Volte à fila para continuar quando a internet retornar.");
       if (api.batches) {
-        const unassigned = pending.filter((item) => !item.batchId && !item.batchPlan);
-        if (unassigned.length) {
-          const plans = new Map<string, NonNullable<QueueItem["batchPlan"]>>();
-          for (let offset = 0; offset < unassigned.length; offset += STAFF_PDF_BATCH_MAX_ITEMS) {
-            const part = offset / STAFF_PDF_BATCH_MAX_ITEMS + 1;
-            const suffix = part > 1 ? ` (${part})` : "";
-            const name = batchName.trim();
-            const plan = {
-              requestId: crypto.randomUUID(),
-              name: name ? name.slice(0, STAFF_PDF_BATCH_NAME_MAX - suffix.length) + suffix : undefined,
-            };
-            for (const item of unassigned.slice(offset, offset + STAFF_PDF_BATCH_MAX_ITEMS)) {
-              plans.set(item.id, plan);
-            }
-          }
-          await setQueue((old) => old.map((item) => {
-            const batchPlan = plans.get(item.id);
-            return batchPlan ? { ...item, batchPlan } : item;
-          }));
+        const unassigned = new Set(pending.filter((item) => !item.batchId && !item.batchPlan).map((item) => item.id));
+        if (unassigned.size) {
+          const batchPlan = { requestId: crypto.randomUUID(), name: batchName.trim() || undefined };
+          await setQueue((old) => old.map((item) =>
+            unassigned.has(item.id) ? { ...item, batchPlan } : item,
+          ));
         }
       }
       const current = pending.every((item) => api.batches && item.batchId)
         ? data : await api.list();
       if (alive.current) setData(current);
       const batchIds = new Map<string, string>();
+      const completedBatches = new Set<string>();
       for (const item of savedQueue.current.filter(
         (item) => pendingIds.has(item.id),
       )) {
@@ -827,12 +815,15 @@ export default function StaffPdfWorkspace({
             const recipe = await api.batches.save(batchId, job, item.requestId);
             if (!alive.current || !generationAllowed.current) return;
             if (recipe.item.status !== "ready") {
-              const rendered = await renderStaffPdfRecipe(recipe);
-              if (rendered.size > 50 * 1024 * 1024)
-                throw new Error("O PDF excede 50 MB.");
+              if (!recipe.uploadExists) {
+                const rendered = await renderStaffPdfRecipe(recipe);
+                if (!alive.current || !generationAllowed.current) return;
+                await api.batches.upload(batchId, recipe.item.id, rendered);
+              }
               if (!alive.current || !generationAllowed.current) return;
               await api.batches.complete(batchId, recipe.item.id);
             }
+            completedBatches.add(batchId);
             reference = recipe.item.outputName;
           } else {
             const initial = await api.initial(
@@ -874,6 +865,14 @@ export default function StaffPdfWorkspace({
           failures++;
         }
         report("processing");
+      }
+      if (api.batches && completedBatches.size && alive.current && !disconnected && !stop.current && generationAllowed.current) {
+        setMessage("Preparando o ZIP para download.");
+        for (const batchId of completedBatches) {
+          await loadStaffPdfArchive(api.batches, batchId, false, () =>
+            alive.current && !stop.current && generationAllowed.current,
+          ).catch(() => undefined); // The download can resume archive preparation.
+        }
       }
       if (alive.current) {
         setBatchRevision((old) => old + 1);

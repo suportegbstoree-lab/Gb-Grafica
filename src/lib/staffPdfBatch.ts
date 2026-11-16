@@ -1,7 +1,6 @@
 import type { StaffPdfJob } from "./staffPdf.js";
 import type { StaffBarcodeVersion } from "./staffPdfBarcode.js";
 
-export const STAFF_PDF_BATCH_MAX_ITEMS = 50;
 export const STAFF_PDF_BATCH_NAME_MAX = 80;
 export function staffPdfBatchName(value: unknown): string {
   if (typeof value !== "string" || value.length > STAFF_PDF_BATCH_NAME_MAX || /[\x00-\x1f\x7f]/.test(value))
@@ -40,6 +39,7 @@ export interface StaffPdfBatchItemView {
   outputName: string;
   barcode?: string;
   status: "pending" | "ready";
+  hasFile?: boolean;
 }
 export interface StaffPdfRecipe {
   item: StaffPdfBatchItemView;
@@ -50,17 +50,32 @@ export interface StaffPdfRecipe {
   fonts: PersonalizationFont[];
   initial?: { url: string; sizePercent: number };
   rendererVersion: 1;
+  uploadExists?: boolean;
 }
+export interface StaffPdfArchiveProgress {
+  cursor: number;
+  fingerprint: string;
+}
+
+export type StaffPdfArchiveResult =
+  | { url: string; name: string }
+  | { progress: StaffPdfArchiveProgress }
+  | { legacy: string[] }
+  | { empty: true };
+
 export interface StaffPdfBatchApi {
   list(): Promise<{ batches: StaffPdfBatchView[] }>;
   rename(id: string, name: string): Promise<StaffPdfBatchView>;
   create(requestId: string, name?: string): Promise<StaffPdfBatchView>;
-  items(batchId: string): Promise<{ items: StaffPdfBatchItemView[] }>;
+  items(batchId: string, cursor?: string): Promise<{ items: StaffPdfBatchItemView[]; next?: string }>;
   save(
     batchId: string,
     job: StaffPdfBatchJob,
     requestId: string,
   ): Promise<StaffPdfRecipe>;
   recipe(batchId: string, itemId: string): Promise<StaffPdfRecipe>;
+  upload(batchId: string, itemId: string, pdf: Blob): Promise<void>;
   complete(batchId: string, itemId: string): Promise<void>;
+  file(batchId: string, itemId: string, inline?: boolean): Promise<{ url: string; name: string } | null>;
+  archive(batchId: string, progress?: StaffPdfArchiveProgress): Promise<StaffPdfArchiveResult>;
 }

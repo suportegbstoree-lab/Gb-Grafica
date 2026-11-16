@@ -686,7 +686,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
     .toContainText("Campos em branco no CSV: nome.");
 });
 
-test("the workshop saves recipes in previous batches and reconstructs its PDF for download", async ({
+test("the workshop downloads the stored PDF without rebuilding its recipe", async ({
   page,
 }) => {
   await page.goto("/__e2e/staff-pdf?batches=true");
@@ -742,6 +742,7 @@ test("the workshop saves recipes in previous batches and reconstructs its PDF fo
   await page.getByRole("button", { name: "Baixar", exact: true }).click();
   const file = await download;
   expect(file.suggestedFilename()).toBe("Kit de teste ANA BR2684621549924.pdf");
+  expect(await page.evaluate(() => sessionStorage.getItem("staff-pdf-fixture-recipe-downloads"))).toBeNull();
   const pdf = await PDFDocument.load(await readFile((await file.path())!));
   expect(pdf.getPageCount()).toBe(4);
   for (const index of [0, 2]) {
@@ -899,7 +900,7 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await expect(toolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("admin keeps 51 PDFs processing across sections and splits them into batches of 50", async ({
+test("admin keeps 51 PDFs processing across sections and downloads one named ZIP", async ({
   page,
 }) => {
   await page.clock.install();
@@ -926,6 +927,7 @@ test("admin keeps 51 PDFs processing across sections and splits them into batche
   await expect(
     page.getByRole("heading", { name: "Fila principal · 51" }),
   ).toBeVisible();
+  await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Pedidos da semana");
   await page
     .getByRole("button", { name: "Processar fila", exact: true })
     .click();
@@ -944,9 +946,15 @@ test("admin keeps 51 PDFs processing across sections and splits them into batche
     "Processamento de PDFs concluído · 51 de 51 processado(s)",
   );
   await page.getByRole("button", { name: "Gerar PDF", exact: true }).click();
-  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
-  await expect(page.getByText(/^LOTE-TESTE ·.*50 arquivo/)).toBeVisible();
-  await expect(page.getByText(/^LOTE-TESTE-2 ·.*1 arquivo/)).toBeVisible();
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/^Pedidos da semana ·.*51 arquivo/).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar lote", exact: true }).click();
+  const zip = await download;
+  expect(zip.suggestedFilename()).toBe("Pedidos da semana.zip");
+  const files = unzipSync(await readFile((await zip.path())!));
+  expect(Object.keys(files)).toHaveLength(51);
+  expect(await page.evaluate(() => sessionStorage.getItem("staff-pdf-fixture-recipe-downloads"))).toBeNull();
 });
 
 test("quantity two creates two separate PDFs with the same order, model and tracking", async ({
