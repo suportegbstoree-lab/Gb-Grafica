@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { crc32 } from "node:zlib";
 import { unzipSync } from "fflate";
 import express from "express";
@@ -738,7 +739,36 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
     assert.equal(optionalRecipe.job.barcode, undefined);
     assert.equal(optionalRecipe.item.outputName, "Kit ANA");
     assert.equal(optionalRecipe.item.barcode, undefined);
-    assert.equal((await request(`/library/batches/${batch.id}/items`, "generator", withoutBarcode)).status, 200);
+    // Recreate the original ID scheme for a recipe started before the fix.
+    const legacyId = createHash("sha256")
+      .update(`generator:${withoutBarcode.requestId}`).digest("hex").slice(0, 32);
+    const optionalPath = `_staffPdfBatchItems/${optionalRecipe.item.id}`;
+    docs.set(`_staffPdfBatchItems/${legacyId}`, docs.get(optionalPath)!);
+    docs.delete(optionalPath);
+    const resumed = await request(`/library/batches/${batch.id}/items`, "generator", withoutBarcode);
+    assert.equal(resumed.status, 200);
+    assert.equal((await resumed.json()).item.id, legacyId);
+
+    const secondBatch = await request("/library/batches", "generator", { requestId: "e".repeat(36) });
+    assert.equal(secondBatch.status, 201);
+    const { batch: rerun } = await secondBatch.json();
+    const rerunPath = `/library/batches/${rerun.id}/items`;
+    const rerunBody = { ...withoutBarcode, job: { ...withoutBarcode.job, outputName: "Kit ANA REFEITO" } };
+    const retries = await Promise.all([
+      request(rerunPath, "generator", rerunBody),
+      request(rerunPath, "generator", rerunBody),
+    ]);
+    assert.deepEqual(retries.map(({ status }) => status).sort(), [200, 201]);
+    const [first, retry] = await Promise.all(retries.map((response) => response.json()));
+    assert.equal(first.item.id, retry.item.id);
+    assert.notEqual(first.item.id, legacyId);
+    assert.equal(first.item.outputName, "Kit ANA REFEITO");
+    assert.equal((await request(`${rerunPath}/${legacyId}`, "generator")).status, 404);
+    const newRerun = await request(rerunPath, "generator", body);
+    assert.equal(newRerun.status, 201);
+    assert.notEqual((await newRerun.json()).item.id, recipe.item.id);
+    assert.equal((await (await request(rerunPath, "generator")).json()).items.length, 2);
+    assert.equal(docs.get(`_staffPdfBatches/${rerun.id}`)?.itemCount, 2);
     assert.match(
       recipe.originalUrl,
       new RegExp(`staff-pdf-batches/${batch.id}/assets/`),
@@ -806,7 +836,6 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
     assert.equal(savedFile.file.url, signed.url);
     const archiveUrl = `/library/batches/${batch.id}/archive`;
     assert.equal((await request(archiveUrl, "customer", {})).status, 403);
-    const legacyId = optionalRecipe.item.id;
     const legacyDoc = docs.get(`_staffPdfBatchItems/${legacyId}`)!;
     docs.set(`_staffPdfBatchItems/${legacyId}`, { ...legacyDoc, status: "ready" });
     assert.deepEqual(await (await request(archiveUrl, "generator", {})).json(), { legacy: [legacyId] });
@@ -875,7 +904,7 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       };
     };
     assert.deepEqual(await cleanupStaffPdfBatches(services, time()), {
-      deleted: 1,
+      deleted: 2,
       failed: 0,
     });
     assert.equal(

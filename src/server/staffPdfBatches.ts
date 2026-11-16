@@ -302,17 +302,25 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const { ref: batchRef, data: batch } = await access(batchId, user);
       if (batch.ownerId !== user.uid)
         throw new OperationsError("Este lote pertence a outra pessoa.", 403);
-      const id = idFor(user.uid, req.body?.requestId);
-      const itemRef = services().db.collection("_staffPdfBatchItems").doc(id);
+      const legacyId = idFor(user.uid, req.body?.requestId);
+      const id = hash(`${batchId}:${legacyId}`).slice(0, 32);
+      const items = services().db.collection("_staffPdfBatchItems");
+      const itemRef = items.doc(id);
+      const legacyRef = items.doc(legacyId);
       const fingerprint = hash(JSON.stringify(req.body?.job ?? null));
-      const old = (await itemRef.get()).data();
+      async function findSavedItem(get: (ref: typeof itemRef) => Promise<FirebaseFirestore.DocumentSnapshot>) {
+        const current = (await get(itemRef)).data();
+        // The original ID omitted the batch. Keep that ID only for resuming its own batch.
+        const legacy = current ? undefined : (await get(legacyRef)).data();
+        const saved = current ?? (legacy?.batchId === batchId ? legacy : undefined);
+        if (!saved) return;
+        if (saved.batchId !== batchId || saved.ownerId !== user.uid || saved.fingerprint !== fingerprint)
+          throw new OperationsError("O pedido mudou durante a geração.", 409);
+        return { id: current ? id : legacyId, data: saved };
+      }
+      const old = await findSavedItem((ref) => ref.get());
       if (old) {
-        if (old.batchId !== batchId || old.fingerprint !== fingerprint)
-          throw new OperationsError(
-            "Este pedido já foi usado em outro lote.",
-            409,
-          );
-        res.json(await payload(batchId, id, old, batch.expiresAt));
+        res.json(await payload(batchId, old.id, old.data, batch.expiresAt));
         return;
       }
       const config = (
@@ -492,33 +500,20 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
           ? { taskId: req.get("x-work-task") }
           : {}),
       };
-      await services().db.runTransaction(async (tx) => {
+      const result = await services().db.runTransaction(async (tx) => {
         const parent = (await tx.get(batchRef)).data();
-        const existing = (await tx.get(itemRef)).data();
         if (!parent || Date.parse(parent.expiresAt) <= now())
           throw new OperationsError("Lote expirado.", 410);
-        if (existing) {
-          if (
-            existing.fingerprint !== fingerprint ||
-            existing.batchId !== batchId
-          )
-            throw new OperationsError("O pedido mudou durante a geração.", 409);
-          return;
-        }
+        const existing = await findSavedItem((ref) => tx.get(ref));
+        if (existing) return { ...existing, created: false };
         const position = (parent.itemCount ?? parent.itemIds?.length ?? 0) + 1;
-        tx.create(itemRef, { ...value, position });
+        const data = { ...value, position };
+        tx.create(itemRef, data);
         tx.set(batchRef, { itemCount: position }, { merge: true });
+        return { id, data, created: true };
       });
-      res
-        .status(201)
-        .json(
-          await payload(
-            batchId,
-            id,
-            (await itemRef.get()).data(),
-            batch.expiresAt,
-          ),
-        );
+      res.status(result.created ? 201 : 200)
+        .json(await payload(batchId, result.id, result.data, batch.expiresAt));
     }),
   );
   router.get(

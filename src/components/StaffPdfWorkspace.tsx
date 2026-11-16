@@ -530,7 +530,7 @@ export default function StaffPdfWorkspace({
           )
             throw new Error("Linha do CSV inválida no arquivo da fila.");
           const key = csvRowKey(csvRow);
-          if (seenRows.has(key) || lockedCsvRows.current.has(key)) continue;
+          if (seenRows.has(key)) continue;
           seenRows.add(key);
         }
         if (

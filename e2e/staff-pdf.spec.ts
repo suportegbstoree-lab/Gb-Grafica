@@ -629,6 +629,39 @@ test("interrupted batches resume after reload without completing the same PDF tw
   expect(new Set(completed).size).toBe(3);
 });
 
+test("the same saved CSV queue can generate a second batch without reloading the page", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches");
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "refazer.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("pedido_plataforma,modelo,texto,barcode\n001,Kit de teste,Ana,BR2684621549924"),
+  });
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+
+  const saved = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Salvar fila em JSON" }).click();
+  const queueFile = (await (await saved).path())!;
+  const batchName = page.getByRole("textbox", { name: "Nome do lote (opcional)" });
+  const process = page.getByRole("button", { name: "Processar fila", exact: true });
+  await batchName.fill("Primeiro lote");
+  await process.click();
+  await expect(page.getByRole("article")).toContainText("Concluído");
+  await page.getByRole("button", { name: "Excluir fila atual" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Excluir fila", exact: true }).click();
+  await expect(page.getByRole("article")).toHaveCount(0);
+
+  await page.getByLabel("Carregar fila JSON").setInputFiles(queueFile);
+  await expect(page.getByRole("article")).toContainText("Ana");
+  await batchName.fill("Lote refeito");
+  await process.click();
+  await expect(page.getByRole("article")).toContainText("Concluído");
+  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
+  await expect(page.getByText(/^Primeiro lote ·.*1 arquivo/)).toBeVisible();
+  await expect(page.getByText(/^Lote refeito ·.*1 arquivo/)).toBeVisible();
+});
+
 test("CSV matches model prefixes from af_clean, starts with empty names, and flags unknown models", async ({
   page,
 }) => {

@@ -321,7 +321,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
                 },
               ],
               item: {
-                id: requestId.replaceAll("-", ""),
+                id: crypto.randomUUID().replaceAll("-", ""),
                 outputName: job.outputName!,
                 barcode: job.barcode,
                 status: "pending",
