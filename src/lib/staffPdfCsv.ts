@@ -166,6 +166,18 @@ export function staffPdfNameColumn(headers: string[]) {
   return headers.findIndex((header) => key(header) === "nome");
 }
 
+const nameParticles = new Set(["da", "das", "de", "do", "dos", "e"]);
+
+export function formatStaffPdfPersonName(value: string) {
+  return value.toLocaleLowerCase("pt-BR").replace(
+    /(\p{L})[\p{L}\p{M}]*/gu,
+    (word, first: string, offset: number, line: string) =>
+      nameParticles.has(word) && /\S/.test(line.slice(line.lastIndexOf("\n", offset) + 1, offset))
+        ? word
+        : first.toLocaleUpperCase("pt-BR") + word.slice(first.length),
+  );
+}
+
 export function expandStaffPdfQuantities(
   rows: string[][],
   quantityColumn: number,

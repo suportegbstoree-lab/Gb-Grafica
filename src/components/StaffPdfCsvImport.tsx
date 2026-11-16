@@ -4,6 +4,7 @@ import type { StaffPdfLibrary } from "../services/staffPdfService";
 import {
   defaultStaffPdfCsvColumns,
   expandStaffPdfQuantities,
+  formatStaffPdfPersonName,
   readStaffPdfCsv,
   resolveStaffPdfCsvModel,
   staffPdfNameColumn,
@@ -27,12 +28,14 @@ export interface StaffPdfCsvOrder {
     sourceId: string;
     index: number;
     textColumn?: number;
+    textIsName?: boolean;
     textWarnings?: { blank: string; filled: string };
   };
   csvWarning: string;
 }
 export interface StaffPdfCsvImportHandle {
   updateText(row: StaffPdfCsvOrder["csvRow"], text: string): void;
+  isNameColumn(row: StaffPdfCsvOrder["csvRow"]): boolean;
 }
 export interface StaffPdfCsvNamePaste {
   column: number;
@@ -76,6 +79,16 @@ function blankWarning(fields: string[]) {
       ? ` e mais ${fields.length - shown.length} coluna(s)`
       : "")
   );
+}
+
+function formatNameCell(cells: string[], column: number) {
+  const value = cells[column];
+  if (!value) return cells;
+  const formatted = formatStaffPdfPersonName(value);
+  if (formatted === value) return cells;
+  const updated = [...cells];
+  updated[column] = formatted;
+  return updated;
 }
 
 export default function StaffPdfCsvImport({
@@ -134,26 +147,6 @@ export default function StaffPdfCsvImport({
       return models.get(name);
     };
   }, [data.bases, data.layouts, source?.id]);
-  React.useImperativeHandle(
-    ref,
-    () => ({
-      updateText({ sourceId, index, textColumn }, text) {
-        if (textColumn === undefined) return;
-        void csv.save((current) => {
-          const source = current.source;
-          const row = source?.rows[index];
-          if (source?.id !== sourceId || !row || textColumn >= source.width)
-            return current;
-          const cells = [...row];
-          cells[textColumn] = text;
-          const rows = [...source.rows];
-          rows[index] = cells;
-          return { ...current, source: { ...source, rows } };
-        });
-      },
-    }),
-    [],
-  );
   async function useCsv(input: string, name: string, separator?: string, workbookId?: string) {
     const parsed = readStaffPdfCsv(input, separator);
     const [header, ...records] = parsed.rows;
@@ -190,6 +183,24 @@ export default function StaffPdfCsvImport({
           `Coluna ${excelColumn(index)}`,
       )
     : [];
+  const nameColumn = staffPdfNameColumn(headers);
+  React.useImperativeHandle(ref, () => ({
+    isNameColumn: (row) => nameColumn >= 0 && row.sourceId === source?.id && row.textColumn === nameColumn,
+    updateText({ sourceId, index, textColumn }, text) {
+      if (textColumn === undefined) return;
+      void csv.save((current) => {
+        const source = current.source;
+        const row = source?.rows[index];
+        if (source?.id !== sourceId || !row || textColumn >= source.width)
+          return current;
+        const cells = [...row];
+        cells[textColumn] = text;
+        const rows = [...source.rows];
+        rows[index] = cells;
+        return { ...current, source: { ...source, rows } };
+      });
+    },
+  }), [source?.id, nameColumn, csv.save]);
   React.useEffect(() => {
     if (!source?.ignoredColumns || !hasHeader) return;
     void csv.save((current) => {
@@ -209,10 +220,12 @@ export default function StaffPdfCsvImport({
       return { ...current, source: restored };
     });
   }, [source, hasHeader, headerIndex]);
-  const imported =
+  const imported = React.useMemo(() =>
     source?.rows.flatMap((row, index) =>
-      row && !(hasHeader && index === headerIndex) ? [{ row, index }] : [],
-    ) ?? [];
+      row && !(hasHeader && index === headerIndex)
+        ? [{ row: formatNameCell(row, nameColumn), index }]
+        : [],
+    ) ?? [], [source, hasHeader, headerIndex, nameColumn]);
   const added = new Set(csv.value.added);
   const pending = imported.filter(({ index }) =>
     !added.has(index) && !queuedRows.has(`${source?.id}:${index}`),
@@ -282,6 +295,7 @@ export default function StaffPdfCsvImport({
         sourceId: source!.id,
         index,
         textColumn: columns.text,
+        ...(nameColumn >= 0 && columns.text === nameColumn ? { textIsName: true } : {}),
         textWarnings,
       },
       csvWarning: textWarnings[text ? "filled" : "blank"],
@@ -328,10 +342,11 @@ export default function StaffPdfCsvImport({
   }
   async function reviseRow(
     index: number,
-    cells: string[] | null,
+    revision: string[] | null,
     pastedColumn?: number,
   ) {
     if (!source || block) throw new Error("Aguarde a operação atual.");
+    const cells = revision && formatNameCell(revision, nameColumn);
     const sameModel =
       cells &&
       cells[columns.template] === source.rows[index]?.[columns.template];
@@ -414,6 +429,7 @@ export default function StaffPdfCsvImport({
             index,
           );
         }
+        return [formatNameCell(cells, nameColumn)];
       }
       return [cells];
     });
@@ -710,7 +726,7 @@ export default function StaffPdfCsvImport({
           headers={barcodeIndex < 0 ? [...headers, "Rastreio"] : headers}
           barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
           quantityColumn={quantityColumn}
-          nameColumn={staffPdfNameColumn(headers)}
+          nameColumn={nameColumn}
           onRevise={reviseRow}
           onDownload={downloadReviewed}
           rows={imported.map(({ row, index }) => {

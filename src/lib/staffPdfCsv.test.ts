@@ -4,6 +4,7 @@ import {
   defaultStaffPdfCsvColumns,
   createStaffSkuMatcher,
   expandStaffPdfQuantities,
+  formatStaffPdfPersonName,
   staffOrderColumn,
   staffSheetColumn,
   staffPdfQuantityColumn,
@@ -12,6 +13,13 @@ import {
 } from "./staffPdfCsv.js";
 import { selectedColumnsCsv } from "./spreadsheetCsv.js";
 import { defaultPdfLayout, type StaffPdfBase } from "./staffPdf.js";
+
+test("personal names use title case while preserving accents, particles and separators", () => {
+  assert.equal(formatStaffPdfPersonName("TESTE NOME"), "Teste Nome");
+  assert.equal(formatStaffPdfPersonName("  ÉRICA DA SILVA\nANA-CLARA D'ÁVILA"), "  Érica da Silva\nAna-Clara D'Ávila");
+  assert.equal(formatStaffPdfPersonName("mArIa dOS sANTOs"), "Maria dos Santos");
+  assert.equal(formatStaffPdfPersonName(""), "");
+});
 
 test("the office CSV accepts its desktop header, quoted delimiters and multiline names", () => {
   const csv =

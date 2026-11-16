@@ -191,9 +191,9 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
   await order.getByRole("button", { name: "Editar item da fila" }).click();
   await page
     .getByRole("textbox", { name: "Texto principal", exact: true })
-    .fill("Érica");
+    .fill("ÉRICA DA SILVA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
-  await expect(order).toContainText("Érica");
+  await expect(order).toContainText("Érica da Silva");
   await expect(order).toContainText("Campos em branco no CSV: observacao.");
   await page
     .getByRole("button", { name: "Planilha e CSV", exact: true })
@@ -208,7 +208,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     table
       .getByRole("row")
       .filter({ hasText: "001" })
-      .getByText("Érica", { exact: true }),
+      .getByText("Érica da Silva", { exact: true }),
   ).toBeVisible();
   await expect(
     table
@@ -219,7 +219,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
   const download = page.waitForEvent("download");
   await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const csv = await readFile((await (await download).path())!, "utf8");
-  expect(csv).toContain('"001","Kit de teste","Érica",,"BR2684621549924"');
+  expect(csv).toContain('"001","Kit de teste","Érica da Silva",,"BR2684621549924"');
   expect(csv).toContain('"002","Kit de teste",,,"BR2684621549925"');
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
@@ -248,18 +248,18 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     table.getByRole("button", { name: "Colar nome na linha 3" }),
   ).toBeVisible();
   await page.evaluate(() =>
-    navigator.clipboard.writeText("  Poliana Vitória\n"),
+    navigator.clipboard.writeText("  TESTE NOME\n"),
   );
   await table
     .getByRole("button", { name: "Colar nome na linha 2", exact: true })
     .click();
   await expect(table.getByRole("status")).toHaveText("Nome colado e salvo.");
   await expect(table.getByRole("row").filter({ hasText: "001" })).toContainText(
-    "Poliana Vitória",
+    "Teste Nome",
   );
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
-  await expect(order).toContainText("Poliana Vitória");
+  await expect(order).toContainText("Teste Nome");
   await expect(order).toContainText("Campos em branco no CSV: observacao.");
 });
 
@@ -566,7 +566,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await expect(text).toHaveValue("");
   await text.fill("ANA REVISADA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
-  await expect(page.getByRole("article")).toContainText("ANA REVISADA");
+  await expect(page.getByRole("article")).toContainText("Ana Revisada");
   const savingQueue = page.waitForEvent("download");
   await page.getByRole("button", { name: "Salvar fila em JSON" }).click();
   const queueFile = await savingQueue;
@@ -579,7 +579,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await page
     .getByLabel("Carregar fila JSON")
     .setInputFiles((await queueFile.path())!);
-  await expect(page.getByRole("article")).toContainText("ANA REVISADA");
+  await expect(page.getByRole("article")).toContainText("Ana Revisada");
   await page.getByRole("button", { name: "Processar fila" }).click();
   await page
     .getByRole("alertdialog")
@@ -589,7 +589,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   const savingPdf = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar PDF-TEST-1" }).click();
   expect((await savingPdf).suggestedFilename()).toBe(
-    "Kit de teste ANA REVISADA BR2684621549924.pdf",
+    "Kit de teste Ana Revisada BR2684621549924.pdf",
   );
 });
 
@@ -701,7 +701,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   await review.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const csv = await readFile((await (await downloading).path())!, "utf8");
   expect(csv).toContain('"af_clean","nome"');
-  expect(csv).toContain('"Kit de teste COM NOME","ANA"');
+  expect(csv).toContain('"Kit de teste COM NOME","Ana"');
   expect(csv).toContain('"00124","BR263172448223P","Desconhecido",');
   expect(csv).not.toContain("BIA");
   await review.getByRole("button", { name: "Fechar", exact: true }).click();
@@ -714,7 +714,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   await expect(unknown).toBeVisible();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toHaveCount(2);
-  await expect(page.getByRole("article").filter({ hasText: "ANA" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "Ana" })).toBeVisible();
   await expect(page.getByRole("article").filter({ hasText: "BR2684621549925" }))
     .toContainText("Campos em branco no CSV: nome.");
 });
@@ -1112,7 +1112,7 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   const download = page.waitForEvent("download");
   await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const edited = await readFile((await (await download).path())!, "utf8");
-  expect(edited).toContain('"001","REVISTO","Kit de teste","ANA"');
+  expect(edited).toContain('"001","REVISTO","Kit de teste","Ana"');
   expect(edited).toContain('"003",,"Kit de teste",,');
   expect(edited).not.toContain('"002"');
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
@@ -1121,7 +1121,7 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   await expect(
     page
       .getByRole("article")
-      .filter({ has: page.getByText("ANA", { exact: true }) }),
+      .filter({ has: page.getByText("Ana", { exact: true }) }),
   ).toHaveCount(1);
   await expect(
     page
@@ -1138,7 +1138,7 @@ test("CSV review corrects and deletes queued rows and confirms remaining blanks 
   const archive = page.waitForEvent("download");
   await page.getByRole("button", { name: "Baixar ZIP completo" }).click();
   const { "Lote completo.pdf": combined, ...files } = unzipSync(await readFile((await (await archive).path())!));
-  expect(Object.keys(files).sort()).toEqual(["Kit de teste ANA BR2684621549924.pdf", "Kit de teste.pdf"]);
+  expect(Object.keys(files).sort()).toEqual(["Kit de teste Ana BR2684621549924.pdf", "Kit de teste.pdf"]);
   expect((await PDFDocument.load(combined)).getPageCount()).toBe(8);
   for (const [name, bytes] of Object.entries(files)) {
     const pdf = await PDFDocument.load(bytes);

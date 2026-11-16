@@ -21,6 +21,7 @@ import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
 import { STAFF_PDF_BATCH_NAME_MAX, type StaffPdfRecipe } from "../lib/staffPdfBatch";
+import { formatStaffPdfPersonName } from "../lib/staffPdfCsv";
 import { Barcode, Edit2, Search, Trash2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import type { PersonalizationFont } from "../lib/textCustomization";
@@ -192,6 +193,8 @@ export default function StaffPdfWorkspace({
     revision = React.useRef(0);
   const lockedCsvRows = React.useRef(new Set<string>());
   const csvImport = React.useRef<StaffPdfCsvImportHandle>(null);
+  const isCsvName = (row?: StaffPdfCsvOrder["csvRow"]) =>
+    row && (row.textIsName === true || csvImport.current?.isNameColumn(row));
   const generationAllowed = React.useRef(canGenerate);
   generationAllowed.current = canGenerate;
   const queuedRows = React.useMemo(() => new Set(
@@ -444,6 +447,7 @@ export default function StaffPdfWorkspace({
       const csvRow = {
         ...row,
         ...(textColumn >= 0 ? { textColumn } : {}),
+        ...(textColumn === pastedName.column ? { textIsName: true } : {}),
         textWarnings,
       };
       const csvWarning = textWarnings[text.trim() ? "filled" : "blank"];
@@ -531,6 +535,7 @@ export default function StaffPdfWorkspace({
             (csvRow.textColumn !== undefined &&
               (!Number.isSafeInteger(csvRow.textColumn) ||
                 csvRow.textColumn < 0)) ||
+            (csvRow.textIsName !== undefined && typeof csvRow.textIsName !== "boolean") ||
             (csvRow.textWarnings !== undefined &&
               (typeof csvRow.textWarnings?.blank !== "string" ||
                 typeof csvRow.textWarnings?.filled !== "string" ||
@@ -817,10 +822,27 @@ export default function StaffPdfWorkspace({
               (!b || b.revision !== item.job.baseRevision || !t || t.revision !== item.job.layoutRevision)) {
             throw new Error("A base ou o molde mudou. Edite este item novamente.");
           }
-          const effectiveJob =
-            !item.batchId && item.job.barcode && item.job.barcodeVersion === STAFF_BARCODE_VERSION
-              ? { ...item.job, barcodeSize: barcodeOverrideOf(item) ?? current.barcodeDefault ?? STAFF_PDF_BARCODE_DEFAULT }
-              : item.job;
+          let effectiveJob = item.job;
+          if (!item.batchId && isCsvName(item.csvRow)) {
+            const [main, ...extras] = effectiveJob.lines;
+            const text = formatStaffPdfPersonName(main.text);
+            if (text !== main.text) {
+              const { outputName, barcode } = effectiveJob;
+              effectiveJob = {
+                ...effectiveJob,
+                lines: [{ ...main, text }, ...extras],
+                outputName: t && outputName === staffPdfDefaultFilename(t.name, main.text, barcode)
+                  ? staffPdfDefaultFilename(t.name, text, barcode)
+                  : outputName,
+              };
+            }
+          }
+          if (!item.batchId && effectiveJob.barcode && effectiveJob.barcodeVersion === STAFF_BARCODE_VERSION) {
+            effectiveJob = {
+              ...effectiveJob,
+              barcodeSize: barcodeOverrideOf(item) ?? current.barcodeDefault ?? STAFF_PDF_BARCODE_DEFAULT,
+            };
+          }
           if (batches) {
             const job = item.batchId ? effectiveJob : normalizeStaffPdfJob({
               ...effectiveJob,
@@ -854,7 +876,7 @@ export default function StaffPdfWorkspace({
             inFlight.add(task);
             void task.then(() => inFlight.delete(task));
           } else {
-            const initial = await api.initial(item.job.baseId, item.job.lines[0]?.text || "");
+            const initial = await api.initial(effectiveJob.baseId, effectiveJob.lines[0]?.text || "");
             if (initial) initial.sizePercent = staffPdfInitialSize(t?.layout) ?? initial.sizePercent;
             const blob = await exportStaffPdf(
               item.original ?? await api.baseFile(item.job.baseId), effectiveJob, fonts, item.fitMargin, initial,
@@ -916,10 +938,15 @@ export default function StaffPdfWorkspace({
     setBusy(true);
     try {
       if (!loaded || !mold) throw new Error("Escolha uma base e um molde.");
+      const csvRow = editingItem?.csvRow;
+      const nameField = isCsvName(csvRow);
+      const textLines = nameField
+        ? lines.map((line, index) => index === 0 ? { ...line, text: formatStaffPdfPersonName(line.text) } : line)
+        : lines;
       const item = queueItem(
         loaded,
         mold,
-        lines,
+        textLines,
         outputName,
         editingId ?? undefined,
         barcode,
@@ -927,8 +954,7 @@ export default function StaffPdfWorkspace({
           !lines.some((line) => line.text.trim()),
         barcodeOverride,
       );
-      if (editingItem?.csvRow) {
-        const csvRow = editingItem.csvRow;
+      if (csvRow) {
         const text = item.job.lines[0].text;
         const blank = !text.trim();
         const legacyWarning = editingItem.csvWarning;
@@ -940,7 +966,7 @@ export default function StaffPdfWorkspace({
                 ?.split(", ")
                 .filter((label) => label.toLowerCase() !== "nome")
                 .join(", ");
-        Object.assign(item, { csvRow, csvWarning });
+        Object.assign(item, { csvRow: nameField ? { ...csvRow, textIsName: true } : csvRow, csvWarning });
       }
       await setQueue((old) =>
         editingId
