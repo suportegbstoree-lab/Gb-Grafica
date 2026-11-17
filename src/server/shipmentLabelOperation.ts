@@ -3,6 +3,7 @@ import { isRecord } from '../lib/shipping.js';
 import { legacyFulfillmentStatus } from '../lib/orderStatus.js';
 import type { ShipmentLabelPrintLink, ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { melhorEnvioConfig, type MelhorEnvioConfig } from './melhorEnvio.js';
+import { nfeAuthorizationRef, readNfeLabelAuthorization } from './nfeLabelAuthorization.js';
 import { shipmentCartBody, shipmentFailure, shipmentProvider, ShipmentProviderError } from './melhorEnvioShipment.js';
 
 type Row = Record<string, unknown>;
@@ -10,6 +11,7 @@ interface SavedLabel extends ShipmentLabelView {
   environment: MelhorEnvioConfig['environment'];
   updatedAt: number;
   nextTrackingAt?: number;
+  nfeFingerprint?: string;
 }
 
 export const shipmentLabelView = (row?: ShipmentLabelView): ShipmentLabelView => row ? {
@@ -50,14 +52,25 @@ export async function shipmentLabelOperation(input: {
     throw shipmentFailure(422, 'Pedido ou operação de etiqueta inválida.');
   const orderRef = db.collection('orders').doc(orderId);
   const labelRef = db.collection('_melhorEnvioLabels').doc(orderId);
+  const authorizationRef = nfeAuthorizationRef(orderRef);
   const [orderSnap, labelSnap] = await Promise.all([orderRef.get(), labelRef.get()]);
   const order = melhorEnvioDelivery(orderSnap.data());
   const saved = labelSnap.data() as SavedLabel | undefined;
   const view = shipmentLabelView;
-  if (body.action === 'status') return view(saved);
+  const storedEnvironment = (order.shipping as Row).environment;
+  const viewForPreparation = async (row?: SavedLabel) => {
+    const label = view(row);
+    if ((label.phase === 'none' || label.phase === 'canceled') &&
+      process.env.MELHOR_ENVIO_ENV?.trim() === 'production' &&
+      (!storedEnvironment || storedEnvironment === 'production')) {
+      const invoice = readNfeLabelAuthorization(orderId, (await authorizationRef.get()).data());
+      if (invoice?.status === 'authorized') return { ...label, authorizedNfeAvailable: true as const };
+    }
+    return label;
+  };
+  if (body.action === 'status') return viewForPreparation(saved);
   if (!['cancel', 'check-cancel', 'discard'].includes(body.action)) activePaidDelivery(order);
   const config = melhorEnvioConfig();
-  const storedEnvironment = (order.shipping as Row).environment;
   if (config.environment !== input.paymentEnvironment() ||
     (storedEnvironment && storedEnvironment !== config.environment) ||
     (saved && saved.environment !== config.environment))
@@ -85,6 +98,12 @@ export async function shipmentLabelOperation(input: {
       const current = (await tx.get(labelRef)).data() as SavedLabel | undefined;
       if (current?.phase !== expected?.phase || current?.updatedAt !== expected?.updatedAt)
         throw shipmentFailure(409, 'Outra operação alterou a etiqueta. Atualize a situação antes de continuar.');
+      const nfeFingerprint = patch.phase === 'preparing' ? patch.nfeFingerprint : current?.nfeFingerprint;
+      if (nfeFingerprint && (patch.phase === 'preparing' || patch.phase === 'buying' || patch.phase === 'generating')) {
+        const invoice = readNfeLabelAuthorization(orderId, (await tx.get(authorizationRef)).data());
+        if (invoice?.status !== 'authorized' || invoice.fingerprint !== nfeFingerprint)
+          throw shipmentFailure(409, 'A NF-e vinculada mudou ou foi cancelada. Confira a nota antes de continuar com a etiqueta.');
+      }
       const next: SavedLabel = {
         phase: 'none', amountCents: null, ...current, ...patch,
         environment: config.environment, updatedAt: Math.max(Date.now(), (current?.updatedAt ?? 0) + 1),
@@ -101,7 +120,10 @@ export async function shipmentLabelOperation(input: {
         return { phase: 'none', amountCents: null, environment: config.environment, updatedAt: next.updatedAt };
       }
       if (next.phase === 'preparing') {
-        const preparing: SavedLabel = { phase: 'preparing', amountCents: null, environment: config.environment, updatedAt: next.updatedAt };
+        const preparing: SavedLabel = {
+          phase: 'preparing', amountCents: null, environment: config.environment, updatedAt: next.updatedAt,
+          ...(patch.nfeFingerprint ? { nfeFingerprint: patch.nfeFingerprint } : {}),
+        };
         tx.set(labelRef, { ...preparing, updatedBy: actor });
         return preparing;
       }
@@ -112,9 +134,19 @@ export async function shipmentLabelOperation(input: {
   if (body.action === 'prepare') {
     if (saved && saved.phase !== 'none' && saved.phase !== 'canceled') return view(saved);
     prePosting(order);
-    const payload = shipmentCartBody(orderId, order, body, config);
+    const invoice = config.environment === 'production'
+      ? readNfeLabelAuthorization(orderId, (await authorizationRef.get()).data()) : null;
+    const selectedKey = typeof body.invoiceKey === 'string' ? body.invoiceKey.replace(/\D/g, '') : '';
+    if (body.useAuthorizedNfe === true && invoice?.status !== 'authorized')
+      throw shipmentFailure(409, 'Nenhuma NF-e de produção autorizada está vinculada a este pedido.');
+    if (invoice?.status === 'canceled' && selectedKey === invoice.accessKey)
+      throw shipmentFailure(409, 'A chave informada pertence a uma NF-e cancelada para este pedido.');
+    if (invoice?.status === 'authorized' && body.useAuthorizedNfe !== true && selectedKey !== invoice.accessKey)
+      throw shipmentFailure(409, 'Use a NF-e autorizada que está vinculada a este pedido.');
+    const authorized = invoice?.status === 'authorized' ? invoice : null;
+    const payload = shipmentCartBody(orderId, order, authorized ? { ...body, invoiceKey: authorized.accessKey } : body, config);
     const chargeId = await input.verifyPayment(order);
-    const preparing = await change(saved, { phase: 'preparing' }, chargeId);
+    const preparing = await change(saved, { phase: 'preparing', ...(authorized ? { nfeFingerprint: authorized.fingerprint } : {}) }, chargeId);
     let cart;
     try {
       cart = await service.create(payload);
@@ -145,12 +177,12 @@ export async function shipmentLabelOperation(input: {
 
   if (!saved?.providerId) throw shipmentFailure(409, 'Prepare o envio antes de emitir a etiqueta.');
   if (body.action === 'cancel' || body.action === 'check-cancel') {
-    if (saved.phase === 'canceled') return view(saved);
+    if (saved.phase === 'canceled') return viewForPreparation(saved);
     if (body.action === 'check-cancel' && saved.phase !== 'canceling') return view(saved);
     if (!['paid', 'issued', 'canceling'].includes(saved.phase))
       throw shipmentFailure(409, 'Selecione uma etiqueta comprada para cancelar.');
     const details = await service.details(saved.providerId);
-    if (details.canceled) return view(await change(saved, { phase: 'canceled' }));
+    if (details.canceled) return viewForPreparation(await change(saved, { phase: 'canceled' }));
     if (saved.phase === 'canceling') return view(saved);
     if (!details.paid || details.unavailable || details.postedAt || details.deliveredAt || ['received', 'posted', 'delivered', 'undelivered', 'paused'].includes(details.state))
       throw shipmentFailure(409, 'O Melhor Envio não permite cancelar esta etiqueta pelo painel.');
@@ -168,7 +200,7 @@ export async function shipmentLabelOperation(input: {
       throw error;
     }
     const result = await service.details(saved.providerId);
-    return view(result.canceled ? await change(pending, { phase: 'canceled' }) : pending);
+    return viewForPreparation(result.canceled ? await change(pending, { phase: 'canceled' }) : pending);
   }
   if (body.action === 'discard') {
     const retrying = saved.phase === 'discarding' && Date.now() - saved.updatedAt >= 20_000;
@@ -185,7 +217,7 @@ export async function shipmentLabelOperation(input: {
         throw error;
       }
     }
-    return view(await change(discarding, { phase: 'none' }));
+    return viewForPreparation(await change(discarding, { phase: 'none' }));
   }
   if (saved.phase === 'discarding')
     throw shipmentFailure(409, 'A remoção aguarda confirmação do Melhor Envio. Confira o carrinho antes de continuar.');

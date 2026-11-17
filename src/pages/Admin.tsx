@@ -67,6 +67,10 @@ import {
 } from '../services/catalogImageService';
 import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
 import OrderActions from '../components/OrderActions';
+import { missingNfeProductFields } from '../lib/nfe';
+import { nfeAdminApi, type NfeAdminApi } from '../services/nfeService';
+import NfeOrdersPanel from '../components/NfeOrdersPanel';
+import NfeSimulationEditor from '../components/NfeSimulationEditor';
 import NfeDraftEditor from '../components/NfeDraftEditor';
 import NfeDefaultsEditor from '../components/NfeDefaultsEditor';
 import { NfeProductInputs } from '../components/NfeProductFields';
@@ -133,6 +137,7 @@ export interface AdminProps {
   activityApi?: AdminActivityApi;
   operationsClient?: OperationsClient;
   orderOperations?: OrderOperationsApi;
+  nfeApi?: NfeAdminApi;
   fullAdmin?: boolean;
   permissions?: StaffPermission[];
   staffApi?: StaffAdministrationApi;
@@ -206,7 +211,7 @@ function adminPersistenceError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API,
+export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi = ADMIN_ACTIVITY_API, operationsClient, orderOperations = ORDER_OPERATIONS_API, nfeApi = nfeAdminApi,
   fullAdmin = false, workClient=workApi, documentApi, pdfLibraryApi, pdfStorageOwner,
   permissions = [],
   staffApi = staffAdministrationApi,
@@ -228,7 +233,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const modelRequest = React.useRef(0);
   React.useEffect(() => () => { modelRequest.current += 1; }, []);
   const [productSearch,setProductSearch]=useState(''), [productCategory,setProductCategory]=useState('');
-  const filteredAdminProducts=products.filter(p=>!p.pacote && (!productCategory || p.categoria===productCategory) && normalizeSearch(productSearch).split(/\s+/).every(term=>normalizeSearch(p.nome).includes(term)));
+  const [productFiscalOnly, setProductFiscalOnly] = useState(false);
   const [savingHighlight, setSavingHighlight] = useState<string | null>(null);
   const adminLocation = useLocation();
   const navigate = useNavigate();
@@ -251,6 +256,11 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const productDesignAllowed = canEditProductImages(effectivePermissions) || canEditProductPersonalization(effectivePermissions);
   const allowedSections = allowedPanelSections(fullAdmin, permissions);
   const allowedSectionsRef = React.useRef(allowedSections); allowedSectionsRef.current = allowedSections;
+  const canManageProducts = can('products.manage');
+  const filteredAdminProducts = products.filter(product => !product.pacote &&
+    (!productCategory || product.categoria === productCategory) &&
+    (!canManageProducts || !productFiscalOnly || missingNfeProductFields(product.fiscal).length > 0) &&
+    normalizeSearch(productSearch).split(/\s+/).every(term => normalizeSearch(product.nome).includes(term)));
   const tabAllowed = (tab: AdminTab) => allowedSections.includes(tab);
   const accessKey = `${fullAdmin}:${effectivePermissions.join(',')}`;
   React.useEffect(() => {
@@ -283,6 +293,9 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   React.useEffect(() => { fontDraftRef.current = configDraft; }, [configDraft]);
   const [isUploadingFonts, setIsUploadingFonts] = useState(false);
   const [nfeDefaultsOpen, setNfeDefaultsOpen] = useState(false);
+  const [nfeOrdersOpen, setNfeOrdersOpen] = useState(false);
+  const [nfeSimulationOpen, setNfeSimulationOpen] = useState(false);
+  const productFiscalFocus = React.useRef(false);
   const [isFontsEditorOpen, setIsFontsEditorOpen] = useState(false);
   const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
   const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
@@ -371,7 +384,8 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
     setPromotionBaseline(null);
   }, []);
 
-  const openProductEditor = (draft: Partial<Anuncio>) => {
+  const openProductEditor = (draft: Partial<Anuncio>, focusFiscal = false) => {
+    productFiscalFocus.current = focusFiscal;
     const copy = structuredClone(draft);
     if (!copy.id && defaultShippingProfile) copy.shipping = { ...defaultShippingProfile };
     const storageId = copy.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
@@ -525,7 +539,13 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
 
     const focusFrame = window.requestAnimationFrame(() => {
       const dialog = activeDialog();
-      if (dialog) focusableElements(dialog)[0]?.focus();
+      if (!dialog) return;
+      const fiscalSection = productFiscalFocus.current ? dialog.querySelector('#product-fiscal') : null;
+      if (fiscalSection) {
+        productFiscalFocus.current = false;
+        fiscalSection.scrollIntoView({ block: 'start' });
+        fiscalSection.querySelector('input')?.focus({ preventScroll: true });
+      } else focusableElements(dialog)[0]?.focus();
     });
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1414,10 +1434,30 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               </button>}
             </div>
 
-            <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-[#151515] p-4"><label className="min-w-0 flex-1 text-sm">Buscar produto por nome<input aria-label="Buscar produto por nome" value={productSearch} onChange={e=>setProductSearch(e.target.value.slice(0,100))} className="mt-2 w-full rounded-lg border border-gray-700 bg-black p-3" /></label><label className="text-sm">Categoria<select aria-label="Filtrar produtos por categoria" value={productCategory} onChange={e=>setProductCategory(e.target.value)} className="mt-2 block rounded-lg border border-gray-700 bg-black p-3"><option value="">Todas as categorias</option>{categories.map(c=><option key={c.id} value={c.nome}>{c.nome}</option>)}</select></label><button onClick={()=>{setProductSearch('');setProductCategory('');}} className="rounded-lg border border-gray-700 p-3 text-sm">Limpar filtros</button><p aria-live="polite" className="w-full text-xs text-gray-400">{filteredAdminProducts.length} produto(s) encontrado(s)</p></div>
+            <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-[#151515] p-4">
+              <label className="min-w-0 flex-1 text-sm">Buscar produto por nome
+                <input value={productSearch} onChange={event => setProductSearch(event.target.value.slice(0, 100))}
+                  className="mt-2 w-full rounded-lg border border-gray-700 bg-black p-3" />
+              </label>
+              <label className="text-sm">Categoria
+                <select aria-label="Filtrar produtos por categoria" value={productCategory} onChange={event => setProductCategory(event.target.value)}
+                  className="mt-2 block rounded-lg border border-gray-700 bg-black p-3">
+                  <option value="">Todas as categorias</option>
+                  {categories.map(category => <option key={category.id} value={category.nome}>{category.nome}</option>)}
+                </select>
+              </label>
+              <button type="button" onClick={() => { setProductSearch(''); setProductCategory(''); setProductFiscalOnly(false); }}
+                className="rounded-lg border border-gray-700 p-3 text-sm hover:bg-gray-800">Limpar filtros</button>
+              {canManageProducts && <label className="flex items-center gap-2 self-center text-sm">
+                <input type="checkbox" checked={productFiscalOnly} onChange={event => setProductFiscalOnly(event.target.checked)} />
+                Só produtos com pendências fiscais
+              </label>}
+              <p aria-live="polite" className="w-full text-xs text-gray-400">{filteredAdminProducts.length} produto(s) encontrado(s)</p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredAdminProducts.map(p => (
-                <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
+              {filteredAdminProducts.map(p => {
+                const missing = canManageProducts && productFiscalOnly ? missingNfeProductFields(p.fiscal) : [];
+                return <div key={p.id} className="bg-[#111111] border border-gray-800 rounded-xl overflow-hidden group">
                   {can('products.manage') && <button type="button" disabled={Boolean(savingHighlight)} aria-pressed={p.destaque === true} onClick={() => void toggleHighlight(p)} className="flex w-full items-center justify-center gap-2 border-b border-gray-800 px-4 py-3 text-xs font-bold text-pink-400 hover:bg-pink-500/10 disabled:opacity-40"><Sparkles size={14} />{p.destaque ? 'Remover de destaque' : 'Adicionar a destaque'}</button>}
                   <div className="aspect-video bg-gray-900 relative">
                     <img src={p.imagem} alt={p.nome} className="w-full h-full object-cover" loading="lazy" decoding="async" referrerPolicy="no-referrer" />
@@ -1434,9 +1474,14 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                     <div className="text-[10px] text-[#ff4d79] font-bold uppercase tracking-widest mb-1">{p.categoria}</div>
                     <h3 className="font-bold mb-2">{p.nome}</h3>
                     <div className="text-xs text-gray-500 line-clamp-2">{p.desc}</div>
+                    {missing.length > 0 && <div className="mt-3 space-y-2">
+                      <p className="text-xs text-amber-200">Confira {missing.join(', ')}.</p>
+                      <button type="button" onClick={() => openProductEditor(p, true)}
+                        className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800">Editar classificação fiscal</button>
+                    </div>}
                   </div>
-                </div>
-              ))}
+                </div>;
+              })}
             </div>
           </div>
         )}
@@ -1531,7 +1576,17 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               <h2 className="text-2xl font-bold">Pedidos Recebidos</h2>
               <p className="mt-2 text-sm text-gray-500">As filas seguem a prioridade operacional. Clique no título para minimizar uma etapa.</p>
             </div>
+            {fullAdmin && <button type="button" onClick={() => setNfeSimulationOpen(true)}
+              className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800">Simular NF-e</button>}
+            {fullAdmin && nfeSimulationOpen && <NfeSimulationEditor api={nfeApi} onClose={() => setNfeSimulationOpen(false)} />}
             {can('documents.generate') && pdfProgress && <StaffPdfQueueProgress value={pdfProgress} />}
+            {can('fiscal.manage') && ordersReady && !ordersError && <div className="space-y-3">
+              <button type="button" aria-expanded={nfeOrdersOpen} onClick={() => setNfeOrdersOpen(open => !open)}
+                className="rounded-lg border border-pink-400/40 px-3 py-2 text-sm font-bold text-pink-300 hover:bg-pink-400/10">
+                {nfeOrdersOpen ? 'Ocultar pendências fiscais' : 'Ver pendências fiscais'}
+              </button>
+              {nfeOrdersOpen && <NfeOrdersPanel orders={orders} api={nfeApi} />}
+            </div>}
             {!ordersReady && <div role="status" className="text-sm text-gray-400 flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Carregando pedidos...</div>}
             {ordersError && <div role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{ordersError}</div>}
             {ORDER_QUEUE_ORDER.map(queue => {
@@ -1560,7 +1615,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                         <OrderCard
                           key={order.id}
                           order={order}
-                          canFulfill={can('orders.fulfillment')} canManageShipments={can('shipments.manage')} canManageNfe={can('fiscal.manage')} canRetryEmail={fullAdmin}
+                          canFulfill={can('orders.fulfillment')} canManageShipments={can('shipments.manage')} canManageNfe={can('fiscal.manage')} nfeApi={nfeApi} canRetryEmail={fullAdmin}
                           operations={orderOperations}
                           onOperationError={setErrorMessage}
                           onOperationSuccess={setSuccessMessage}
@@ -1625,11 +1680,11 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               {activeTab === 'config' && <>
                 <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
                 {fullAdmin && <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-800 bg-[#111111] p-6">
-                  <div><h3 className="font-bold">Padrões de NF-e</h3>
-                    <p className="mt-1 text-sm text-gray-400">UF do emitente, natureza da operação, CFOP e CST ou CSOSN.</p>
+                  <div><h3 className="font-bold">Configuração de NF-e</h3>
+                    <p className="mt-1 text-sm text-gray-400">Dados do emitente e padrões fiscais para vendas.</p>
                   </div>
                   <button type="button" onClick={() => setNfeDefaultsOpen(true)}
-                    className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800">Configurar padrões fiscais</button>
+                    className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800">Configurar NF-e</button>
                 </section>}
                 <section aria-labelledby="default-shipping-heading" className="space-y-4 rounded-xl border border-gray-800 bg-[#111111] p-6">
                   <h3 id="default-shipping-heading" className="font-bold">Peso e embalagem padrão</h3>
@@ -1785,7 +1840,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         )}
       </main>
 
-      {fullAdmin && activeTab === 'config' && nfeDefaultsOpen && <NfeDefaultsEditor onClose={() => setNfeDefaultsOpen(false)} />}
+      {fullAdmin && activeTab === 'config' && nfeDefaultsOpen && <NfeDefaultsEditor api={nfeApi} onClose={() => setNfeDefaultsOpen(false)} />}
       {isFontsEditorOpen && <EditorModal title="Fontes da personalização" compact={isUploadingFonts} busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
         <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} includeInactive />
         <div className={isUploadingFonts ? "space-y-0" : "space-y-5"}>
@@ -2526,7 +2581,7 @@ function formatAdminDate(value: string): string {
 }
 
 function OrderCard({
-  canFulfill, canManageShipments, canManageNfe, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
+  canFulfill, canManageShipments, canManageNfe, nfeApi, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
   order,
   handleStatusChange,
   handleOpenArtwork,
@@ -2536,6 +2591,7 @@ function OrderCard({
   canFulfill: boolean;
   canManageShipments: boolean;
   canManageNfe: boolean;
+  nfeApi: NfeAdminApi;
   canRetryEmail: boolean;
   operations: OrderOperationsApi;
   onOperationError: (message: string) => void;
@@ -2628,7 +2684,7 @@ function OrderCard({
       <OrderDocuments order={order} staff canRetry={canRetryEmail} />
       {(canFulfill || canManageShipments) && <OrderActions order={order} api={operations} canFulfill={canFulfill} canManageShipments={canManageShipments} onError={onOperationError} onSuccess={onOperationSuccess} />}
       {canManageNfe && <button type="button" onClick={() => setNfeOpen(true)} className="rounded-lg border border-pink-400/40 px-4 py-2 text-sm font-bold text-pink-300 hover:bg-pink-400/10">Conferir NF-e</button>}
-      {canManageNfe && nfeOpen && <NfeDraftEditor orderId={order.id} onClose={() => setNfeOpen(false)} />}
+      {canManageNfe && nfeOpen && <NfeDraftEditor orderId={order.id} api={nfeApi} onClose={() => setNfeOpen(false)} />}
       {order.tracking && <p className="break-words text-xs text-cyan-300">{order.tracking.code ? `Rastreio: ${order.tracking.code} · ` : ''}{order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
       {sheetOpen && <OrderProductionSheet canOpenFiles={canOpenFiles} order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}

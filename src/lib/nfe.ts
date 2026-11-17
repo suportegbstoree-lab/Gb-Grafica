@@ -1,5 +1,5 @@
 import { isValidCpf } from './commerce.js';
-import type { DeliveryAddress } from '../types.js';
+import type { DeliveryAddress, Order } from '../types.js';
 
 export const NFE_PRODUCT_FIELDS = [
   { key: 'ncm', label: 'NCM', max: 8, pattern: /^\d{8}$/ },
@@ -11,6 +11,30 @@ export const NFE_PRODUCT_FIELDS = [
 export type NfeProductFields = Partial<Record<typeof NFE_PRODUCT_FIELDS[number]['key'], string>>;
 export type NfeItemDraft = NfeProductFields & { cfop?: string; icmsCode?: string; couponCents: number | null };
 export type NfeAddress = DeliveryAddress;
+export const NFE_ADDRESS_FIELDS = [
+  ['cep', 'CEP', 9], ['estado', 'UF', 2], ['cidade', 'Município', 60], ['cityCode', 'Código IBGE do município', 7],
+  ['rua', 'Logradouro', 160], ['numero', 'Número', 20], ['bairro', 'Bairro', 60], ['complemento', 'Complemento', 60],
+] as const satisfies ReadonlyArray<[keyof NfeAddress, string, number]>;
+
+export const NFE_TAX_REGIMES = [
+  ['1', 'Simples Nacional'],
+  ['2', 'Simples Nacional — excesso de sublimite'],
+  ['3', 'Regime Normal'],
+  ['4', 'MEI'],
+] as const;
+
+export interface NfeIssuer {
+  legalName: string;
+  cnpj: string;
+  stateRegistration: string;
+  taxRegime: '' | typeof NFE_TAX_REGIMES[number][0];
+  address: NfeAddress;
+}
+
+export const EMPTY_NFE_ISSUER: NfeIssuer = {
+  legalName: '', cnpj: '', stateRegistration: '', taxRegime: '',
+  address: { cep: '', estado: '', cidade: '', cityCode: '', rua: '', numero: '', bairro: '', complemento: '' },
+};
 export interface NfeRecipient {
   recipientName: string;
   recipientDocument: string;
@@ -35,6 +59,7 @@ export interface NfeDefaults {
 export interface NfeDefaultsConfig {
   revision: string | null;
   defaults: NfeDefaults;
+  issuer: NfeIssuer;
 }
 export const EMPTY_NFE_DEFAULTS: NfeDefaults = {
   issuerState: '', operation: '', intrastate: { cfop: '', icmsCode: '' }, interstate: { cfop: '', icmsCode: '' },
@@ -56,16 +81,30 @@ export interface NfeDraft extends NfeRecipient {
   items: NfeItemDraft[];
 }
 export interface NfeReview {
-  environment: 'disabled' | 'homologacao' | 'invalid';
+  environment: 'disabled' | 'simulacao' | 'homologacao' | 'invalid';
   revision: string | null;
   reviewedAt?: string;
   editable: boolean;
   paymentEnvironment: 'sandbox' | 'production' | null;
   draft: NfeDraft;
   issues: string[];
+  issuerMissing: string[];
   lines: Array<{ name: string; sku: string; quantity: number; unitCents: number; bundle: boolean }>;
   totals: { itemsCents: number; itemCouponCents: number; shippingCents: number; shippingCouponCents: number; totalCents: number };
   couponFromCheckout: boolean;
+}
+
+export const NFE_SUMMARY_PAGE_SIZE = 10;
+export const NFE_ORDER_ID = /^GB-[A-Z0-9]{8,64}$/;
+export interface NfeOrderSummary {
+  status: 'pending' | 'ready' | 'reviewed' | 'unavailable';
+  issues: string[];
+  issueCount: number;
+}
+
+export function canReviewNfeOrder(order: Pick<Order, 'paymentStatus' | 'status' | 'fulfillmentStatus' | 'pagbankRefundedAmountCents'>) {
+  const paid = order.paymentStatus ? order.paymentStatus === 'pago' : order.status === 'Pago';
+  return paid && order.fulfillmentStatus !== 'cancelado' && !Number(order.pagbankRefundedAmountCents);
 }
 
 export function fiscalRecord(value: unknown): Record<string, unknown> | null {
@@ -88,6 +127,90 @@ export function parseNfeProductFields(value: unknown): NfeProductFields | null {
     if (text) output[key] = text;
   }
   return output;
+}
+
+export function missingNfeProductFields(value?: NfeProductFields) {
+  return NFE_PRODUCT_FIELDS
+    .filter(({ key, pattern }) => key !== 'cest' && !pattern.test(value?.[key] ?? ''))
+    .map(({ label }) => label);
+}
+
+export function parseNfeAddress(value: unknown): NfeAddress | null {
+  const input = fiscalRecord(value);
+  if (!input) return null;
+  const address = { ...EMPTY_NFE_ISSUER.address };
+  for (const [key, , max] of NFE_ADDRESS_FIELDS) {
+    const value = fiscalText(input[key], max);
+    if (value === null) return null;
+    address[key] = value;
+  }
+  address.cep = address.cep.replace('-', '');
+  address.estado = address.estado.toUpperCase();
+  const cityCode = address.cityCode ?? '';
+  if ((address.cep && !/^\d{8}$/.test(address.cep)) ||
+    (address.estado && !isFiscalState(address.estado)) ||
+    (cityCode && (!/^\d{7}$/.test(cityCode) || (address.estado && !validCityCode(cityCode, address.estado))))) return null;
+  return address;
+}
+
+export function parseNfeIssuer(value: unknown): NfeIssuer | null {
+  const input = fiscalRecord(value);
+  if (!input) return null;
+  const legalName = fiscalText(input.legalName, 60);
+  const document = fiscalText(input.cnpj, 24);
+  const registration = fiscalText(input.stateRegistration, 20);
+  const taxRegime = NFE_TAX_REGIMES.find(([code]) => code === input.taxRegime)?.[0] ?? '';
+  const address = parseNfeAddress(input.address);
+  if (legalName === null || document === null || registration === null || !address ||
+    (input.taxRegime !== undefined && input.taxRegime !== '' && !taxRegime)) return null;
+  const cnpj = parseNfeDocument(document);
+  const stateRegistration = registration.replace(/[. /-]/g, '');
+  if (cnpj === null || (cnpj && cnpj.length !== 14) || (registration && !/^\d{2,14}$/.test(stateRegistration))) return null;
+  return { legalName, cnpj, stateRegistration, taxRegime, address };
+}
+
+function missingNfeAddressFields(address: NfeAddress) {
+  return NFE_ADDRESS_FIELDS.filter(([key]) => {
+    if (key === 'complemento') return false;
+    if (key === 'cityCode') return !validCityCode(address.cityCode ?? '', address.estado);
+    if (key === 'estado') return !isFiscalState(address.estado);
+    if (key === 'cep') return !/^\d{5}-?\d{3}$/.test(address.cep);
+    return !address[key];
+  }).map(([, label]) => label);
+}
+
+export function missingNfeIssuerFields(issuer: NfeIssuer) {
+  return [
+    ...(!issuer.legalName ? ['Razão social'] : []),
+    ...(!issuer.cnpj ? ['CNPJ'] : []),
+    ...(!issuer.stateRegistration ? ['Inscrição estadual'] : []),
+    ...(!issuer.taxRegime ? ['Regime tributário'] : []),
+    ...missingNfeAddressFields(issuer.address),
+  ];
+}
+
+export function nfeDraftIssues(
+  draft: NfeDraft, lines: NfeReview['lines'], expectedDiscount: number, issuerMissing: string[],
+) {
+  const issues: string[] = [];
+  if (issuerMissing.length) issues.push('Complete o cadastro do emitente em Loja → Informações da Loja → Configuração de NF-e.');
+  if (!draft.recipientName || !parseNfeDocument(draft.recipientDocument)) issues.push('Confirme o nome e o documento do destinatário.');
+  const addressMissing = missingNfeAddressFields(draft.address);
+  if (addressMissing.length) issues.push('Complete o endereço fiscal do destinatário (' + addressMissing.join(', ') + ').');
+  if (!draft.operation) issues.push('Informe a natureza da operação.');
+  draft.items.forEach((item, index) => {
+    const { name, sku, bundle } = lines[index];
+    const label = 'Item ' + (index + 1) + ' · ' + name + (sku && sku !== name ? ' (' + sku + ')' : '');
+    const missing = [...missingNfeProductFields(item),
+      ...(!/^\d{4}$/.test(item.cfop ?? '') ? ['CFOP'] : []),
+      ...(!/^\d{2,3}$/.test(item.icmsCode ?? '') ? ['CST ou CSOSN do ICMS'] : []),
+    ];
+    if (missing.length) issues.push(label + ' · Confira ' + missing.join(', ') + '.');
+    if (bundle) issues.push(label + ' · Confirme com a contabilidade como discriminar os componentes do pacote.');
+  });
+  if (draft.items.some(item => item.couponCents === null) ||
+    draft.items.reduce((sum, item) => sum + (item.couponCents ?? 0), 0) !== expectedDiscount) issues.push('A soma dos descontos por item deve fechar com o desconto dos produtos no pedido.');
+  return issues;
 }
 
 export function parseNfeDocument(value: string): string | null {

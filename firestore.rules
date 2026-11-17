@@ -211,6 +211,7 @@ service cloud.firestore {
     match /_reviewOwners/{reviewId} { allow read, write: if false; }
 
     match /_fiscalSettings/{document} { allow read, write: if false; }
+    match /_fiscalSimulations/{document} { allow read, write: if false; }
 
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || can('orders.read'));

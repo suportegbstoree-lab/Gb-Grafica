@@ -103,6 +103,21 @@ test('only a full administrator can manage fiscal defaults, including when a sta
   docs.set('_staffAccess/' + employee, { schemaVersion: 1, enabled: true, roleId: 'designer', epoch });
   docs.set('_staffRoles/designer', { schemaVersion: 1, enabled: true, permissions: ['orders.read', 'fiscal.manage'], revision: epoch });
   const endpoint = '/admin/nfe-defaults';
+  const orderId = 'GB-FISCAL123';
+  docs.set('orders/' + orderId, {
+    userId: employee, paymentStatus: 'pago', metodoEntrega: 'retirada', totalCents: 1000,
+    itens: [{ productId: 'product', nome: 'Produto', preco: '10.00', quantidade: 1 }],
+  });
+  docs.set('orders/' + orderId + '/fiscal/checkout', { payerCpf: '52998224725' });
+  const summaryEndpoint = '/admin/orders/nfe-summary';
+  assert.equal((await call(summaryEndpoint, 'buyer', { ids: [orderId] })).status, 403);
+  assert.equal((await call(summaryEndpoint, 'fiscal', { ids: ['../outro'] })).status, 422);
+  const summary = await call(summaryEndpoint, 'fiscal', { ids: [orderId] });
+  assert.equal(summary.status, 200, await summary.clone().text());
+  assert.equal(summary.headers.get('cache-control'), 'private, no-store');
+  const result = await summary.json();
+  assert.equal(result[orderId].status, 'pending');
+  assert.doesNotMatch(JSON.stringify(result), /52998224725|recipientDocument|draft|issuer:/);
   const defaults = { issuerState: 'SP', operation: 'Venda', intrastate: { cfop: '5102', icmsCode: '102' },
     interstate: { cfop: '6108', icmsCode: '102' } };
   assert.equal((await call(endpoint, 'buyer')).status, 403);
@@ -122,14 +137,51 @@ test('only a full administrator can manage fiscal defaults, including when a sta
       cep: '01001000', estado: 'SP', cidade: 'São Paulo', cityCode: '3550308', rua: 'Praça da Sé', bairro: 'Sé',
     });
   } finally { postalLookup.mock.restore(); }
-  const response = await call(endpoint, 'admin', { defaults, revision: null });
+  const issuer = {
+    legalName: 'GB Teste', cnpj: '11.222.333/0001-81', stateRegistration: '012.345.678-90', taxRegime: '1',
+    address: { cep: '01001000', estado: 'SP', cidade: 'São Paulo', cityCode: '3550308', rua: 'Praça da Sé', numero: '1', bairro: 'Sé' },
+  };
+  assert.equal((await call(endpoint, 'fiscal', { defaults, issuer, revision: null })).status, 403);
+  const response = await call(endpoint, 'admin', { defaults, issuer, revision: null });
   assert.equal(response.status, 200, await response.clone().text());
   const saved = await response.json();
   assert.deepEqual(saved.defaults, defaults);
+  assert.equal(saved.issuer.cnpj, '11222333000181');
   assert.ok(saved.revision);
   assert.equal(response.headers.get('cache-control'), 'private, no-store');
   assert.equal((await call(endpoint, 'admin', { defaults, revision: null })).status, 409);
   assert.deepEqual(await (await call(endpoint)).json(), saved);
+});
+
+test('only full administrators can simulate NF-e and recover the saved attempt without real orders', async () => {
+  const endpoint = '/admin/nfe-simulation';
+  const savedEnv = process.env.NFE_ENV;
+  try {
+    process.env.NFE_ENV = 'disabled';
+    const disabled = await call(endpoint);
+    assert.equal(disabled.status, 200);
+    assert.equal((await disabled.json()).enabled, false);
+    assert.equal((await call(endpoint, 'admin', { action: 'review', revision: null })).status, 409);
+    process.env.NFE_ENV = 'simulacao';
+    assert.equal((await call(endpoint, 'buyer')).status, 403);
+    const review = await call(endpoint, 'admin', { action: 'review', revision: null });
+    assert.equal(review.status, 200, await review.clone().text());
+    assert.equal(review.headers.get('cache-control'), 'private, no-store');
+    const { status } = await review.json();
+    const emit = await call(endpoint, 'admin', { action: 'emit', revision: status.revision, scenario: 'timeout' });
+    assert.equal(emit.status, 504);
+    const recovered = await (await call(endpoint)).json();
+    assert.equal(recovered.status.phase, 'uncertain');
+    const consult = await call(endpoint, 'admin', { action: 'consult', revision: recovered.status.revision });
+    assert.equal(consult.status, 200, await consult.clone().text());
+    const result = await consult.json();
+    assert.equal(result.status.attemptId, recovered.status.attemptId);
+    assert.equal(result.status.phase, 'authorized');
+    assert.ok(![...docs.keys()].some(path => path.startsWith('orders/')));
+  } finally {
+    if (savedEnv === undefined) delete process.env.NFE_ENV;
+    else process.env.NFE_ENV = savedEnv;
+  }
 });
 
 test('assignment resolves a registered email, persists staff authorization and truthfully queues the email', async () => {

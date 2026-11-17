@@ -1,18 +1,14 @@
 import { useEffect, useState } from 'react';
 import { formatMoney } from '../lib/commerce';
-import { NFE_RECIPIENT_FIELDS, parseNfeDocument, type NfeAddress, type NfeDraft, type NfeItemDraft, type NfeReview } from '../lib/nfe';
-import { requestNfeAddress, requestNfeDraft } from '../services/nfeService';
+import { NFE_ADDRESS_FIELDS, NFE_RECIPIENT_FIELDS, nfeDraftIssues, parseNfeDocument, type NfeAddress, type NfeDraft, type NfeItemDraft, type NfeReview } from '../lib/nfe';
+import { nfeAdminApi, type NfeAdminApi } from '../services/nfeService';
 import EditorModal from './EditorModal';
 import { NfeProductInputs, nfeFieldClass } from './NfeProductFields';
 
-const addressFields = [
-  ['cep', 'CEP', 9], ['estado', 'UF', 2], ['cidade', 'Município', 60], ['cityCode', 'Código IBGE do município', 7],
-  ['rua', 'Logradouro', 160], ['numero', 'Número', 20], ['bairro', 'Bairro', 60], ['complemento', 'Complemento', 60],
-] as const satisfies ReadonlyArray<[keyof NfeAddress, string, number]>;
 const recipientFields = [...NFE_RECIPIENT_FIELDS, ['operation', 'Natureza da operação', 60]] as const;
 const money = (cents: number) => formatMoney(cents / 100);
 
-export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; onClose: () => void }) {
+export default function NfeDraftEditor({ orderId, onClose, api = nfeAdminApi }: { orderId: string; onClose: () => void; api?: NfeAdminApi }) {
   const [review, setReview] = useState<NfeReview>();
   const [draft, setDraft] = useState<NfeDraft>();
   const [error, setError] = useState('');
@@ -21,13 +17,13 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
-    void requestNfeDraft(orderId, undefined, controller.signal).then(value => {
+    void api.draft(orderId, undefined, controller.signal).then(value => {
       if (!controller.signal.aborted) { setReview(value); setDraft(value.draft); }
     }).catch((reason: Error) => {
       if (!controller.signal.aborted) setError(reason.message);
     });
     return () => controller.abort();
-  }, [orderId]);
+  }, [api, orderId]);
 
   function update(patch: Partial<NfeDraft>) {
     setSaved(false);
@@ -66,7 +62,7 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
     setBusy(true);
     setError('');
     try {
-      const address = await requestNfeAddress(draft.address.cep);
+      const address = await api.address(draft.address.cep);
       updateAddress({
         ...draft.address, ...address,
         rua: address.rua || draft.address.rua,
@@ -82,7 +78,7 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
     setBusy(true);
     setError('');
     try {
-      const result = await requestNfeDraft(orderId, { draft, revision: review.revision, confirm });
+      const result = await api.draft(orderId, { draft, revision: review.revision, confirm });
       setReview(result);
       setDraft(result.draft);
       setSaved(true);
@@ -92,11 +88,15 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
     } finally { setBusy(false); }
   }
 
+  const issues = review && draft
+    ? nfeDraftIssues(draft, review.lines, review.totals.itemCouponCents, review.issuerMissing ?? [])
+    : [];
+
   return <EditorModal wide title="Rascunho de NF-e" busy={busy} onClose={onClose} closeLabel="Fechar rascunho de NF-e" doneLabel="Fechar" footerText=""
     footerActions={<>
       <button type="submit" form="nfe-draft-form" disabled={busy || !review?.editable || Boolean(review.reviewedAt && !changed)}
         className="rounded-lg border border-gray-700 px-4 py-2 text-sm hover:bg-gray-800 disabled:opacity-40">Salvar rascunho</button>
-      <button type="button" onClick={() => void save(true)} disabled={busy || !review?.editable || Boolean(review.reviewedAt && !changed)}
+      <button type="button" onClick={() => void save(true)} disabled={busy || !review?.editable || Boolean(review.reviewedAt && !changed) || issues.length > 0}
         className="rounded-lg bg-pink-600 px-4 py-2 text-sm font-bold hover:bg-pink-700 disabled:opacity-40">Marcar como conferido</button>
     </>}>
     <p className="text-sm font-semibold">Pedido {orderId} · NF-e modelo 55</p>
@@ -118,8 +118,8 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
         ] as const).map(([label, value]) => <div key={label}><dt className="text-gray-400">{label}</dt><dd className="font-bold">{money(value)}</dd></div>)}
       </dl>
       {!review.editable && <p className="text-sm text-amber-300">A edição requer um pedido pago, sem cancelamento ou estorno.</p>}
-      {review.issues.length > 0 && <ul className="list-disc space-y-1 rounded-lg border border-amber-800 px-7 py-3 text-sm text-amber-200">
-        {review.issues.map(issue => <li key={issue}>{issue}</li>)}
+      {issues.length > 0 && <ul className="list-disc space-y-1 rounded-lg border border-amber-800 px-7 py-3 text-sm text-amber-200">
+        {issues.map(issue => <li key={issue}>{issue}</li>)}
       </ul>}
       <fieldset className="space-y-4 disabled:opacity-70" disabled={busy || !review.editable}>
         <legend className="mb-2 font-semibold">Destinatário e operação</legend>
@@ -128,7 +128,7 @@ export default function NfeDraftEditor({ orderId, onClose }: { orderId: string; 
           {recipientFields.map(([key, label, max]) => <label key={key} className="text-sm text-gray-300">{label}
             <input className={nfeFieldClass} maxLength={max} value={draft[key]} onChange={event => updateRecipientField(key, event.target.value)} />
           </label>)}
-          {addressFields.map(([key, label, max]) => <label key={key} className="text-sm text-gray-300">{label}
+          {NFE_ADDRESS_FIELDS.map(([key, label, max]) => <label key={key} className="text-sm text-gray-300">{label}
             <input className={nfeFieldClass} maxLength={max} value={draft.address[key] ?? ''}
               onChange={event => updateAddress({
                 ...draft.address,

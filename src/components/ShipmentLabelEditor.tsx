@@ -108,18 +108,21 @@ export default function ShipmentLabelEditor({ order, api, onClose, onStatus }: {
       {(label?.phase === 'none' || label?.phase === 'canceled') && canPrepare && <form className="space-y-3" onSubmit={event => {
         event.preventDefault();
         void run(async () => {
-          setLabel(await api.shipmentLabel(order.id, { action: 'prepare', invoiceKey, recipientDocument, agency }));
+          const invoice = label.authorizedNfeAvailable ? { useAuthorizedNfe: true as const } : { invoiceKey };
+          setLabel(await api.shipmentLabel(order.id, { action: 'prepare', ...invoice, recipientDocument, agency }));
           setInvoiceKey(''); setRecipientDocument('');
         });
       }}>
-        <label className="block text-sm">Chave da NF-e
-          <input className={field} inputMode="numeric" autoComplete="off" required maxLength={44} pattern="[0-9]{44}"
-            value={invoiceKey} onChange={event => setInvoiceKey(event.target.value)} />
-        </label>
+        {label.authorizedNfeAvailable ? <p className="text-sm text-green-300">A etiqueta usará a chave da NF-e autorizada deste pedido.</p> :
+          <label className="block text-sm">Chave da NF-e
+            <input className={field} inputMode="numeric" autoComplete="off" required maxLength={44} pattern="[0-9]{44}"
+              value={invoiceKey} onChange={event => setInvoiceKey(event.target.value)} />
+          </label>}
         <label className="block text-sm">CPF ou CNPJ do destinatário
           <input className={field} autoComplete="off" required maxLength={24}
             value={recipientDocument} onChange={event => setRecipientDocument(event.target.value)} />
         </label>
+        {label.authorizedNfeAvailable && <p className="text-xs text-gray-400">Informe o documento de quem recebe a encomenda.</p>}
         <label className="block text-sm">ID da agência de postagem (quando exigido)
           <input className={field} inputMode="numeric" autoComplete="off" maxLength={9} pattern="[0-9]{1,9}"
             value={agency} onChange={event => setAgency(event.target.value)} />

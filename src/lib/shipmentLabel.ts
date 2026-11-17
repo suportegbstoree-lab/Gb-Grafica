@@ -11,13 +11,16 @@ export interface ShipmentLabelView {
   amountCents: number | null;
   providerId?: string;
   tracking?: string;
+  authorizedNfeAvailable?: true;
 }
 
-export interface ShipmentLabelFields {
-  invoiceKey: string;
+export type ShipmentLabelFields = {
   recipientDocument: string;
   agency?: string;
-}
+} & (
+  | { useAuthorizedNfe: true; invoiceKey?: undefined }
+  | { useAuthorizedNfe?: false; invoiceKey: string }
+);
 
 export interface ShipmentLabelPrintLink {
   printUrl: string;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseNfeDocument } from '../lib/nfe';
 import { memoryFirestore } from '../../test/helpers/memoryFirestore';
-import { NfeDraftError, orderNfeDraft } from './nfeDraft';
+import { NfeDraftError, nfeOrderSummaries, orderNfeDraft } from './nfeDraft';
 import { manageNfeDefaults } from './nfeDefaults';
 
 const id = 'GB-FISCAL123';
@@ -82,12 +82,16 @@ const defaults = {
   interstate: { cfop: '6108', icmsCode: '102' },
 };
 const checkout = { payerCpf: '52998224725', couponByItem: [245], products: [nfeCode] };
+const issuer = {
+  legalName: 'Gráfica Fiscal Teste', cnpj: '11222333000181', stateRegistration: '01234567890', taxRegime: '1',
+  address: fiscalAddress,
+};
 
 test('new drafts suggest fiscal settings by destination and only mark complete drafts as reviewed', async () => {
   const { db, docs } = memoryFirestore([
     [path, { ...order, enderecoEntrega: fiscalAddress }], [path + '/fiscal/checkout', checkout],
   ]);
-  const config = await manageNfeDefaults(db, 'admin', { defaults, revision: null });
+  const config = await manageNfeDefaults(db, 'admin', { defaults, issuer, revision: null });
   await assert.rejects(manageNfeDefaults(db, 'admin', { defaults, revision: null }), rejects(409));
   const initial = await orderNfeDraft(db, id, 'operator');
   assert.equal(initial.draft.operation, 'Venda');
@@ -129,4 +133,60 @@ test('interstate defaults apply to retail delivery, while CNPJ and pickup requir
   docs.set(path + '/fiscal/checkout', checkout);
   docs.set(path, { ...order, metodoEntrega: 'retirada' });
   assert.equal((await orderNfeDraft(db, id, 'operator')).draft.items[0].cfop, undefined);
+});
+
+test('issuer configuration normalizes documents, treats partial data as pending and rejects an obsolete revision', async () => {
+  const { db, docs } = memoryFirestore([['_fiscalSettings/nfe', { defaults, revision: 'legacy' }]]);
+  const previous = await manageNfeDefaults(db, 'admin');
+  assert.equal(previous.issuer.address.estado, 'SP');
+  assert.equal(previous.issuer.cnpj, '');
+  const changed = await manageNfeDefaults(db, 'admin', { defaults, issuer: {
+    ...issuer, cnpj: '11.222.333/0001-81', stateRegistration: '012.345.678-90', address: { ...fiscalAddress, cep: '01001-000' },
+  }, revision: 'legacy' });
+  assert.equal(changed.issuer.cnpj, issuer.cnpj);
+  assert.equal(changed.issuer.stateRegistration, issuer.stateRegistration);
+  assert.equal(changed.issuer.address.cep, '01001000');
+  const currentIssuerRevision = docs.get('_fiscalSettings/nfe')?.issuerRevision;
+  const revisedDefaults = await manageNfeDefaults(db, 'admin', { defaults: { ...defaults, operation: 'Venda na loja' }, revision: changed.revision });
+  assert.deepEqual(revisedDefaults.issuer, changed.issuer);
+  assert.equal(docs.get('_fiscalSettings/nfe')?.issuerRevision, currentIssuerRevision);
+  await assert.rejects(manageNfeDefaults(db, 'admin', { defaults, issuer, revision: 'legacy' }), rejects(409));
+  for (const invalid of [{ cnpj: '52998224725' }, { stateRegistration: 'AB123' }, { taxRegime: '5' },
+    { address: { ...fiscalAddress, cityCode: '3304557' } }]) {
+    await assert.rejects(manageNfeDefaults(db, 'admin', { defaults, issuer: { ...issuer, ...invalid }, revision: revisedDefaults.revision }), rejects(422));
+  }
+});
+
+test('the order list identifies specific pending fields, disregards unrelated incomplete catalog and rechecks changes to the issuer', async () => {
+  const buyerPath = path + '/fiscal/checkout';
+  const { db, docs } = memoryFirestore([
+    [path, { ...order, enderecoEntrega: fiscalAddress }],
+    [buyerPath, { ...checkout, products: [{ origin: '0', unit: 'UN' }] }],
+    ['anuncios/catalogo-teste', { nome: 'Produto de teste' }],
+  ]);
+  let config = await manageNfeDefaults(db, 'admin', { defaults, revision: null });
+  let review = await orderNfeDraft(db, id, 'operator');
+  assert.ok(review.issuerMissing.includes('CNPJ'));
+  assert.ok(review.issues.some(issue => issue.includes('Cartão gráfico (C01)') && issue.includes('NCM')));
+  await assert.rejects(orderNfeDraft(db, id, 'operator', { draft: review.draft, confirm: true, revision: null }), rejects(422));
+  const pending = (await nfeOrderSummaries(db, [id], 'operator'))[id];
+  assert.equal(pending.status, 'pending');
+  assert.doesNotMatch(JSON.stringify(pending), /52998224725|Pessoa de Teste|Praça da Sé/);
+  assert.equal(docs.has(path + '/fiscal/draft'), false);
+
+  config = await manageNfeDefaults(db, 'admin', { defaults, issuer, revision: config.revision });
+  docs.set('anuncios/cartao', { fiscal: { ncm: nfeCode.ncm, origin: '8', unit: 'UN' } });
+  review = await orderNfeDraft(db, id, 'operator');
+  assert.deepEqual(review.issues, []);
+  assert.equal(review.draft.items[0].origin, '0');
+  assert.equal(review.draft.items[0].ncm, nfeCode.ncm);
+  assert.equal((await nfeOrderSummaries(db, [id], 'operator'))[id].status, 'ready');
+
+  const confirmed = await orderNfeDraft(db, id, 'operator', { draft: review.draft, confirm: true, revision: null });
+  assert.equal((await nfeOrderSummaries(db, [id], 'operator'))[id].status, 'reviewed');
+  await manageNfeDefaults(db, 'admin', { defaults, issuer: { ...issuer, taxRegime: '3' }, revision: config.revision });
+  const summary = await nfeOrderSummaries(db, [id, 'GB-INEXISTENTE'], 'operator');
+  assert.equal(summary[id].status, 'ready');
+  assert.equal(summary['GB-INEXISTENTE'].status, 'unavailable');
+  assert.deepEqual((await orderNfeDraft(db, id, 'operator')).draft, confirmed.draft);
 });

@@ -1,6 +1,6 @@
 # Changelog
 
-## Última atualização: 2026-11-11
+## Última atualização: 2026-11-17
 
 **Nota**: Este arquivo registra todas as alterações significativas do projeto. As versões são listadas em ordem cronológica inversa, com a data de implementação e um resumo das mudanças. Para detalhes completos, consulte os commits correspondentes no repositório. \
 **Algumas das melhorias já foram pagas. Deixarei uma tabela com as datas - Mas de antemão, Tudo antes de 2026-09-27 já foi combinado e/ou pago.**
@@ -9,30 +9,107 @@ As integrações com PagBank, Correios e Firebase App Check, já previstas e pag
 
 ## TABELA DE IMPLEMENTAÇÕES AINDA NÃO COBRADAS
 
-| Data da implementação | Funcionalidade                                                         | Status                               |
-| --------------------- | ---------------------------------------------------------------------- | ------------------------------------ |
-| 2026-11-01            | Gerador interno de PDF, retenção e compartilhamento para funcionários  | COMPLETO                             |
-| 2026-11-01            | Produção automática, expediente e relatórios de produtividade privados | COMPLETO                             |
-| 2026-11-01            | Filtros de produtos no Admin e upload paralelo do alfabeto             | COMPLETO                             |
-| 2026-11-01            | Páginas do catálogo, vitrine padronizada e compartilhamento            | COMPLETO                             |
-| 2026-11-01            | Pacotes de produtos com composição e desconto próprios                 | COMPLETO                             |
-| 2026-11-01            | Perfil do cliente, histórico e preenchimento do checkout               | COMPLETO                             |
-| 2026-11-01            | Busca por tags, filtros e avaliações de compras verificadas            | COMPLETO                             |
-| 2026-10-31            | Integração de e-mails, preferências e campanhas                        | COMPLETP                             |
-| 2026-10-31            | Cargos personalizados, exclusão segura e revogação de acessos          | COMPLETO                             |
-| 2026-10-31            | Atividades da equipe e simplificação da aparência                      | COMPLETO                             |
-| 2026-10-31            | Inicial decorativa de cadernetas e correções de PDF/API                | COMPLETO                             |
-| 2026-10-31            | Ajustes de QoL e melhorias pontuais                                    | COMPLETO                             |
-| 2026-10-31            | Ajustes em equipe e isolamento das seções                              | COMPLETO                             |
-| 2026-10-30            | Funcionários, pedidos e promoções relâmpago                            | COMPLETO                             |
-| 2026-10-30            | Impressão e produção de pedidos                                        | COMPLETO                             |
-| 2026-10-30            | Ajustes na personalização de texto e arte obrigatória                  | COMPLETO                             |
-| 2026-10-30            | Cards, contracapa e carrinho                                           | COMPLETO                             |
-| 2026-10-30            | Melhorias de personalização                                            | COMPLETO                             |
-| 2026-10-30            | Destaques, contatos e acesso temporário                                | COMPLETO                             |
-| 2026-10-29            | Capa, contracapa e exportação dos modelos                              | COMPLETO                             |
+| Data da implementação   | Funcionalidade                                                                                         | Status                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| 2026-11-17              | NF-e: classificação no catálogo, padrões fiscais e conferência privada por pedido                      | RASCUNHO IMPLEMENTADO · EMISSÃO PENDENTE                |
+| 2026-11-17              | Minha conta: consulta por CEP, destinatário fiscal e atualização da Política de Privacidade            | COMPLETO                                                |
+| 2026-11-17              | Menu administrativo agrupado com opção de voltar ao menu clássico                                      | COMPLETO                                                |
+| 2026-11-17              | Vitrine compacta de promoções e peso e embalagem padrão para novos produtos                            | COMPLETO                                                |
+| 2026-11-17              | Equipe: remoção de funcionários, revogação ao excluir cargos e acesso retroativo aos PDFs              | COMPLETO                                                |
+| 2026-11-17              | Oficina de PDFs: edição de moldes, identificação de pedidos compostos e pedidos em observação          | COMPLETO                                                |
+| 2026-11-15              | Lote único de PDFs, geração otimizada, ZIP e download do PDF consolidado                               | COMPLETO                                                |
+| 2026-11-15              | Reprocessamento de lotes e formatação dos nomes próprios                                               | COMPLETO                                                |
+| 2026-11-15              | Importação CSV/XLSX: associação de moldes pelo nome, expansão por quantidade e retomada da fila        | COMPLETO                                                |
+| 2026-11-15              | Editor de PDFs: barra superior, linhas extras, limpeza da fila e ajustes de código de barras           | COMPLETO                                                |
+| 2026-11-15              | Cupons de venda com valor mínimo de compra                                                             | COMPLETO                                                |
+| 2026-11-14              | Painel de etiquetas do Melhor Envio, prévia, impressão e cancelamento                                  | COMPLETO                                                |
+| 2026-11-14              | Cupons de frete e permissões de etiquetas e cupons por cargo                                           | COMPLETO                                                |
+| 2026-11-14              | Limpeza de pedidos de teste e registros órfãos, com prévia e verificação final                         | COMPLETO                                                |
+| 2026-11-14              | Páginas institucionais no tema da loja, padronização de botões e upload em português                   | COMPLETO                                                |
+| 2026-11-13              | Renomeação de bases PDF com preservação dos vínculos                                                   | COMPLETO                                                |
+| 2026-11-11 a 2026-11-13 | Cotação, emissão e rastreio pelo Melhor Envio, com teste de etiqueta isolado do PagBank                | CÓDIGO COMPLETO · FLUXO DE ETIQUETA VALIDADO EM SANDBOX |
+| 2026-11-11              | Revisão de planilhas, mapeamento de colunas e gestão da fila de PDFs                                   | COMPLETO                                                |
+| 2026-11-11              | Ajustes de campanhas de e-mail, alfabeto acentuado e importação da oficina                             | COMPLETO                                                |
+| 2026-11-09              | Arte por opção de produto, compra da base, opções avulsas e referência automática                      | COMPLETO                                                |
+| 2026-11-09              | Prévia de PDF dinâmica, busca de bases e moldes, banner e códigos de cupom                             | COMPLETO                                                |
+| 2026-11-08              | Cadastro de produtos, tipos de variação, preços e SKUs por combinação                                  | COMPLETO                                                |
+| 2026-11-08              | Cupons por produto, categoria ou carrinho e desconto de primeira compra                                | COMPLETO                                                |
+| 2026-11-08              | Editor de campanhas com prévia, gestão de rascunhos, modelos de e-mail e envio de teste                | COMPLETO                                                |
+| 2026-11-08              | Retenção de exclusões do catálogo e biblioteca e importação em lote de fontes                          | COMPLETO                                                |
+| 2026-11-07 a 2026-11-08 | Code128, categorias de bases, importação por pasta e reconstrução de lotes internos                    | COMPLETO                                                |
+| 2026-11-04 a 2026-11-06 | Oficina de PDFs adaptada do programa interno, edição visual, conversão XLSX e fila de revisão          | COMPLETO                                                |
+| 2026-11-04 a 2026-11-05 | Configuração de remetentes e publicação de modelos pelo Resend                                         | CÓDIGO COMPLETO · ATIVAÇÃO POR AMBIENTE                 |
+| 2026-11-01              | Gerador interno de PDF, retenção e compartilhamento para funcionários                                  | COMPLETO                                                |
+| 2026-11-01              | Produção automática, expediente e relatórios de produtividade privados                                 | COMPLETO                                                |
+| 2026-11-01              | Filtros de produtos no Admin e upload paralelo do alfabeto                                             | COMPLETO                                                |
+| 2026-11-01              | Páginas do catálogo, vitrine padronizada e compartilhamento                                            | COMPLETO                                                |
+| 2026-11-01              | Pacotes de produtos com composição e desconto próprios                                                 | COMPLETO                                                |
+| 2026-11-01              | Perfil do cliente, histórico e preenchimento do checkout                                               | COMPLETO                                                |
+| 2026-11-01              | Busca por tags, filtros e avaliações de compras verificadas                                            | COMPLETO                                                |
+| 2026-10-31              | Integração de e-mails, preferências e campanhas                                                        | COMPLETP                                                |
+| 2026-10-31              | Cargos personalizados, exclusão segura e revogação de acessos                                          | COMPLETO                                                |
+| 2026-10-31              | Atividades da equipe e simplificação da aparência                                                      | COMPLETO                                                |
+| 2026-10-31              | Inicial decorativa de cadernetas e correções de PDF/API                                                | COMPLETO                                                |
+| 2026-10-31              | Ajustes de QoL e melhorias pontuais                                                                    | COMPLETO                                                |
+| 2026-10-31              | Ajustes em equipe e isolamento das seções                                                              | COMPLETO                                                |
+| 2026-10-30              | Funcionários, pedidos e promoções relâmpago                                                            | COMPLETO                                                |
+| 2026-10-30              | Impressão e produção de pedidos                                                                        | COMPLETO                                                |
+| 2026-10-30              | Ajustes na personalização de texto e arte obrigatória                                                  | COMPLETO                                                |
+| 2026-10-30              | Cards, contracapa e carrinho                                                                           | COMPLETO                                                |
+| 2026-10-30              | Melhorias de personalização                                                                            | COMPLETO                                                |
+| 2026-10-30              | Destaques, contatos e acesso temporário                                                                | COMPLETO                                                |
+| 2026-10-29              | Capa, contracapa e exportação dos modelos                                                              | COMPLETO                                                |
 
 Os status descrevem a implementação do código. Publicação, configuração externa e homologação permanecem pendentes quando indicadas; o histórico não confirma uma nova ativação em produção.
+
+## 2026-11-17 — Preparação de NF-e e dados fiscais em Minha conta
+
+- Cadastro de NCM, CEST quando aplicável, origem e unidade comercial no catálogo. Padrões fiscais privados por UF de entrega para operações comuns, com natureza da operação, CFOP e CST/CSOSN.
+- O rascunho reaproveita dados da compra, classificação do produto, quantidades, valores, frete e rateio do desconto. O endereço de novas entregas recebe o código IBGE a partir do CEP. A equipe autorizada pode consultar o CEP e revisar pedidos antigos.
+- Minha conta permite buscar o endereço pelo CEP e salvar outro destinatário fiscal com nome ou razão social, CPF ou CNPJ e inscrição estadual quando aplicável. No carrinho, a escolha pode ser trocada para a compra atual. A Política de Privacidade foi atualizada.
+- Dados fiscais do pedido permanecem em registros privados, com permissão de acesso no ADM, respostas sem cache e mascaramento de identificadores nos logs. A conferência local é registrada por pedido.
+- A emissão na SEFAZ, o XML autorizado, o DANFE e o preenchimento automático da chave na etiqueta dependem da integração com a API fiscal.
+
+## 2026-11-17 — Organização do painel, promoções e embalagem
+
+- Menu agrupado em Pedidos, Gerar PDF, Produtos, Descontos, Loja e Equipe, com opção de voltar ao menu clássico. Fontes ficam junto da oficina e produtividade junto de Equipe.
+- A vitrine compacta de promoções aparece em **Todos os produtos**, com acesso à lista de ofertas. A loja pode cadastrar peso e dimensões padrão para novos produtos e ajustar os valores em cada cadastro.
+- Caixas de seleção da loja e do painel usam o mesmo estilo visual.
+
+## 2026-11-17 — Equipe, moldes e pedidos em observação
+
+- Remoção de funcionários da lista com revogação de acesso ao ADM. Excluir um cargo desativa o acesso de quem estava vinculado. Funcionários com a permissão de PDFs internos passam a acessar também o histórico dentro do prazo de retenção.
+- Renomeação de moldes preserva os vínculos com a base e a pasta de letras. A barra superior atende ao texto principal e às linhas extras, com cor em HEX, RGB e seletor visual. Todas as linhas podem ser redimensionadas e o alinhamento central usa os dois eixos da caixa.
+- A importação por arquivo CSV mantém os nomes informados. O fluxo de XLSX convertido no painel inicia com o campo de nome vazio. A planilha revisada pode ser exportada.
+- Linhas com observação vão para uma área própria, com visualização, edição, exclusão, exportação CSV e envio à fila. A lista ordena pelo prazo de envio e destaca a urgência por cor.
+- PDFs com o mesmo código de barras no lote recebem o identificador visual de pedido composto. A posição e o estilo são configuráveis e a prévia usa uma base da biblioteca.
+
+## 2026-11-15 — Lotes, desempenho e retomada dos PDFs
+
+- A oficina mantém todos os arquivos de uma geração no mesmo lote. O ZIP reúne os PDFs individuais e uma cópia consolidada com as páginas na ordem do lote, incluindo frentes e versos. É possível baixar só o PDF consolidado ou o ZIP completo.
+- O download reaproveita os PDFs já produzidos. O bloqueio de 200 MB foi removido. A geração reutiliza recursos comuns às páginas e aos pedidos. Lotes anteriores podem ser refeitos.
+- A revisão de XLSX convertido persiste após recarregar ou sair do painel até enviar à fila. Gerações interrompidas podem continuar a partir do progresso salvo. A fila atual pode ser excluída mediante confirmação.
+- A importação associa moldes pelo prefixo do nome, incluindo os sufixos **COM NOME** e **SEM NOME**. Mantém o campo `af_clean`, replica os dados conforme a quantidade e envia todos os pedidos válidos à fila. Nomes digitados em caixa alta são formatados para a arte.
+- O editor de texto usa barra acima da prévia com seletores personalizados. Moldes aceitam linhas extras que começam em branco. Largura, altura e escala horizontal do código de barras podem ser configuradas globalmente e sobrescritas por pedido. A imagem aparece quando há código preenchido.
+- Cupons de venda podem exigir um valor mínimo de compra.
+
+## 2026-11-14 — Etiquetas, cupons de frete, limpeza e interface
+
+- Área de etiquetas no ADM com consulta, prévia, impressão e cancelamento, além de compra e emissão a partir dos pedidos. O painel de descontos inclui cupom fixo ou percentual de frete. Os acessos a etiquetas, cupons e operações de envio são configuráveis por cargo.
+- A limpeza de testes ganhou prévia por ambiente, remoção de subcoleções e registros relacionados mesmo com referências ausentes, limpeza de artes no Storage e verificação final. A execução exige a confirmação explícita do projeto, banco e bucket de destino.
+- Padronizados os estados de foco e hover em expediente, operações, PDFs, pedidos, e-mails e equipe. A oficina usa ícones distintos para editar, renomear e importar pastas, seletor de arquivos em português e placeholder no campo de nome do lote. A edição do layout fica nos moldes vinculados.
+- As páginas institucionais usam o tema claro e escuro da loja, com revisão da apresentação dos documentos e adaptação para telas menores.
+
+## 2026-11-13 — Renomeação de bases e impressão de etiquetas
+
+- Bases PDF podem ser renomeadas pelo painel sem perder os vínculos com moldes e pastas de letras.
+- A cotação envia os volumes do pedido em uma única consulta ao Melhor Envio. A impressão aceita o PDF fornecido pela API ou um link privado da conta emissora.
+
+## 2026-11-11 a 2026-11-12 — Melhor Envio e correções operacionais
+
+- Cotação integrada ao checkout, com peso e dimensões por produto, escolha do serviço e revalidação do frete antes do PagBank. A retirada continua disponível.
+- Preparação comercial com chave da NF-e, compra na carteira, emissão e consulta do rastreio pelo ADM. A confirmação de postagem ou entrega pode atualizar a etapa do pedido. O teste de etiqueta usa a conta sandbox do Melhor Envio e independe de um pagamento PagBank de teste.
+- Corrigidos problemas de composição da oficina, leitura de iniciais acentuadas e importação de pastas. Foram ajustadas telas de campanhas de e-mail e fixtures de E2E do painel.
 
 ## 2026-11-11 — Importação de pastas de PDFs e letras
 

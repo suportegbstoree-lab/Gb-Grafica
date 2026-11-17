@@ -117,22 +117,34 @@ O token PagBank e a conta de serviço Firebase são exclusivos do servidor. A IA
 
 ### NF-e de produtos no ADM
 
-Em **Loja → Informações da Loja → Padrões de NF-e**, o administrador pode salvar
-a UF do emitente, a natureza da operação e os códigos CFOP e CST/CSOSN para
-entregas dentro do estado ou para outro estado a pessoas físicas sem inscrição
-estadual informada. Use os valores da contabilidade.
-Em **Produtos → Catálogo → Editar Produto → Classificação fiscal**, cadastre
-NCM, CEST (quando aplicável), origem e unidade comercial.
+Em **Loja → Informações da Loja → Configuração de NF-e → Configurar NF-e**,
+o administrador cadastra razão social, CNPJ, inscrição estadual, regime tributário (CRT)
+e endereço fiscal do emitente. **Consultar CEP do emitente** preenche os dados
+disponíveis, incluindo o código IBGE. A configuração e os padrões fiscais ficam
+em `_fiscalSettings/nfe`, com leitura e escrita pela API exclusiva de administradores.
+A UF fiscal do emitente orienta as sugestões para entregas dentro e fora do
+estado a pessoas físicas sem inscrição estadual informada. Use os CFOP, CST/CSOSN
+e natureza da operação confirmados pela contabilidade.
 
-Em **Pedidos → Pedidos do site → Conferir NF-e**, revise e clique em **Marcar
-como conferido**. Os dados vêm do pedido, da classificação do produto e dos
-padrões configurados. O código IBGE é obtido na consulta de CEP do checkout para
-novas entregas. Para endereços fiscais antigos ou diferentes, use **Consultar
-CEP** no rascunho e confira logradouro, número, bairro e complemento. Pedidos de
-retirada, empresas e pacotes exigem revisão fiscal específica. Rascunhos com pendências
-podem ser salvos. A edição exige um pedido pago sem estorno ou cancelamento.
-Administradores podem delegar **Conferir e salvar rascunhos de NF-e** junto com
-**Consultar pedidos e fichas de produção**.
+Em **Produtos → Catálogo**, **Só produtos com pendências fiscais** lista os
+cadastros sem NCM, origem ou unidade comercial, com acesso direto à seção
+de edição. Preencha o CEST quando aplicável. A classificação é opcional no
+cadastro do catálogo. A conferência fiscal considera os itens de cada pedido.
+
+Em **Pedidos → Pedidos do site**, abra **Ver pendências fiscais** para ver os
+pedidos pagos disponíveis para conferência. O resumo usa a mesma validação do
+rascunho e identifica os itens e campos pendentes. Em **Conferir NF-e**, revise
+e clique em **Marcar como conferido** quando o emitente e os dados fiscais do
+pedido estiverem completos. Alterações no cadastro do emitente pedem nova
+conferência nos rascunhos, preservando seus dados salvos.
+
+O código IBGE é obtido na consulta de CEP do checkout para novas entregas.
+Para endereços fiscais antigos ou diferentes, use **Consultar CEP** no
+rascunho e confira logradouro, número, bairro e complemento. Pedidos de
+retirada, empresas e pacotes exigem revisão fiscal específica. Rascunhos com
+pendências podem ser salvos. A edição exige um pedido pago sem estorno ou
+cancelamento. Administradores podem delegar **Conferir e salvar rascunhos de
+NF-e** junto com **Consultar pedidos e fichas de produção**.
 
 O CPF e o rateio por item ficam em `orders/{id}/fiscal/checkout`. O comprador
 pode salvar outro destinatário em **Minha conta → Dados da nota fiscal** e
@@ -145,24 +157,52 @@ CPF no registro fiscal exigem preenchimento autorizado. A configuração de
 padrões é privada e alterações nela se aplicam como sugestões a novos
 rascunhos, preservando o que já foi salvo.
 
+#### Simulação no painel
+
 ```dotenv
-# Opcional. Variável de servidor na Vercel.
-NFE_ENV=disabled
+# Variável exclusiva do servidor. Use disabled para manter a simulação desativada.
+NFE_ENV=simulacao
 ```
 
-`disabled` é o padrão. `homologacao` identifica o ambiente fiscal planejado
-para testar o provedor. Ambos mantêm os rascunhos disponíveis. Neste estágio a
-aplicação ainda não envia NF-e, gera chave, XML ou DANFE.
+O padrão é `disabled`. Abra **Pedidos → Simular NF-e** com um administrador
+para conferir o pedido fictício e escolher o cenário: autorização, rejeição
+ou timeout após aceitar o envio. **Consultar tentativa** recupera o resultado
+pela mesma referência, mesmo depois de reabrir o painel. A autorização simulada
+pode ser cancelada e os cenários podem ser reiniciados após o resultado.
 
-Para integrar, defina o provedor e confirme com a contabilidade os dados do
-emitente, credenciamento, certificado ou forma de assinatura aceita pelo
-provedor, regime tributário, série e numeração, regras por operação e UF,
-tributos e como discriminar pacotes. As credenciais e demais variáveis serão
-específicas da API contratada e ficarão no servidor. Valide envio com
-referência estável por pedido para evitar duplicidade, consulta de status,
-rejeições, cancelamento e retorno de XML/DANFE em homologação
-antes de ativar produção. Apenas a chave autorizada de produção poderá
-alimentar a etiqueta de postagem em produção.
+A simulação usa apenas o exemplo incluso e grava a tentativa em
+`_fiscalSimulations/{uid}`. Ela funciona independentemente do cadastro da loja,
+do catálogo, do PagBank e do Melhor Envio. Os rascunhos seguem disponíveis em
+qualquer ambiente. `homologacao` fica reservado para a integração fiscal real.
+
+#### Integração fiscal e chave na etiqueta
+
+Ao contratar a API, configure no servidor as credenciais do provedor e
+confirme com a contabilidade o credenciamento, certificado ou outra forma de
+assinatura aceita, série e numeração, regras por UF, tributos e discriminação
+de pacotes. A integração real deverá validar autorização, consulta, rejeições,
+cancelamento e XML/DANFE em homologação.
+
+A preparação da etiqueta já lê o documento privado
+`orders/{id}/fiscal/authorization`. Esse registro deverá ser escrito pelo
+adaptador fiscal somente após confirmar a autorização para o pedido:
+
+| Campo | Valor esperado |
+| --- | --- |
+| `orderId` | Identificador do próprio pedido |
+| `source` | `provider` |
+| `environment` | `production` |
+| `status` | `authorized` ou `canceled`, conforme o provedor |
+| `accessKey` | Chave de 44 dígitos usada pelo Melhor Envio |
+| `reference` | Referência estável da autorização |
+| `protocol` | Protocolo confirmado pelo provedor |
+
+Quando uma nota autorizada estiver vinculada ao pedido, o Melhor Envio recebe
+a chave pelo servidor. O documento de quem recebe a encomenda continua
+sendo informado na preparação da etiqueta. A disponibilidade da nota é
+revalidada na preparação, na compra e na geração da etiqueta. O preenchimento
+manual continua disponível para pedidos sem uma autorização vinculada válida,
+inclusive no fluxo de testes de envio já existente.
 
 [Manuais do Portal Nacional da NF-e](https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl%2BiEFdE%3D)
 
@@ -210,8 +250,10 @@ impressão (`shipping-calculate`, `cart-read`, `cart-write`, `orders-read`,
 `shipping-checkout`, `shipping-generate` e `shipping-print`). Para a prévia e o
 cancelamento no ADM, inclua também `shipping-preview` e `shipping-cancel`.
 
-Em **Etiquetas → Abrir etiqueta** ou **Pedidos → Etiqueta de postagem**, prepare o envio com a chave de NF-e,
-CPF/CNPJ do destinatário e ID da agência quando exigido. Confira o custo e
+Em **Etiquetas → Abrir etiqueta** ou **Pedidos → Etiqueta de postagem**, prepare o envio
+com CPF/CNPJ do destinatário da entrega e ID da agência quando exigido. Se houver
+uma NF-e autorizada de produção vinculada, o servidor usa a chave automaticamente.
+Para os demais pedidos, informe a chave da NF-e no campo manual. Confira o custo e
 confirme o débito na carteira do Melhor Envio. Depois que a compra for liberada,
 emita e baixe o PDF. Se o arquivo estiver indisponível pela API, o ADM solicita
 um link privado de impressão. Abra esse link com a conta que emitiu a etiqueta.

@@ -213,6 +213,8 @@ test('order owners, fiscal staff and admins cannot bypass the API to read fiscal
   await seed([
     ['orders/order/fiscal/checkout', { payerCpf: '52998224725' }],
     ['orders/order/fiscal/draft', { recipientDocument: '52998224725' }],
+    ['orders/order/fiscal/authorization', { accessKey: '1'.repeat(44) }],
+    ['_fiscalSimulations/fiscal-admin', { phase: 'authorized', attemptId: 'SIM-TESTE' }],
     ['_fiscalSettings/nfe', { defaults: { issuerState: 'SP' } }],
     ['_customerProfiles/customer', { cpf: '52998224725', fiscalRecipient: { recipientDocument: '11222333000181' } }],
     ['_staffRoles/designer', { ...policy, permissions: ['orders.read', 'fiscal.manage'] }],
@@ -226,7 +228,7 @@ test('order owners, fiscal staff and admins cannot bypass the API to read fiscal
   await assertSucceeds(staff.doc('orders/order').get());
   await assertSucceeds(adminDb.doc('orders/order').get());
   for (const db of [customer, staff, adminDb]) {
-    for (const entry of ['orders/order/fiscal/checkout', 'orders/order/fiscal/draft', '_fiscalSettings/nfe', '_customerProfiles/customer']) {
+    for (const entry of ['orders/order/fiscal/checkout', 'orders/order/fiscal/draft', 'orders/order/fiscal/authorization', '_fiscalSimulations/fiscal-admin', '_fiscalSettings/nfe', '_customerProfiles/customer']) {
       await assertFails(db.doc(entry).get());
       await assertFails(db.doc(entry).set({ changed: true }));
     }

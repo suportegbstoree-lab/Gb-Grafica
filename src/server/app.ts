@@ -141,11 +141,12 @@ import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
 import { shipmentLabelOperation, shipmentLabelView } from './shipmentLabelOperation.js';
-import { nfeCheckoutSnapshot, orderNfeDraft } from './nfeDraft.js';
+import { nfeCheckoutSnapshot, nfeOrderSummaries, orderNfeDraft } from './nfeDraft.js';
+import { simulateNfe } from './nfeSimulation.js';
 import { NfeDraftError } from './nfeDraftError.js';
 import { manageNfeDefaults } from './nfeDefaults.js';
 import { lookupPostalAddress } from './postalAddress.js';
-import { parseNfeRecipient } from '../lib/nfe.js';
+import { NFE_SUMMARY_PAGE_SIZE, parseNfeRecipient } from '../lib/nfe.js';
 import type { ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { validateShipmentSender } from './melhorEnvioShipment.js';
 import { processMelhorEnvioTracking, syncMelhorEnvioTracking } from './melhorEnvioTracking.js';
@@ -2579,6 +2580,36 @@ app.post('/api/admin/nfe-postal-address', requireAppCheck, async (req, res) => {
     if (!result?.cityCode) throw new HttpError(422, 'Não foi possível localizar o código IBGE para este CEP. Confira os dados ou preencha o município manualmente.');
     res.json({ cep: result.cep, estado: result.state, cidade: result.city,
       cityCode: result.cityCode, rua: result.street, bairro: result.neighborhood });
+  } catch (error) { sendNfeError(res, error); }
+});
+
+app.all('/api/admin/nfe-simulation', requireAppCheck, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.set('Allow', 'GET, POST').status(405).end();
+    return;
+  }
+  try {
+    const actor = await requireAdminUser(req);
+    const { db } = getAdminServices();
+    await enforceDistributedRateLimit(db, 'nfe-simulation:' + actor.uid, 40, 60_000);
+    const change = req.method === 'POST' ? req.body ?? null : undefined;
+    res.json(await simulateNfe(db, actor.uid, change));
+  } catch (error) { sendNfeError(res, error); }
+});
+
+app.post('/api/admin/orders/nfe-summary', requireAppCheck, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const user = await requirePermissionUser(req, 'fiscal.manage');
+    const { db } = getAdminServices();
+    const ids: unknown = req.body?.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > NFE_SUMMARY_PAGE_SIZE ||
+      !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,67}$/.test(id))) {
+      throw new HttpError(422, 'Informe até ' + NFE_SUMMARY_PAGE_SIZE + ' pedidos válidos.');
+    }
+    await enforceDistributedRateLimit(db, 'nfe-summary:' + user.uid, 40, 60_000);
+    res.json(await nfeOrderSummaries(db, ids, user.uid));
   } catch (error) { sendNfeError(res, error); }
 });
 

@@ -156,3 +156,19 @@ test('shipping labels tab lists the order, previews and opens the PDF, and refle
   await label.getByRole('button', { name: 'Fechar', exact: true }).click();
   await expect(row).toContainText('Cancelada');
 });
+
+test('an authorized order uses its NF-e key while keeping the delivery document separate', async ({ page }) => {
+  await page.goto('/admin/shipment-labels?shipping-label=1&authorized-nfe=1');
+  const panel = page.getByRole('region', { name: 'Etiquetas de postagem' });
+  const row = panel.getByRole('listitem').filter({ hasText: 'GB-E2E-ETIQUETA' });
+  await row.getByRole('button', { name: 'Abrir etiqueta' }).click();
+  const label = page.getByRole('dialog', { name: 'Etiqueta de postagem', exact: true });
+  await expect(label).toContainText('A etiqueta usará a chave da NF-e autorizada deste pedido.');
+  await expect(label.getByLabel('Chave da NF-e')).toHaveCount(0);
+  await label.getByLabel('CPF ou CNPJ do destinatário').fill('52998224725');
+  await label.getByRole('button', { name: 'Preparar envio', exact: true }).click();
+  await expect(label.getByRole('button', { name: 'Confirmar compra da etiqueta', exact: true })).toBeVisible();
+  await label.getByRole('button', { name: 'Remover do carrinho', exact: true }).click();
+  await page.getByRole('button', { name: 'Remover envio', exact: true }).click();
+  await expect(label).toContainText('A etiqueta usará a chave da NF-e autorizada deste pedido.');
+});

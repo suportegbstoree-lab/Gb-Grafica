@@ -1,3 +1,4 @@
+import { fixtureNfeAdminApi } from './nfeFixture';
 import { createSalesAdminApi } from '../services/salesService';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
@@ -338,14 +339,23 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const [promotions, setPromotions] = React.useState(FIXTURE_PROMOTIONS);
   const [lastAction, setLastAction] = React.useState('');
   const [orders, setOrders] = React.useState(FIXTURE_ORDERS);
+  const nfeApi = React.useMemo(fixtureNfeAdminApi, []);
   const shipmentLabels = React.useRef(new Map<string, ShipmentLabelView>());
   const orderOperations = React.useMemo<OrderOperationsApi>(() => ({
     async shipmentLabel(id, request) {
-      const old = shipmentLabels.current.get(id) ?? { phase: 'none', amountCents: null };
+      const authorizedNfe = new URLSearchParams(window.location.search).has('authorized-nfe');
+      const empty: ShipmentLabelView = {
+        phase: 'none', amountCents: null, ...(authorizedNfe ? { authorizedNfeAvailable: true } : {}),
+      };
+      const old = shipmentLabels.current.get(id) ?? empty;
       if (request.action === 'status') return old;
       let next: ShipmentLabelView = old;
-      if (request.action === 'prepare') next = { phase: 'cart', amountCents: 1250 };
-      if (request.action === 'discard' && old.phase === 'cart') next = { phase: 'none', amountCents: null };
+      if (request.action === 'prepare') {
+        if (authorizedNfe && (request.useAuthorizedNfe !== true || request.invoiceKey ||
+          request.recipientDocument !== '52998224725')) throw new Error('Confira os dados de preparação da etiqueta.');
+        next = { phase: 'cart', amountCents: 1250 };
+      }
+      if (request.action === 'discard' && old.phase === 'cart') next = empty;
       if (request.action === 'issue' && old.phase === 'cart') {
         if (request.expectedAmountCents !== old.amountCents) throw new Error('Confira o valor do frete.');
         next = { ...old, phase: 'paid' };
@@ -476,6 +486,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
         categories={categories}
         orders={permissionOverride === undefined || permissionOverride.includes('orders.read') ? orders : []}
         orderOperations={orderOperations}
+        nfeApi={nfeApi}
         orderModelLoader={fixtureOrderModelLoader}
         ordersReady
         ordersError={null}

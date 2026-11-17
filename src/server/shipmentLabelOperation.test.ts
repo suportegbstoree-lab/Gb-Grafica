@@ -35,14 +35,19 @@ afterEach(() => {
   for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
 });
 
-function scenario(printFileStatus = 200, printUrl = sandboxPrintUrl) {
-  const { db, docs } = memoryFirestore([[orderPath, structuredClone(baseOrder)]]);
+function scenario(printFileStatus = 200, printUrl = sandboxPrintUrl, defaultEnvironment: 'sandbox' | 'production' = 'sandbox') {
+  process.env.MELHOR_ENVIO_ENV = defaultEnvironment;
+  const { db, docs } = memoryFirestore([[orderPath, { ...structuredClone(baseOrder), shipping: {
+    ...baseOrder.shipping, environment: defaultEnvironment,
+  } }]]);
   let paid = false, issued = false, removed = false, lostRemovalResponse = false, amount = '14.25', ambiguous = false, reject = false;
   let verified = 0;
   const calls: AxiosRequestConfig[] = [];
   mock.method(axios, 'request', async (request: AxiosRequestConfig) => {
     calls.push(request);
-    assert.match(request.url!, /^https:\/\/sandbox\.melhorenvio\.com\.br\/api\/v2\/me\//);
+    const hostname = defaultEnvironment === 'sandbox' ? 'sandbox.melhorenvio.com.br' : 'melhorenvio.com.br';
+    assert.equal(new URL(request.url!).hostname, hostname);
+    assert.match(new URL(request.url!).pathname, /^\/api\/v2\/me\//);
     assert.equal(request.maxRedirects, 0);
     assert.equal(request.headers?.Authorization, 'Bearer token-de-teste');
     const path = request.url!.split('/api/v2/me/')[1];
@@ -86,7 +91,7 @@ function scenario(printFileStatus = 200, printUrl = sandboxPrintUrl) {
     }
     throw new Error('Chamada inesperada');
   });
-  const invoke = (body: Record<string, unknown>, environment = 'sandbox') =>
+  const invoke = (body: Record<string, unknown>, environment: string = defaultEnvironment) =>
     shipmentLabelOperation({ db, orderId, actor: 'staff', body,
       paymentEnvironment: () => environment, verifyPayment: async () => { verified++; return chargeId; } });
   const count = (path: string) => calls.filter(request => request.url?.endsWith(path)).length;
@@ -233,4 +238,56 @@ test('recovers a confirmed removal after a timeout without buying or deleting tw
   assert.deepEqual(await s.invoke({ action: 'discard' }), { phase: 'none', amountCents: null });
   assert.equal(s.count(`/cart/${providerId}`), 1);
   assert.equal(s.count('/shipment/checkout'), 0);
+});
+
+const authorizationPath = orderPath + '/fiscal/authorization';
+const productionAuthorization = {
+  orderId, source: 'provider', environment: 'production', status: 'authorized',
+  accessKey: '2'.repeat(44), reference: 'provider-reference', protocol: 'protocol-test',
+};
+const autoPrepare = { action: 'prepare', useAuthorizedNfe: true, recipientDocument: '52998224725' };
+
+test('label prepare uses the order’s authorized production key and the independently supplied shipping recipient', async () => {
+  const s = scenario(200, sandboxPrintUrl, 'production');
+  s.docs.set(authorizationPath, { ...productionAuthorization, recipientDocument: '11222333000181' });
+  const status = await s.invoke({ action: 'status' });
+  assert.deepEqual(status, { phase: 'none', amountCents: null, authorizedNfeAvailable: true });
+  await assert.rejects(s.invoke(fields), /Use a NF-e autorizada/);
+  assert.equal(s.calls.length, 0);
+  await s.invoke(autoPrepare);
+  assert.equal(s.calls[0].data.options.invoice.key, productionAuthorization.accessKey);
+  assert.equal(s.calls[0].data.to.document, autoPrepare.recipientDocument);
+  assert.doesNotMatch(JSON.stringify(s.docs.get(labelPath)), new RegExp(productionAuthorization.accessKey));
+  s.docs.set(authorizationPath, { ...productionAuthorization, status: 'canceled' });
+  await assert.rejects(s.invoke({ action: 'issue', expectedAmountCents: 1425 }), /mudou ou foi cancelada/);
+  assert.equal(s.count('/shipment/checkout'), 0);
+  const replacement = { ...productionAuthorization, accessKey: '3'.repeat(44) };
+  s.docs.set(authorizationPath, replacement);
+  await assert.rejects(s.invoke({ action: 'issue', expectedAmountCents: 1425 }), /mudou ou foi cancelada/);
+  assert.equal(s.count('/shipment/checkout'), 0);
+  assert.deepEqual(await s.invoke({ action: 'discard' }), { phase: 'none', amountCents: null, authorizedNfeAvailable: true });
+  await s.invoke(autoPrepare);
+  assert.equal(s.calls.filter(call => call.url?.endsWith('/cart')).at(-1)?.data.options.invoice.key, replacement.accessKey);
+});
+
+test('simulation, cancellation, mismatched orders and sandbox never provide an automatic production key', async () => {
+  const s = scenario(200, sandboxPrintUrl, 'production');
+  for (const patch of [
+    { source: 'simulation' }, { environment: 'homologacao' }, { status: 'canceled' },
+    { orderId: 'GB-OTHER0123' }, { protocol: '' },
+  ]) {
+    s.docs.set(authorizationPath, { ...productionAuthorization, ...patch });
+    assert.deepEqual(await s.invoke({ action: 'status' }), { phase: 'none', amountCents: null });
+    await assert.rejects(s.invoke(autoPrepare), /Nenhuma NF-e de produção autorizada/);
+  }
+  s.docs.set(authorizationPath, { ...productionAuthorization, status: 'canceled' });
+  await assert.rejects(s.invoke({ ...fields, invoiceKey: productionAuthorization.accessKey }), /NF-e cancelada/);
+  assert.equal(s.calls.length, 0);
+
+  process.env.MELHOR_ENVIO_ENV = 'sandbox';
+  s.docs.set(authorizationPath, productionAuthorization);
+  assert.deepEqual(await s.invoke({ action: 'status' }), { phase: 'none', amountCents: null });
+  s.docs.set(orderPath, structuredClone(baseOrder));
+  await assert.rejects(s.invoke(autoPrepare, 'sandbox'), /Nenhuma NF-e de produção autorizada/);
+  assert.equal(s.calls.length, 0);
 });
