@@ -1,5 +1,5 @@
 import React from "react";
-import { AlignCenter, AlignLeft, AlignRight, Bold, Check, Grid2X2, Minus, Plus, SlidersHorizontal, TextCursorInput } from "lucide-react";
+import { AlignCenter, AlignLeft, AlignRight, Bold, Grid2X2, Minus, Plus, SlidersHorizontal, TextCursorInput } from "lucide-react";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
   STAFF_PDF_SYSTEM_FONT,
@@ -38,11 +38,8 @@ function Slider({
 
 function EffectToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
-    <label className="relative flex min-h-8 flex-1 cursor-pointer items-center gap-2 rounded-md bg-slate-700/60 px-2 hover:bg-slate-600">
-      <input type="checkbox" className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0" checked={checked} onChange={onChange} />
-      <span className="grid h-4 w-4 place-items-center rounded border border-slate-400 text-transparent peer-checked:border-blue-400 peer-checked:bg-[#1d5f94] peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-blue-300">
-        <Check size={12} aria-hidden="true" />
-      </span>
+    <label className="flex min-h-8 flex-1 items-center gap-2 rounded-md bg-slate-700/60 px-2 hover:bg-slate-600">
+      <input type="checkbox" checked={checked} onChange={onChange} />
       <span>{label}</span>
     </label>
   );

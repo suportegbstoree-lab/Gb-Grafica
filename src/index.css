@@ -50,6 +50,62 @@
 [data-store-theme="dark"] :is(.text-gray-600,.text-gray-500,.text-gray-400,.text-brand-muted) { color: var(--store-muted); }
 [data-store-theme="dark"] :is(.border-gray-100,.border-gray-200,.border-gray-300,.border-pink-100,.border-pink-200) { border-color: var(--store-border); }
 [data-store-theme="dark"] :is(input,textarea,select) { background-color: var(--store-raised); color: var(--store-text); border-color: var(--store-border); }
+[data-store-theme="dark"], .admin-controls {
+  --checkbox-surface: #1f2937;
+  --checkbox-border: #94a3b8;
+  --checkbox-focus: #f9a8d4;
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  padding: 0;
+  vertical-align: middle;
+  border: 1px solid var(--checkbox-border, #64748b);
+  border-radius: 0.25rem;
+  background-color: var(--checkbox-surface, #fff);
+  cursor: pointer;
+}
+input[type="checkbox"]:is(:checked, :indeterminate) {
+  border-color: #be185d;
+  background-color: #be185d;
+}
+input[type="checkbox"]:checked::before {
+  content: "";
+  inline-size: 0.36rem;
+  block-size: 0.6rem;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+input[type="checkbox"]:indeterminate::before {
+  content: "";
+  inline-size: 0.55rem;
+  block-size: 0;
+  border-top: 2px solid white;
+  transform: none;
+}
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--checkbox-focus, #be185d);
+  outline-offset: 2px;
+}
+input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+label:has(input[type="checkbox"]:enabled) { cursor: pointer; }
+@media (hover: hover) {
+  input[type="checkbox"]:enabled:hover { border-color: #ec4899; }
+}
+@media (forced-colors: active) {
+  input[type="checkbox"] { appearance: auto; }
+  input[type="checkbox"]::before { display: none; }
+}
+
 [data-store-theme="dark"] :is(.from-pink-50,.from-gray-50,.from-white,.via-white,.to-white) { --tw-gradient-from: var(--store-surface); --tw-gradient-via: var(--store-surface); --tw-gradient-to: var(--store-base); }
 [data-store-theme="dark"] :is(.shadow-gray-100,.shadow-pink-100) { --tw-shadow-color: #0004; }
 [data-store-theme="dark"] .text-green-700 { color: #86efac; }

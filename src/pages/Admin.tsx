@@ -2415,7 +2415,6 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                     id="promo-ativa"
                     checked={editingPromotion.ativa}
                     onChange={e => setEditingPromotion({...editingPromotion, ativa: e.target.checked})}
-                    className="w-4 h-4 accent-[#ff4d79]"
                   />
                   <label htmlFor="promo-ativa" className="text-sm font-bold">Promoção Ativa</label>
                 </div>

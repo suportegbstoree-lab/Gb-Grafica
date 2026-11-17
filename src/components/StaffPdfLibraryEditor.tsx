@@ -557,7 +557,7 @@ export default function StaffPdfLibraryEditor({
         <button type="button" className="rounded-lg border border-gray-700 px-4 py-2" disabled={busy}
           onClick={() => setMarkerEditor(true)}>Identificador visual</button>
       </section>
-      {markerEditor && <StaffPdfCompoundMarkerEditor value={data.compoundMarker}
+      {markerEditor && <StaffPdfCompoundMarkerEditor value={data.compoundMarker} bases={data.bases} readBase={api.baseFile}
         onClose={() => setMarkerEditor(false)} onSave={async value => {
           await api.saveCompoundMarker(value);
           await reload();

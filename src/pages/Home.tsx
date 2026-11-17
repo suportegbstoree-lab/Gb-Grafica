@@ -1588,7 +1588,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         checked={acceptedLegalTerms}
                         onChange={event => setAcceptedLegalTerms(event.target.checked)}
                         aria-describedby="checkout-legal-documents"
-                        className="mt-1 h-4 w-4 accent-pink-500"
+                        className="mt-1"
                       />
                       <div id="checkout-legal-documents" className="text-[11px] leading-relaxed text-gray-600">
                         <label htmlFor="checkout-legal-acceptance" className="font-bold text-gray-900 cursor-pointer">

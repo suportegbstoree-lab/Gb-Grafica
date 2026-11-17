@@ -46,6 +46,39 @@ export async function prepareStaffPdfFonts(
   }
   return () => faces.forEach((face) => document.fonts.delete(face));
 }
+type TextRun = {
+  text: string;
+  x: number;
+  y: number;
+  angle: number;
+  offsetX: number;
+};
+
+function rotatedTextBounds(context: CanvasRenderingContext2D, runs: TextRun[], radians: number) {
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+  for (const run of runs) {
+    const { actualBoundingBoxLeft, actualBoundingBoxRight, actualBoundingBoxAscent, actualBoundingBoxDescent } =
+      context.measureText(run.text);
+    const width = actualBoundingBoxRight + actualBoundingBoxLeft;
+    const height = actualBoundingBoxAscent + actualBoundingBoxDescent;
+    if (!width || !height) continue;
+    const angle = radians + run.angle;
+    const glyphCos = Math.cos(angle), glyphSin = Math.sin(angle);
+    const localX = run.offsetX + (actualBoundingBoxRight - actualBoundingBoxLeft) / 2;
+    const localY = (actualBoundingBoxDescent - actualBoundingBoxAscent) / 2;
+    const x = run.x * cos - run.y * sin + localX * glyphCos - localY * glyphSin;
+    const y = run.x * sin + run.y * cos + localX * glyphSin + localY * glyphCos;
+    const halfWidth = (Math.abs(glyphCos) * width + Math.abs(glyphSin) * height) / 2;
+    const halfHeight = (Math.abs(glyphSin) * width + Math.abs(glyphCos) * height) / 2;
+    left = Math.min(left, x - halfWidth);
+    right = Math.max(right, x + halfWidth);
+    top = Math.min(top, y - halfHeight);
+    bottom = Math.max(bottom, y + halfHeight);
+  }
+  return Number.isFinite(left) ? { left, right, top, bottom } : undefined;
+}
+
 function drawFormattedLine(
   context: CanvasRenderingContext2D,
   line: StaffPdfLine,
@@ -121,10 +154,40 @@ function drawFormattedLine(
   const outerHeight = height + padding * 2 + (bend ? size : 0);
   const rotatedWidth = width * cos + outerHeight * sin;
   const rotatedHeight = width * sin + outerHeight * cos;
+  const runs = rows.flatMap((text, index): TextRun[] => {
+    const rowWidth = widths[index];
+    const left =
+      line.align === "left"
+        ? -textWidth / 2
+        : line.align === "right"
+          ? textWidth / 2 - rowWidth
+          : -rowWidth / 2;
+    const baseline = -height / 2 + ascent + Math.max(0, -bend) + index * pitch;
+    if (!gap && !bend) return [{ text, x: left, y: baseline, angle: 0, offsetX: 0 }];
+    let prefix = "";
+    return glyphs(text).map((glyph, i) => {
+      const offset = context.measureText(prefix).width + gap * i;
+      const glyphWidth = context.measureText(glyph).width;
+      const middle = offset + glyphWidth / 2;
+      const relative = rowWidth > 0 ? (2 * middle) / rowWidth - 1 : 0;
+      prefix += glyph;
+      return {
+        text: glyph,
+        x: left + middle,
+        y: baseline + bend * relative * relative,
+        angle: bend && rowWidth > 0 ? Math.atan((4 * bend * relative) / rowWidth) : 0,
+        offsetX: -glyphWidth / 2,
+      };
+    });
+  });
+  const centerInBox = line.align === "center" && !dynamic;
+  const bounds = centerInBox ? rotatedTextBounds(context, runs, radians) : undefined;
+  const fitWidth = bounds ? Math.max(rotatedWidth, bounds.right - bounds.left + padding * 2) : rotatedWidth;
+  const fitHeight = bounds ? Math.max(rotatedHeight, bounds.bottom - bounds.top + padding * 2) : rotatedHeight;
   const scale = Math.min(
     1,
-    (dynamic ? pageWidth : maxWidth) / rotatedWidth,
-    (dynamic ? pageHeight : anchor.height * (1 - fitMargin)) / rotatedHeight,
+    (dynamic ? pageWidth : maxWidth) / fitWidth,
+    (dynamic ? pageHeight : anchor.height * (1 - fitMargin)) / fitHeight,
   );
   const inkWidth = rotatedWidth * scale;
   const inkHeight = rotatedHeight * scale;
@@ -143,7 +206,11 @@ function drawFormattedLine(
       : line.align === "right"
         ? box.width - inkWidth / 2
         : box.width / 2;
-  context.translate(centerX, (rotatedHeight * scale) / 2);
+  const centerY = centerInBox ? box.height / 2 : inkHeight / 2;
+  context.translate(
+    centerX - (bounds ? (bounds.left + bounds.right) * scale / 2 : 0),
+    centerY - (bounds ? (bounds.top + bounds.bottom) * scale / 2 : 0),
+  );
   context.rotate(radians);
   context.scale(scale, scale);
   function paint(text: string, x: number, y: number) {
@@ -182,35 +249,17 @@ function drawFormattedLine(
     }
     context.fillText(text, x, y);
   }
-  rows.forEach((text, index) => {
-    const rowWidth = widths[index];
-    const left =
-      line.align === "left"
-        ? -textWidth / 2
-        : line.align === "right"
-          ? textWidth / 2 - rowWidth
-          : -rowWidth / 2;
-    const baseline = -height / 2 + ascent + Math.max(0, -bend) + index * pitch;
-    if (!gap && !bend) {
-      paint(text, left, baseline);
-      return;
+  for (const { text, x, y, angle, offsetX } of runs) {
+    if (!angle) {
+      paint(text, x + offsetX, y);
+      continue;
     }
-    let prefix = "";
-    glyphs(text).forEach((glyph, i) => {
-      const offset = context.measureText(prefix).width + gap * i;
-      const glyphWidth = context.measureText(glyph).width;
-      const relative =
-        rowWidth > 0 ? (2 * (offset + glyphWidth / 2)) / rowWidth - 1 : 0;
-      const y = bend * relative * relative;
-      context.save();
-      context.translate(left + offset + glyphWidth / 2, baseline + y);
-      if (bend && rowWidth > 0)
-        context.rotate(Math.atan((4 * bend * relative) / rowWidth));
-      paint(glyph, -glyphWidth / 2, 0);
-      context.restore();
-      prefix += glyph;
-    });
-  });
+    context.save();
+    context.translate(x, y);
+    context.rotate(angle);
+    paint(text, offsetX, 0);
+    context.restore();
+  }
   return box;
 }
 
@@ -290,15 +339,23 @@ export function drawStaffPdfText(
       continue;
     }
     context.font = `${line.fontSize}px ${font.cssFamily}`;
+    const centered = line.align === "center";
+    context.textAlign = centered ? "left" : "center";
+    context.textBaseline = "alphabetic";
     const measured = context.measureText(line.text);
-    const measuredHeight =
-      (measured.actualBoundingBoxAscent || line.fontSize * 0.8) +
-      (measured.actualBoundingBoxDescent || line.fontSize * 0.2);
+    const ascent = centered ? measured.actualBoundingBoxAscent
+      : measured.actualBoundingBoxAscent || line.fontSize * 0.8;
+    const descent = centered ? measured.actualBoundingBoxDescent
+      : measured.actualBoundingBoxDescent || line.fontSize * 0.2;
+    const measuredHeight = ascent + descent;
+    const measuredWidth = centered
+      ? measured.actualBoundingBoxLeft + measured.actualBoundingBoxRight
+      : measured.width;
     const radians = (line.rotation * Math.PI) / 180,
       absCos = Math.abs(Math.cos(radians)),
       absSin = Math.abs(Math.sin(radians));
-    const rotatedWidth = measured.width * absCos + measuredHeight * absSin,
-      rotatedHeight = measured.width * absSin + measuredHeight * absCos;
+    const rotatedWidth = measuredWidth * absCos + measuredHeight * absSin,
+      rotatedHeight = measuredWidth * absSin + measuredHeight * absCos;
     const scale = Math.min(
       1,
       (box.width * (1 - fitMargin)) / Math.max(1, rotatedWidth),
@@ -312,18 +369,14 @@ export function drawStaffPdfText(
         : line.align === "right"
           ? box.width - inkWidth / 2
           : box.width / 2;
-    context.translate(centerX, inkHeight / 2);
+    context.translate(centerX, centered ? box.height / 2 : inkHeight / 2);
     context.rotate(radians);
     context.scale(scale, scale);
-    context.textAlign = "center";
-    context.textBaseline = "alphabetic";
     context.fillStyle = line.color;
     context.fillText(
       line.text,
-      0,
-      ((measured.actualBoundingBoxAscent || line.fontSize * 0.8) -
-        (measured.actualBoundingBoxDescent || line.fontSize * 0.2)) /
-        2,
+      centered ? (measured.actualBoundingBoxLeft - measured.actualBoundingBoxRight) / 2 : 0,
+      (ascent - descent) / 2,
     );
     context.restore();
   }
@@ -398,6 +451,33 @@ export async function drawStaffPdfCompoundMarker(
   });
 }
 
+export async function addStaffPdfSourcePage(pdf: PDFDocument, source: PDFPage) {
+  const crop = source.getCropBox();
+  const angle = ((source.getRotation().angle % 360) + 360) % 360;
+  const rotated = angle === 90 || angle === 270;
+  if (![0, 90, 180, 270].includes(angle))
+    throw new Error("Rotação inválida.");
+  const width = rotated ? crop.height : crop.width;
+  const height = rotated ? crop.width : crop.height;
+  const page = pdf.addPage([width, height]);
+  if (source.node.Contents()) {
+    const embedded = await pdf.embedPage(source, {
+      left: crop.x,
+      bottom: crop.y,
+      right: crop.x + crop.width,
+      top: crop.y + crop.height,
+    });
+    page.drawPage(embedded, {
+      x: angle === 180 || angle === 270 ? width : 0,
+      y: angle === 90 || angle === 180 ? height : 0,
+      width: crop.width,
+      height: crop.height,
+      rotate: degrees(-angle),
+    });
+  }
+  return page;
+}
+
 export async function exportStaffPdf(
   original: Blob,
   job: StaffPdfJob,
@@ -438,29 +518,8 @@ export async function exportStaffPdf(
       }
     }
     for (const [index, p] of source.getPages().entries()) {
-      const crop = p.getCropBox(),
-        angle = ((p.getRotation().angle % 360) + 360) % 360,
-        rotated = angle === 90 || angle === 270;
-      if (![0, 90, 180, 270].includes(angle))
-        throw new Error("Rotação inválida.");
-      const width = rotated ? crop.height : crop.width,
-        height = rotated ? crop.width : crop.height;
-      const sheet = pdf.addPage([width, height]);
-      if (p.node.Contents()) {
-        const embedded = await pdf.embedPage(p, {
-          left: crop.x,
-          bottom: crop.y,
-          right: crop.x + crop.width,
-          top: crop.y + crop.height,
-        });
-        sheet.drawPage(embedded, {
-          x: angle === 180 || angle === 270 ? width : 0,
-          y: angle === 90 || angle === 180 ? height : 0,
-          width: crop.width,
-          height: crop.height,
-          rotate: degrees(-angle),
-        });
-      }
+      const sheet = await addStaffPdfSourcePage(pdf, p);
+      const { width, height } = sheet.getSize();
       if(index===0 && customerImage) {
         const decoded=await (await import('./personalizationModelService')).decodePersonalizationSource(customerImage);
         const canvas=document.createElement('canvas');

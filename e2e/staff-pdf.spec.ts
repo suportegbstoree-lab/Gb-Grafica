@@ -9,6 +9,7 @@ import {
   PDFDocument,
   PDFName,
   PDFRawStream,
+  degrees,
 } from "pdf-lib";
 import { zipSync, unzipSync, strToU8 } from "fflate";
 import { parseStaffPdfCsv } from "../src/lib/staffPdfCsv";
@@ -33,6 +34,47 @@ test("renames an uploaded PDF and reopens its existing mold", async ({ page }) =
   await page.getByRole("button", { name: "Edição e fila", exact: true }).click();
   await page.getByLabel("Base PDF da equipe").selectOption({ label: "Cadernos da equipe.pdf · Sem categoria" });
   await expect(page.getByLabel("Molde PDF da equipe")).toHaveValue("b".repeat(32));
+});
+
+test("center alignment follows both axes when the mold box is resized", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
+  await page.getByText("Sem categoria", { exact: true }).click();
+  await page.getByRole("button", { name: "Editar Kit de teste.pdf", exact: true }).click();
+  const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
+  const canvas = mold.getByLabel("Prévia do PDF interno");
+  await expect(canvas).toBeVisible();
+  await mold.getByLabel("Texto de exemplo", { exact: true }).fill("Ágj");
+  const x = 300, y = 450;
+  await mold.getByLabel("Molde pos_x", { exact: true }).fill(String(x));
+  await mold.getByLabel("Molde pos_y", { exact: true }).fill(String(y));
+  for (const { width, height, bold } of [
+    { width: 1050, height: 330, bold: false },
+    { width: 460, height: 145, bold: true },
+  ]) {
+    await mold.getByLabel("Molde max_width_pixels", { exact: true }).fill(String(width));
+    await mold.getByLabel("Molde max_height_pixels", { exact: true }).fill(String(height));
+    if (bold) await mold.getByRole("button", { name: "Negrito", exact: true }).click();
+    await expect.poll(() => canvas.evaluate((node: HTMLCanvasElement, box) => {
+      const { x, y, width, height } = box;
+      const data = node.getContext("2d")!.getImageData(x, y, width, height).data;
+      let left = width, right = -1, top = height, bottom = -1;
+      for (let row = 0; row < height; row++) {
+        for (let column = 0; column < width; column++) {
+          const offset = (row * width + column) * 4;
+          if (data[offset] >= 64 || data[offset + 1] >= 64 || data[offset + 2] >= 64) continue;
+          left = Math.min(left, column);
+          right = Math.max(right, column);
+          top = Math.min(top, row);
+          bottom = Math.max(bottom, row);
+        }
+      }
+      return right < 0 ? Infinity : Math.max(
+        Math.abs((left + right + 1 - width) / 2),
+        Math.abs((top + bottom + 1 - height) / 2),
+      );
+    }, { x, y, width, height })).toBeLessThan(4);
+  }
 });
 
 test("lists bases in natural name order and links alphabet folders in bulk", async ({
@@ -375,7 +417,10 @@ test("staff queue snapshots independent lines, supports revision and exports fou
   const effects = toolbar.getByRole("group", { name: "Efeitos", exact: true });
   await expect(effects).toBeVisible();
   await expect(effects).toHaveCSS("position", "fixed");
-  await toolbar.getByLabel("Contorno", { exact: true }).check();
+  const outline = effects.getByRole("checkbox", { name: "Contorno", exact: true });
+  await expect(outline).toHaveCSS("appearance", "none");
+  await outline.check();
+  await expect(outline).toHaveCSS("background-color", "rgb(190, 24, 93)");
   await toolbar.getByLabel("Sombra", { exact: true }).check();
   await toolbar.getByLabel("Brilho", { exact: true }).check();
   await expect(effects.getByLabel("Espessura do contorno", { exact: true })).toHaveCount(0);
@@ -1382,4 +1427,44 @@ test("compound marker is printed only on PDFs with duplicate tracking within the
     expect(commands(0).includes(marker)).toBe(name.includes("BR264666798641W"));
     expect(commands(1)).not.toContain(marker);
   }
+});
+
+test("compound marker previews existing PDF bases and follows the selected page orientation", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf");
+  await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
+  const source = await PDFDocument.create();
+  source.addPage([240, 360]).setRotation(degrees(90));
+  await page.getByLabel("Selecionar base PDF", { exact: true }).setInputFiles({
+    name: "Rotacionado.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from(await source.save()),
+  });
+  const category = page.getByRole("dialog", { name: "Categoria do PDF" });
+  await category.getByLabel("Categoria", { exact: true }).fill("Testes");
+  await category.getByRole("button", { name: "Continuar" }).click();
+  const uploading = page.getByRole("dialog", { name: "Importar bases PDF" });
+  await uploading.getByRole("button", { name: "Enviar 1 PDF(s)" }).click();
+  await expect(uploading.getByText("Enviado", { exact: true })).toBeVisible();
+  await uploading.getByRole("button", { name: "Concluir" }).click();
+
+  await page.getByRole("button", { name: "Identificador visual", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Identificador visual" });
+  const canvas = editor.getByLabel("Prévia do PDF interno");
+  const picker = editor.getByLabel("Base PDF para a prévia");
+  await expect(picker).toHaveValue("a".repeat(32));
+  await expect(editor.locator('input[type="file"]')).toHaveCount(0);
+  await expect(canvas).toBeVisible();
+  await picker.selectOption({ label: "Rotacionado.pdf · Testes" });
+  await expect.poll(() => canvas.evaluate((node: HTMLCanvasElement) => node.width / node.height)).toBeCloseTo(1.5, 2);
+  const hasMarkerAt = (percent: number) => canvas.evaluate((node: HTMLCanvasElement, percent) => {
+    const x = Math.round(node.width * percent / 100);
+    const pixels = node.getContext("2d")!.getImageData(x - 25, 0, 50, node.height).data;
+    return pixels.some((red, index) => index % 4 === 0 && red < 64 && pixels[index + 3] === 255);
+  }, percent);
+  await expect.poll(() => hasMarkerAt(94.3)).toBe(true);
+  expect(await hasMarkerAt(25)).toBe(false);
+  await editor.getByLabel("Posição horizontal (%)").fill("25");
+  await editor.getByRole("button", { name: "Atualizar prévia" }).click();
+  await expect.poll(() => hasMarkerAt(25)).toBe(true);
+  expect(await hasMarkerAt(94.3)).toBe(false);
 });

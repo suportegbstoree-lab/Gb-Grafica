@@ -94,7 +94,6 @@ export default function AdminFontList({
                 type="checkbox"
                 checked={font.ativo}
                 onChange={(e) => onChange(index, { ativo: e.target.checked })}
-                className="accent-[#ff4d79]"
               />{" "}
               Ativa
             </label>

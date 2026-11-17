@@ -64,7 +64,10 @@ test('modal mostra Enter, tamanho e cor na prévia e no modelo em resolução or
   await cart.getByLabel(/CPF do pagador/).fill('52998224725');
   await cart.getByLabel('Telefone para contato').fill('16999376260');
   await cart.getByLabel(/^Aprovar arte de /).check();
-  await cart.getByLabel('Li e aceito as condições da compra.').check();
+  const terms = cart.getByRole('checkbox', { name: 'Li e aceito as condições da compra.' });
+  await expect(terms).toHaveCSS('appearance', 'none');
+  await terms.press('Space');
+  await expect(terms).toBeChecked();
   const request = page.waitForRequest(r => r.url().endsWith('/api/checkout'));
   await cart.getByRole('button', { name: 'IR PARA O PAGBANK' }).click();
   expect((await request).postDataJSON().items[0].personalizacaoTexto).toEqual(expect.objectContaining({ texto: 'AAAA\nBBBB', tamanhoFonte: 9, cor: '#00ff00' }));

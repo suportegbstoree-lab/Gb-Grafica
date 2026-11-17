@@ -3,43 +3,69 @@ import { PDFDocument } from "pdf-lib";
 import {
   DEFAULT_STAFF_PDF_COMPOUND_MARKER, normalizeStaffPdfCompoundMarker, type StaffPdfCompoundMarker,
 } from "../lib/staffPdfCompound";
-import { STAFF_DOCUMENT_MAX_BYTES } from "../lib/staffDocument";
-import { drawStaffPdfCompoundMarker } from "../services/staffPdfRender";
+import { compareStaffPdfNames, type StaffPdfBase } from "../lib/staffPdf";
+import { UNCATEGORIZED_PDFS } from "../lib/staffPdfCategory";
+import { addStaffPdfSourcePage, drawStaffPdfCompoundMarker } from "../services/staffPdfRender";
+import type { StaffPdfApi } from "../services/staffPdfService";
 import EditorModal from "./EditorModal";
 import StaffPdfPreview from "./StaffPdfPreview";
 import { StaffPdfTextColor } from "./StaffPdfTextControls";
 
 const input = "mt-1 block w-full rounded-lg border border-gray-700 bg-black p-2";
 export default function StaffPdfCompoundMarkerEditor({
-  value, onClose, onSave,
+  value, bases, readBase, onClose, onSave,
 }: {
   value?: StaffPdfCompoundMarker;
+  bases: StaffPdfBase[];
+  readBase: StaffPdfApi["baseFile"];
   onClose: () => void;
   onSave: (value: StaffPdfCompoundMarker) => Promise<void>;
 }) {
   const [marker, setMarker] = React.useState(value ?? DEFAULT_STAFF_PDF_COMPOUND_MARKER);
-  const [source, setSource] = React.useState<File>();
-  const [preview, setPreview] = React.useState<Blob>();
+  const sortedBases = React.useMemo(() => [...bases].sort((a, b) => compareStaffPdfNames(a.name, b.name)), [bases]);
+  const [baseId, setBaseId] = React.useState("");
+  const base = sortedBases.find(row => row.id === baseId) ?? sortedBases[0];
+  const selectedId = base?.id;
+  const sourceKey = base ? `${base.id}/${base.revision}` : "";
+  const source = React.useRef<{ key: string; pdf: PDFDocument }>(undefined);
+  const [previewSettings, setPreviewSettings] = React.useState(marker);
+  const [preview, setPreview] = React.useState<{ key: string; blob: Blob }>();
+  const [previewError, setPreviewError] = React.useState("");
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
   const update = (patch: Partial<StaffPdfCompoundMarker>) => setMarker(current => ({ ...current, ...patch }));
-  async function previewMarker() {
-    if (!source) return;
-    setError("");
+  React.useEffect(() => {
+    if (!selectedId) return;
+    let active = true;
     setChecking(true);
-    try {
-      const settings = normalizeStaffPdfCompoundMarker(marker);
-      const original = await PDFDocument.load(await source.arrayBuffer(), { updateMetadata: false });
-      if (!original.getPageCount()) throw new Error("O PDF precisa ter ao menos uma página.");
-      const document = await PDFDocument.create();
-      const [page] = await document.copyPages(original, [0]);
-      document.addPage(page);
-      await drawStaffPdfCompoundMarker(document, page, "BR264666798641W", settings);
-      setPreview(new Blob([new Uint8Array(await document.save())], { type: "application/pdf" }));
-    } catch (failure) { setError((failure as Error).message); }
-    finally { setChecking(false); }
-  }
+    setPreviewError("");
+    async function render(id: string) {
+      try {
+        const settings = normalizeStaffPdfCompoundMarker(previewSettings);
+        const original = source.current?.key === sourceKey
+          ? source.current.pdf
+          : await PDFDocument.load(await (await readBase(id)).arrayBuffer(), { updateMetadata: false });
+        if (!active) return;
+        if (!original.getPageCount()) throw new Error("O PDF precisa ter ao menos uma página.");
+        source.current = { key: sourceKey, pdf: original };
+        const document = await PDFDocument.create();
+        const page = await addStaffPdfSourcePage(document, original.getPage(0));
+        await drawStaffPdfCompoundMarker(document, page, "BR264666798641W", settings);
+        const bytes = await document.save();
+        if (active) setPreview({
+          key: sourceKey,
+          blob: new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),
+        });
+      } catch (failure) {
+        if (active) setPreviewError((failure as Error).message);
+      } finally {
+        if (active) setChecking(false);
+      }
+    }
+    void render(selectedId);
+    return () => { active = false; };
+  }, [readBase, previewSettings, selectedId, sourceKey]);
   async function save() {
     setBusy(true);
     setError("");
@@ -48,13 +74,13 @@ export default function StaffPdfCompoundMarkerEditor({
     finally { setBusy(false); }
   }
   return (
-    <EditorModal wide title="Identificador visual" busy={busy || checking} onClose={onClose} closeLabel="Fechar identificador visual" doneLabel="Voltar" footerText=""
-      footerActions={<button type="button" disabled={busy || checking}
+    <EditorModal wide title="Identificador visual" busy={busy} onClose={onClose} closeLabel="Fechar identificador visual" doneLabel="Voltar" footerText=""
+      footerActions={<button type="button" disabled={busy}
         className="rounded-lg bg-pink-600 px-4 py-2 font-bold disabled:opacity-40" onClick={() => void save()}>Salvar identificador</button>}>
       <p className="mb-3 text-sm text-gray-300">A posição vale para a primeira página dos PDFs com rastreio repetido no lote. Use uma base de exemplo para conferir o espaço entre a arte e as linhas de corte.</p>
       {error && <p role="alert" className="mb-3 text-red-300">{error}</p>}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-        <fieldset disabled={busy || checking} className="space-y-3">
+        <fieldset disabled={busy} className="min-w-0 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             {([["x", "Posição horizontal (%)", 0, 100, 0.1], ["y", "Posição vertical (%)", 0, 100, 0.1], ["size", "Tamanho (pt)", 6, 36, 0.5]] as const).map(([key, label, min, max, step]) =>
               <label key={key}>{label}
@@ -73,26 +99,32 @@ export default function StaffPdfCompoundMarkerEditor({
             </label>
             <div className="grid justify-items-start gap-1">Cor<StaffPdfTextColor label="Cor do identificador" value={marker.color} onChange={color => update({ color })} /></div>
           </div>
-          <label className="block">PDF de teste
-            <input className={input} type="file" accept=".pdf,application/pdf" onChange={event => {
-              const file = event.target.files?.[0];
-              setPreview(undefined);
-              if (file && (/\.pdf$/i.test(file.name) && file.size <= STAFF_DOCUMENT_MAX_BYTES)) {
-                setSource(file);
-                setError("");
-              } else {
-                setSource(undefined);
-                setError(file ? "Selecione um PDF de até 50 MB." : "");
-              }
-            }} />
+          <label className="block">Base PDF para a prévia
+            <select className={input} value={selectedId ?? ""} disabled={!sortedBases.length} onChange={event => {
+              setBaseId(event.target.value);
+              setPreviewSettings({ ...marker });
+            }}>
+              {!sortedBases.length && <option value="">Nenhuma base disponível</option>}
+              {sortedBases.map(row => <option key={row.id} value={row.id}>
+                {row.name} · {row.category || (row.source === "catalog" ? "Produtos" : UNCATEGORIZED_PDFS)}
+              </option>)}
+            </select>
           </label>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="rounded border border-gray-700 p-2" disabled={!source} onClick={() => void previewMarker()}>Atualizar prévia</button>
-            <button type="button" className="rounded border border-gray-700 p-2" onClick={() => setMarker(DEFAULT_STAFF_PDF_COMPOUND_MARKER)}>Restaurar padrão</button>
+            <button type="button" className="rounded border border-gray-700 p-2 disabled:opacity-40" disabled={!selectedId || checking}
+              onClick={() => setPreviewSettings({ ...marker })}>Atualizar prévia</button>
+            <button type="button" className="rounded border border-gray-700 p-2" onClick={() => {
+              setMarker(DEFAULT_STAFF_PDF_COMPOUND_MARKER);
+              setPreviewSettings({ ...DEFAULT_STAFF_PDF_COMPOUND_MARKER });
+            }}>Restaurar padrão</button>
           </div>
         </fieldset>
-        {preview ? <StaffPdfPreview original={preview} pageCount={1} lines={[]} fonts={[]} /> :
-          <p className="rounded-lg bg-gray-900 p-4 text-sm text-gray-300">Selecione um PDF e atualize a prévia para ver o identificador.</p>}
+        <div className="min-w-0 space-y-2">
+          {!selectedId && <p className="rounded-lg bg-gray-900 p-4 text-sm text-gray-300">Nenhuma base PDF cadastrada na biblioteca.</p>}
+          {selectedId && checking && <p role="status" className="text-sm text-gray-300">Carregando prévia…</p>}
+          {selectedId && previewError && <p role="alert" className="text-sm text-red-300">{previewError}</p>}
+          {selectedId && preview?.key === sourceKey && <StaffPdfPreview original={preview.blob} pageCount={1} lines={[]} fonts={[]} />}
+        </div>
       </div>
     </EditorModal>
   );
