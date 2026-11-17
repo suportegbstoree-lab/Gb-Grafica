@@ -1262,6 +1262,29 @@ test("uploading an individual PDF asks for a category and offers direct template
   );
 });
 
+test("retrying an interrupted base upload preserves the request and saves one PDF", async ({ page }) => {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([595, 842]);
+  await page.goto("/__e2e/staff-pdf?base-upload-retry");
+  await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
+  await page.getByLabel("Selecionar base PDF", { exact: true }).setInputFiles({
+    name: "Base retomada.pdf", mimeType: "application/pdf", buffer: Buffer.from(await pdf.save()),
+  });
+  const category = page.getByRole("dialog", { name: "Categoria do PDF" });
+  await category.getByLabel("Categoria", { exact: true }).fill("Cadernetas");
+  await category.getByRole("button", { name: "Continuar", exact: true }).click();
+  const uploading = page.getByRole("dialog", { name: "Importar bases PDF" });
+  const send = uploading.getByRole("button", { name: "Enviar 1 PDF(s)", exact: true });
+  await send.click();
+  await expect(uploading.getByText("A conexão caiu após salvar a base. Tente novamente.", { exact: true })).toBeVisible();
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(uploading.getByText("Enviado", { exact: true })).toBeVisible();
+  await uploading.getByRole("button", { name: "Concluir", exact: true }).click();
+  await page.getByText("Cadernetas", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Editar Base retomada.pdf", exact: true })).toHaveCount(1);
+});
+
 test("folder import keeps the root category and attaches letters to the matching nested PDF", async ({
   page,
 }) => {

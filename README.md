@@ -424,6 +424,8 @@ gcloud storage buckets describe \
 
 O CORS libera `GET` e `HEAD` para leitura web e `PUT` para os domínios do painel definidos no arquivo. Os PDFs da oficina são enviados por links assinados de escrita única. Inclua o domínio do ambiente de testes na regra de `PUT` se for diferente dos domínios listados.
 
+O envio de bases PDF também usa um link assinado pela API, com tamanho exato, validade de cinco minutos e criação única do arquivo temporário. A API verifica a permissão de gerenciar bases, valida o PDF e publica a base após o envio. Se a conexão cair, o botão de enviar repete a mesma tentativa e aproveita o arquivo já armazenado. Uma falha de rede na resposta final preserva a base salva. Envios incompletos podem ser descartados na biblioteca.
+
 Os testes E2E usam persistência e uploads simulados. Portanto, um teste E2E aprovado não confirma as permissões do projeto real. Se o painel funcionar em `/__e2e/admin`, mas o upload real devolver `storage/unauthorized` ou a gravação devolver `permission-denied`, publique os dois arquivos de regras com o comando acima, saia da conta administrativa e entre novamente para renovar o token com a claim.
 
 ### Administrador

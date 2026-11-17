@@ -236,7 +236,6 @@ export default function StaffPdfBaseImport({
                       ...item,
                       status: "error",
                       storedBaseId,
-                      requestId: crypto.randomUUID(),
                       error: (e as Error).message,
                     }
                   : item,

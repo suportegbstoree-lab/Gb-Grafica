@@ -23,6 +23,7 @@ import {
   staffPdfDefaultFilename,
 } from "../lib/staffPdfBarcode";
 import { OperationsError } from "../lib/operations";
+import { uploadStaffPdfBase } from "../services/staffPdfBaseUpload";
 async function pdf(pages = 4) {
   const d = await PDFDocument.create();
   for (let i = 0; i < pages; i++) {
@@ -99,7 +100,8 @@ async function scenario(run: (s: any) => Promise<void>) {
     ]),
     objects = new Map<string, { bytes: Buffer; meta: any }>();
   const downloads: string[] = [],
-    signatures: string[] = [];
+    signatures: string[] = [],
+    signedUploads: Array<{ name: string; options: any }> = [];
   let gen = 1,
     revoked = false,
     clock = Date.now();
@@ -171,8 +173,9 @@ async function scenario(run: (s: any) => Promise<void>) {
           },
         });
       },
-      getSignedUrl: async () => {
+      getSignedUrl: async (options: any) => {
         signatures.push(name);
+        if (options.action === "write") signedUploads.push({ name, options });
         return [`https://signed.example.test/${name}`];
       },
     }),
@@ -221,6 +224,7 @@ async function scenario(run: (s: any) => Promise<void>) {
       objects,
       downloads,
       signatures,
+      signedUploads,
       request,
       services,
       advance: (ms: number) => {
@@ -235,6 +239,147 @@ async function scenario(run: (s: any) => Promise<void>) {
     await new Promise<void>((r) => server.close(() => r()));
   }
 }
+test("signed base uploads resume after lost upload and finalize responses without deleting a saved base", async () =>
+  scenario(async ({ request, docs, objects, signedUploads, time }) => {
+    const bytes = await pdf(2);
+    const file = new File([bytes], "Base assinada.pdf");
+    const requestId = "c".repeat(36);
+    const id = pdfLibraryId(`manager:${requestId}`);
+    const path = `staff-pdf-bases/${id}/upload.pdf`;
+    const calls: string[] = [];
+    let puts = 0;
+    let loseFinalizeResponse = true;
+    const clientRequest = async (route: string, body: unknown) => {
+      calls.push(route);
+      const response = await request(`/library${route}`, "manager", body);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      if (route.endsWith("/finalize") && loseFinalizeResponse) {
+        loseFinalizeResponse = false;
+        throw new TypeError("Lost finalize response");
+      }
+      return data;
+    };
+    const fetcher: typeof fetch = async (url, options) => {
+      puts++;
+      assert.equal(String(url), `https://signed.example.test/${path}`);
+      assert.equal(options?.method, "PUT");
+      assert.equal(options?.credentials, "omit");
+      assert.equal(options?.redirect, "error");
+      assert.deepEqual(options?.headers, {
+        "Content-Type": "application/pdf",
+        "x-goog-if-generation-match": "0",
+      });
+      assert.equal(options.body, file);
+      assert.deepEqual(signedUploads[0].options, {
+        version: "v4", action: "write", expires: time() + 300000,
+        contentType: "application/pdf",
+        extensionHeaders: { "content-length": String(file.size), "x-goog-if-generation-match": "0" },
+      });
+      objects.set(path, {
+        bytes,
+        meta: { contentType: "application/pdf", size: bytes.length, generation: "10" },
+      });
+      throw new TypeError("Lost upload response");
+    };
+    const upload = () => uploadStaffPdfBase(file, requestId, undefined, "Cadernetas", clientRequest, fetcher);
+    await assert.rejects(upload(), /Confira a conexão/);
+    assert.equal(docs.get(`_staffPdfBases/${id}`).status, "uploading");
+    await assert.rejects(upload(), /Lost finalize response/);
+    assert.equal(docs.get(`_staffPdfBases/${id}`).status, "ready");
+    assert.equal(await upload(), id);
+    assert.equal(puts, 1);
+    assert.equal(signedUploads.length, 1);
+    assert.equal(calls.filter(route => route.endsWith("/finalize")).length, 1);
+    assert.equal(calls.some(route => route.endsWith("/delete")), false);
+    const library = await (await request("/library", "manager")).json();
+    assert.equal(library.pendingUploads.length, 0);
+    assert.equal(library.bases.length, 1);
+    assert.equal(library.bases[0].pageCount, 2);
+    assert.equal(library.bases[0].category, "Cadernetas");
+    assert.equal((await PDFDocument.load(objects.get(staffPdfStoragePath(id)).bytes)).getPageCount(), 2);
+  }));
+
+test("signed base targets validate sizes, metadata and current permissions before publishing", async () =>
+  scenario(async ({ request, docs, objects, signedUploads, revoke }) => {
+    const bytes = await pdf(1);
+    const body = { name: "Base.pdf", requestId: "a".repeat(36), size: bytes.length };
+    for (const size of [0, 7, 50 * 1024 * 1024 + 1, 10.5, "100"])
+      assert.equal((await request("/library/bases", "manager", { ...body, size })).status, 422);
+    assert.equal(signedUploads.length, 0);
+    assert.equal((await request("/library/bases", "generator", body)).status, 403);
+    const pending = await (await request("/library/bases", "manager", body)).json();
+    assert.equal(signedUploads.length, 1);
+    assert.equal((await request("/library/bases", "manager", { ...body, size: bytes.length + 1 })).status, 409);
+    const meta = { contentType: "application/pdf", size: bytes.length, generation: "10", metadata: {} };
+    objects.set(pending.path, { bytes, meta });
+    for (const invalid of [
+      { size: bytes.length + 1 },
+      { contentType: "image/png" },
+      { generation: "invalid" },
+      { metadata: { uploadedBy: "another-manager" } },
+    ]) {
+      objects.set(pending.path, { bytes, meta: { ...meta, ...invalid } });
+      assert.equal((await request(`/library/bases/${pending.id}/finalize`, "manager", {})).status, 422);
+      assert.equal((await request("/library/bases", "manager", body)).status, 409);
+    }
+    objects.set(pending.path, { bytes, meta });
+    const retry = await (await request("/library/bases", "manager", body)).json();
+    assert.equal(retry.uploaded, true);
+    assert.equal(retry.url, undefined);
+    assert.equal((await request(`/library/bases/${pending.id}/finalize`, "generator", {})).status, 403);
+    revoke();
+    assert.equal((await request(`/library/bases/${pending.id}/finalize`, "manager", {})).status, 403);
+    assert.equal(docs.get(`_staffPdfBases/${pending.id}`).status, "uploading");
+  }));
+
+test("signed replacements preserve base, mold and alphabet links", async () =>
+  scenario(async ({ request, docs, objects }) => {
+    const originalBytes = await pdf(2);
+    const start = await (await request("/library/bases", "manager", {
+      name: "Kit.pdf", requestId: "a".repeat(36),
+    })).json();
+    objects.set(start.path, {
+      bytes: originalBytes,
+      meta: { contentType: "application/pdf", size: originalBytes.length, generation: "5", metadata: { uploadedBy: "manager" } },
+    });
+    await request(`/library/bases/${start.id}/finalize`, "manager", {});
+    const ref = `_staffPdfBases/${start.id}`;
+    const base = docs.get(ref);
+    const alphabet = { folderName: "Kit", letters: { A: { path: `staff-pdf-bases/${start.id}/letters/${"c".repeat(32)}.png` } }, sizePercent: 45 };
+    docs.set(ref, { ...base, alphabet, displayName: "Kit renomeado.pdf" });
+    const layout = { ...defaultPdfLayout(), base_id: start.id };
+    await request("/library/layouts", "manager", { name: "Kit_template__2p", layout });
+    const file = new File([await pdf(2)], "Novo arquivo.pdf", { type: "application/pdf" });
+    const clientRequest = async (route: string, body: unknown) => {
+      const response = await request(`/library${route}`, "manager", body);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      return data;
+    };
+    const fetcher: typeof fetch = async (url) => {
+      const path = new URL(String(url)).pathname.slice(1);
+      objects.set(path, {
+        bytes: Buffer.from(await file.arrayBuffer()),
+        meta: { contentType: "application/pdf", size: file.size, generation: "11" },
+      });
+      return new Response(null, { status: 200 });
+    };
+    const replacement = { id: start.id, revision: base.revision, name: "Kit renomeado.pdf", sourceName: "Kit.pdf" };
+    const upload = () => uploadStaffPdfBase(file, "b".repeat(36), replacement, undefined, clientRequest, fetcher);
+    assert.equal(await upload(), start.id);
+    assert.equal(await upload(), start.id);
+    const updated = docs.get(ref);
+    assert.equal(updated.name, "Kit.pdf");
+    assert.equal(updated.displayName, "Kit renomeado.pdf");
+    assert.deepEqual(updated.alphabet, alphabet);
+    assert.notEqual(updated.revision, base.revision);
+    const library = await (await request("/library", "manager")).json();
+    assert.equal(library.bases.length, 1);
+    assert.equal(library.pendingUploads.length, 0);
+    assert.equal(baseForPdfLayout(library.layouts[0], library.bases)?.id, start.id);
+  }));
+
 test("PDF-library access is independent from products/orders and template permission does not grant generation", async () =>
   scenario(async ({ request }) => {
     assert.equal((await request("/library", "customer")).status, 403);

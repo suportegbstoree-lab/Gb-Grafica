@@ -77,6 +77,8 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
     const files = new Map<string, Blob>(),
       alphabets = new Map<string, Record<string, File>>(),
       saved = new Map<string, StaffDocumentView>();
+    const baseUploadRequests = new Map<string, string>();
+    let loseBaseResponse = new URLSearchParams(location.search).has("base-upload-retry");
     let compoundMarker: StaffPdfCompoundMarker | undefined;
     let barcodeDefault: StaffBarcodeSize | undefined;
     const value: StaffPdfApi = {
@@ -152,7 +154,9 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
         );
         progress?.(letters.length, letters.length);
       },
-      uploadBase: async (file, _requestId, replacement, category) => {
+      uploadBase: async (file, requestId, replacement, category) => {
+        const existing = baseUploadRequests.get(requestId);
+        if (existing) return existing;
         const d = await PDFDocument.load(await file.arrayBuffer()),
           id = replacement?.id || crypto.randomUUID().replaceAll("-", "");
         files.set(id, file);
@@ -168,6 +172,11 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           revision: crypto.randomUUID().replaceAll("-", ""),
           source: "internal",
         });
+        baseUploadRequests.set(requestId, id);
+        if (loseBaseResponse) {
+          loseBaseResponse = false;
+          throw new Error("A conexão caiu após salvar a base. Tente novamente.");
+        }
         return id;
       },
       renameBase: async (target, name) => {

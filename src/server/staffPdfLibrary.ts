@@ -65,6 +65,19 @@ const input = <T>(parse: () => T): T => {
     throw new OperationsError((e as Error).message);
   }
 };
+function validBaseUpload(
+  meta: { size?: string | number; contentType?: string; generation?: string | number; metadata?: Record<string, unknown> },
+  base: { ownerId?: string; signedUploadSize?: number },
+): boolean {
+  const size = Number(meta.size);
+  return typeof base.ownerId === "string" && base.ownerId.length > 0 &&
+    meta.contentType === "application/pdf" &&
+    Number.isSafeInteger(size) && size >= 8 && size <= STAFF_DOCUMENT_MAX_BYTES &&
+    /^\d+$/.test(String(meta.generation)) &&
+    (base.signedUploadSize === undefined || base.signedUploadSize === size) &&
+    (meta.metadata?.uploadedBy === base.ownerId ||
+      (base.signedUploadSize === size && meta.metadata?.uploadedBy === undefined));
+}
 export function catalogPdfBase(productId: string, t: any): StaffPdfBase {
   return {
     id: `catalog_${productId}_${t.id}`,
@@ -567,6 +580,10 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       const requestId = req.body?.requestId;
       if (typeof requestId !== "string" || !/^[a-f0-9-]{36}$/.test(requestId))
         throw new OperationsError("Envio inválido.");
+      const size = req.body?.size;
+      if (size !== undefined &&
+          (!Number.isSafeInteger(size) || size < 8 || size > STAFF_DOCUMENT_MAX_BYTES))
+        throw new OperationsError("Envie um PDF válido de até 50 MB.");
       const id = pdfLibraryId(`${actor.uid}:${requestId}`),
         ref = services().db.collection("_staffPdfBases").doc(id),
         replacement = req.body?.replacement,
@@ -589,9 +606,12 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             old.ownerId !== actor.uid ||
             old.status === "deleted" ||
             old.replaceId !== replacement?.id ||
-            old.replaceRevision !== replacement?.revision
+            old.replaceRevision !== replacement?.revision ||
+            (size !== undefined && old.signedUploadSize !== undefined && old.signedUploadSize !== size)
           )
             throw new OperationsError("Este envio já foi utilizado.", 409);
+          if (size !== undefined && old.signedUploadSize === undefined && old.status === "uploading")
+            tx.set(ref, { signedUploadSize: size }, { merge: true });
           return;
         }
         if (replacement) {
@@ -633,6 +653,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           ownerId: actor.uid,
           createdAt: new Date(now()).toISOString(),
           revision: revision(),
+          ...(size !== undefined ? { signedUploadSize: size } : {}),
           ...(replacement
             ? {
                 replaceId: replacement.id,
@@ -643,10 +664,44 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         if (!replacement) tx.set(nameRef, { baseId: id });
       });
       const data = (await ref.get()).data();
+      const ready = data?.status === "ready" || data?.status === "applied";
+      const path = `staff-pdf-bases/${id}/upload.pdf`;
+      let target: { uploaded: true } | { url: string; headers: Record<string, string> } | undefined;
+      if (size !== undefined && !ready) {
+        if (data?.status !== "uploading")
+          throw new OperationsError("Base excluída durante o envio.", 409);
+        const file = services().bucket.file(path);
+        const [meta] = await file.getMetadata().catch((error) => {
+          if (Number(error?.code) === 404) return [undefined];
+          throw error;
+        });
+        if (meta) {
+          if (!validBaseUpload(meta, data))
+            throw new OperationsError("O arquivo deste envio mudou. Remova o envio incompleto e envie a base novamente.", 409);
+          target = { uploaded: true };
+        } else {
+          const headers = {
+            "Content-Type": "application/pdf",
+            "x-goog-if-generation-match": "0",
+          };
+          const [url] = await file.getSignedUrl({
+            version: "v4",
+            action: "write",
+            expires: now() + 300000,
+            contentType: headers["Content-Type"],
+            extensionHeaders: {
+              "content-length": String(size),
+              "x-goog-if-generation-match": headers["x-goog-if-generation-match"],
+            },
+          });
+          target = { url, headers };
+        }
+      }
       res.status(201).json({
         id,
-        path: `staff-pdf-bases/${id}/upload.pdf`,
-        ready: data?.status === "ready" || data?.status === "applied",
+        path,
+        ready,
+        ...target,
       });
     }),
   );
@@ -869,12 +924,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       }
       const file = services().bucket.file(`staff-pdf-bases/${id}/upload.pdf`),
         [meta] = await file.getMetadata();
-      if (
-        meta.contentType !== "application/pdf" ||
-        Number(meta.size) > STAFF_DOCUMENT_MAX_BYTES ||
-        meta.metadata?.uploadedBy !== old.ownerId ||
-        !/^\d+$/.test(String(meta.generation))
-      )
+      if (!validBaseUpload(meta, old))
         throw new OperationsError("Upload da base inválido.");
       const [bytes] = await services()
           .bucket.file(file.name, { generation: String(meta.generation) })

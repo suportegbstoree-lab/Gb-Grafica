@@ -5,6 +5,7 @@ import type { StaffPdfBatchApi } from "../lib/staffPdfBatch";
 import type { StaffBarcodeSize } from "../lib/staffPdfBarcode";
 import { ref, uploadBytesResumable } from "firebase/storage";
 import { auth, storage } from "../firebase";
+import { uploadStaffPdfBase } from "./staffPdfBaseUpload";
 import {
   STAFF_DOCUMENT_MAX_BYTES,
   staffDocumentPath,
@@ -97,46 +98,8 @@ export const staffPdfApi: StaffPdfApi = {
       baseRevision: base.revision,
     }),
   uploadBase: async (file, requestId, replacement, category) => {
-    const user = auth.currentUser;
-    if (!user) throw new Error("Entre novamente.");
-    if (
-      !/\.pdf$/i.test(file.name) ||
-      file.size < 8 ||
-      file.size > STAFF_DOCUMENT_MAX_BYTES ||
-      (await file.slice(0, 5).text()) !== "%PDF-"
-    )
-      throw new Error("Envie um PDF válido de até 50 MB.");
-    const pending = await staffPdfRequest("/bases", {
-      name: replacement ? staffPdfSourceName(replacement) : file.name,
-      requestId,
-      ...(category || replacement?.category
-        ? { category: category || replacement?.category }
-        : {}),
-      ...(replacement
-        ? {
-            replacement: { id: replacement.id, revision: replacement.revision },
-          }
-        : {}),
-    });
-    if (
-      pending.path !== `staff-pdf-bases/${pending.id}/upload.pdf` ||
-      !/^[a-f0-9]{32}$/.test(pending.id)
-    )
-      throw new Error("Destino inválido.");
-    if (pending.ready) return replacement?.id ?? pending.id;
-    try {
-      await uploadBytesResumable(ref(storage, pending.path), file, {
-        contentType: "application/pdf",
-        customMetadata: { uploadedBy: user.uid },
-      });
-      const { id } = await staffPdfRequest(`/bases/${pending.id}/finalize`, {});
-      return id;
-    } catch (e) {
-      await staffPdfRequest(`/bases/${pending.id}/delete`, {}).catch(
-        () => undefined,
-      );
-      throw e;
-    }
+    if (!auth.currentUser) throw new Error("Entre novamente.");
+    return uploadStaffPdfBase(file, requestId, replacement, category, staffPdfRequest);
   },
   renameBase: async (base, name) => {
     await staffPdfRequest(`/bases/${encodeURIComponent(base.id)}/rename`, {
