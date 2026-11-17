@@ -1,5 +1,5 @@
 import { CouponsPanel, VariationTypesPanel } from '../components/SalesAdminPanels';
-import { shippingOptionLabel } from '../lib/shipping';
+import { parseShippingProfile, shippingOptionLabel } from '../lib/shipping';
 import { salesAdminApi, type SalesAdminApi } from '../services/salesService';
 import { variationReferenceUrls, MAX_PRODUCT_SKU } from '../lib/productSales';
 import StaffDocuments from '../components/StaffDocuments';
@@ -23,6 +23,7 @@ import OperationsWorkbench from '../components/OperationsWorkbench';
 import type { OperationsClient } from '../services/operationsService';
 import { uploadCatalogPdf, removeCatalogPdf, type UploadedCatalogPdf } from '../services/catalogPdfService';
 import UploadInput from '../components/UploadInput';
+import AdminNavigation, { ADMIN_MENU_STORAGE_KEY, type AdminMenuLayout } from '../components/AdminNavigation';
 import { allowedPanelSections, type PanelSection } from '../lib/panelAccess';
 import StaffManagement from '../components/StaffManagement';
 import ProductDesignEditor from '../components/ProductDesignEditor';
@@ -46,9 +47,9 @@ import PersonalizationViewer from '../components/PersonalizationViewer';
 import type { PersonalizationDocument } from '../services/personalizationExport';
 import { loadOrderPersonalizationDocument } from '../services/personalizationDocumentService';
 import React, { useState } from 'react';
-import ProductShippingEditor from '../components/ProductShippingEditor';
+import ProductShippingEditor, { EMPTY_SHIPPING_PROFILE, ShippingProfileFields } from '../components/ProductShippingEditor';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Layout, List, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type, FileText } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, ArrowLeft, ArrowUp, ArrowDown, ChevronDown, ChevronUp, Package, Settings, LogOut, Upload, Loader2, Sparkles, CheckCircle2, Tag, QrCode, CreditCard, Image, Type } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Anuncio, SiteConfig, Order, Category, Promocao, type FulfillmentStatus } from '../types';
 import { cn } from '../lib/utils';
@@ -229,39 +230,31 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const adminLocation = useLocation();
   const navigate = useNavigate();
   const activeTab = (/^\/admin\/([^/]+)/.exec(adminLocation.pathname)?.[1] || 'products') as AdminTab;
+  const staffRoles = /^\/admin\/staff\/cargos\/?$/.test(adminLocation.pathname);
+  const [menuLayout, setMenuLayout] = useState<AdminMenuLayout>(() => {
+    try { return localStorage.getItem(ADMIN_MENU_STORAGE_KEY) === 'classic' ? 'classic' : 'organized'; }
+    catch { return 'organized'; }
+  });
+  function toggleMenuLayout() {
+    const next = menuLayout === 'organized' ? 'classic' : 'organized';
+    setMenuLayout(next);
+    try { localStorage.setItem(ADMIN_MENU_STORAGE_KEY, next); } catch { /* A preferência vale nesta sessão. */ }
+  }
   const [pdfOpened, setPdfOpened] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<StaffPdfQueueProgressValue>();
-  const setActiveTab = (tab: AdminTab) => navigate(`/admin/${tab}${adminLocation.search}`, { replace: false });
+  const setActiveTab = (tab: AdminTab, roles = false) => navigate(`/admin/${tab}${roles ? '/cargos' : ''}${adminLocation.search}`);
   const effectivePermissions = fullAdmin ? ALL_STAFF_PERMISSIONS : permissions;
   const can = (permission: StaffPermission) => effectivePermissions.includes(permission);
   const productDesignAllowed = canEditProductImages(effectivePermissions) || canEditProductPersonalization(effectivePermissions);
   const allowedSections = allowedPanelSections(fullAdmin, permissions);
   const allowedSectionsRef = React.useRef(allowedSections); allowedSectionsRef.current = allowedSections;
-  const navItems = [
-    { id: 'operations' as const, label: 'Operações', icon: Layout },
-    { id:'documents' as const,label:'Gerar PDF',icon:FileText },
-    { id: 'products' as const, label: 'Produtos', icon: Layout },
-    { id: 'variation-types' as const, label: 'Tipos de variação', icon: List },
-    { id: 'bundles' as const, label: 'Pacotes', icon: Package },
-    { id: 'categories' as const, label: 'Categorias', icon: List },
-    { id: 'orders' as const, label: 'Pedidos', icon: Package },
-    { id: 'shipment-labels' as const, label: 'Etiquetas', icon: Tag },
-    { id: 'promotions' as const, label: 'Promoções', icon: Tag },
-    { id: 'coupons' as const, label: 'Cupons', icon: Tag },
-    { id: 'branding' as const, label: 'Identidade Visual', icon: Image },
-    { id: 'fonts' as const, label: 'Fontes', icon: Type },
-    { id: 'config' as const, label: 'Configurações', icon: Settings },
-    { id: 'email' as const, label: 'E-mails', icon: Settings },
-    { id: 'staff' as const, label: 'Funcionários', icon: Settings },
-  ];
-  const allowedTabs = navItems.filter(item => allowedSections.includes(item.id));
-  const tabAllowed = (tab: AdminTab) => allowedTabs.some(item => item.id === tab);
+  const tabAllowed = (tab: AdminTab) => allowedSections.includes(tab);
   const accessKey = `${fullAdmin}:${effectivePermissions.join(',')}`;
   React.useEffect(() => {
     if (activeTab === 'documents' && tabAllowed('documents')) setPdfOpened(true);
     if (!can('documents.generate')) setPdfProgress(undefined);
     if (!tabAllowed(activeTab)) {
-      setActiveTab(allowedTabs[0]?.id || 'products'); setEditingProduct(null); setEditingPromotion(null);
+      setActiveTab(allowedSections[0] || 'products'); setEditingProduct(null); setEditingPromotion(null);
       setIsFontsEditorOpen(false);
     }
     if (!can('orders.artwork')) { modelRequest.current++; setModelDocument(null); }
@@ -281,6 +274,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const [configUploads, setConfigUploads] = useState<Partial<Record<'logo_url' | 'banner_principal', UploadedAdminAsset>>>({});
   const [isUploadingAdminAsset, setIsUploadingAdminAsset] = useState(false);
   const [configDraft, setConfigDraft] = useState<SiteConfig>(() => structuredClone(config));
+  const defaultShippingProfile = parseShippingProfile(config.defaultShippingProfile) ?? undefined;
   const fontDraftRef = React.useRef(configDraft);
   React.useEffect(() => { fontDraftRef.current = configDraft; }, [configDraft]);
   const [isUploadingFonts, setIsUploadingFonts] = useState(false);
@@ -374,6 +368,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
 
   const openProductEditor = (draft: Partial<Anuncio>) => {
     const copy = structuredClone(draft);
+    if (!copy.id && defaultShippingProfile) copy.shipping = { ...defaultShippingProfile };
     const storageId = copy.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
     const originalUrls = [copy.imagem, ...(copy.imagens || []), ...alphabetUrls(copy.modelosPdf)]
       .filter((value): value is string => typeof value === 'string' && Boolean(value));
@@ -461,8 +456,8 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const confirmationOpen = confirmation !== null;
   const aiPreviewOpen = aiPreview !== null;
 
-  const requestTabChange = (nextTab: AdminTab) => {
-    if (isUploadingAdminAsset || !tabAllowed(nextTab) || nextTab === activeTab) return;
+  const requestTabChange = (nextTab: AdminTab, roles = false) => {
+    if (isUploadingAdminAsset || !tabAllowed(nextTab) || (nextTab === activeTab && roles === staffRoles)) return;
     if (['config', 'branding', 'fonts'].includes(activeTab) && configDirty) {
       setConfirmation({
         title: 'Sair sem salvar?',
@@ -477,12 +472,12 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
           setConfigUploads({});
           setConfigDraft(structuredClone(config));
           setConfigDirty(false);
-          if (allowedSectionsRef.current.includes(nextTab)) setActiveTab(nextTab);
+          if (allowedSectionsRef.current.includes(nextTab)) setActiveTab(nextTab, roles);
         },
       });
       return;
     }
-    setActiveTab(nextTab);
+    setActiveTab(nextTab, roles);
   };
 
   const runConfirmedAction = async () => {
@@ -620,7 +615,10 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
       // Products
       for (const prod of INITIAL_PRODUCTS) {
         const id = prod.id || crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-        await persistence.setDocument('anuncios', id, { ...prod, id });
+        await persistence.setDocument('anuncios', id, {
+          ...(defaultShippingProfile ? { shipping: defaultShippingProfile } : {}),
+          ...prod, id,
+        });
       }
       setSuccessMessage('Dados iniciais carregados com sucesso!');
     } catch (error) {
@@ -673,6 +671,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
       email_atendimento: String(formData.get('email_atendimento') || '').trim().toLowerCase(),
       email_privacidade: String(formData.get('email_privacidade') || '').trim().toLowerCase(),
       prazo_producao: String(formData.get('prazo_producao') || '').trim(),
+      defaultShippingProfile: configDraft.defaultShippingProfile,
     };
 
     const fields = activeTab === 'branding' ? BRANDING_FIELDS : activeTab === 'fonts' ? FONTS_FIELDS : SETTINGS_FIELDS;
@@ -1312,9 +1311,12 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
           </div>
 
           <Link to="/?preview=customer" className="mb-4 block rounded-lg border border-gray-700 px-4 py-3 text-sm">Visualizar como cliente</Link>
-          <nav aria-label="Seções administrativas" className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0">
-            {allowedTabs.map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => requestTabChange(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} className={cn('w-auto shrink-0 lg:w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-bold transition-colors', activeTab === item.id ? 'bg-[#ff4d79] text-white' : 'text-gray-400 hover:bg-gray-800')}><Icon size={18} />{item.label}</button>; })}
-          </nav>
+          <AdminNavigation allowed={allowedSections} active={activeTab} roles={staffRoles}
+            layout={menuLayout} onSelect={requestTabChange} />
+          <button type="button" onClick={toggleMenuLayout}
+            className="mt-3 rounded-md px-3 py-2 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">
+            {menuLayout === 'organized' ? 'Voltar ao menu clássico' : 'Usar menu organizado'}
+          </button>
         </div>
 
         <div className="mt-auto flex flex-wrap gap-4 px-4 pb-4 sm:px-6 sm:pb-6 lg:flex-col lg:p-8">
@@ -1574,7 +1576,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         {['config', 'branding', 'fonts'].includes(activeTab) && tabAllowed(activeTab) && (
           <div className="max-w-5xl space-y-8">
             <div>
-              <h2 className="text-2xl font-bold">{activeTab === 'branding' ? 'Identidade Visual' : activeTab === 'fonts' ? 'Fontes da personalização' : 'Configurações do Site'}</h2>
+              <h2 className="text-2xl font-bold">{activeTab === 'branding' ? 'Identidade Visual' : activeTab === 'fonts' ? 'Fontes da personalização' : menuLayout === 'organized' ? 'Informações da Loja' : 'Configurações do Site'}</h2>
               <p className="mt-2 text-sm text-gray-500">{activeTab === 'branding' ? 'Logo e banner da loja.' : activeTab === 'fonts' ? 'Fontes usadas pelos clientes na personalização.' : 'Atendimento, benefícios e dados comerciais da loja.'}</p>
             </div>
 
@@ -1615,7 +1617,29 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               </section>
               </>}
 
-              {activeTab === 'config' && <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />}
+              {activeTab === 'config' && <>
+                <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
+                <section aria-labelledby="default-shipping-heading" className="space-y-4 rounded-xl border border-gray-800 bg-[#111111] p-6">
+                  <h3 id="default-shipping-heading" className="font-bold">Peso e embalagem padrão</h3>
+                  <p className="text-sm text-gray-400">Os valores salvos preenchem os novos produtos. Você pode ajustá-los em cada produto ou combinação.</p>
+                  <ShippingProfileFields profile={configDraft.defaultShippingProfile ?? undefined}
+                    onChange={value => {
+                      setConfigDraft(current => ({ ...current, defaultShippingProfile: value }));
+                      setConfigDirty(true);
+                    }} />
+                  {configDraft.defaultShippingProfile
+                    ? <button type="button" className="rounded px-2 py-1.5 text-sm text-red-400 hover:bg-red-950"
+                        onClick={() => {
+                          setConfigDraft(current => ({ ...current, defaultShippingProfile: null }));
+                          setConfigDirty(true);
+                        }}>Remover padrão da loja</button>
+                    : <button type="button" className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800"
+                        onClick={() => {
+                          setConfigDraft(current => ({ ...current, defaultShippingProfile: { ...EMPTY_SHIPPING_PROFILE } }));
+                          setConfigDirty(true);
+                        }}>Cadastrar padrão da loja</button>}
+                </section>
+              </>}
 
               {activeTab === 'fonts' && <>
               <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-purple-500/30 bg-[#111111] p-6">
@@ -1678,9 +1702,10 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
           </div>
         )}
 
-        {activeTab === 'staff' && fullAdmin && <StaffManagement api={staffApi} />}
+        {activeTab === 'staff' && fullAdmin && <StaffManagement api={staffApi}
+          view={menuLayout === 'classic' ? undefined : staffRoles ? 'roles' : 'members'} />}
         {activeTab === 'email' && tabAllowed('email') && <EmailManagement api={emailApi} />}
-        {allowedTabs.length === 0 && <p role="status">Sua função não possui áreas disponíveis no painel.</p>}
+        {allowedSections.length === 0 && <p role="status">Sua função não possui áreas disponíveis no painel.</p>}
 
         {activeTab === 'promotions' && tabAllowed('promotions') && (
           <div className="space-y-8">
@@ -2076,7 +2101,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                 </section>
                 <section id="product-entrega" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-entrega-title">
                   <h4 id="product-entrega-title" className="text-lg font-bold">Peso e embalagem</h4>
-                <ProductShippingEditor product={editingProduct} onChange={setEditingProduct} />
+                <ProductShippingEditor product={editingProduct} storeDefault={defaultShippingProfile} onChange={setEditingProduct} />
 
                 </section>
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">

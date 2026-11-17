@@ -16,7 +16,7 @@ import { adminAccessRecordAllows } from '../lib/adminAccess.js';
 import { validateCategoryDraft, validateProductDraft, validatePromotionDraft, validateSiteConfig } from '../lib/adminValidation.js';
 import { OperationsError } from '../lib/operations.js';
 import { prepareCatalogRetention } from './catalogRetention.js';
-import type { Anuncio, Category, Promocao } from '../types.js';
+import type { Anuncio, Category, Promocao, SiteConfig } from '../types.js';
 type Services = ReturnType<typeof getAdminServices>;
 export interface CatalogActor { uid: string; admin?: boolean; email?: string; name?: string; permissions: StaffPermission[]; claims?: Record<string, unknown>; }
 const required: Record<string, StaffPermission> = { anuncios: 'products.manage', categories: 'categories.manage', promocoes: 'promotions.manage', config: 'settings.manage' };
@@ -95,7 +95,10 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
         const result = collection === 'anuncios' ? validateProductDraft({ ...next, id } as Anuncio, categories, products)
           : collection === 'categories' ? validateCategoryDraft(next as Category, categories, id)
           : collection === 'promocoes' ? validatePromotionDraft(next as Promocao, products, categories) : validateSiteConfig(next as any);
-        if (!result.ok) fail((result as { message: string }).message);
+        if (result.ok === false) return fail(result.message);
+        if (collection === 'config' && Object.hasOwn(next, 'defaultShippingProfile')) {
+          next.defaultShippingProfile = (result.value as SiteConfig).defaultShippingProfile;
+        }
         if (collection === 'anuncios') {
           if (next.pacote) {
             const parsed = parseBundle(next.pacote)!; const previous = parseBundle(old?.pacote);

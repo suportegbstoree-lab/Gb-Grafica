@@ -63,7 +63,7 @@ test('flash countdown uses the saved deadline and removes an expired offer witho
   await page.clock.install({ time: new Date('2026-10-30T12:00:00Z') });
   await page.goto('/__e2e/store?flash');
   const offers = page.getByRole('region', { name: 'Produtos em promoção', exact: true });
-  await expect(offers).toBeVisible(); await expect(offers.getByText('Valor original', { exact: true })).toBeVisible();
+  await expect(offers).toBeVisible(); await expect(offers.locator('s')).toHaveText('R$ 8,40');
   await expect(offers.getByText('R$ 7,56', { exact: true })).toBeVisible();
   await page.clock.fastForward(61_000); await expect(offers).toHaveCount(0);
 });

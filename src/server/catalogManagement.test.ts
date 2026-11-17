@@ -36,6 +36,20 @@ test('designer cannot alter price, name, delete products or mutate role/profile 
   assert.equal((await context.call('_staffRoles', 'custom-designer', 'set', { permissions: ['operations.manage'] })).status, 422);
   assert.equal(context.docs.get('anuncios/product').preco_base, '20.00'); assert.equal(context.activity().length, 0);
 }));
+test('store packaging defaults require settings permission and valid full parcel measurements', async () => scenario(async context => {
+  const profile = { unitWeightGrams: 500, packagingWeightGrams: 10, lengthCm: 21, widthCm: 15, heightCm: 4, unitsPerParcel: 2 };
+  context.docs.set('config/main', { banner_principal: '/banner.png' });
+  context.actor.permissions = ['branding.manage'];
+  assert.equal((await context.call('config', 'main', 'patch', { defaultShippingProfile: profile })).status, 403);
+
+  context.actor.permissions = ['settings.manage'];
+  assert.equal((await context.call('config', 'main', 'patch', { defaultShippingProfile: { ...profile, unitsPerParcel: 60 } })).status, 422);
+  assert.equal((await context.call('config', 'main', 'patch', { defaultShippingProfile: { ...profile, extra: 'ignored' } })).status, 200);
+  assert.deepEqual(context.docs.get('config/main').defaultShippingProfile, profile);
+  assert.equal(context.docs.get('anuncios/product').shipping, undefined);
+  assert.equal((await context.call('config', 'main', 'patch', { defaultShippingProfile: null })).status, 200);
+  assert.equal(context.docs.get('config/main').defaultShippingProfile, null);
+}));
 test('revoked or stale role policies are checked again inside the catalog transaction', async () => scenario(async context => {
   context.actor.claims = { uid: 'employee', staffRole: 'custom-designer', gbStaffEpoch: 'a'.repeat(32) };
   context.docs.set('_staffRoles/custom-designer', { ...context.docs.get('_staffRoles/custom-designer'), permissions: [] });

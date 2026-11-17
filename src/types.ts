@@ -184,6 +184,7 @@ export interface StoreBenefit { id: string; title: string; description: string; 
 export interface SiteConfig {
   contatos?: StoreContact[];
   beneficios?: StoreBenefit[];
+  defaultShippingProfile?: ProductShippingProfile | null;
   logo_url?: string;
   telefone1: string;
   telefone2: string;

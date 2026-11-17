@@ -181,6 +181,14 @@ const FIXTURE_PROMOTIONS: Promocao[] = [
   },
 ];
 
+if (new URLSearchParams(window.location.search).has('many-offers')) {
+  const offers = Array.from({ length: 6 }, (_, index) => ({
+    ...FIXTURE_PRODUCTS[0], id: `offer-${index + 1}`, nome: `Produto em oferta ${index + 1}`,
+  }));
+  FIXTURE_PRODUCTS.push(...offers);
+  FIXTURE_PROMOTIONS[0].alvoIds = [FIXTURE_PROMOTIONS[0].alvoId!, ...offers.map(product => product.id)];
+}
+
 const FIXTURE_ORDERS: Order[] = [
   {
     id: 'GB-E2E-PAGO',

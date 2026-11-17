@@ -97,7 +97,7 @@ export const PRODUCT_IMAGE_FIELDS = ['imagem', 'imagens', 'imagensPorCombinacao'
 export const PRODUCT_PERSONALIZATION_FIELDS = ['tipoInput', 'labelTexto', 'printProfile', 'moldePdf'] as const;
 export const BRANDING_FIELDS = ['logo_url', 'banner_principal', 'banner_titulo', 'banner_subtitulo', 'banner_botao'] as const;
 export const FONTS_FIELDS = ['fontes_personalizacao'] as const;
-export const SETTINGS_FIELDS = ['contatos', 'beneficios', 'telefone1', 'telefone2', 'beneficio1_titulo', 'beneficio1_desc', 'beneficio2_titulo', 'beneficio2_desc', 'beneficio3_titulo', 'beneficio3_desc', 'razao_social', 'documento_fiscal', 'endereco_comercial', 'email_atendimento', 'email_privacidade', 'prazo_producao'] as const;
+export const SETTINGS_FIELDS = ['contatos', 'beneficios', 'telefone1', 'telefone2', 'beneficio1_titulo', 'beneficio1_desc', 'beneficio2_titulo', 'beneficio2_desc', 'beneficio3_titulo', 'beneficio3_desc', 'razao_social', 'documento_fiscal', 'endereco_comercial', 'email_atendimento', 'email_privacidade', 'prazo_producao', 'defaultShippingProfile'] as const;
 
 export function permittedProductPatch(product: Record<string, unknown>, permissions: readonly StaffPermission[]): Record<string, unknown> {
   const fields = [...(canEditProductImages(permissions) ? PRODUCT_IMAGE_FIELDS : []), ...(canEditProductPersonalization(permissions) ? PRODUCT_PERSONALIZATION_FIELDS : [])];

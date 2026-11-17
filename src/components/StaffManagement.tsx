@@ -3,7 +3,10 @@ import ConfirmDialog from './ConfirmDialog';
 import { STAFF_PERMISSIONS, STAFF_PERMISSION_DEPENDENCIES, staffRoleName, type StaffRoleView, type StaffMember, type StaffOverview, type AssignedRole, type StaffPermission } from '../lib/staffAccess';
 import { staffAdministrationApi, type StaffAdministrationApi } from '../services/staffService';
 
-export default function StaffManagement({ api = staffAdministrationApi }: { api?: StaffAdministrationApi }) {
+export default function StaffManagement({ api = staffAdministrationApi, view }: {
+  api?: StaffAdministrationApi;
+  view?: 'members' | 'roles';
+}) {
   const [memberToDelete, setMemberToDelete] = React.useState<StaffMember | null>(null);
   const [pendingDelete, setPendingDelete] = React.useState<StaffRoleView | null>(null);
   const [overview, setOverview] = React.useState<StaffOverview | null>(null);
@@ -64,7 +67,7 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
     return { ...value, permissions: STAFF_PERMISSIONS.map(item => item.id).filter(item => permissions.has(item)) };
   }) })); };
   return <section className="max-w-5xl space-y-6">
-    <header><h2 className="text-2xl font-bold">Funcionários e permissões</h2><p className="mt-2 text-sm text-gray-400">Atribua funções a contas já cadastradas na loja. Administradores mantêm acesso completo e gerenciam as permissões das funções de funcionário.</p></header>
+    <header><h2 className="text-2xl font-bold">{view === 'roles' ? 'Cargos e permissões' : view === 'members' ? 'Funcionários' : 'Funcionários e permissões'}</h2><p className="mt-2 text-sm text-gray-400">{view === 'roles' ? 'Defina as áreas e ações disponíveis para cada cargo da equipe.' : 'Atribua funções a contas já cadastradas na loja. Administradores mantêm acesso completo e gerenciam as permissões das funções de funcionário.'}</p></header>
     {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{error}</p>}
     {message && <p role="status" className="rounded-xl border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-300">{message}</p>}
     {notification && notification.status !== 'unchanged' && <div role="status" className="rounded-xl border border-gray-700 p-4 text-xs text-gray-300">
@@ -72,6 +75,7 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
       {notification.id && notification.status !== 'accepted' && <button type="button" disabled={busy} onClick={() => void run(async () => { const value = await api.retryNotification(notification.id!); if (alive.current) setNotification({ id: notification.id, ...value }); })} className="ml-3 font-bold text-pink-400 disabled:opacity-40">Tentar enviar aviso</button>}
     </div>}
     {!overview ? <p role="status">Carregando funções...</p> : <fieldset disabled={busy} className="min-w-0 space-y-6">
+      <div hidden={view === 'roles'} className="space-y-6">
       {!overview.emailConfigured && <p className="text-xs text-amber-300">O envio de avisos por e-mail precisa ser configurado na hospedagem da loja.</p>}
       {Boolean(overview.notifications?.length) && <section className="space-y-3 rounded-xl border border-amber-500/30 p-4"><h3 className="text-sm font-bold">Avisos por e-mail pendentes</h3>{overview.notifications!.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 text-xs"><span className="break-all">{item.email} · {new Date(item.createdAt).toLocaleString('pt-BR')}</span><button type="button" onClick={() => void run(async () => { const value = await api.retryNotification(item.id); if (alive.current) setNotification({ id: item.id, ...value }); await reload(); })} className="font-bold text-pink-400">Reenviar aviso pendente</button></div>)}</section>}
       {dirtyRoles.current.size > 0 && <p className="text-xs text-amber-300">Salve as permissões alteradas antes de atribuir funções.</p>}
@@ -87,6 +91,8 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
           {member.role !== 'administrator' && <button type="button" onClick={() => setMemberToDelete(member)} aria-label={`Excluir funcionário ${member.email}`} className="rounded-lg border border-red-500/40 px-3 py-2 text-xs font-bold text-red-300">Excluir funcionário</button>}
         </div>
       </div>)}{overview.truncated && <p className="text-xs text-amber-300">A lista mostra até 200 contas. Use o e-mail cadastrado para alterar outra conta.</p>}</div>
+      </div>
+      <div hidden={view === 'members'} className="space-y-6">
       <form className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-700 p-5" onSubmit={event => { event.preventDefault(); void run(async () => { const id = `role-${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`; await api.saveRole(id, [], null, newRole); setNewRole(''); await reload(); setMessage('Cargo criado. Selecione as permissões e salve antes de atribuí-lo.'); }); }}>
         <label className="min-w-0 flex-1 text-sm">Nome do novo cargo<input required minLength={1} maxLength={80} value={newRole} onChange={event => setNewRole(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-700 bg-black p-3" /></label><button type="submit" className="rounded-lg bg-pink-500 px-5 py-3 text-sm font-bold">Criar cargo</button>
       </form>
@@ -96,6 +102,7 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
         <button type="button" disabled={value.deletionPending} onClick={() => void save(value)} className="max-w-full break-words rounded-lg bg-purple-500 px-4 py-3 text-xs font-bold [overflow-wrap:anywhere]">Salvar permissões de {staffRoleName(value.id, value)}</button>
         <button type="button" onClick={() => setPendingDelete(value)} className="max-w-full rounded-lg border border-red-500/40 px-4 py-3 text-left text-xs font-bold text-red-300 [overflow-wrap:anywhere]">{value.deletionPending ? 'Concluir exclusão de' : 'Excluir cargo'} {staffRoleName(value.id, value)}</button>
       </section>)}</div>
+      </div>
     </fieldset>}
     {memberToDelete && <ConfirmDialog title="Excluir funcionário" message={`Remover ${memberToDelete.name || memberToDelete.email} da equipe e revogar o acesso ao painel? A conta da loja e o histórico ficam disponíveis.`} confirmLabel="Excluir funcionário" busy={busy} danger onCancel={() => setMemberToDelete(null)} onConfirm={() => void run(async () => {
       await api.deleteMember(memberToDelete.uid);

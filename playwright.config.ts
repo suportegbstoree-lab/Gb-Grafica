@@ -14,6 +14,11 @@ export default defineConfig({
   outputDir: 'test-results',
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    // Existing workflow tests use the classic menu. The navigation suite exercises both layouts.
+    storageState: {
+      cookies: [],
+      origins: [{ origin: 'http://127.0.0.1:4173', localStorage: [{ name: 'gb-admin-menu-layout', value: 'classic' }] }],
+    },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: executablePath ? 'off' : 'retain-on-failure',

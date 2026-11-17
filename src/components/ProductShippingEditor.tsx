@@ -3,6 +3,10 @@ import type { Anuncio } from '../types';
 import { generateProductCombinations } from '../lib/adminValidation';
 import type { ProductShippingProfile } from '../lib/shipping';
 
+export const EMPTY_SHIPPING_PROFILE: ProductShippingProfile = {
+  unitWeightGrams: 0, packagingWeightGrams: 0, lengthCm: 0, widthCm: 0, heightCm: 0, unitsPerParcel: 1,
+};
+
 const fields: Array<{ key: keyof ProductShippingProfile; label: string; min: number; max: number; step: number }> = [
   { key: 'unitWeightGrams', label: 'Peso por unidade vendida (g)', min: 1, max: 30000, step: 1 },
   { key: 'packagingWeightGrams', label: 'Peso da embalagem vazia (g)', min: 0, max: 29999, step: 1 },
@@ -12,8 +16,24 @@ const fields: Array<{ key: keyof ProductShippingProfile; label: string; min: num
   { key: 'unitsPerParcel', label: 'Unidades que cabem por volume', min: 1, max: 999, step: 1 },
 ];
 
-export default function ProductShippingEditor({ product, onChange }: {
-  product: Partial<Anuncio>; onChange: (product: Partial<Anuncio>) => void;
+export function ShippingProfileFields({ profile, onChange }: {
+  profile?: ProductShippingProfile;
+  onChange: (profile: ProductShippingProfile) => void;
+}) {
+  if (!profile) return null;
+  return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    {fields.map(field => <label key={field.key} className="text-xs text-gray-400">{field.label}
+      <input type="number" required min={field.min} max={field.max} step={field.step}
+        value={profile[field.key]} onChange={event => onChange({ ...profile, [field.key]: Number(event.target.value) })}
+        className="mt-2 w-full rounded-lg border border-gray-800 bg-black px-3 py-2 text-white" />
+    </label>)}
+  </div>;
+}
+
+export default function ProductShippingEditor({ product, storeDefault, onChange }: {
+  product: Partial<Anuncio>;
+  storeDefault?: ProductShippingProfile;
+  onChange: (product: Partial<Anuncio>) => void;
 }) {
   const [combination, setCombination] = useState('');
   const combinations = generateProductCombinations(product.atributos || []);
@@ -37,18 +57,15 @@ export default function ProductShippingEditor({ product, onChange }: {
           {combinations.map(combo => <option key={combo} value={combo}>{combo.replace(/\|/g, ' + ')}</option>)}
         </select>
       </label>}
-      {!profile ? <button type="button" className="text-xs font-bold text-[#ff4d79]" onClick={() => update({
-        unitWeightGrams: 0, packagingWeightGrams: 0, lengthCm: 0, widthCm: 0, heightCm: 0, unitsPerParcel: 1,
-      })}>{target ? 'Definir embalagem específica para esta combinação' : 'Cadastrar peso e embalagem'}</button> : <>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {fields.map(field => <label key={field.key} className="text-xs text-gray-400">{field.label}
-            <input aria-label={field.label} type="number" required min={field.min} max={field.max} step={field.step}
-              value={profile[field.key]} onChange={event => update({ ...profile, [field.key]: event.target.value === '' ? 0 : Number(event.target.value) })}
-              className="mt-2 w-full bg-black border border-gray-800 rounded-lg px-3 py-2 text-white" />
-          </label>)}
-        </div>
+      {!profile ? <button type="button" className="text-xs font-bold text-[#ff4d79]"
+        onClick={() => update({ ...(target ? product.shipping ?? EMPTY_SHIPPING_PROFILE : EMPTY_SHIPPING_PROFILE) })}>
+        {target ? 'Definir embalagem específica para esta combinação' : 'Cadastrar peso e embalagem'}
+      </button> : <>
+        <ShippingProfileFields profile={profile} onChange={update} />
         <button type="button" onClick={() => update(undefined)} className="text-xs text-red-400">{target ? 'Usar padrão do produto nesta combinação' : 'Remover embalagem padrão'}</button>
       </>}
+      {!target && storeDefault && <button type="button" onClick={() => update({ ...storeDefault })}
+        className="block text-xs font-bold text-[#ff4d79]">Usar padrão da loja</button>}
       {target && !profile && <p className="text-xs text-gray-500">Esta combinação usa a embalagem padrão do produto, quando cadastrada.</p>}
     </fieldset>
   );

@@ -378,6 +378,11 @@ export function validateSiteConfig(config: SiteConfig): ValidationResult<SiteCon
     typeof value === 'string' ? value.trim() : value,
   ])) as unknown as SiteConfig;
 
+  if (normalized.defaultShippingProfile != null) {
+    const profile = parseShippingProfile(normalized.defaultShippingProfile);
+    if (!profile) return { ok: false, message: 'Revise o peso, as dimensões e a capacidade da embalagem padrão da loja.' };
+    normalized.defaultShippingProfile = profile;
+  }
   if (normalized.contatos !== undefined && !parseStoreContacts(normalized.contatos)) return { ok: false, message: 'Revise os meios de contato: nome, e-mail ou telefone inválido, ou limite de 12 itens excedido.' };
   if (normalized.beneficios !== undefined && !parseStoreBenefits(normalized.beneficios)) return { ok: false, message: 'Revise os benefícios: título, descrição ou limite de 12 itens inválido.' };
   if (normalized.contatos === undefined && [normalized.telefone1, normalized.telefone2].some(value => value && !isValidBrazilianPhone(value))) {

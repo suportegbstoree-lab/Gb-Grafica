@@ -236,6 +236,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   const sectionTitles = { todos: 'Todos os produtos', destaques: 'Produtos em destaque', promocoes: 'Produtos em promoção', lancamentos: 'Lançamentos', pacotes: 'Pacotes de produtos' };
   const isProfile = location.pathname === '/minha-conta';
   const focusedPage = !!productId || isProfile;
+  const showOffers = section === 'todos' && !focusedPage && !categoryId && !query.has('categoria');
   const detailProduct = products.find(p => p.id === productId);
   const routeCategory = categories.find(category => category.id === (categoryId || query.get('categoria')));
   const [ratings, setRatings] = useState<Record<string,ProductRating>>({});
@@ -315,7 +316,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     const availableSlides: HomeSlide[] = [
       { branding: true, image: config.banner_principal, title: config.banner_titulo, subtitle: config.banner_subtitulo, link: '' },
       ...highlighted,
-      ...promotions.filter(promotion => promotionActiveAt(promotion, promotionNow)).map(promotion => ({
+      ...(showOffers ? promotions : []).filter(promotion => promotionActiveAt(promotion, promotionNow)).map(promotion => ({
         image: promotion.imagem,
         title: promotion.titulo,
         link: promotion.link || '',
@@ -327,7 +328,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     return availableSlides.length > 0
       ? availableSlides
       : [{ image: DEFAULT_LOGO_URL, title: config.banner_titulo, link: '' }];
-  }, [config.banner_principal, config.banner_titulo, config.banner_subtitulo, promotions, products, promotionNow]);
+  }, [config.banner_principal, config.banner_titulo, config.banner_subtitulo, promotions, products, promotionNow, showOffers]);
 
   const visibleProducts = useMemo(() => ((categoryId || query.get('categoria')) && !routeCategory) ? [] : filterCatalog(products, promotions, ratings, { section, category: routeCategory?.nome, query: searchTerm, min: query.get('min') ? parseMoneyToCents(query.get('min')) ?? undefined : undefined, max: query.get('max') ? parseMoneyToCents(query.get('max')) ?? undefined : undefined, rating: Number(query.get('avaliacao')) || undefined }, promotionNow), [products,promotions,ratings,section,routeCategory,categoryId,searchTerm,location.search,promotionNow]);
 
@@ -936,7 +937,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       {/* Promo Bar */}
       <div className="bg-[#0f5e64] py-4 text-center relative z-20">
         <span className="text-white font-black uppercase tracking-[0.3em] text-[11px]">
-          {promotions.find(promotion => promotion.ativa)?.titulo || 'PERSONALIZADOS FEITOS COM CUIDADO PARA VOCÊ'}
+          {(showOffers && promotions.find(promotion => promotionActiveAt(promotion, promotionNow))?.titulo) || 'PERSONALIZADOS FEITOS COM CUIDADO PARA VOCÊ'}
         </span>
         {/* Smooth Wave Bottom for Promo */}
         <div className="absolute bottom-[-15px] left-0 w-full overflow-hidden leading-[0] z-50 pointer-events-none">
@@ -1063,7 +1064,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         {benefits.map(benefit => <BenefitItem key={benefit.id} icon={<Sparkles size={28} />} title={benefit.title} desc={benefit.description} />)}
       </section>}
 
-      {!focusedPage && <FlashOffers products={products} promotions={promotions} now={promotionNow} />}
+      {showOffers && <FlashOffers products={products} promotions={promotions} now={promotionNow} />}
       <main id="produtos" className="mx-auto max-w-[1920px] px-4 py-12 md:px-8 xl:px-12">
         {isProfile ? (
           <CustomerProfile uid={user?.uid} email={user?.email} api={customerApi} onSaved={fillProfile} />
