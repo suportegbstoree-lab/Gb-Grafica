@@ -78,6 +78,23 @@ test('only full administrators can enumerate or assign staff access', async () =
   assert.equal(docs.has(`_staffAccess/${employee}`), false);
   assert.equal((await call('/admin/staff', 'bad')).status, 401);
 });
+test('fiscal draft API keeps checkout data private without a fiscal role', async () => {
+  const id = 'GB-FISCAL123';
+  const route = '/admin/orders/' + id + '/nfe-draft';
+  docs.set('orders/' + id, {
+    userId: employee, paymentStatus: 'pago', metodoEntrega: 'retirada', totalCents: 1000,
+    itens: [{ productId: 'product', nome: 'Produto', preco: '10.00', quantidade: 1 }],
+  });
+  docs.set('orders/' + id + '/fiscal/checkout', { payerCpf: '52998224725' });
+  assert.equal((await call(route, 'buyer')).status, 403);
+  assert.equal((await call(route, 'buyer', {})).status, 403);
+  const response = await call(route);
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  const { draft, revision } = await response.json();
+  assert.equal(draft.recipientDocument, '52998224725');
+  assert.equal((await call(route, 'admin', { draft, revision })).status, 200);
+});
 test('assignment resolves a registered email, persists staff authorization and truthfully queues the email', async () => {
   const response = await assign(); assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   const data = await response.json() as { notification: { status: string } }; assert.equal(data.notification.status, 'not_configured');

@@ -41,6 +41,7 @@ let jadlogAvailable = true;
 function ref(path: string) {
   return {
     path,
+    collection: (name: string) => ({ doc: (id: string) => ref(`${path}/${name}/${id}`) }),
     async get() { const value = docs.get(path); return { id: path.split('/').at(-1), exists: value !== undefined, data: () => value }; },
     async set(value: Record<string, unknown>) { docs.set(path, { ...docs.get(path), ...value }); },
     async create(value: Record<string, unknown>) { assert.ok(!docs.has(path)); docs.set(path, value); },

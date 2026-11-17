@@ -67,6 +67,8 @@ import {
 } from '../services/catalogImageService';
 import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
 import OrderActions from '../components/OrderActions';
+import NfeDraftEditor from '../components/NfeDraftEditor';
+import { NfeProductInputs } from '../components/NfeProductFields';
 import ShipmentLabelsPanel from '../components/ShipmentLabelsPanel';
 import PromotionTargets from '../components/PromotionTargets';
 import VariantImagesEditor from '../components/VariantImagesEditor';
@@ -1555,7 +1557,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                         <OrderCard
                           key={order.id}
                           order={order}
-                          canFulfill={can('orders.fulfillment')} canManageShipments={can('shipments.manage')} canRetryEmail={fullAdmin}
+                          canFulfill={can('orders.fulfillment')} canManageShipments={can('shipments.manage')} canManageNfe={can('fiscal.manage')} canRetryEmail={fullAdmin}
                           operations={orderOperations}
                           onOperationError={setErrorMessage}
                           onOperationSuccess={setSuccessMessage}
@@ -1824,6 +1826,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                   ['product-variacoes', 'Variações'],
                   ['product-producao', 'Arte e moldes PDF'],
                   ['product-entrega', 'Peso e embalagem'],
+                  ['product-fiscal', 'Classificação fiscal'],
                 ].map(([id, label]) => <button key={id} type="button" className="shrink-0 rounded-lg px-3 py-2 text-sm font-bold text-gray-300 hover:bg-pink-500/15 hover:text-pink-300"
                   onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>{label}</button>)}
               </nav>
@@ -2103,6 +2106,12 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
                   <h4 id="product-entrega-title" className="text-lg font-bold">Peso e embalagem</h4>
                 <ProductShippingEditor product={editingProduct} storeDefault={defaultShippingProfile} onChange={setEditingProduct} />
 
+                </section>
+                <section id="product-fiscal" className="min-w-0 scroll-mt-20 space-y-4 rounded-2xl border border-gray-800 p-4 sm:p-6" aria-labelledby="product-fiscal-title">
+                  <h4 id="product-fiscal-title" className="text-lg font-bold">Classificação fiscal</h4>
+                  <p className="text-sm text-gray-400">Preencha os códigos confirmados pela contabilidade para reaproveitar nos rascunhos de NF-e.</p>
+                  <NfeProductInputs value={editingProduct.fiscal} onChange={patch => setEditingProduct(current =>
+                    current ? { ...current, fiscal: { ...current.fiscal, ...patch } } : current)} />
                 </section>
                 <div className="md:col-span-2 pt-8 flex justify-end gap-4">
                   <button type="button" onClick={requestCloseProductEditor} disabled={isSaving || isUploadingCatalogImages} className="px-8 py-3 rounded-full font-bold text-sm text-gray-500 hover:text-white disabled:opacity-50">Cancelar</button>
@@ -2506,7 +2515,7 @@ function formatAdminDate(value: string): string {
 }
 
 function OrderCard({
-  canFulfill, canManageShipments, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
+  canFulfill, canManageShipments, canManageNfe, canRetryEmail, canOpenFiles, operations, onOperationError, onOperationSuccess,
   order,
   handleStatusChange,
   handleOpenArtwork,
@@ -2515,6 +2524,7 @@ function OrderCard({
   order: Order;
   canFulfill: boolean;
   canManageShipments: boolean;
+  canManageNfe: boolean;
   canRetryEmail: boolean;
   operations: OrderOperationsApi;
   onOperationError: (message: string) => void;
@@ -2526,6 +2536,7 @@ function OrderCard({
   key?: string;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [nfeOpen, setNfeOpen] = useState(false);
   const paymentConfirmed = isPaymentConfirmed(order);
   const fulfillment = order.fulfillmentStatus || legacyFulfillmentStatus(order.status, order.paymentStatus);
   const transitionOptions = Array.from(new Set([
@@ -2605,6 +2616,8 @@ function OrderCard({
 
       <OrderDocuments order={order} staff canRetry={canRetryEmail} />
       {(canFulfill || canManageShipments) && <OrderActions order={order} api={operations} canFulfill={canFulfill} canManageShipments={canManageShipments} onError={onOperationError} onSuccess={onOperationSuccess} />}
+      {canManageNfe && <button type="button" onClick={() => setNfeOpen(true)} className="rounded-lg border border-pink-400/40 px-4 py-2 text-sm font-bold text-pink-300">Rascunho de NF-e</button>}
+      {canManageNfe && nfeOpen && <NfeDraftEditor orderId={order.id} onClose={() => setNfeOpen(false)} />}
       {order.tracking && <p className="break-words text-xs text-cyan-300">{order.tracking.code ? `Rastreio: ${order.tracking.code} · ` : ''}{order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>
       {sheetOpen && <OrderProductionSheet canOpenFiles={canOpenFiles} order={order} onClose={() => setSheetOpen(false)} onOpenModel={handleOpenModel} />}

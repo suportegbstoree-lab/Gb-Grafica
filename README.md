@@ -115,6 +115,42 @@ Cadastre as variáveis em Project Settings → Environment Variables. Para produ
 
 O token PagBank e a conta de serviço Firebase são exclusivos do servidor. A IA administrativa chama a Agent Platform Gemini API no backend com OAuth da conta de serviço existente. O navegador envia somente a ação e os textos para `/api/admin/ai/suggestions`, com login e App Check. Os quatro recursos do painel foram preservados. Confira a [ativação da IA administrativa](docs/ia-administrativa-seguranca.md) antes de publicar: são necessárias a API e a permissão IAM da conta de serviço, além do fechamento posterior do acesso direto antigo.
 
+### NF-e de produtos no ADM
+
+Em **Produtos → Catálogo → Editar Produto → Classificação fiscal**, informe
+NCM, CEST (quando aplicável), origem e unidade comercial com a contabilidade.
+Em **Pedidos → Pedidos do site → Rascunho de NF-e**, confira o destinatário,
+endereço, natureza da operação, CFOP, CST/CSOSN e valores da compra. O rascunho
+pode ser salvo mesmo com pendências. A edição exige um pedido pago sem estorno
+ou cancelamento. Administradores podem delegar **Conferir e salvar rascunhos
+de NF-e** junto com **Consultar pedidos e fichas de produção**.
+
+O backend usa os preços do pedido. Os dados fiscais disponíveis no checkout,
+incluindo o CPF do pagador e o rateio do cupom, ficam em uma subcoleção privada
+do pedido. Confirme quem deve constar como destinatário. Pedidos anteriores
+podem exigir preenchimento manual do documento e do rateio.
+
+```dotenv
+# Opcional. Variável de servidor na Vercel.
+NFE_ENV=disabled
+```
+
+`disabled` é o padrão. `homologacao` identifica o ambiente fiscal planejado
+para testar o provedor. Ambos mantêm os rascunhos disponíveis. Neste estágio a
+aplicação ainda não envia NF-e, gera chave, XML ou DANFE.
+
+Para integrar, defina o provedor e confirme com a contabilidade os dados do
+emitente, credenciamento, certificado ou forma de assinatura aceita pelo
+provedor, regime tributário, série e numeração, regras por operação e UF,
+tributos e como discriminar pacotes. As credenciais e demais variáveis serão
+específicas da API contratada e ficarão no servidor. Valide envio com
+referência estável por pedido para evitar duplicidade, consulta de status,
+rejeições, cancelamento e retorno de XML/DANFE em homologação
+antes de ativar produção. Apenas a chave autorizada de produção poderá
+alimentar a etiqueta de postagem em produção.
+
+[Manuais do Portal Nacional da NF-e](https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl%2BiEFdE%3D)
+
 ### Frete pelo Melhor Envio
 
 No painel da conta correspondente ao ambiente, acesse **Integrações → Permissões de Acesso → Gerar novo token** e habilite a cotação de fretes. Use este bloco no `.env` local e preencha os valores. Na Vercel, cadastre as variáveis no ambiente correspondente, com `MELHOR_ENVIO_ENV=production` e o token de produção antes de liberar pagamentos reais com entrega.

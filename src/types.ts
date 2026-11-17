@@ -3,6 +3,7 @@ import type { PrintProfile, ArtworkApproval } from './lib/printProfile';
 import type { DeliveryMethod, FulfillmentStatus, PaymentStatus } from './lib/orderStatus';
 import type { PersonalizationFont, ProductCustomizationType, TextCustomization } from './lib/textCustomization';
 import type { ProductShippingProfile, ShippingOption, ShippingParcel } from './lib/shipping';
+import type { NfeProductFields } from './lib/nfe';
 
 export type { DeliveryMethod, FulfillmentStatus, PaymentStatus, PersonalizationFont, ProductCustomizationType, TextCustomization };
 
@@ -50,6 +51,7 @@ export interface Anuncio {
   printProfile?: PrintProfile;
   shipping?: ProductShippingProfile;
   shippingByCombination?: Record<string, ProductShippingProfile>;
+  fiscal?: NfeProductFields;
 }
 
 export interface CartItem {

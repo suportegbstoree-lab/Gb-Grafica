@@ -22,6 +22,7 @@ export const STAFF_PERMISSIONS = [
   { id: 'orders.read', label: 'Consultar pedidos e fichas de produção' },
   { id: 'orders.artwork', label: 'Consultar e baixar artes dos pedidos' },
   { id: 'orders.fulfillment', label: 'Alterar etapas de produção e envio' },
+  { id: 'fiscal.manage', label: 'Conferir e salvar rascunhos de NF-e' },
   { id: 'shipments.read', label: 'Consultar etiquetas de postagem' },
   { id: 'shipments.manage', label: 'Comprar, emitir, imprimir e cancelar etiquetas de postagem' },
   { id: 'ai.generate', label: 'Usar IA para textos dos produtos' },
@@ -55,6 +56,7 @@ export function isStaffRoleId(value: unknown): value is StaffRoleId { return typ
 export const STAFF_PERMISSION_DEPENDENCIES: Partial<Record<StaffPermission, StaffPermission[]>> = {
   'orders.artwork': ['orders.read'],
   'orders.fulfillment': ['orders.read'],
+  'fiscal.manage': ['orders.read'],
   'shipments.read': ['orders.read'],
   'shipments.manage': ['orders.read', 'shipments.read'],
 };

@@ -141,6 +141,7 @@ import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
 import { shipmentLabelOperation, shipmentLabelView } from './shipmentLabelOperation.js';
+import { NfeDraftError, nfeCheckoutSnapshot, orderNfeDraft } from './nfeDraft.js';
 import type { ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { validateShipmentSender } from './melhorEnvioShipment.js';
 import { processMelhorEnvioTracking, syncMelhorEnvioTracking } from './melhorEnvioTracking.js';
@@ -1935,16 +1936,18 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			observacoes: textValue(body.observacoes, 1000),
 			legalAcceptance,
 		};
+    const fiscalCheckout = nfeCheckoutSnapshot(orderData.itens, cpf, pagbank.environment, selection?.discounts ?? [], normalizedCart.shippingProducts);
 		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '',
       selection ? async tx => {
         const current = await selectCoupon(db, firebaseUser, lines, body.couponCode, tx, shipping.amountCents);
         if (!current || current.coupon.revision !== selection.coupon.revision ||
           current.applied.code !== coupon?.code || current.applied.discountCents !== coupon?.discountCents ||
-          current.applied.shippingDiscountCents !== coupon?.shippingDiscountCents) {
+          current.applied.shippingDiscountCents !== coupon?.shippingDiscountCents ||
+          current.discounts.some((amount, index) => amount !== selection.discounts[index])) {
           throw couponChanged();
         }
         reserveCoupon(db, tx, orderId, current, checkoutExpiresAt);
-      } : undefined);
+      } : undefined, fiscalCheckout);
 		orderCreated = true;
 		await Promise.allSettled([sendOrderEmail(db, `${orderId}-customer`), sendOrderEmail(db, `${orderId}-merchant`)]);
 
@@ -2545,6 +2548,24 @@ app.post('/api/admin/orders/:orderId/shipment-label', requireAppCheck, async (re
 
 app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (req, res) => {
   try { await performOrderOperation(req, res, true); } catch (error) { sendError(res, error); }
+});
+
+app.all('/api/admin/orders/:orderId/nfe-draft', requireAppCheck, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.set('Allow', 'GET, POST').status(405).end();
+    return;
+  }
+  try {
+    const user = await requirePermissionUser(req, 'fiscal.manage');
+    const { db } = getAdminServices();
+    enforceRateLimit('nfe-draft:' + user.uid, 30, 60_000);
+    await enforceDistributedRateLimit(db, 'nfe-draft:' + user.uid, 60, 60_000);
+    const change = req.method === 'POST' ? req.body ?? null : undefined;
+    res.json(await orderNfeDraft(db, req.params.orderId as string, user.uid, change));
+  } catch (error) {
+    sendError(res, error instanceof NfeDraftError ? new HttpError(error.status, error.message) : error);
+  }
 });
 
 app.post('/api/admin/orders/:orderId/shipment-tracking', requireAppCheck, async (req, res) => {

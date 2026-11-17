@@ -43,6 +43,7 @@ let copies: Array<{ path: string; generation: number | undefined }> = [];
 function ref(path: string) {
   return {
     path,
+    collection: (name: string) => ({ doc: (id: string) => ref(`${path}/${name}/${id}`) }),
     async get() { const value = docs.get(path); return { exists: value !== undefined, data: () => value }; },
     async set(value: Record<string, unknown>) { docs.set(path, { ...docs.get(path), ...value }); },
     async create(value: Record<string, unknown>) {
@@ -533,6 +534,10 @@ test('coupon quote skips artwork validation and checkout reserves one use with t
   assert.equal(order.itens[0].sku, 'AGENDA-FL1-NOME');
   assert.equal(order.cupom.code, salesCouponCode);
   assert.equal(order.cupom.discountCents, 301);
+  assert.equal(order.payerCpf, undefined);
+  const fiscal = docs.get(`orders/${order.id}/fiscal/checkout`);
+  assert.equal(fiscal?.payerCpf, '52998224725');
+  assert.deepEqual(fiscal?.couponByItem, [301]);
   assert.equal(docs.get('_salesCoupons/' + salesCouponCode)?.used, 1);
   assert.equal(docs.get('_salesCouponHolds/' + order.id)?.providerAttempted, true);
 });

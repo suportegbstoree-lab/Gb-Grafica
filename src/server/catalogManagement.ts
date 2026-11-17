@@ -100,6 +100,11 @@ export function createCatalogManagementRouter(deps: { services: () => Services; 
           next.defaultShippingProfile = (result.value as SiteConfig).defaultShippingProfile;
         }
         if (collection === 'anuncios') {
+          if (keys.includes('fiscal')) {
+            const fiscal = (result.value as Omit<Anuncio, 'id'>).fiscal;
+            if (fiscal) next.fiscal = fiscal;
+            else delete next.fiscal;
+          }
           if (next.pacote) {
             const parsed = parseBundle(next.pacote)!; const previous = parseBundle(old?.pacote);
             const same = previous && isDeepStrictEqual({ ...parsed, revision: '' }, { ...previous, revision: '' });

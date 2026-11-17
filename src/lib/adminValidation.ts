@@ -8,6 +8,7 @@ import { parseStoreContacts, parseStoreBenefits } from './storePresentation.js';
 import type { Anuncio, Category, ProductAttribute, Promocao, SiteConfig } from '../types.js';
 import { isHttpUrl, isValidBrazilianPhone, parseMoneyToCents, slugifyDocumentId } from './commerce.js';
 import { parseShippingProfile, type ProductShippingProfile } from './shipping.js';
+import { parseNfeProductFields } from './nfe.js';
 import {
   isProductCustomizationType,
   normalizePersonalizationFonts,
@@ -245,6 +246,8 @@ export function validateProductDraft(
   if (printProfile === null) return { ok: false, message: 'Revise o formato de impressão: medidas, sangria, margem segura e resolução devem ser válidas.' };
 
   const shipping = draft.shipping === undefined ? undefined : parseShippingProfile(draft.shipping);
+  const fiscal = draft.fiscal === undefined ? undefined : parseNfeProductFields(draft.fiscal);
+  if (fiscal === null) return { ok: false, message: 'Revise NCM, CEST, origem e unidade comercial do produto.' };
   const shippingByCombination: Record<string, ProductShippingProfile> = {};
   if (shipping === null) return { ok: false, message: 'Revise o peso e a embalagem: máximo de 30 kg por volume, 100 cm por lado e soma de até 200 cm.' };
   for (const key of combinationKeys) {
@@ -258,6 +261,7 @@ export function validateProductDraft(
     ok: true,
     value: {
       ...(bundle ? { pacote: bundle } : {}),
+      ...(fiscal && Object.keys(fiscal).length ? { fiscal } : {}),
       ...(draft.tags !== undefined ? { tags: [...new Set(draft.tags.map(tag => tag.trim()).filter(Boolean))] } : {}),
       ...(draft.lancamento !== undefined ? { lancamento: draft.lancamento } : {}),
       ...(draft.destaque !== undefined ? { destaque: draft.destaque === true } : {}),

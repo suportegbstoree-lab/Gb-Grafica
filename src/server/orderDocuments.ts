@@ -4,6 +4,7 @@ import type { Order } from "../types.js";
 import { createOrderLabel } from "./productionLabel.js";
 import { resendEmailContent } from "./resendEmailTemplates.js";
 import { orderReceiptEmailMessage } from "./emailMessages.js";
+import type { nfeCheckoutSnapshot } from "./nfeDraft.js";
 
 const email = (value: unknown): string =>
   typeof value === "string" &&
@@ -17,6 +18,7 @@ export async function createOrderWithDocuments(
   order: Order,
   merchantEmail: string,
   reserve?: (transaction: Transaction) => Promise<void>,
+  fiscalCheckout?: ReturnType<typeof nfeCheckoutSnapshot>,
 ) {
   const bytes = Buffer.from(await createOrderLabel(id, order));
   if (bytes.length > 750_000)
@@ -24,10 +26,12 @@ export async function createOrderWithDocuments(
   const now = Date.now();
   await db.runTransaction(async (transaction) => {
     await reserve?.(transaction);
-    transaction.create(db.collection("orders").doc(id), {
+    const orderRef = db.collection("orders").doc(id);
+    transaction.create(orderRef, {
       ...order,
       etiquetaCriada: true,
     });
+    if (fiscalCheckout) transaction.create(orderRef.collection("fiscal").doc("checkout"), fiscalCheckout);
     transaction.create(db.collection("_orderDocuments").doc(id), {
       pdf: bytes,
       createdAt: new Date(now).toISOString(),
