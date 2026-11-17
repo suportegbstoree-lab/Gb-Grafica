@@ -1,6 +1,7 @@
+import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import { staffBarcodeCanvas } from "./staffPdfBarcode";
 import { staffBarcodeBoxes } from "../lib/staffPdfBarcode";
-import { PDFDocument, degrees } from "pdf-lib";
+import { PDFDocument, degrees, rgb, StandardFonts, type PDFPage } from "pdf-lib";
 import {
   DEFAULT_PDF_TEXT_EFFECTS,
   staffPdfFont,
@@ -71,7 +72,7 @@ function drawFormattedLine(
   const widthOf = (text: string) =>
     context.measureText(text).width +
     Math.max(0, glyphs(text).length - 1) * gap;
-  const dynamic = line.kind === "extra";
+  const dynamic = line.kind === "extra" && !line.fitBox;
   const blurMargin = Math.max(
     effects.glow ? effects.glow.intensity * 2 : 0,
     effects.shadow
@@ -254,7 +255,7 @@ export function drawStaffPdfText(
     const box = line[orientation],
       font = staffPdfFont(line.fontId, fonts)!;
     context.save();
-    if (line.kind === "extra") {
+    if (line.kind === "extra" && !line.fitBox) {
       boxes.set(
         line.id,
         drawFormattedLine(
@@ -369,6 +370,32 @@ function textOverlayRegion(
       return { x: left, y: top, width: right - left, height: bottom - top };
   }
   return { x: 0, y: 0, width, height };
+}
+
+export async function drawStaffPdfCompoundMarker(
+  pdf: PDFDocument, page: PDFPage, barcode: string, marker: StaffPdfCompoundMarker,
+) {
+  const text = `pedido composto ${barcode}`;
+  const font = await pdf.embedFont(marker.font === "courier" ? StandardFonts.Courier : StandardFonts.Helvetica);
+  const crop = page.getCropBox();
+  const { width, height } = crop;
+  const vertical = marker.angle === 90 || marker.angle === 270;
+  const available = (vertical ? height : width) - 4;
+  const size = Math.min(marker.size, available / font.widthOfTextAtSize(text, 1));
+  if (size <= 0) return;
+  const halfWidth = font.widthOfTextAtSize(text, size) / 2;
+  const halfHeight = font.heightAtSize(size, { descender: false }) / 2;
+  const limit = (center: number, extent: number, boundary: number) =>
+    Math.max(extent + 2, Math.min(boundary - extent - 2, center));
+  const cx = limit(width * marker.x / 100, vertical ? halfHeight : halfWidth, width);
+  const cy = limit(height * (1 - marker.y / 100), vertical ? halfWidth : halfHeight, height);
+  const [cos, sin] = [[1, 0], [0, -1], [-1, 0], [0, 1]][marker.angle / 90];
+  const [red, green, blue] = [1, 3, 5].map(offset => Number.parseInt(marker.color.slice(offset, offset + 2), 16) / 255);
+  page.drawText(text, {
+    x: crop.x + cx - cos * halfWidth + sin * halfHeight,
+    y: crop.y + cy - sin * halfWidth - cos * halfHeight,
+    size, font, color: rgb(red, green, blue), rotate: degrees(-marker.angle),
+  });
 }
 
 export async function exportStaffPdf(
@@ -512,6 +539,8 @@ export async function exportStaffPdf(
           job.barcodeSize,
         ))
           sheet.drawImage(barcode, box);
+      if (index === 0 && job.compoundMarker && job.barcode)
+        await drawStaffPdfCompoundMarker(pdf, sheet, job.barcode, job.compoundMarker);
     }
     return new Blob([new Uint8Array(await pdf.save())], {
       type: "application/pdf",

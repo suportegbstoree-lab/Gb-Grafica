@@ -37,7 +37,7 @@ export function StaffPdfTextPopover({
       const above = rect.top - gap - edge;
       const opensAbove = panel.scrollHeight > below && above > below;
       panel.style.maxHeight = `${Math.max(0, opensAbove ? above : below)}px`;
-      panel.style.top = `${opensAbove ? rect.top - gap - panel.offsetHeight : rect.bottom + gap}px`;
+      panel.style.top = `${Math.max(edge, Math.min(opensAbove ? rect.top - gap - panel.offsetHeight : rect.bottom + gap, window.innerHeight - edge - panel.offsetHeight))}px`;
       panel.style.left = `${Math.max(edge, Math.min(rect.left, window.innerWidth - edge - panel.offsetWidth))}px`;
       panel.style.visibility = "visible";
     };
@@ -141,6 +141,23 @@ export function StaffPdfTextSelect({
   );
 }
 
+const colorByte = (value: number) => Math.round(value).toString(16).padStart(2, "0");
+const clampColor = (value: number) => Math.max(0, Math.min(1, value));
+function hsvHex(hue: number, saturation: number, brightness: number) {
+  return "#" + [5, 3, 1].map(offset => {
+    const k = (offset + hue / 60) % 6;
+    return colorByte(255 * brightness * (1 - saturation * Math.max(0, Math.min(k, 4 - k, 1))));
+  }).join("");
+}
+function colorChannels(value: string) {
+  return [1, 3, 5].map(offset => Number.parseInt(value.slice(offset, offset + 2), 16) || 0);
+}
+function colorCoordinates([red, green, blue]: number[]) {
+  const max = Math.max(red, green, blue), min = Math.min(red, green, blue), span = max - min;
+  const sector = span === 0 ? 0 : max === red ? (green - blue) / span : max === green ? 2 + (blue - red) / span : 4 + (red - green) / span;
+  return { hue: (sector * 60 + 360) % 360, saturation: max ? span / max : 0, brightness: max / 255 };
+}
+
 const colors = ["#000000", "#ffffff", "#64748b", "#1d5f94", "#ec4899", "#e11d48", "#eab308", "#22c55e"];
 
 export function StaffPdfTextColor({
@@ -152,21 +169,67 @@ export function StaffPdfTextColor({
   disabled?: boolean;
 }) {
   const [draft, setDraft] = React.useState<string>();
+  const [preferredHue, setPreferredHue] = React.useState(0);
+  const rgb = colorChannels(value);
+  const { hue: actualHue, saturation, brightness } = colorCoordinates(rgb);
+  const hue = saturation ? actualHue : preferredHue;
+  function selectColor(event: React.PointerEvent<HTMLDivElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const nextSaturation = clampColor((event.clientX - rect.left) / rect.width);
+    const nextBrightness = 1 - clampColor((event.clientY - rect.top) / rect.height);
+    onChange(hsvHex(hue, nextSaturation, nextBrightness));
+  }
   return (
     <StaffPdfTextPopover label={label} className="border border-[#49576a] !bg-[#191f2a] hover:!bg-[#344255]"
-      disabled={disabled} panelClass="w-44" focusOnOpen="input"
+      disabled={disabled} panelClass="w-64 max-w-[calc(100vw-16px)]" focusOnOpen="[data-hex]"
       trigger={<span className="h-4 w-5 rounded-sm border border-white/20" style={{ backgroundColor: value }} />}>
       {(close) => (
-        <div className="grid gap-2">
-          <label className="grid gap-1">
+        <div className="grid min-w-0 gap-2">
+          <div role="group" aria-label="Área de seleção da cor"
+            className="relative h-28 w-full touch-none cursor-crosshair rounded border border-white/25"
+            style={{ backgroundImage: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hue} 100% 50%))` }}
+            onPointerDown={event => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              selectColor(event);
+            }}
+            onPointerMove={event => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) selectColor(event);
+            }}>
+            <span className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_2px_#000]"
+              style={{ left: `${100 * saturation}%`, top: `${100 * (1 - brightness)}%` }} />
+          </div>
+          <label className="grid gap-1">Matiz
+            <input aria-label="Matiz" className="w-full" type="range" min={0} max={359} value={hue}
+              style={{ accentColor: `hsl(${hue} 100% 50%)` }}
+              onChange={event => {
+                const next = event.target.valueAsNumber;
+                setPreferredHue(next);
+                onChange(hsvHex(next, saturation || 1, brightness || 1));
+              }} />
+          </label>
+          <label className="grid min-w-0 gap-1">
             {label} (HEX)
-            <input type="text" autoComplete="off" spellCheck={false} maxLength={7} className={textField}
+            <input data-hex type="text" autoComplete="off" spellCheck={false} maxLength={7} className={`${textField} min-w-0 w-full`}
               value={draft ?? value} onChange={(event) => {
                 const next = event.target.value;
                 setDraft(next);
                 if (/^#[a-f0-9]{6}$/i.test(next)) onChange(next.toLowerCase());
               }} onBlur={() => setDraft(undefined)} />
           </label>
+          <div className="grid grid-cols-3 gap-1.5">
+            {["R", "G", "B"].map((channel, index) => (
+              <label key={channel} className="grid min-w-0 gap-1">
+                {channel}
+                <input type="number" aria-label={`${label} (${channel})`} min={0} max={255}
+                  className={`${textField} w-full min-w-0`} value={rgb[index]}
+                  onChange={event => {
+                    const next = event.target.valueAsNumber;
+                    if (!Number.isInteger(next) || next < 0 || next > 255) return;
+                    onChange("#" + rgb.map((value, i) => colorByte(i === index ? next : value)).join(""));
+                  }} />
+              </label>
+            ))}
+          </div>
           <div className="grid grid-cols-4 gap-1.5">
             {colors.map((color) => (
               <button key={color} type="button" aria-label={`Usar ${color}`} title={color}

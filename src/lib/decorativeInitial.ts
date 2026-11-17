@@ -116,7 +116,7 @@ export function isFolderMetadata(file: File): boolean {
     part.startsWith('.') || /^(?:__macosx|thumbs\.db|desktop\.ini)$/i.test(part));
 }
 
-export function readAlphabetFiles(files: File[], modelName: string): { folderName: string; letters: Array<{ letter: string; file: File }> } {
+export function readAlphabetFiles(files: File[], model: string | readonly string[]): { folderName: string; letters: Array<{ letter: string; file: File }> } {
   const images = files.filter(file => !isFolderMetadata(file));
   if (!images.length) throw new Error('Selecione uma pasta com imagens de letras, como A.png e É.png.');
   if (images.length > MAX_ALPHABET_LETTERS) throw new Error(`A pasta pode conter até ${MAX_ALPHABET_LETTERS} letras PNG.`);
@@ -124,7 +124,9 @@ export function readAlphabetFiles(files: File[], modelName: string): { folderNam
     throw new Error('Selecione a pasta inteira pelo botão de importar letras.');
   const folder = images[0].webkitRelativePath.split('/').slice(0, -1);
   const folderName = folder.at(-1);
-  if (!folderName || !matchingAlphabetName(modelName, folderName)) throw new Error(`A pasta “${folderName || ''}” não corresponde a “${modelName}”. Selecione a pasta “${alphabetFolderName(modelName)}”.`);
+  const names = typeof model === "string" ? [model] : model;
+  const modelName = names[0];
+  if (!folderName || !names.some(name => matchingAlphabetName(name, folderName))) throw new Error(`A pasta “${folderName || ''}” não corresponde a “${modelName}”. Selecione a pasta “${alphabetFolderName(modelName)}”.`);
   const letters: Array<{ letter: string; file: File }> = [], used = new Set<string>();
   for (const file of images) {
     const parts = file.webkitRelativePath.split('/');

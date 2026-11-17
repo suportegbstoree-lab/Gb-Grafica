@@ -42,7 +42,7 @@ export function planStaffPdfAlphabetImport(
     rows.push(row);
     const folderName = path.split("/").at(-1)!;
     const matched = layouts
-      .filter((mold) => matchingAlphabetName(mold.name, folderName))
+      .filter(mold => [mold.name, ...(mold.previousNames ?? [])].some(name => matchingAlphabetName(name, folderName)))
       .map((mold) => ({ mold, base: baseForPdfLayout(mold, bases) }));
     const targets = new Map<string, StaffPdfBase>();
     for (const { base } of matched)
@@ -66,7 +66,7 @@ export function planStaffPdfAlphabetImport(
     const base = [...targets.values()][0];
     const mold = matched.find((match) => match.base?.id === base.id)?.mold;
     try {
-      readAlphabetFiles(group, mold?.name ?? staffPdfSourceName(base));
+      readAlphabetFiles(group, mold ? [mold.name, ...(mold.previousNames ?? [])] : staffPdfSourceName(base));
       row.base = base;
       row.mold = mold;
       targetCounts.set(base.id, (targetCounts.get(base.id) ?? 0) + 1);

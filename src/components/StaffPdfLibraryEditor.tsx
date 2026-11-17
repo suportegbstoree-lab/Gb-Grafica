@@ -11,6 +11,7 @@ import {
   DEFAULT_DECORATIVE_INITIAL_PERCENT,
 } from "../lib/decorativeInitial";
 import StaffPdfPreview from "./StaffPdfPreview";
+import StaffPdfCompoundMarkerEditor from "./StaffPdfCompoundMarkerEditor";
 import StaffPdfTextEditor from "./StaffPdfTextEditor";
 import { useStaffPdfInitial } from "./useStaffPdfInitial";
 import {
@@ -52,6 +53,7 @@ export default function StaffPdfLibraryEditor({
   fonts: PersonalizationFont[];
   reload: () => Promise<void>;
 }) {
+  const [markerEditor, setMarkerEditor] = React.useState(false);
   const [operationBusy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
@@ -199,16 +201,17 @@ export default function StaffPdfLibraryEditor({
       },
     }));
   }
-  function changePreviewBox(id: string, orientation: PdfTextLayout, update: { x: number; y: number } | { width: number; height: number }) {
+  function changePreviewBox(id: string, orientation: PdfTextLayout, update: { x: number; y: number; width?: number; height?: number }) {
     if (id === "sample") {
-      const geometry = "x" in update ? { pos_x: update.x, pos_y: update.y }
-        : { max_width_pixels: update.width, max_height_pixels: update.height };
+      const geometry = { pos_x: update.x, pos_y: update.y, ...(
+        update.width === undefined ? {} : { max_width_pixels: update.width, max_height_pixels: update.height }
+      ) };
       patch(orientation === "portrait" ? geometry : Object.fromEntries(
         Object.entries(geometry).map(([key, value]) => [`${key}_landscape`, value]),
       ) as Partial<StaffPdfLayout>);
     } else {
       const line = editing?.layout.extra_lines?.find((line) => line.id === id);
-      if (line) changeExtra(id, { [orientation]: { ...line[orientation], ...update } });
+      if (line) changeExtra(id, { [orientation]: { ...line[orientation], ...update }, ...(update.width !== undefined ? { fitBox: true } : {}) });
     }
   }
   const extraLines = editing?.layout.extra_lines ?? [];
@@ -550,6 +553,16 @@ export default function StaffPdfLibraryEditor({
           {message}
         </p>
       )}
+      <section className="rounded-xl border border-gray-700 p-4">
+        <button type="button" className="rounded-lg border border-gray-700 px-4 py-2" disabled={busy}
+          onClick={() => setMarkerEditor(true)}>Identificador visual</button>
+      </section>
+      {markerEditor && <StaffPdfCompoundMarkerEditor value={data.compoundMarker}
+        onClose={() => setMarkerEditor(false)} onSave={async value => {
+          await api.saveCompoundMarker(value);
+          await reload();
+          setMessage("Identificador visual atualizado.");
+        }} />}
       {editing && (
         <EditorModal
           wide
@@ -566,7 +579,6 @@ export default function StaffPdfLibraryEditor({
                 Nome do molde
                 <input
                   aria-label="Nome do molde"
-                  disabled={Boolean(editing.id)}
                   value={editing.name}
                   onChange={(e) =>
                     setEditing((old) => ({ ...old!, name: e.target.value }))
@@ -579,83 +591,6 @@ export default function StaffPdfLibraryEditor({
                 escolhidas ficam associadas a ele.
               </p>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label>
-                  Fonte padrão
-                  <select
-                    aria-label="Fonte padrão do molde"
-                    value={editing.layout.font_name}
-                    onChange={(e) => patch({ font_name: e.target.value })}
-                    className={input}
-                  >
-                    <option value="">Definir durante a edição</option>
-                    {editing.layout.font_name &&
-                      !fonts.some(
-                        (f) => f.nome === editing.layout.font_name,
-                      ) && (
-                        <option value={editing.layout.font_name}>
-                          {editing.layout.font_name} · conferir cadastro
-                        </option>
-                      )}
-                    {fonts
-                      .filter((f) => f.ativo)
-                      .map((f) => (
-                        <option key={f.id} value={f.nome}>
-                          {f.nome}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Tamanho padrão (px)
-                  <input
-                    type="number"
-                    min={1}
-                    max={4000}
-                    value={editing.layout.font_size}
-                    onChange={(e) =>
-                      patch({ font_size: Number(e.target.value) })
-                    }
-                    className={input}
-                  />
-                </label>
-                <label>
-                  Cor padrão
-                  <input
-                    type="color"
-                    value={editing.layout.color}
-                    onChange={(e) => patch({ color: e.target.value })}
-                    className={`${input} h-10`}
-                  />
-                </label>
-                <label>
-                  Alinhamento
-                  <select
-                    value={editing.layout.align}
-                    onChange={(e) =>
-                      patch({
-                        align: e.target.value as StaffPdfLayout["align"],
-                      })
-                    }
-                    className={input}
-                  >
-                    <option value="left">Esquerda</option>
-                    <option value="center">Centro</option>
-                    <option value="right">Direita</option>
-                  </select>
-                </label>
-                <label>
-                  Rotação do texto
-                  <input
-                    type="number"
-                    min={-180}
-                    max={180}
-                    value={editing.layout.text_rotation}
-                    onChange={(e) =>
-                      patch({ text_rotation: Number(e.target.value) })
-                    }
-                    className={input}
-                  />
-                </label>
                 <label>
                   Margem de ajuste (0 a 0,5)
                   <input
@@ -743,7 +678,7 @@ export default function StaffPdfLibraryEditor({
                   disabled={busy || extraLines.length + 1 >= STAFF_PDF_MAX_LINES}
                   onClick={() => {
                     const { text, kind, ...line } = newPdfLine(editing.layout, fonts, extraLines.length + 1);
-                    patch({ extra_lines: [...extraLines, line] });
+                    patch({ extra_lines: [...extraLines, { ...line, fitBox: true }] });
                     setPreviewSelection(line.id);
                   }}>
                   Adicionar linha de texto extra
@@ -857,6 +792,7 @@ export default function StaffPdfLibraryEditor({
                       editing.name,
                       layout,
                       editing.revision,
+                      editing.id,
                     );
                     await reload();
                     setEditing(null);
@@ -873,14 +809,18 @@ export default function StaffPdfLibraryEditor({
                   {initialError}
                 </p>
               )}
-              {extraLines.length > 0 && (
+              {previewLines.length > 0 && (
                 <StaffPdfTextEditor lines={previewLines} selected={previewSelection} fonts={fonts}
-                  disabled={busy} allowTextEditing={false} onSelect={setPreviewSelection}
+                  disabled={busy} editMainStyle allowTextEditing={false} onSelect={setPreviewSelection}
                   onChange={(id, update) => {
                     if (id !== "sample") changeExtra(id, update);
                     else patch({
                       ...(update.fontId !== undefined ? { font_name: update.fontId === STAFF_PDF_SYSTEM_FONT.id ? "" : update.fontId } : {}),
                       ...(update.fontSize !== undefined ? { font_size: update.fontSize } : {}),
+                      ...(update.align !== undefined ? { align: update.align } : {}),
+                      ...(update.color !== undefined ? { color: update.color } : {}),
+                      ...(update.rotation !== undefined ? { text_rotation: update.rotation } : {}),
+                      ...(update.effects !== undefined ? { main_effects: update.effects } : {}),
                     });
                   }}
                 />
@@ -896,7 +836,7 @@ export default function StaffPdfLibraryEditor({
                   onSelect={setPreviewSelection}
                   fitMargin={editing.layout.fit_margin}
                   onMove={(id, x, y, orientation) => changePreviewBox(id, orientation, { x, y })}
-                  onResize={(id, width, height, orientation) => changePreviewBox(id, orientation, { width, height })}
+                  onResize={(id, width, height, orientation, origin) => changePreviewBox(id, orientation, { ...origin, width, height })}
                 />
               ) : (
                 <p className="grid min-h-56 place-items-center rounded-xl bg-gray-950 p-3 text-sm text-gray-400">

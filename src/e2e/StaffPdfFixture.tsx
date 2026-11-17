@@ -1,3 +1,4 @@
+import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import React from "react";
 import { PDFDocument, rgb } from "pdf-lib";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
@@ -76,6 +77,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
     const files = new Map<string, Blob>(),
       alphabets = new Map<string, Record<string, File>>(),
       saved = new Map<string, StaffDocumentView>();
+    let compoundMarker: StaffPdfCompoundMarker | undefined;
     let barcodeDefault: StaffBarcodeSize | undefined;
     const value: StaffPdfApi = {
       list: async () => ({
@@ -83,7 +85,9 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
         layouts: structuredClone(layouts),
         truncated: false,
         barcodeDefault,
+        compoundMarker,
       }),
+      saveCompoundMarker: async (value) => { compoundMarker = value; },
       saveBarcodeDefault: async (size) => {
         barcodeDefault = { ...size };
         return barcodeDefault;
@@ -129,7 +133,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
         const { id } = target;
         const { folderName, letters } = readAlphabetFiles(
           files,
-          mold?.name ?? staffPdfSourceName(target),
+          mold ? [mold.name, staffPdfSourceName(target), ...(mold.previousNames ?? [])] : staffPdfSourceName(target),
         );
         progress?.(0, letters.length);
         alphabets.set(
@@ -174,13 +178,15 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
       deleteBase: async (id) => {
         bases = bases.filter((b) => b.id !== id);
       },
-      saveLayout: async (name, layout, revision) => {
-        const old = layouts.find((t) => t.name === name);
+      saveLayout: async (name, layout, revision, id) => {
+        const old = layouts.find((t) => id ? t.id === id : t.name === name);
+        if (layouts.some(t => t.name === name && t.id !== old?.id)) throw new Error("Já existe um molde com este nome.");
         if (old && old.revision !== revision) throw new Error("Molde mudou.");
-        layouts = layouts.filter((t) => t.name !== name);
+        layouts = layouts.filter((t) => t.id !== old?.id);
         layouts.push({
           id: old?.id || crypto.randomUUID().replaceAll("-", ""),
           name,
+          ...(old?.name !== name && old?.name ? { previousNames: [...(old.previousNames ?? []), old.name] } : {}),
           layout: normalizePdfLayout(layout),
           revision: crypto.randomUUID().replaceAll("-", ""),
         });

@@ -42,7 +42,7 @@ import { isAdminImagePath, isAdminFontPath } from '../lib/adminAsset.js';
 import { isCatalogImagePath } from '../lib/catalogImage.js';
 import type { AdminAccessRecord } from '../lib/adminAccess.js';
 import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
-import { createStaffBackend, assignStaffRole, updateStaffRole, deleteStaffRole, userStaffPermissions, StaffAccessError } from './staffAccess.js';
+import { createStaffBackend, assignStaffRole, updateStaffRole, deleteStaffRole, removeStaffMember, staffAccountIsAdministrator, userStaffPermissions, StaffAccessError } from './staffAccess.js';
 import { grantAdminAccess, revokeAdminAccess, createAdminAccessBackend } from './adminAccess.js';
 import { queueStaffEmail, sendStaffEmail, staffEmailConfigured } from './staffEmail.js';
 import { STAFF_ACCESS_COLLECTION, STAFF_ROLES_COLLECTION, STAFF_ROLE_LABELS, DEFAULT_ROLE_PERMISSIONS, isStaffRoleId, validStaffRole, validStaffAccess, type StaffPermission, type StaffRoleId, type AssignedRole } from '../lib/staffAccess.js';
@@ -2217,19 +2217,38 @@ app.get('/api/admin/staff', requireAppCheck, async (req, res) => {
       if (data && !validStaffRole(data)) throw new HttpError(409, 'Configuração de cargo inválida.');
       return { id, configured: Boolean(data), ...(data || { schemaVersion: 1, enabled: true, revision: '', name: STAFF_ROLE_LABELS[id], permissions: DEFAULT_ROLE_PERMISSIONS[id], updatedAt: '', updatedBy: '' }) };
     });
+    const staffCollection = db.collection(STAFF_ACCESS_COLLECTION);
+    const visibleStaff = async () => {
+      const records: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+      let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+      while (records.length < 201) {
+        let query = staffCollection.orderBy('__name__').limit(201);
+        if (cursor) query = query.startAfter(cursor);
+        const page = await query.get();
+        records.push(...page.docs.filter(doc => validStaffAccess(doc.data()) && !doc.data().removed));
+        if (page.size < 201) break;
+        cursor = page.docs.at(-1);
+      }
+      return records.slice(0, 201);
+    };
     const [staff, administrators] = await Promise.all([
-      db.collection(STAFF_ACCESS_COLLECTION).limit(201).get(), db.collection(ADMIN_ACCESS_COLLECTION).limit(201).get(),
+      visibleStaff(), db.collection(ADMIN_ACCESS_COLLECTION).limit(201).get(),
     ]);
     const active = new Map<string, AssignedRole>();
-    for (const doc of staff.docs) { const data = doc.data(); if (validStaffAccess(data) && data.enabled) active.set(doc.id, roleMap.get(data.roleId)?.deleted || roleMap.get(data.roleId)?.deletionPending ? 'none' : data.roleId); }
-    for (const doc of administrators.docs) if (doc.data().enabled === true) active.set(doc.id, 'administrator');
-    const ids = [...active.keys()].slice(0, 200);
+    for (const doc of staff) { const data = doc.data(); if (validStaffAccess(data) && !data.removed) active.set(doc.id, data.enabled && roleMap.get(data.roleId)?.enabled === true ? data.roleId : 'none'); }
+    const adminRecords = new Map(administrators.docs.filter(doc => doc.data().enabled === true).map(doc => [doc.id, doc.data()]));
+    const ids = [...new Set([...active.keys(), ...adminRecords.keys()])].slice(0, 200);
     const accounts = (await Promise.all([ids.slice(0, 100), ids.slice(100)].filter(batch => batch.length).map(batch => auth.getUsers(batch.map(uid => ({ uid })))))).flatMap(batch => batch.users);
     const profiles = await Promise.all(accounts.map(account => db.collection('_staffProfiles').doc(account.uid).get()));
-    const members = accounts.map((account, index) => ({ uid: account.uid, email: account.email || account.uid, name: profiles[index].data()?.name || account.displayName || '', role: active.get(account.uid)!, enabled: !account.disabled }));
+    const members = (await Promise.all(accounts.map(async (account, index) => {
+      const authorization = adminRecords.get(account.uid);
+      const legacyRole = authorization?.epoch === 'legacy' && (await db.collection('users').doc(account.uid).get()).data()?.role;
+      const role = staffAccountIsAdministrator(account, authorization, legacyRole) ? 'administrator' : active.get(account.uid);
+      return role ? { uid: account.uid, email: account.email || account.uid, name: profiles[index].data()?.name || account.displayName || '', role, enabled: !account.disabled } : null;
+    }))).filter(Boolean);
     const pending = await db.collection('_staffNotifications').where('status', '==', 'pending').limit(30).get();
     const notifications = pending.docs.map(doc => ({ id: doc.id, email: textValue(doc.data().email, 254), createdAt: textValue(doc.data().createdAt, 40) }));
-    res.json({ roles, members, notifications, emailConfigured: staffEmailConfigured(), truncated: staff.size > 200 || administrators.size > 200 || active.size > 200 });
+    res.json({ roles, members, notifications, emailConfigured: staffEmailConfigured(), truncated: staff.length > 200 || administrators.size > 200 || active.size > 200 });
   } catch (error) { sendStaffError(res, error); }
 });
 
@@ -2289,6 +2308,17 @@ app.post('/api/admin/staff/assign', requireAppCheck, async (req, res) => {
       catch { notification = { status: 'pending' }; logEvent('error', 'staff_notification_queue_failed', { request_id: responseRequestId(res), uid: target.uid }); }
     }
     res.json({ changed, uid: target.uid, email: target.email, role, notification });
+  } catch (error) { sendStaffError(res, error); }
+});
+
+app.post('/api/admin/staff/members/:uid/delete', requireAppCheck, async (req, res) => {
+  try {
+    const actor = await requireAdminUser(req), { db } = getAdminServices(), uid = req.params.uid;
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) throw new HttpError(422, 'Funcionário inválido.');
+    enforceRateLimit(`staff-delete-member:${actor.uid}`, 12, 60_000);
+    await enforceDistributedRateLimit(db, `staff-delete-member:${actor.uid}`, 30, 60_000);
+    await staffMutation(req, () => removeStaffMember(createStaffBackend(), uid, actor.uid));
+    res.json({ deleted: true });
   } catch (error) { sendStaffError(res, error); }
 });
 

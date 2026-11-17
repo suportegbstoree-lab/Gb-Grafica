@@ -11,6 +11,7 @@ import {
   PDFRawStream,
 } from "pdf-lib";
 import { zipSync, unzipSync, strToU8 } from "fflate";
+import { parseStaffPdfCsv } from "../src/lib/staffPdfCsv";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
 test("renames an uploaded PDF and reopens its existing mold", async ({ page }) => {
@@ -26,7 +27,9 @@ test("renames an uploaded PDF and reopens its existing mold", async ({ page }) =
   const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
   await expect(mold.getByRole("textbox", { name: "Nome do molde" })).toHaveValue("Kit de teste");
   await expect(mold.getByLabel("Base para associar e testar")).toHaveValue("a".repeat(32));
-  await mold.getByRole("button", { name: "Fechar editor de molde" }).click();
+  await mold.getByLabel("Nome do molde").fill("Molde Renomeado");
+  await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
+  await expect(mold).toBeHidden();
   await page.getByRole("button", { name: "Edição e fila", exact: true }).click();
   await page.getByLabel("Base PDF da equipe").selectOption({ label: "Cadernos da equipe.pdf · Sem categoria" });
   await expect(page.getByLabel("Molde PDF da equipe")).toHaveValue("b".repeat(32));
@@ -214,13 +217,13 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     table
       .getByRole("row")
       .filter({ hasText: "002" })
-      .getByRole("button", { name: "Colar nome na linha 3" }),
+      .getByText("Luísa", { exact: true }),
   ).toBeVisible();
   const download = page.waitForEvent("download");
   await table.getByRole("button", { name: "Baixar CSV revisado" }).click();
   const csv = await readFile((await (await download).path())!, "utf8");
   expect(csv).toContain('"001","Kit de teste","Érica da Silva",,"BR2684621549924"');
-  expect(csv).toContain('"002","Kit de teste",,,"BR2684621549925"');
+  expect(csv).toContain('"002","Kit de teste","Luísa",,"BR2684621549925"');
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await order.getByRole("button", { name: "Editar item da fila" }).click();
@@ -245,7 +248,7 @@ test("editing a queued order synchronizes only the mapped name cell and its warn
     "BR2684621549924",
   );
   await expect(
-    table.getByRole("button", { name: "Colar nome na linha 3" }),
+    table.getByText("Luísa", { exact: true }),
   ).toBeVisible();
   await page.evaluate(() =>
     navigator.clipboard.writeText("  TESTE NOME\n"),
@@ -662,7 +665,7 @@ test("the same saved CSV queue can generate a second batch without reloading the
   await expect(page.getByText(/^Lote refeito ·.*1 arquivo/)).toBeVisible();
 });
 
-test("CSV matches model prefixes from af_clean, starts with empty names, and flags unknown models", async ({
+test("CSV matches model prefixes from af_clean, preserves personal names, and flags unknown models", async ({
   page,
 }) => {
   await page.goto("/__e2e/staff-pdf");
@@ -684,7 +687,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   );
   await expect(page.getByLabel("Molde do registro 4")).toHaveValue("b".repeat(32));
   await expect(unknown).toContainText("Confira a base e o molde.");
-  await expect(known).toContainText("Campos em branco: nome.");
+  await expect(known).toContainText("Ana");
   await expect(
     page.getByLabel("Coluna do modelo").locator("option").filter({ hasText: "af_clean" }),
   ).toHaveCount(1);
@@ -694,7 +697,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   const row = review.getByRole("row").filter({ hasText: "00123" });
   await row.getByRole("button", { name: "Editar linha" }).click();
   await expect(row.getByRole("textbox", { name: /af_clean/ })).toHaveValue("Kit de teste COM NOME");
-  await expect(row.getByRole("textbox", { name: "nome, linha 2" })).toHaveValue("");
+  await expect(row.getByRole("textbox", { name: "nome, linha 2" })).toHaveValue("Ana");
   await row.getByRole("textbox", { name: "nome, linha 2" }).fill("ANA");
   await row.getByRole("button", { name: "Salvar linha" }).click();
   const downloading = page.waitForEvent("download");
@@ -702,8 +705,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   const csv = await readFile((await (await downloading).path())!, "utf8");
   expect(csv).toContain('"af_clean","nome"');
   expect(csv).toContain('"Kit de teste COM NOME","Ana"');
-  expect(csv).toContain('"00124","BR263172448223P","Desconhecido",');
-  expect(csv).not.toContain("BIA");
+  expect(csv).toContain('"00124","BR263172448223P","Desconhecido","Bia"');
   await review.getByRole("button", { name: "Fechar", exact: true }).click();
   await page
     .getByRole("button", {
@@ -716,7 +718,7 @@ test("CSV matches model prefixes from af_clean, starts with empty names, and fla
   await expect(page.getByRole("article")).toHaveCount(2);
   await expect(page.getByRole("article").filter({ hasText: "Ana" })).toBeVisible();
   await expect(page.getByRole("article").filter({ hasText: "BR2684621549925" }))
-    .toContainText("Campos em branco no CSV: nome.");
+    .toContainText("Carla");
 });
 
 test("the workshop downloads the stored PDF without rebuilding its recipe", async ({
@@ -900,8 +902,27 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   const mold = page.getByRole("dialog", { name: "Editor de molde PDF" });
   await mold.getByLabel("Nome do molde").fill("Molde Duas Linhas");
   await mold.getByLabel("Base para associar e testar").selectOption("a".repeat(32));
+  const toolbar = mold.getByRole("group", { name: "Formatação do texto" });
+  await expect(toolbar.getByRole("button", { name: "Negrito" })).toBeVisible();
+  await toolbar.getByRole("button", { name: "Cor", exact: true }).click();
+  const picker = toolbar.getByRole("group", { name: "Cor", exact: true });
+  await picker.getByLabel("Cor (R)", { exact: true }).fill("170");
+  await expect(picker.getByLabel("Cor (HEX)")).toHaveValue("#aa0000");
+  const palette = picker.getByRole("group", { name: "Área de seleção da cor" });
+  await palette.click({ position: { x: 80, y: 18 } });
+  await expect(picker.getByLabel("Cor (HEX)")).not.toHaveValue("#aa0000");
+  await page.keyboard.press("Escape");
   await mold.getByRole("button", { name: "Adicionar linha de texto extra" }).click();
-  const toolbar = page.getByRole("group", { name: "Formatação do texto" });
+  const canvas = mold.getByLabel("Prévia do PDF interno");
+  await expect(canvas).toBeVisible();
+  const pixels = await canvas.evaluate((node: HTMLCanvasElement) => ({ x: node.width, y: node.height }));
+  const rectangle = (await canvas.boundingBox())!;
+  const x = rectangle.x + rectangle.width * 2200 / pixels.x;
+  const y = rectangle.y + rectangle.height * 1580 / pixels.y;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - rectangle.width * 300 / pixels.x, y + rectangle.height * 55 / pixels.y, { steps: 5 });
+  await page.mouse.up();
   await toolbar.getByLabel("Tamanho (px)", { exact: true }).fill("87");
   await toolbar.getByRole("button", { name: "Aumentar tamanho" }).click();
   await toolbar.getByRole("button", { name: "Negrito", exact: true }).click();
@@ -916,6 +937,11 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await expect(mold).toBeVisible();
   await expect(toolbar.getByLabel("Texto da linha extra")).toHaveCount(0);
   await mold.getByRole("button", { name: "Salvar molde", exact: true }).click();
+  const exported = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Exportar JSON", exact: true }).click();
+  const molds = JSON.parse(await readFile((await (await exported).path())!, "utf8"));
+  expect(molds["Molde Duas Linhas"].extra_lines[0].portrait.width).toBeLessThan(1900);
+  expect(molds["Molde Duas Linhas"].extra_lines[0].portrait.height).toBeGreaterThan(420);
 
   await page.getByRole("button", { name: "Planilha e CSV" }).click();
   await page.getByLabel("Arquivo CSV").setInputFiles({
@@ -927,11 +953,12 @@ test("mold extra lines keep their formatting and start blank in CSV orders", asy
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await page.getByRole("button", { name: "Editar item da fila", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Texto principal", exact: true })).toHaveValue("ANA");
-  await toolbar.getByRole("button", { name: "Texto selecionado" }).click();
-  await toolbar.getByRole("option", { name: "Linha extra 1", exact: true }).click();
-  await expect(toolbar.getByLabel("Texto da linha extra")).toHaveValue("");
-  await expect(toolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue("88");
-  await expect(toolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");
+  const orderToolbar = page.getByRole("group", { name: "Formatação do texto" });
+  await orderToolbar.getByRole("button", { name: "Texto selecionado" }).click();
+  await orderToolbar.getByRole("option", { name: "Linha extra 1", exact: true }).click();
+  await expect(orderToolbar.getByLabel("Texto da linha extra")).toHaveValue("");
+  await expect(orderToolbar.getByLabel("Tamanho (px)", { exact: true })).toHaveValue("88");
+  await expect(orderToolbar.getByRole("button", { name: "Negrito", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("admin keeps 100 PDFs processing across sections and downloads one ordered ZIP", async ({
@@ -1011,7 +1038,7 @@ test("quantity two creates two separate PDFs with the same order, model and trac
     name: "mesma-entrega.csv",
     mimeType: "text/csv",
     buffer: Buffer.from(
-      "pedido_plataforma,barcode,af_clean,nome,quantidade_itens\n001,BR264979796804XSPXLM14002828,Kit de teste,IGNORAR,2.0",
+      "pedido_plataforma,barcode,af_clean,nome,quantidade_itens\n001,BR264979796804XSPXLM14002828,Kit de teste,,2.0",
     ),
   });
   await page
@@ -1275,5 +1302,84 @@ test("folder import keeps the root category and attaches letters to the matching
     ).toHaveValue("45");
   } finally {
     await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test("observations remove CSV rows from production, persist, sort by deadline and can be released", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-17T12:00:00-03:00"));
+  await page.goto("/__e2e/staff-pdf?batches&resume");
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "pedidos.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("pedido_plataforma,barcode,modelo,nome,prazo_envio\n" +
+      "FUTURO,BR1003,Kit de teste,ANA,2026-11-19\n" +
+      "HOJE,BR1001,Kit de teste,LUÍSA,17/11/2026\n" +
+      "AMANHA,BR1002,Kit de teste,MARIA,2026-11-18"),
+  });
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
+  const table = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
+  for (const [reference, note] of [["FUTURO", "Conferir tamanho"], ["HOJE", "Aguardar aprovação"], ["AMANHA", "Confirmar o papel"]]) {
+    await table.getByRole("row").filter({ hasText: reference }).getByRole("button", { name: "Adicionar observação" }).click();
+    await table.getByLabel("Observação do pedido").fill(note);
+    await table.getByRole("button", { name: "Salvar observação" }).click();
+    await expect(table.getByRole("row").filter({ hasText: reference })).toHaveCount(0);
+  }
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await page.getByRole("button", { name: "Edição e fila", exact: true }).click();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "Pedidos em Observação", exact: true }).click();
+  const rows = page.getByRole("row").filter({ has: page.getByRole("rowheader") });
+  await expect(rows.getByRole("rowheader")).toHaveText(["HOJE", "AMANHA", "FUTURO"]);
+  await expect(rows.nth(0)).toContainText("Vence hoje");
+  await expect(rows.nth(1)).toContainText("Vence amanhã");
+  await expect(rows.nth(2)).toContainText("2 dias");
+  const exported = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Exportar CSV" }).click();
+  const records = parseStaffPdfCsv(await readFile((await (await exported).path())!, "utf8"));
+  expect(records[0]).toEqual(["pedido_plataforma", "barcode", "modelo", "nome", "prazo_envio", "observacoes"]);
+  expect(records[1]).toEqual(["HOJE", "BR1001", "Kit de teste", "Luísa", "17/11/2026", "Aguardar aprovação"]);
+  await rows.nth(0).getByRole("button", { name: "Editar", exact: true }).click();
+  const observed = page.getByRole("dialog", { name: "Pedido em observação" });
+  await observed.getByRole("textbox", { name: /observacoes, linha/ }).fill("Cliente aprovou");
+  await observed.getByRole("button", { name: "Salvar linha" }).click();
+  await observed.getByRole("button", { name: "Fechar", exact: true }).click();
+  await rows.nth(0).getByRole("button", { name: "Enviar à fila de PDF" }).click();
+  await expect(page.getByRole("article")).toContainText("Observação · Cliente aprovou");
+});
+
+test("compound marker is printed only on PDFs with duplicate tracking within the batch", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches");
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "compostos.csv", mimeType: "text/csv",
+    buffer: Buffer.from("pedido_plataforma,barcode,modelo,nome,quantidade_itens\n" +
+      "001,BR264666798641W,Kit de teste,ANA,2\n" +
+      "002,BR264507889419K,Kit de teste,BIA,1\n" +
+      "003,BR268279807858D,Kit de teste,CARLA,1"),
+  });
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(4);
+  await page.getByText("Lotes anteriores · 1", { exact: true }).click();
+  await page.getByText(/^LOTE-TESTE ·.*4 arquivo/).click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar ZIP completo" }).click();
+  const { "Lote completo.pdf": _combined, ...files } = unzipSync(await readFile((await (await download).path())!));
+  expect(Object.keys(files)).toHaveLength(4);
+  const marker = Buffer.from("pedido composto BR264666798641W").toString("hex");
+  for (const [name, data] of Object.entries(files)) {
+    const pdf = await PDFDocument.load(data);
+    const commands = (index: number) => {
+      const streams = pdf.getPage(index).node.Contents() as PDFArray | undefined;
+      return streams ? Array.from({ length: streams.size() }, (_, i) =>
+        Buffer.from(decodePDFRawStream(streams.lookup(i, PDFRawStream)).decode()).toString(),
+      ).join("\n").toLowerCase() : "";
+    };
+    expect(commands(0).includes(marker)).toBe(name.includes("BR264666798641W"));
+    expect(commands(1)).not.toContain(marker);
   }
 });

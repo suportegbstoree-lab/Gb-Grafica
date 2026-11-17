@@ -142,7 +142,7 @@ function TextEffects({
 }
 
 export default function StaffPdfTextEditor({
-  lines, selected, fonts, disabled, onSelect, onChange, allowTextEditing = true,
+  lines, selected, fonts, disabled, onSelect, onChange, allowTextEditing = true, editMainStyle = false,
 }: {
   lines: StaffPdfLine[];
   selected?: string;
@@ -151,10 +151,12 @@ export default function StaffPdfTextEditor({
   onSelect: (id: string) => void;
   onChange: (id: string, patch: Partial<StaffPdfLine>) => void;
   allowTextEditing?: boolean;
+  editMainStyle?: boolean;
 }) {
   const line = lines.find((item) => item.id === selected) ?? lines[0];
   if (!line) return null;
   const extra = line.kind === "extra";
+  const canStyle = extra || editMainStyle;
   const hasExtras = lines.some((item) => item.kind === "extra");
   const effects = { ...DEFAULT_PDF_TEXT_EFFECTS, ...line.effects };
   const change = (patch: Partial<StaffPdfLine>) => onChange(line.id, patch);
@@ -195,23 +197,25 @@ export default function StaffPdfTextEditor({
             <Plus size={14} aria-hidden="true" />
           </button>
         </div>
-        {hasExtras && (
-          <div key={line.id} className={`contents ${extra ? "" : "invisible"}`} aria-hidden={!extra}>
+        {(hasExtras || editMainStyle) && (
+          <div key={line.id} className={`contents ${canStyle ? "" : "invisible"}`} aria-hidden={!canStyle}>
             <button type="button" className={`${textControl} aria-pressed:bg-blue-400 aria-pressed:text-gray-950`}
-              aria-label="Negrito" title="Negrito" aria-pressed={effects.bold} disabled={!extra}
+              aria-label="Negrito" title="Negrito" aria-pressed={effects.bold} disabled={!canStyle}
               onClick={() => style({ bold: !effects.bold })}>
               <Bold size={16} aria-hidden="true" />
             </button>
-            <StaffPdfTextSelect label="Alinhamento" value={line.align} disabled={disabled || !extra}
+            <StaffPdfTextSelect label="Alinhamento" value={line.align} disabled={disabled || !canStyle}
               icon={<AlignmentIcon size={16} aria-hidden="true" />}
               options={[{ value: "left", label: "Esquerda" }, { value: "center", label: "Centro" }, { value: "right", label: "Direita" }]}
               onChange={(align) => change({ align: align as StaffPdfLine["align"] })} />
-            <StaffPdfTextColor label="Cor" value={line.color} disabled={disabled || !extra}
+            <StaffPdfTextColor label="Cor" value={line.color} disabled={disabled || !canStyle}
               onChange={(color) => change({ color })} />
-            <TextEffects effects={effects} onChange={style} disabled={disabled || !extra} />
+            <TextEffects effects={effects} onChange={style} disabled={disabled || !canStyle} />
             <StaffPdfTextPopover label="Opções de letra" trigger={<TextCursorInput size={16} aria-hidden="true" />}
-              panelClass="w-56" disabled={disabled || !extra}>
+              panelClass="w-56" disabled={disabled || !canStyle}>
               <div className="grid gap-2 p-1">
+                <Slider label="Rotação do texto" min={-180} max={180} value={line.rotation}
+                  onChange={(rotation) => change({ rotation })} />
                 <Slider label="Espaçamento entre letras" min={-50} max={100} value={effects.letterSpacing}
                   onChange={(letterSpacing) => style({ letterSpacing })} />
                 <Slider label="Espaçamento entre linhas" min={0.5} max={3} step={0.05} value={effects.lineSpacing}
@@ -219,7 +223,7 @@ export default function StaffPdfTextEditor({
               </div>
             </StaffPdfTextPopover>
             <StaffPdfTextPopover label="Transparência" trigger={<Grid2X2 size={16} aria-hidden="true" />}
-              panelClass="w-52" disabled={disabled || !extra}>
+              panelClass="w-52" disabled={disabled || !canStyle}>
               <div className="p-1">
                 <Slider label="Opacidade (%)" min={0} max={100} value={effects.opacity}
                   onChange={(opacity) => style({ opacity })} />

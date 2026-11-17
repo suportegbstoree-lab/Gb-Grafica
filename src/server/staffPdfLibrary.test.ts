@@ -187,7 +187,7 @@ async function scenario(run: (s: any) => Promise<void>) {
         ? []
         : role === "manager"
           ? ["documents.templates.manage"]
-          : role === "generator"
+          : ["generator", "another-generator"].includes(role)
             ? ["documents.generate"]
             : [],
     };
@@ -281,12 +281,14 @@ test("saving a mold publishes its changes to products and variations with the sa
     }] });
     docs.set("orders/paid", { itens: [{ moldePedido: { layout: previous.layout } }] });
     const response = await request("/library/layouts", "manager", {
-      name, revision: previous.revision,
+      id, name: "Molde renomeado", revision: previous.revision,
       layout: { ...previous.layout, font_name: "FreeMono", font_size: 222, initial_size_percent: 49 },
     });
     assert.equal(response.status, 200, await response.clone().text());
-    assert.equal((await response.json()).updatedProducts, 1);
+    assert.deepEqual(await response.json(), { id, updatedProducts: 1 });
     const stored = docs.get("anuncios/linked"), current = docs.get(ref);
+    assert.equal(current.name, "Molde renomeado");
+    assert.deepEqual(current.previousNames, [name]);
     for (const binding of [stored.moldePdf, stored.atributos[0].configuracao.A.moldePdf]) {
       assert.notEqual(binding.revision, bound.revision);
       assert.equal(binding.layoutRevision, current.revision);
@@ -862,6 +864,10 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
     const readCount = downloads.length;
     assert.equal((await (await request(archiveUrl, "generator", {})).json()).url, result.url);
     assert.equal((await (await request(archiveUrl, "generator", { format: "pdf" })).json()).url, direct.url);
+    assert.equal((await (await request("/library/batches", "another-generator")).json()).batches[0].id, batch.id);
+    assert.equal((await request(`/library/batches/${batch.id}/items/${recipe.item.id}/file`, "another-generator")).status, 200);
+    assert.equal((await request(archiveUrl, "another-generator", { format: "pdf" })).status, 200);
+    assert.equal((await request(`/library/batches/${batch.id}/items/${recipe.item.id}/upload`, "another-generator", upload)).status, 404);
     assert.equal(downloads.length, readCount);
     const activities = [...docs.keys()].filter((key) =>
       key.startsWith("_operationsActivity/"),

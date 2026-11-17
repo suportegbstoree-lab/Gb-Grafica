@@ -39,7 +39,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<StaffRoleId, StaffPermission[]> = 
 };
 
 export interface StaffAccessRecord {
-  schemaVersion: 1; enabled: boolean; epoch: string; roleId: StaffRoleId;
+  removed?: true; schemaVersion: 1; enabled: boolean; epoch: string; roleId: StaffRoleId;
   updatedAt: string; updatedBy: string;
 }
 export interface StaffRoleRecord {
@@ -70,6 +70,7 @@ export function validStaffAccess(value: unknown): value is StaffAccessRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return record.schemaVersion === 1 && typeof record.enabled === 'boolean' && isStaffRoleId(record.roleId) &&
+    (record.removed === undefined || (record.removed === true && !record.enabled)) &&
     typeof record.epoch === 'string' && /^[a-f0-9]{32}$/.test(record.epoch);
 }
 export function validStaffRole(value: unknown): value is StaffRoleRecord {

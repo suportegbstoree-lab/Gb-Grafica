@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assignStaffRole, updateStaffRole, deleteStaffRole, type StaffBackend, type StaffStore } from './staffAccess';
+import { assignStaffRole, updateStaffRole, deleteStaffRole, removeStaffMember, staffAccountIsAdministrator, type StaffBackend, type StaffStore } from './staffAccess';
 import { staffPermissions, DEFAULT_ROLE_PERMISSIONS, type StaffAccessRecord, type StaffRoleRecord } from '../lib/staffAccess';
 
 function fixture() {
@@ -11,6 +11,7 @@ function fixture() {
   const stores: StaffStore[] = access.map((data, index) => ({ name: String(index),
     readAccess: async uid => data.get(uid) || null,
     async writeAccess(uid, value, expected) { const current = data.get(uid); if (expected === null ? !!current : expected !== undefined && current?.epoch !== expected) throw new Error('Access conflict'); data.set(uid, { ...value }); },
+    async closeRoleMembers(roleId) { for (const [uid, value] of data) if (value.roleId === roleId) data.set(uid, { ...value, enabled: false }); },
     readRole: async id => roles[index].get(id) || null,
     async writeRole(id, value, expected) { const current = roles[index].get(id); if (expected === null ? !!current : expected !== undefined && current?.revision !== expected) throw new Error('Role conflict'); roles[index].set(id, { ...value }); },
   }));
@@ -85,6 +86,7 @@ test('deleting an assigned role revokes unchanged tokens in both registries and 
     const policy = f.roles[index].get('designer')!;
     assert.equal(policy.deleted, true); assert.equal(policy.deletionPending, false); assert.equal(policy.enabled, false);
     assert.deepEqual(policy.permissions, []); assert.equal(policy.updatedBy, 'administrator');
+    assert.equal(f.access[index].get('employee')?.enabled, false);
     assert.deepEqual(staffPermissions(f.access[index].get('employee'), policy, claims), []);
   }
   assert.deepEqual(f.account, before, 'customer login and unrelated claims stay intact');
@@ -133,4 +135,24 @@ test('failure finalizing the primary deletion leaves all access closed and the o
   f.backend.stores[0].writeRole = write;
   await deleteStaffRole(f.backend, 'designer', f.roles[0].get('designer')!.revision, 'admin');
   assert.ok(f.roles.every(map => map.get('designer')?.deleted));
+});
+
+
+test("removing a staff member closes and hides their assignment and allows a later rehire", async () => {
+  const f = fixture();
+  await assignStaffRole(f.backend, "employee", "designer", "administrator");
+  await removeStaffMember(f.backend, "employee", "administrator");
+  assert.ok(f.access.every(store => store.get("employee")?.removed && !store.get("employee")?.enabled));
+  await assignStaffRole(f.backend, "employee", "designer", "administrator");
+  assert.ok(f.access.every(store => !store.get("employee")?.removed && store.get("employee")?.enabled));
+  f.setAdmin();
+  await assert.rejects(removeStaffMember(f.backend, "employee", "administrator"), /protegidos/);
+});
+
+test("stale admin claims or inconsistent registries cannot label an employee administrator", () => {
+  const epoch = "a".repeat(32);
+  const account = { uid: "employee", disabled: false, customClaims: { admin: true, gbAdminEpoch: epoch } };
+  assert.equal(staffAccountIsAdministrator(account, undefined, "admin"), false);
+  assert.equal(staffAccountIsAdministrator(account, { schemaVersion: 1, enabled: true, epoch: "b".repeat(32) }), false);
+  assert.equal(staffAccountIsAdministrator(account, { schemaVersion: 1, enabled: true, epoch }), true);
 });

@@ -21,9 +21,10 @@ export interface StaffDocumentView {
   size: number;
   reference: string;
   sha256: string | null;
+  canManage?: boolean;
 }
 export interface StaffDocumentApi {
-  list(): Promise<{ documents: StaffDocumentView[]; truncated: boolean }>;
+  list(cursor?: string): Promise<{ documents: StaffDocumentView[]; truncated: boolean; next?: string }>;
   template(productId: string, templateId: string): Promise<Blob>;
   generate(
     productId: string,
@@ -85,7 +86,7 @@ async function readPdf(url: string) {
   return new Blob(parts, { type: "application/pdf" });
 }
 export const staffDocumentApi: StaffDocumentApi = {
-  list: () => request(""),
+  list: (cursor) => request(cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""),
   template: async (productId, templateId) =>
     readPdf(
       (

@@ -9,7 +9,7 @@ import { readStaffPdf, staffPdfRequest } from "./staffPdfRequest";
 import { exportStaffPdf } from "./staffPdfRender";
 
 export const staffPdfBatchApi: StaffPdfBatchApi = {
-  list: () => staffPdfRequest("/batches"),
+  list: (cursor) => staffPdfRequest(`/batches${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
   create: async (requestId, name) =>
     (await staffPdfRequest("/batches", { requestId, name })).batch,
   rename: async (id, name) =>
@@ -93,8 +93,9 @@ export async function retryStaffPdfRateLimit<T>(request: () => Promise<T>, activ
 export async function loadStaffPdfArchive(
   api: StaffPdfBatchApi,
   batchId: string,
-  { restoreLegacy = false, active = () => true, format = "zip" }: {
+  { restoreLegacy = false, active = () => true, format = "zip", legacyReadOnly = false }: {
     restoreLegacy?: boolean;
+    legacyReadOnly?: boolean;
     active?: () => boolean;
     format?: StaffPdfArchiveFormat;
   } = {},
@@ -106,6 +107,7 @@ export async function loadStaffPdfArchive(
     if ("url" in result) return result;
     if ("empty" in result) return;
     if ("legacy" in result) {
+      if (legacyReadOnly) throw new Error("Este lote precisa ser recuperado pelo responsável para o download em conjunto. Os PDFs individuais estão disponíveis.");
       if (!restoreLegacy) return;
       for (const itemId of result.legacy) {
         if (!active()) return;

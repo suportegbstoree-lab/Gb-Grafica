@@ -308,6 +308,7 @@ function AdminFixture({ permissionOverride }: { permissionOverride?: import('../
   const members = React.useRef([{ uid: 'fixture-admin', email: 'admin@example.com', name: 'Administrador Teste', role: 'administrator' as import('../lib/staffAccess').AssignedRole, enabled: true }]);
   const staffApi = React.useMemo<StaffAdministrationApi>(() => ({
     async load() { return { roles: structuredClone([...rolePolicies.current.values()].filter(value => !value.deleted)), members: structuredClone(members.current), emailConfigured: false, truncated: false }; },
+    async deleteMember(uid) { members.current = members.current.filter(member => member.uid !== uid); },
     async deleteRole(id, expectedRevision) {
       const value = rolePolicies.current.get(id); if (!value || value.revision !== expectedRevision) throw new Error('Este cargo mudou. Atualize a lista antes de excluir.');
       rolePolicies.current.set(id, { ...value, enabled: false, deleted: true, permissions: [] });

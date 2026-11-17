@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { adminAccessRecordAllows, ADMIN_ACCESS_COLLECTION } from '../lib/adminAccess.js';
 import { getAdminServices } from './firebaseAdmin.js';
 import { createAdminAccessBackend, revokeAdminAccess } from './adminAccess.js';
 import {
@@ -15,6 +16,7 @@ export interface StaffStore {
   name: string;
   readAccess(uid: string): Promise<StaffAccessRecord | null>;
   writeAccess(uid: string, value: StaffAccessRecord, expected?: string | null): Promise<void>;
+  closeRoleMembers(roleId: StaffRoleId, actor: string): Promise<void>;
   readRole(roleId: StaffRoleId): Promise<StaffRoleRecord | null>;
   writeRole(roleId: StaffRoleId, value: StaffRoleRecord, expected?: string | null): Promise<void>;
 }
@@ -47,6 +49,19 @@ function store(db: Firestore): StaffStore {
   return { name: db.databaseId,
     readAccess: uid => read(STAFF_ACCESS_COLLECTION, uid, validStaffAccess),
     writeAccess: (uid, value, expected) => write(STAFF_ACCESS_COLLECTION, uid, value, 'epoch', expected),
+    async closeRoleMembers(roleId, actor) {
+      const query = db.collection(STAFF_ACCESS_COLLECTION).where('roleId', '==', roleId).where('enabled', '==', true);
+      for (;;) {
+        const page = await query.limit(200).get();
+        if (!page.size) return;
+        await Promise.all(page.docs.map(doc => db.runTransaction(async tx => {
+          const current = (await tx.get(doc.ref)).data();
+          if (!current || !current.enabled || current.roleId !== roleId) return;
+          if (!validStaffAccess(current)) throw new StaffAccessError(409, 'Registro de acesso inconsistente.');
+          tx.set(doc.ref, { ...current, enabled: false, epoch: epoch(), updatedAt: new Date().toISOString(), updatedBy: actor });
+        })));
+      }
+    },
     readRole: id => read(STAFF_ROLES_COLLECTION, id, validStaffRole),
     writeRole: (id, value, expected) => write(STAFF_ROLES_COLLECTION, id, value, 'revision', expected),
   };
@@ -57,8 +72,37 @@ export function createStaffBackend(): StaffBackend {
     stores: db.databaseId === '(default)' ? [store(db)] : [store(db), store(getFirestore(app))],
     getAccount: uid => auth.getUser(uid), setClaims: (uid, claims) => auth.setCustomUserClaims(uid, claims),
     removeAdmin: uid => revokeAdminAccess(createAdminAccessBackend(), uid),
-    isAdmin: async uid => (await auth.getUser(uid)).customClaims?.admin === true || (await db.collection('users').doc(uid).get()).data()?.role === 'admin' || (await db.collection('_adminAccess').doc(uid).get()).data()?.enabled === true,
+    isAdmin: async uid => {
+      const [account, authorization] = await Promise.all([
+        auth.getUser(uid), db.collection(ADMIN_ACCESS_COLLECTION).doc(uid).get(),
+      ]);
+      const data = authorization.data();
+      const legacyRole = data?.epoch === 'legacy' && (await db.collection('users').doc(uid).get()).data()?.role;
+      return staffAccountIsAdministrator(account, data, legacyRole);
+    },
   };
+}
+
+export function staffAccountIsAdministrator(account: Account, authorization: unknown, legacyRole?: unknown) {
+  const claims = account.customClaims ?? {};
+  return adminAccessRecordAllows(authorization, claims)
+    && (claims.admin === true || legacyRole === 'admin');
+}
+
+export async function removeStaffMember(backend: StaffBackend, uid: string, actor: string) {
+  if (uid === actor || await backend.isAdmin(uid)) throw new StaffAccessError(403, 'Administradores são protegidos.');
+  const before = await Promise.all(backend.stores.map(target => target.readAccess(uid)));
+  if (!before.some(Boolean)) throw new StaffAccessError(404, 'Funcionário não encontrado.');
+  // Revoke the panel grant and staff claims, preserving the customer account.
+  await backend.removeAdmin(uid);
+  const results = await Promise.allSettled(backend.stores.map(async (target) => {
+    const current = await target.readAccess(uid);
+    if (current?.removed) return;
+    if (!current || current.enabled) throw new StaffAccessError(409, 'O acesso mudou. Atualize a lista.');
+    await target.writeAccess(uid, { ...current, removed: true, updatedAt: new Date().toISOString(), updatedBy: actor }, current.epoch);
+  }));
+  if (results.some(result => result.status === 'rejected'))
+    throw new StaffAccessError(503, 'A exclusão do funcionário está pendente. Tente novamente.');
 }
 
 /** Both databases start closed; CAS prevents a failed operation reopening newer changes. */
@@ -102,6 +146,7 @@ export async function deleteStaffRole(backend: StaffBackend, roleId: StaffRoleId
   if (failed) throw new StaffAccessError(503, 'A exclusão não foi concluída em todos os serviços. Atualize a lista e tente novamente.');
   const deleted: StaffRoleRecord = { ...closed, deletionPending: false, deleted: true, deletedAt: now };
   try {
+    for (const target of backend.stores) await target.closeRoleMembers(roleId, actor);
     // Hide the primary entry only after all Storage mirrors have been finalized.
     for (const target of [...backend.stores.slice(1), backend.stores[0]]) await target.writeRole(roleId, deleted, closed.revision);
   } catch { throw new StaffAccessError(503, 'A exclusão está pendente. Atualize a lista e tente novamente para concluí-la.'); }

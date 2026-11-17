@@ -7,6 +7,7 @@ export interface StaffAssignmentResult { changed: boolean; uid: string; email: s
 export interface StaffAdministrationApi {
   load(): Promise<StaffOverview>;
   saveRole(id: StaffRoleId, permissions: StaffPermission[], expectedRevision: string | null, name?: string): Promise<StaffRoleView>;
+  deleteMember(uid: string): Promise<void>;
   deleteRole(id: StaffRoleId, expectedRevision: string | null): Promise<void>;
   assign(email: string, role: AssignedRole, name?: string): Promise<StaffAssignmentResult>;
   saveName?(uid: string, name: string): Promise<void>;
@@ -24,6 +25,7 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 export const staffAdministrationApi: StaffAdministrationApi = {
+  deleteMember: uid => request(`/members/${encodeURIComponent(uid)}/delete`, {}),
   deleteRole: (id, expectedRevision) => request(`/roles/${encodeURIComponent(id)}/delete`, { expectedRevision }),
   saveName: (uid, name) => request(`/profiles/${encodeURIComponent(uid)}`, { name }),
   load: () => request(''), saveRole: (id, permissions, expectedRevision, name) => request(`/roles/${encodeURIComponent(id)}`, { permissions, expectedRevision, name }),

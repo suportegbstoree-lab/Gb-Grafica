@@ -95,25 +95,26 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     status: data.status,
     hasFile: Boolean(data.pdf),
   });
-  async function access(id: string, user: WorkActor) {
+  async function access(id: string, user: WorkActor, ownerOnly = false) {
     if (!validDocumentId(id)) throw new OperationsError("Lote inválido.");
     const ref = services().db.collection("_staffPdfBatches").doc(id);
     const data = (await ref.get()).data();
-    if (!data || (!user.admin && data.ownerId !== user.uid))
+    if (!data || (ownerOnly && !user.admin && data.ownerId !== user.uid))
       throw new OperationsError("Lote não encontrado.", 404);
     if (Date.parse(data.expiresAt) <= now())
       throw new OperationsError("Este lote expirou.", 410);
     return { ref, data };
   }
-  async function itemAccess(batchId: string, itemId: string, user: WorkActor) {
-    const batch = await access(batchId, user);
+  async function itemAccess(batchId: string, itemId: string, user: WorkActor, ownerOnly = false) {
+    const batch = await access(batchId, user, ownerOnly);
     if (!validDocumentId(itemId)) throw new OperationsError("Item inválido.");
     const ref = services().db.collection("_staffPdfBatchItems").doc(itemId);
     const data = (await ref.get()).data();
     if (
       !data ||
       data.batchId !== batchId ||
-      data.ownerId !== batch.data.ownerId
+      data.ownerId !== batch.data.ownerId ||
+      (!user.admin && batch.data.ownerId !== user.uid && data.status !== "ready")
     )
       throw new OperationsError("Item não encontrado.", 404);
     return { ...batch, itemRef: ref, item: data };
@@ -212,17 +213,26 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
   }
   router.get(
     "/",
-    action(async (_req, res) => {
+    action(async (req, res) => {
       const user = actor(res);
-      let query: any = services().db.collection("_staffPdfBatches");
-      if (!user.admin) query = query.where("ownerId", "==", user.uid);
-      const rows = await query
-        .where("expiresAt", ">", new Date(now()).toISOString())
-        .orderBy("expiresAt", "desc")
-        .limit(100)
-        .get();
+      const collection = services().db.collection("_staffPdfBatches");
+      let query = collection.where("expiresAt", ">", new Date(now()).toISOString()).orderBy("expiresAt", "desc").limit(101);
+      if (req.query.cursor !== undefined) {
+        if (!validDocumentId(req.query.cursor)) throw new OperationsError("Página inválida.");
+        const cursor = await collection.doc(req.query.cursor).get();
+        if (!cursor.exists) throw new OperationsError("Atualize os lotes para continuar.", 409);
+        query = query.startAfter(cursor);
+      }
+      const rows = await query.get();
+      const page = rows.docs.slice(0, 100);
       res.json({
-        batches: rows.docs.map((row: any) => view(row.id, row.data())),
+        batches: page.flatMap(row => {
+          const data = row.data();
+          const canManage = user.admin || data.ownerId === user.uid;
+          return canManage || (data.fileCount ?? data.itemIds?.length ?? 0) > 0
+            ? [{ ...view(row.id, data), canManage }] : [];
+        }),
+        ...(rows.size > 100 ? { next: page[page.length - 1].id } : {}),
       });
     }),
   );
@@ -273,7 +283,8 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
   router.get(
     "/:batchId/items",
     action(async (req, res) => {
-      await access(req.params.batchId, actor(res));
+      const user = actor(res);
+      const { data } = await access(req.params.batchId, user);
       const collection = services().db.collection("_staffPdfBatchItems");
       const pageSize = 500;
       let query = collection
@@ -288,7 +299,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const rows = await query.get();
       const page = rows.docs.slice(0, pageSize);
       res.json({
-        items: page.map((row) => itemView(row.id, row.data())),
+        items: page.filter((row) => user.admin || data.ownerId === user.uid || row.data().status === "ready").map((row) => itemView(row.id, row.data())),
         ...(rows.size > pageSize ? { next: page[page.length - 1].id } : {}),
       });
     }),
@@ -525,7 +536,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     "/:batchId/items/:itemId/upload",
     action(async (req, res) => {
       const { batchId, itemId } = req.params;
-      const { data, item } = await itemAccess(batchId, itemId, actor(res));
+      const { data, item } = await itemAccess(batchId, itemId, actor(res), true);
       const { size, crc32 } = req.body ?? {};
       if (!Number.isSafeInteger(size) || size < 8 || size > STAFF_DOCUMENT_MAX_BYTES ||
           typeof crc32 !== "string" || !/^[0-9a-f]{8}$/.test(crc32))
@@ -559,7 +570,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     action(async (req, res) => {
       const user = actor(res);
       const { batchId, itemId } = req.params;
-      const { ref: batchRef, itemRef, item } = await itemAccess(batchId, itemId, user);
+      const { ref: batchRef, itemRef, item } = await itemAccess(batchId, itemId, user, true);
       if (!item.pdf) {
         const file = services().bucket.file(staffPdfBatchFilePath(batchId, itemId));
         const [meta] = await file.getMetadata().catch((error) => {

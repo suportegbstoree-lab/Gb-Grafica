@@ -1,3 +1,4 @@
+import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { staffPdfBatchApi } from "./staffPdfBatchService";
 import type { StaffPdfBatchApi } from "../lib/staffPdfBatch";
@@ -29,10 +30,12 @@ export interface StaffPdfLibrary {
   truncated: boolean;
   pendingUploads?: Array<{ id: string; name: string }>;
   barcodeDefault?: StaffBarcodeSize;
+  compoundMarker?: StaffPdfCompoundMarker;
 }
 export interface StaffPdfApi {
   batches?: StaffPdfBatchApi;
   list(): Promise<StaffPdfLibrary>;
+  saveCompoundMarker(marker: StaffPdfCompoundMarker): Promise<void>;
   saveBarcodeDefault(size: StaffBarcodeSize): Promise<StaffBarcodeSize>;
   baseFile(id: string): Promise<Blob>;
   prepareProductCopy(
@@ -55,6 +58,7 @@ export interface StaffPdfApi {
     name: string,
     layout: StaffPdfLayout,
     revision?: string,
+    id?: string,
   ): Promise<void>;
   deleteLayout(id: string, revision: string): Promise<void>;
   importLayouts(
@@ -66,7 +70,7 @@ export interface StaffPdfApi {
       Partial<Pick<StaffPdfBase, "revision">>,
     files: File[],
     progress?: (completed: number, total: number) => void,
-    mold?: Pick<StaffPdfLayoutView, "id" | "name">,
+    mold?: Pick<StaffPdfLayoutView, "id" | "name" | "previousNames">,
   ): Promise<void>;
   generate(
     job: StaffPdfJob,
@@ -78,6 +82,7 @@ export { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 import { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 
 export const staffPdfApi: StaffPdfApi = {
+  saveCompoundMarker: (marker) => staffPdfRequest("/compound-marker", { marker }),
   batches: staffPdfBatchApi,
   list: () => staffPdfRequest(""),
   saveBarcodeDefault: async (size) =>
@@ -143,8 +148,8 @@ export const staffPdfApi: StaffPdfApi = {
   deleteBase: async (id) => {
     await staffPdfRequest(`/bases/${id}/delete`, {});
   },
-  saveLayout: async (name, layout, revision) => {
-    await staffPdfRequest("/layouts", { name, layout, revision });
+  saveLayout: async (name, layout, revision, id) => {
+    await staffPdfRequest("/layouts", { name, layout, revision, id });
   },
   deleteLayout: async (id, revision) => {
     await staffPdfRequest(`/layouts/${id}/delete`, { revision });
@@ -194,7 +199,8 @@ export const staffPdfApi: StaffPdfApi = {
     const user = auth.currentUser;
     if (!user) throw new Error("Entre novamente.");
     const sourceName = staffPdfSourceName(base);
-    const parsed = readAlphabetFiles(files, mold?.name ?? sourceName),
+    const names = mold ? [mold.name, sourceName, ...(mold.previousNames ?? [])] : [sourceName];
+    const parsed = readAlphabetFiles(files, names),
       letters: Record<string, { path: string }> = {};
     for (const { file } of parsed.letters) {
       const header = new Uint8Array(await file.slice(0, 33).arrayBuffer());

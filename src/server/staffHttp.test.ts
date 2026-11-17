@@ -30,9 +30,12 @@ const transaction = {
   update(ref: Ref, data: Record<string, unknown>) { docs.set(ref.path, { ...docs.get(ref.path), ...data }); }, delete(ref: Ref) { docs.delete(ref.path); },
 };
 function collection(name: string) {
-  let limit = 1000, statusFilter: unknown = undefined;
-  const query = { doc: (id: string) => reference(`${name}/${id}`), limit(value: number) { limit = value; return query; }, orderBy() { return query; }, where(_field: string, _operator: string, value: unknown) { statusFilter = value; return query; },
-    async get() { const entries = [...docs].filter(([path]) => path.startsWith(`${name}/`) && path.split('/').length === 2 && (statusFilter === undefined || docs.get(path)?.status === statusFilter)).slice(0, limit); return { size: entries.length, docs: entries.map(([path, data]) => ({ id: path.split('/')[1], data: () => data })) }; },
+  let limit = 1000, cursor = '';
+  const filters: Array<[string, unknown]> = [];
+  const query = { doc: (id: string) => reference(`${name}/${id}`), limit(value: number) { limit = value; return query; }, orderBy() { return query; },
+    startAfter(doc: { id: string }) { cursor = `${name}/${doc.id}`; return query; },
+    where(field: string, _operator: string, value: unknown) { filters.push([field, value]); return query; },
+    async get() { const entries = [...docs].filter(([path, data]) => path > cursor && path.startsWith(`${name}/`) && path.split('/').length === 2 && filters.every(([field, value]) => data[field] === value)).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).slice(0, limit); return { size: entries.length, docs: entries.map(([path, data]) => ({ id: path.split('/')[1], ref: reference(path), data: () => data })) }; },
   };
   return query;
 }
@@ -223,6 +226,7 @@ test('only a full administrator can delete a role and its members lose API acces
   assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   assert.equal((await call('/admin/activity/orders', 'designer', {})).status, 403);
   assert.deepEqual(accounts.get(employee)!.customClaims, claims); assert.equal(accounts.get(employee)!.disabled, false);
+  assert.equal(docs.get(`_staffAccess/${employee}`)?.enabled, false);
   assert.equal(docs.get(`_staffProfiles/${employee}`)?.name, 'Nome preservado');
   const overview = await (await call('/admin/staff')).json();
   assert.ok(!overview.roles.some((role: any) => role.id === 'designer'));
@@ -271,4 +275,17 @@ test('public one-click unsubscribe accepts the mail form while App Check still p
     secret === undefined ? delete process.env.EMAIL_UNSUBSCRIBE_SECRET : process.env.EMAIL_UNSUBSCRIBE_SECRET = secret;
     process.env.FIREBASE_APP_CHECK_MODE = mode;
   }
+});
+
+test('removing a staff member hides the assignment and revokes panel access while keeping the customer account', async () => {
+  assert.equal((await assign()).status, 200);
+  tokens.set('employee', { uid: employee, ...accounts.get(employee)!.customClaims });
+  assert.equal((await call(`/admin/staff/members/${employee}/delete`, 'employee', {})).status, 403);
+  assert.equal((await call(`/admin/staff/members/${actor}/delete`, 'admin', {})).status, 403);
+  assert.equal((await call(`/admin/staff/members/${employee}/delete`, 'admin', {})).status, 200);
+  assert.equal((await call('/admin/activity/orders', 'employee', {})).status, 403);
+  assert.equal(accounts.get(employee)?.disabled, false);
+  assert.equal(docs.get(`_staffAccess/${employee}`)?.removed, true);
+  const overview = await (await call('/admin/staff')).json();
+  assert.ok(!overview.members.some((member: { uid: string }) => member.uid === employee));
 });

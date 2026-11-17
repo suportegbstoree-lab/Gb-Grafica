@@ -56,7 +56,7 @@ export default function StaffPdfPreview({
   selected?: string;
   onSelect?: (id: string) => void;
   onMove?: ChangeBox;
-  onResize?: ChangeBox;
+  onResize?: (id: string, width: number, height: number, orientation: PdfTextLayout, origin: Pick<PdfTextBox, "x" | "y">) => void;
   onEdit?: (id: string) => void;
   fitMargin?: number;
   initial?: DecorativeInitial;
@@ -119,6 +119,7 @@ export default function StaffPdfPreview({
     x: number;
     y: number;
     resize: boolean;
+    origin: Pick<PdfTextBox, "x" | "y">;
   } | null>(null);
 
   React.useEffect(() => {
@@ -471,7 +472,7 @@ export default function StaffPdfPreview({
             const p = point(e, e.currentTarget);
             if (!p) return;
             const current = lines.find((line) => line.id === selected);
-            const box = current?.[orientation];
+            const box = current && (boxes.current.get(current.id) ?? current[orientation]);
             const radius = 10 / scale;
             const resize = Boolean(
               onResize &&
@@ -486,9 +487,10 @@ export default function StaffPdfPreview({
             const b = boxes.current.get(line.id) ?? line[orientation];
             dragging.current = {
               id: line.id,
-              x: p.x - b.x,
-              y: p.y - b.y,
+              x: p.x - (resize ? b.width : b.x),
+              y: p.y - (resize ? b.height : b.y),
               resize,
+              origin: { x: b.x, y: b.y },
             };
             e.currentTarget.setPointerCapture(e.pointerId);
           }}
@@ -498,13 +500,13 @@ export default function StaffPdfPreview({
             const p = point(e, e.currentTarget);
             const line = lines.find((l) => l.id === drag.id);
             if (!p || !line) return;
-            const box = line[orientation];
             if (drag.resize)
               onResize?.(
                 line.id,
-                Math.round(Math.max(1, Math.min(p.w - box.x, p.x - box.x))),
-                Math.round(Math.max(1, Math.min(p.h - box.y, p.y - box.y))),
+                Math.round(Math.max(1, Math.min(p.w - drag.origin.x, p.x - drag.x))),
+                Math.round(Math.max(1, Math.min(p.h - drag.origin.y, p.y - drag.y))),
                 orientation,
+                drag.origin,
               );
             else move(line, p.x - drag.x, p.y - drag.y, orientation);
           }}

@@ -33,6 +33,7 @@ export interface StaffPdfBatchView {
   expiresAt: string;
   ownerName: string;
   count: number;
+  canManage?: boolean;
 }
 export interface StaffPdfBatchItemView {
   id: string;
@@ -67,7 +68,7 @@ export type StaffPdfArchiveResult =
   | { empty: true };
 
 export interface StaffPdfBatchApi {
-  list(): Promise<{ batches: StaffPdfBatchView[] }>;
+  list(cursor?: string): Promise<{ batches: StaffPdfBatchView[]; next?: string }>;
   rename(id: string, name: string): Promise<StaffPdfBatchView>;
   create(requestId: string, name?: string): Promise<StaffPdfBatchView>;
   items(batchId: string, cursor?: string): Promise<{ items: StaffPdfBatchItemView[]; next?: string }>;

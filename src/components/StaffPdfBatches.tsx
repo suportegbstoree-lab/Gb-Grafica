@@ -7,7 +7,7 @@ import type {
   StaffPdfBatchItemView,
   StaffPdfBatchView,
 } from "../lib/staffPdfBatch";
-import { loadStaffPdfArchive, restoreStaffPdfBatchFile } from "../services/staffPdfBatchService";
+import { loadStaffPdfArchive, renderStaffPdfRecipe, restoreStaffPdfBatchFile } from "../services/staffPdfBatchService";
 import { readStaffPdf } from "../services/staffPdfRequest";
 
 const button =
@@ -31,6 +31,7 @@ export default function StaffPdfBatches({
   api: StaffPdfBatchApi;
   revision: number;
 }) {
+  const [next, setNext] = React.useState<string>();
   const [batches, setBatches] = React.useState<StaffPdfBatchView[]>([]);
   const [items, setItems] = React.useState<
     Record<string, StaffPdfBatchItemView[]>
@@ -44,13 +45,13 @@ export default function StaffPdfBatches({
     running = React.useRef(false);
   const listGeneration = React.useRef(0);
   const loading = React.useRef(new Map<string, number>());
-  const reload = React.useCallback(async () => {
-    listGeneration.current++;
-    const value = await api.list();
-    if (alive.current) {
-      setBatches(value.batches);
-      setItems({});
-      setQueries({});
+  const reload = React.useCallback(async (cursor?: string) => {
+    const version = cursor ? listGeneration.current : ++listGeneration.current;
+    const value = await api.list(cursor);
+    if (alive.current && version === listGeneration.current) {
+      setBatches(current => cursor ? [...current, ...value.batches.filter(row => !current.some(old => old.id === row.id))] : value.batches);
+      setNext(value.next);
+      if (!cursor) { setItems({}); setQueries({}); }
     }
   }, [api]);
   React.useEffect(() => {
@@ -82,10 +83,11 @@ export default function StaffPdfBatches({
       if (alive.current) setBusy(false);
     }
   }
-  function downloadBatch(batchId: string, format: StaffPdfArchiveFormat) {
+  function downloadBatch(batch: StaffPdfBatchView, format: StaffPdfArchiveFormat) {
     return run(async () => {
-      const delivery = await loadStaffPdfArchive(api, batchId, {
+      const delivery = await loadStaffPdfArchive(api, batch.id, {
         format,
+        legacyReadOnly: batch.canManage === false,
         restoreLegacy: true,
         active: () => alive.current,
       });
@@ -114,9 +116,17 @@ export default function StaffPdfBatches({
       if (loading.current.get(id) === version) loading.current.delete(id);
     }
   }
-  async function file(batchId: string, itemId: string, inline = false) {
+  async function file(batch: StaffPdfBatchView, itemId: string, inline = false) {
+    const batchId = batch.id;
     const existing = await api.file(batchId, itemId, inline);
     if (existing) return existing;
+    if (batch.canManage === false) {
+      const recipe = await api.recipe(batchId, itemId);
+      const pdf = await renderStaffPdfRecipe(recipe);
+      const url = URL.createObjectURL(pdf);
+      window.setTimeout(() => URL.revokeObjectURL(url), 120000);
+      return { url, name: `${recipe.item.outputName}.pdf` };
+    }
     await restoreStaffPdfBatchFile(api, batchId, itemId);
     const restored = await api.file(batchId, itemId, inline);
     if (!restored) throw new Error("Não foi possível recuperar o PDF.");
@@ -154,6 +164,8 @@ export default function StaffPdfBatches({
             {error}
           </p>
         )}
+        {next && <button type="button" className={button} disabled={busy}
+          onClick={() => void run(() => reload(next))}>Carregar lotes anteriores</button>}
         {batches.map((batch) => (
           <details
             key={batch.id}
@@ -170,7 +182,7 @@ export default function StaffPdfBatches({
             <p className="my-3 text-xs text-gray-400">
               Disponível até {new Date(batch.expiresAt).toLocaleString("pt-BR")}
             </p>
-            {renaming?.id === batch.id ? (
+            {batch.canManage !== false && (renaming?.id === batch.id ? (
               <form className="mb-3 flex flex-wrap items-end gap-2" onSubmit={(event) => {
                 event.preventDefault();
                 void run(async () => {
@@ -195,14 +207,14 @@ export default function StaffPdfBatches({
                 onClick={() => setRenaming({ id: batch.id, name: batch.name || "" })}>
                 <TextCursorInput size={16} aria-hidden="true" />
               </button>
-            )}
+            ))}
             <div className="inline-flex flex-wrap gap-2">
               <button type="button" className={`${button} inline-flex items-center gap-2`}
-                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch.id, "zip")}>
+                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch, "zip")}>
                 <Download size={16} aria-hidden="true" /> Baixar ZIP completo
               </button>
               <button type="button" className={`${button} inline-flex items-center gap-2`}
-                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch.id, "pdf")}>
+                disabled={busy || !batch.count} onClick={() => void downloadBatch(batch, "pdf")}>
                 <FileDown size={16} aria-hidden="true" /> Baixar PDF unido
               </button>
             </div>
@@ -240,7 +252,7 @@ export default function StaffPdfBatches({
                     type="button" className={iconButton} aria-label="Baixar" title="Baixar"
                     disabled={busy || item.status !== "ready"}
                     onClick={() =>
-                      void run(async () => downloadFile(await file(batch.id, item.id)))
+                      void run(async () => downloadFile(await file(batch, item.id)))
                     }
                   >
                     <Download size={16} aria-hidden="true" />
@@ -253,7 +265,7 @@ export default function StaffPdfBatches({
                       if (popup) popup.opener = null;
                       void run(async () => {
                         try {
-                          const value = await file(batch.id, item.id, true);
+                          const value = await file(batch, item.id, true);
                           const url = URL.createObjectURL(await readStaffPdf(value.url));
                           if (popup) {
                             popup.location.replace(url);

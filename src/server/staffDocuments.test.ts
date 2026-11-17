@@ -277,13 +277,16 @@ test("staff PDF generation checks permission, binds owner, resumes, sanitizes an
     );
     assert.equal(
       (await (await s.call("", undefined, "other")).json()).documents.length,
-      0,
+      1,
     );
     assert.equal(
       (await (await s.call("", undefined, "root")).json()).documents.length,
       1,
     );
-    assert.equal((await s.call(`/${id}/file`, undefined, "other")).status, 404);
+    assert.equal((await s.call(`/${id}/file`, undefined, "other")).status, 200);
+    assert.equal((await s.call(`/${id}/share`, {}, "other")).status, 200);
+    assert.equal((await s.call(`/${id}/revoke-sharing`, {}, "other")).status, 403);
+    assert.equal((await s.call(`/${id}/file`, undefined, "no-permission")).status, 403);
     assert.equal((await s.call(`/${id}/file?mode=print`)).status, 200);
     assert.equal(s.storage.signed.at(-1).responseDisposition, "inline");
     s.revoke();
@@ -355,7 +358,7 @@ test("staff document emails use one immutable recipient/body/idempotency key and
           to: "buyer@example.test",
           requestId: "32345678-1234-4234-8234-123456789012",
         };
-      assert.equal((await s.call(path, body, "other")).status, 404);
+      assert.equal((await s.call(path, body, "no-permission")).status, 403);
       let response = await s.call(path, body);
       assert.equal(response.status, 200, await response.clone().text());
       assert.equal((await response.json()).status, "accepted");

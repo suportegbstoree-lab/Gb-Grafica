@@ -1,3 +1,4 @@
+import { DEFAULT_STAFF_PDF_COMPOUND_MARKER, normalizeStaffPdfCompoundMarker } from "../lib/staffPdfCompound.js";
 import {
   prepareCatalogRetention,
   scheduleCatalogAssetRemoval,
@@ -234,6 +235,13 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
     return actor;
   };
   router.use("/batches", createStaffPdfBatchRouter(deps));
+  const markerSettings = () => services().db.collection("_staffPdfSettings").doc("compound-marker");
+  router.post("/compound-marker", action(async (req, res) => {
+    manage(res);
+    const marker = input(() => normalizeStaffPdfCompoundMarker(req.body?.marker));
+    await markerSettings().set(marker);
+    res.json({ compoundMarker: marker });
+  }));
   const barcodeSettings = () => services().db.collection("_staffPdfSettings").doc("barcode");
   router.post("/barcode-default", action(async (req, res) => {
     const actor = res.locals.user as WorkActor;
@@ -250,7 +258,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
   router.get(
     "/",
     action(async (_req, res) => {
-      const [bases, layouts, products, barcode] = await Promise.all([
+      const [bases, layouts, products, barcode, marker] = await Promise.all([
         services()
           .db.collection("_staffPdfBases")
           .where("status", "==", "ready")
@@ -263,6 +271,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           .get(),
         services().db.collection("anuncios").limit(501).get(),
         barcodeSettings().get(),
+        markerSettings().get(),
       ]);
       const internal = bases.docs.slice(0, 500).map((d) => {
         const b = d.data();
@@ -302,6 +311,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             : undefined;
       res.json({
         barcodeDefault: barcode.data() ?? STAFF_PDF_BARCODE_DEFAULT,
+        compoundMarker: marker.data() ?? DEFAULT_STAFF_PDF_COMPOUND_MARKER,
         bases: [...internal, ...catalog],
         pendingUploads:
           pending?.docs.map((d) => ({ id: d.id, name: d.data().name })) || [],
@@ -309,6 +319,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           id: d.id,
           name: d.data().name,
           revision: d.data().revision,
+          ...(d.data().previousNames ? { previousNames: d.data().previousNames } : {}),
           layout: d.data().layout,
         })),
         truncated:
@@ -774,7 +785,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           if (
             !mold?.enabled ||
             typeof mold.name !== "string" ||
-            !matchingAlphabetName(mold.name, folderName) ||
+            ![mold.name, ...(mold.previousNames ?? [])].some(name => matchingAlphabetName(name, folderName)) ||
             !mold.layout ||
             !baseForPdfLayout(
               {
@@ -1053,12 +1064,25 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       const actor = manage(res),
         name = input(() => staffPdfName(req.body?.name)),
         layout = input(() => normalizePdfLayout(req.body?.layout)),
-        id = pdfLibraryId(name),
         { db, bucket } = services(),
-        ref = db.collection("_staffPdfLayouts").doc(id);
+        collection = db.collection("_staffPdfLayouts");
+      const requestedId = req.body?.id;
+      if (requestedId !== undefined && !validDocumentId(requestedId)) throw new OperationsError("Molde inválido.");
+      let id = requestedId ?? pdfLibraryId(name);
       const layoutRevision = revision();
       const updatedProducts = await db.runTransaction(async (tx) => {
-        const old = (await tx.get(ref)).data();
+        id = requestedId ?? pdfLibraryId(name);
+        let ref = collection.doc(id);
+        let old = (await tx.get(ref)).data();
+        if (!requestedId && old?.enabled && old.name !== name) {
+          id = revision();
+          ref = collection.doc(id);
+          old = undefined;
+        }
+        if (requestedId && !old?.enabled) throw new OperationsError("Molde não encontrado.", 404);
+        const sameName = await tx.get(collection.where("name", "==", name));
+        if (sameName.docs.some(row => row.id !== id && row.data().enabled))
+          throw new OperationsError("Já existe um molde com este nome.", 409);
         if (old?.enabled && old.revision !== req.body?.revision)
           throw new OperationsError(
             "O molde foi alterado. Atualize antes de salvar.",
@@ -1102,6 +1126,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
         tx.set(ref, {
           name,
           layout,
+          ...(old?.name && old.name !== name ? { previousNames: [...new Set([...(old.previousNames ?? []), old.name])].slice(-20) } : old?.previousNames ? { previousNames: old.previousNames } : {}),
           enabled: true,
           revision: layoutRevision,
           updatedAt: new Date(now()).toISOString(),
@@ -1129,11 +1154,13 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
             services().db.collection("_staffPdfLayouts").doc(id),
           ),
           old = await Promise.all(refs.map((ref) => tx.get(ref)));
+        const existing = await tx.get(services().db.collection("_staffPdfLayouts").where("enabled", "==", true).select("name"));
+        const names = new Set(existing.docs.map(doc => doc.data().name));
         created = 0;
         skipped = 0;
         const retention = await Promise.all(
           rows.map((row, i) =>
-            old[i].data()?.enabled
+            (old[i].data()?.enabled || names.has(row.name))
               ? undefined
               : prepareCatalogRetention(
                   services().db,
@@ -1147,7 +1174,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
           ),
         );
         rows.forEach((row, i) => {
-          if (old[i].data()?.enabled) {
+          if (old[i].data()?.enabled || names.has(row.name)) {
             skipped++;
             return;
           }

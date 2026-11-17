@@ -1,3 +1,4 @@
+import { normalizeStaffPdfCompoundMarker, type StaffPdfCompoundMarker } from "./staffPdfCompound.js";
 import {
   isStaffBarcodeVersion,
   normalizeStaffBarcode,
@@ -43,6 +44,7 @@ export interface StaffPdfLayout {
   imagem_full_page: boolean;
   text_rotation: number;
   fit_margin: number;
+  main_effects?: StaffPdfTextEffects;
   extra_lines?: StaffPdfExtraLine[];
 }
 export interface StaffPdfBase {
@@ -69,6 +71,7 @@ export function staffPdfSourceName(
 export interface StaffPdfLayoutView {
   id: string;
   name: string;
+  previousNames?: string[];
   revision: string;
   layout: StaffPdfLayout;
 }
@@ -81,6 +84,7 @@ export interface StaffPdfLine {
   color: string;
   align: "left" | "center" | "right";
   rotation: number;
+  fitBox?: true;
   effects?: StaffPdfTextEffects;
   portrait: PdfTextBox;
   landscape: PdfTextBox;
@@ -177,6 +181,7 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
 }
 
 export interface StaffPdfJob {
+  compoundMarker?: StaffPdfCompoundMarker;
   schemaVersion: 1;
   allowEmptyText?: true;
   barcode?: string;
@@ -305,6 +310,7 @@ export function normalizePdfLayout(value: unknown): StaffPdfLayout {
       throw new Error("Informe um tamanho de inicial entre 5% e 100%.");
     output.initial_size_percent = value.initial_size_percent;
   }
+  if (value.main_effects !== undefined) output.main_effects = normalizePdfTextEffects(value.main_effects);
   if (value.extra_lines !== undefined) {
     if (!Array.isArray(value.extra_lines) || value.extra_lines.length >= STAFF_PDF_MAX_LINES)
       throw new Error(`Cadastre até ${STAFF_PDF_MAX_LINES - 1} linhas extras por molde.`);
@@ -466,6 +472,7 @@ export function fixedStaffPdfMain(
     color: layout.color,
     align: layout.align,
     rotation: layout.text_rotation,
+    ...(layout.main_effects ? { effects: layout.main_effects } : {}),
     portrait: layoutBox(layout, "portrait"),
     landscape: layoutBox(layout, "landscape"),
   };
@@ -499,6 +506,7 @@ function normalizeStaffPdfLine(line: unknown, fonts?: PersonalizationFont[]): St
     typeof line.fontId !== "string" ||
     !/^[A-Za-z0-9_-]{1,100}$/.test(line.fontId) ||
     (fonts !== undefined && !staffPdfFont(line.fontId, fonts)) ||
+    (line.fitBox !== undefined && (line.fitBox !== true || line.kind !== "extra")) ||
     !number(line.fontSize, 1, 4000) ||
     !/^#[a-fA-F0-9]{6}$/.test(line.color) ||
     !["left", "center", "right"].includes(line.align) ||
@@ -520,6 +528,7 @@ function normalizeStaffPdfLine(line: unknown, fonts?: PersonalizationFont[]): St
     id: line.id,
     ...(line.kind === undefined ? {} : { kind: line.kind }),
     text: line.text,
+    ...(line.fitBox ? { fitBox: true as const } : {}),
     fontId: line.fontId,
     fontSize: line.fontSize,
     color: line.color.toLowerCase(),
@@ -571,7 +580,10 @@ export function normalizeStaffPdfJob(
       staffPdfOutputName(value.outputName) !== value.outputName)
   )
     throw new Error("Nome do arquivo final inválido.");
+  if (value.compoundMarker !== undefined && (typeof value.barcode !== "string" || !value.barcode.trim()))
+    throw new Error("O identificador exige um código de barras.");
   return {
+    ...(value.compoundMarker === undefined ? {} : { compoundMarker: normalizeStaffPdfCompoundMarker(value.compoundMarker) }),
     ...(value.allowEmptyText ? { allowEmptyText: true as const } : {}),
     ...(value.barcodeVersion === undefined
       ? {}

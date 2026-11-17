@@ -134,6 +134,7 @@
   inset: auto;
   visibility: hidden;
   margin: 0;
+  box-sizing: border-box;
   max-width: calc(100vw - 16px);
   overflow: auto;
   overscroll-behavior: contain;

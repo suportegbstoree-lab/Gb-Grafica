@@ -194,7 +194,7 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
     const ref = services().db.collection("_staffDocuments").doc(id),
       snapshot = await ref.get(),
       data = snapshot.data();
-    if (!data || (!user.admin && data.ownerId !== user.uid))
+    if (!data || (!user.admin && data.ownerId !== user.uid && (!ready || data.status !== "ready")))
       throw new OperationsError("Documento não encontrado.", 404);
     if (Date.parse(data.expiresAt) <= now() || data.status === "expired")
       throw new OperationsError(
@@ -241,18 +241,24 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
     "/",
     action(async (req, res) => {
       const user = res.locals.user as WorkActor;
-      let query: any = services().db.collection("_staffDocuments");
-      if (!user.admin) query = query.where("ownerId", "==", user.uid);
-      const rows = await query
-        .where("expiresAt", ">", new Date(now()).toISOString())
-        .orderBy("expiresAt", "desc")
-        .limit(100)
-        .get();
+      const collection = services().db.collection("_staffDocuments");
+      let query = collection.where("expiresAt", ">", new Date(now()).toISOString()).orderBy("expiresAt", "desc").limit(101);
+      if (req.query.cursor !== undefined) {
+        if (!validDocumentId(req.query.cursor)) throw new OperationsError("Página inválida.");
+        const cursor = await collection.doc(req.query.cursor).get();
+        if (!cursor.exists) throw new OperationsError("Atualize o histórico para continuar.", 409);
+        query = query.startAfter(cursor);
+      }
+      const rows = await query.get();
+      const page = rows.docs.slice(0, 100);
       res.json({
-        documents: rows.docs.map((doc: any) =>
-          staffDocumentView(doc.id, doc.data()),
-        ),
-        truncated: rows.size === 100,
+        documents: page.flatMap(doc => {
+          const data = doc.data();
+          const canManage = user.admin || data.ownerId === user.uid;
+          return canManage || data.status === "ready" ? [{ ...staffDocumentView(doc.id, data), canManage }] : [];
+        }),
+        truncated: rows.size > 100,
+        ...(rows.size > 100 ? { next: page[page.length - 1].id } : {}),
       });
     }),
   );
@@ -598,7 +604,9 @@ export function createStaffDocumentRouters(deps: StaffDocumentDeps) {
   admin.post(
     "/:id/revoke-sharing",
     action(async (req, res) => {
-      const { ref } = await access(req.params.id, res.locals.user);
+      const { ref, data } = await access(req.params.id, res.locals.user);
+      if (!res.locals.user.admin && data.ownerId !== res.locals.user.uid)
+        throw new OperationsError("Apenas o autor pode revogar o compartilhamento.", 403);
       await services().db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data();
         tx.set(

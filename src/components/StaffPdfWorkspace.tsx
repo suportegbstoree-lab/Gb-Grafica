@@ -1,3 +1,4 @@
+import { DEFAULT_STAFF_PDF_COMPOUND_MARKER, staffPdfRepeatedBarcodes } from "../lib/staffPdfCompound";
 import React from "react";
 import {
   DEFAULT_STAFF_BARCODE_SIZE,
@@ -137,7 +138,7 @@ export default function StaffPdfWorkspace({
       layouts: [],
       truncated: false,
     }),
-    [tab, setTab] = React.useState(canGenerate ? "edit" : "library"),
+    [tab, setTab] = React.useState<"edit" | "library" | "csv" | "observations">(canGenerate ? "edit" : "library"),
     [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
@@ -536,6 +537,7 @@ export default function StaffPdfWorkspace({
               (!Number.isSafeInteger(csvRow.textColumn) ||
                 csvRow.textColumn < 0)) ||
             (csvRow.textIsName !== undefined && typeof csvRow.textIsName !== "boolean") ||
+            (csvRow.observation !== undefined && (typeof csvRow.observation !== "string" || csvRow.observation.length > 2000)) ||
             (csvRow.textWarnings !== undefined &&
               (typeof csvRow.textWarnings?.blank !== "string" ||
                 typeof csvRow.textWarnings?.filled !== "string" ||
@@ -773,17 +775,21 @@ export default function StaffPdfWorkspace({
     report("processing");
     try {
       if (!navigator.onLine) throw new TypeError("Network offline");
+      const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
+      if (alive.current) setData(current);
+      const newItems = pending.filter(item => !item.batchId && !item.batchPlan);
+      const repeated = staffPdfRepeatedBarcodes(newItems);
+      const marker = current.compoundMarker ?? DEFAULT_STAFF_PDF_COMPOUND_MARKER;
+      const compoundMarker = (job: StaffPdfJob) => job.barcode && repeated.has(job.barcode) ? marker : undefined;
       if (batches) {
-        const unassigned = new Set(pending.filter((item) => !item.batchId && !item.batchPlan).map((item) => item.id));
+        const unassigned = new Set(newItems.map(item => item.id));
         if (unassigned.size) {
           const batchPlan = { requestId: crypto.randomUUID(), name: batchName.trim() || undefined };
           await setQueue((old) => old.map((item) =>
-            unassigned.has(item.id) ? { ...item, batchPlan } : item,
+            unassigned.has(item.id) ? { ...item, batchPlan, job: { ...item.job, compoundMarker: compoundMarker(item.job) } } : item,
           ));
         }
       }
-      const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
-      if (alive.current) setData(current);
       const batchIds = new Map<string, string>();
       const attemptLimit = batches ? BATCH_ATTEMPTS_PER_WINDOW : 20;
       for (const item of savedQueue.current.filter((row) => pendingIds.has(row.id))) {
@@ -822,7 +828,7 @@ export default function StaffPdfWorkspace({
               (!b || b.revision !== item.job.baseRevision || !t || t.revision !== item.job.layoutRevision)) {
             throw new Error("A base ou o molde mudou. Edite este item novamente.");
           }
-          let effectiveJob = item.job;
+          let effectiveJob = batches ? item.job : { ...item.job, compoundMarker: compoundMarker(item.job) };
           if (!item.batchId && isCsvName(item.csvRow)) {
             const [main, ...extras] = effectiveJob.lines;
             const text = formatStaffPdfPersonName(main.text);
@@ -1106,6 +1112,7 @@ export default function StaffPdfWorkspace({
               job: {
                 ...row.job,
                 barcode: code,
+                compoundMarker: undefined,
                 barcodeVersion: code ? STAFF_BARCODE_VERSION : undefined,
                 barcodeSize: override,
                 outputName: !row.job.outputName || row.job.outputName === automaticName
@@ -1172,6 +1179,10 @@ export default function StaffPdfWorkspace({
             Planilha e CSV
           </button>
         )}
+        {canGenerate && <button type="button" disabled={busy} onClick={() => setTab("observations")}
+          aria-pressed={tab === "observations"} className="rounded-lg border border-gray-700 px-4 py-2">
+          Pedidos em Observação
+        </button>}
         <button
           disabled={busy}
           onClick={() => void reload().catch((e) => setError(e.message))}
@@ -1206,13 +1217,14 @@ export default function StaffPdfWorkspace({
         />
       )}
       {canGenerate && (
-        <div hidden={tab !== "csv"}>
+        <div hidden={tab !== "csv" && tab !== "observations"}>
           <StaffPdfCsvImport
             ref={csvImport}
             data={data}
             fonts={fonts}
             busy={busy || !queueReady}
             visible={visible && tab === "csv"}
+            observationsVisible={visible && tab === "observations"}
             fallback={{ baseId: loaded?.base.id || "", layoutId }}
             onAdd={importOrders}
             onReviewQueue={() => setTab("edit")}
@@ -1512,6 +1524,7 @@ export default function StaffPdfWorkspace({
                           Campos em branco no CSV: {item.csvWarning || "Nome"}.
                         </p>
                       )}
+                      {item.csvRow?.observation && <p className="whitespace-pre-wrap break-words text-xs text-amber-200">Observação · {item.csvRow.observation}</p>}
                       {item.error && (
                         <p role="alert" className="text-sm text-red-300">
                           {item.error}

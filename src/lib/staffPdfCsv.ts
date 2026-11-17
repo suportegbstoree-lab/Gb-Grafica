@@ -224,13 +224,11 @@ function csvModelStem(value: string) {
 
 export function createStaffSkuMatcher(layouts: StaffPdfLayoutView[]) {
   const candidates = layouts
-    .map(({ name, layout }) => ({
-      name: layout.base_pdf_name
-        ? name
-        : name.replace(/_template(?:__?\d+p)?$/i, ""),
-      match: modelStem(name),
-      explicit: key(name),
-    }))
+    .flatMap(({ name, layout, previousNames = [] }) => [name, ...previousNames].map(alias => ({
+      name: layout.base_pdf_name ? name : name.replace(/_template(?:__?\d+p)?$/i, ""),
+      match: modelStem(alias),
+      explicit: key(alias),
+    })))
     .filter((item) => item.match)
     .sort((a, b) => b.match.length - a.match.length)
     .map((item) => ({
@@ -291,6 +289,31 @@ export const STAFF_SHEET_FIELDS = [
   },
 ] as const;
 export type StaffSheetField = (typeof STAFF_SHEET_FIELDS)[number]["key"];
+export function staffPdfObservationColumn(headers: string[]) {
+  return headers.findIndex(header => ["observacao", "observacoes"].includes(key(header)));
+}
+
+export function staffPdfDeadlineColumn(headers: string[]) {
+  return headers.findIndex(header => STAFF_SHEET_FIELDS[2].aliases.some(alias => alias === key(header)));
+}
+
+const deadlineDay = 86400000;
+const saoPauloDay = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" });
+export function staffPdfDeadline(value: string) {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T\s]|$)/.exec(value.trim());
+  const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s|$)/.exec(value.trim());
+  if (!iso && !br) return undefined;
+  const [year, month, day] = (iso ? iso.slice(1) : [br![3], br![2], br![1]]).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return undefined;
+  return date.getTime();
+}
+
+export function staffPdfDaysToDeadline(value: string, now = new Date()) {
+  const due = staffPdfDeadline(value);
+  return due === undefined ? undefined : (due - staffPdfDeadline(saoPauloDay.format(now))!) / deadlineDay;
+}
+
 export function staffPdfQuantityColumn(headers: string[]) {
   return headers.findIndex((header) => quantityHeaders.includes(key(header)));
 }
@@ -323,7 +346,8 @@ function resolveExactModel(
 ) {
   const exact = key(value);
   if (!exact) return;
-  const named = layouts.filter((layout) => key(layout.name) === exact);
+  const current = layouts.filter((layout) => key(layout.name) === exact);
+  const named = current.length ? current : layouts.filter(layout => layout.previousNames?.some(name => key(name) === exact));
   const associated =
     named.length === 1 ? named[0].layout.base_pdf_name : undefined;
   const associatedId = named.length === 1 ? named[0].layout.base_id : undefined;
@@ -386,7 +410,7 @@ export function resolveStaffPdfCsvModel(
     ...bases.flatMap((base) => [base.name, staffPdfSourceName(base)]),
     ...layouts
       .filter(({ layout }) => layout.base_id || layout.base_pdf_name)
-      .map(({ name }) => name),
+      .flatMap(({ name, previousNames = [] }) => [name, ...previousNames]),
   ]);
   let longest = 0;
   let matches: string[] = [];

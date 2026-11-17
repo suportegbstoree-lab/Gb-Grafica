@@ -1,9 +1,10 @@
 import React from 'react';
 import ConfirmDialog from './ConfirmDialog';
-import { STAFF_PERMISSIONS, STAFF_PERMISSION_DEPENDENCIES, staffRoleName, type StaffRoleView, type StaffOverview, type AssignedRole, type StaffPermission } from '../lib/staffAccess';
+import { STAFF_PERMISSIONS, STAFF_PERMISSION_DEPENDENCIES, staffRoleName, type StaffRoleView, type StaffMember, type StaffOverview, type AssignedRole, type StaffPermission } from '../lib/staffAccess';
 import { staffAdministrationApi, type StaffAdministrationApi } from '../services/staffService';
 
 export default function StaffManagement({ api = staffAdministrationApi }: { api?: StaffAdministrationApi }) {
+  const [memberToDelete, setMemberToDelete] = React.useState<StaffMember | null>(null);
   const [pendingDelete, setPendingDelete] = React.useState<StaffRoleView | null>(null);
   const [overview, setOverview] = React.useState<StaffOverview | null>(null);
   const [name, setName] = React.useState(''), [newRole, setNewRole] = React.useState('');
@@ -82,7 +83,9 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
       </form>
       <div className="space-y-3"><h3 className="font-bold">Contas da equipe</h3>{overview.members.map(member => <div key={member.uid} className="grid min-w-0 items-start gap-3 rounded-xl border border-gray-800 p-4 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0 flex-1 space-y-2"><label className="block text-xs text-gray-400">Nome<input aria-label={`Nome de ${member.email}`} maxLength={120} value={member.name || ''} onChange={event => setOverview(current => current && ({ ...current, members: current.members.map(item => item.uid === member.uid ? { ...item, name: event.target.value } : item) }))} className="mt-1 w-full rounded-lg border border-gray-700 bg-black p-2 text-sm text-white" /></label><span className="block break-words [overflow-wrap:anywhere]">{member.email}{!member.enabled && <span className="ml-2 text-amber-400">Conta desativada</span>}</span><button type="button" className="max-w-full break-all text-left text-xs font-bold text-pink-400" onClick={() => void run(async () => { if (!api.saveName) throw new Error('Atualize o painel para editar o nome.'); await api.saveName(member.uid, member.name || ''); await reload(); setMessage('Nome do funcionário atualizado.'); })}>Salvar nome de {member.email}</button></div>
-        <select disabled={member.role === 'administrator' || dirtyRoles.current.size > 0} aria-label={`Função de ${member.email}`} value={member.role} onChange={event => void assign(member.email, event.target.value as AssignedRole)} className="w-full min-w-0 max-w-full rounded-lg border border-gray-700 bg-black px-3 py-2 sm:w-auto">{[['administrator', 'Administrador'], ...overview.roles.filter(item => !item.deletionPending).map(item => [item.id, staffRoleName(item.id, item)]), ['none', 'Sem acesso ao painel']].map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
+        <div className="flex flex-wrap items-center gap-2"><select disabled={member.role === 'administrator' || dirtyRoles.current.size > 0} aria-label={`Função de ${member.email}`} value={member.role} onChange={event => void assign(member.email, event.target.value as AssignedRole)} className="w-full min-w-0 max-w-full rounded-lg border border-gray-700 bg-black px-3 py-2 sm:w-auto">{[['administrator', 'Administrador'], ...overview.roles.filter(item => !item.deletionPending).map(item => [item.id, staffRoleName(item.id, item)]), ['none', 'Sem acesso ao painel']].map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
+          {member.role !== 'administrator' && <button type="button" onClick={() => setMemberToDelete(member)} aria-label={`Excluir funcionário ${member.email}`} className="rounded-lg border border-red-500/40 px-3 py-2 text-xs font-bold text-red-300">Excluir funcionário</button>}
+        </div>
       </div>)}{overview.truncated && <p className="text-xs text-amber-300">A lista mostra até 200 contas. Use o e-mail cadastrado para alterar outra conta.</p>}</div>
       <form className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-700 p-5" onSubmit={event => { event.preventDefault(); void run(async () => { const id = `role-${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`; await api.saveRole(id, [], null, newRole); setNewRole(''); await reload(); setMessage('Cargo criado. Selecione as permissões e salve antes de atribuí-lo.'); }); }}>
         <label className="min-w-0 flex-1 text-sm">Nome do novo cargo<input required minLength={1} maxLength={80} value={newRole} onChange={event => setNewRole(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-700 bg-black p-3" /></label><button type="submit" className="rounded-lg bg-pink-500 px-5 py-3 text-sm font-bold">Criar cargo</button>
@@ -94,6 +97,11 @@ export default function StaffManagement({ api = staffAdministrationApi }: { api?
         <button type="button" onClick={() => setPendingDelete(value)} className="max-w-full rounded-lg border border-red-500/40 px-4 py-3 text-left text-xs font-bold text-red-300 [overflow-wrap:anywhere]">{value.deletionPending ? 'Concluir exclusão de' : 'Excluir cargo'} {staffRoleName(value.id, value)}</button>
       </section>)}</div>
     </fieldset>}
+    {memberToDelete && <ConfirmDialog title="Excluir funcionário" message={`Remover ${memberToDelete.name || memberToDelete.email} da equipe e revogar o acesso ao painel? A conta da loja e o histórico ficam disponíveis.`} confirmLabel="Excluir funcionário" busy={busy} danger onCancel={() => setMemberToDelete(null)} onConfirm={() => void run(async () => {
+      await api.deleteMember(memberToDelete.uid);
+      await reload();
+      if (alive.current) { setMemberToDelete(null); setMessage('Funcionário excluído da equipe.'); }
+    })} />}
     {pendingDelete && <ConfirmDialog title="Excluir cargo" message={`Excluir o cargo “${staffRoleName(pendingDelete.id, pendingDelete)}”? Todas as pessoas com este cargo ficarão sem acesso ao painel até receberem outro. As contas, os pedidos e o histórico serão preservados. Alterações não salvas deste cargo serão descartadas.`} confirmLabel="Excluir cargo" busy={busy} danger onCancel={() => setPendingDelete(null)} onConfirm={() => void removeRole()} />}
   </section>;
 }

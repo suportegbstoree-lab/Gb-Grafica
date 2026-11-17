@@ -11,6 +11,9 @@ export default function StaffPdfImportTable({
   onRevise,
   onDownload,
   onClose,
+  onObserve,
+  initiallyEditing = false,
+  title = "Planilha dos pedidos importados",
 }: {
   name: string;
   headers: string[];
@@ -25,13 +28,17 @@ export default function StaffPdfImportTable({
   ) => Promise<void>;
   onDownload: () => void;
   onClose: () => void;
+  onObserve?: (index: number, note: string) => Promise<void>;
+  initiallyEditing?: boolean;
+  title?: string;
 }) {
   const [page, setPage] = React.useState(0);
   const [columnPage, setColumnPage] = React.useState(0);
   const [editing, setEditing] = React.useState<{
     index: number;
     cells: string[];
-  }>();
+  }>(initiallyEditing && rows[0] ? { index: rows[0].index, cells: [...rows[0].cells] } : undefined);
+  const [observing, setObserving] = React.useState<{ index: number; note: string }>();
   const [removing, setRemoving] = React.useState<number>();
   const [notice, setNotice] = React.useState("");
   const [applying, setApplying] = React.useState(false);
@@ -66,7 +73,7 @@ export default function StaffPdfImportTable({
     cells: string[] | null,
     pasteName = false,
   ) {
-    if (applyingRef.current) return;
+    if (applyingRef.current || observing) return;
     applyingRef.current = true;
     setApplying(true);
     setNotice("");
@@ -114,10 +121,25 @@ export default function StaffPdfImportTable({
       setApplying(false);
     }
   }
+  async function saveObservation() {
+    if (!observing?.note.trim() || !onObserve || applyingRef.current) return;
+    applyingRef.current = true;
+    setApplying(true);
+    try {
+      await onObserve(observing.index, observing.note.trim());
+      setObserving(undefined);
+      setNotice("Pedido movido para Pedidos em Observação.");
+    } catch (error) {
+      setNotice((error as Error).message);
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
+    }
+  }
   return (
     <EditorModal
       wide
-      title="Planilha dos pedidos importados"
+      title={title}
       busy={applying}
       onClose={onClose}
       closeLabel="Fechar planilha importada"
@@ -127,7 +149,7 @@ export default function StaffPdfImportTable({
         <button
           type="button"
           className={button}
-          disabled={applying || !!editing || removing !== undefined}
+          disabled={applying || !!editing || !!observing || removing !== undefined}
           onClick={() => {
             try {
               onDownload();
@@ -214,7 +236,7 @@ export default function StaffPdfImportTable({
                                 aria-label={`Colar nome na linha ${index + 1}`}
                                 disabled={
                                   applying ||
-                                  !!editing ||
+                                  !!editing || !!observing ||
                                   removing !== undefined
                                 }
                                 className="cursor-pointer text-amber-300 hover:underline disabled:opacity-40"
@@ -249,7 +271,16 @@ export default function StaffPdfImportTable({
                       )}
                     </td>
                     <td className="min-w-32 space-y-2 p-2">
-                      {draft ? (
+                      {observing?.index === index ? (
+                        <div className="space-y-2">
+                          <textarea autoFocus aria-label="Observação do pedido" maxLength={2000} rows={3}
+                            className="w-full min-w-40 rounded-lg border border-gray-700 bg-black p-2"
+                            value={observing.note} disabled={applying}
+                            onChange={event => setObserving({ index, note: event.target.value })} />
+                          <button type="button" className={button} disabled={applying || !observing.note.trim()} onClick={() => void saveObservation()}>Salvar observação</button>
+                          <button type="button" className={button} disabled={applying} onClick={() => setObserving(undefined)}>Cancelar</button>
+                        </div>
+                      ) : draft ? (
                         <>
                           <button
                             type="button"
@@ -293,7 +324,7 @@ export default function StaffPdfImportTable({
                             type="button"
                             className={button}
                             disabled={
-                              applying || !!editing || removing !== undefined
+                              applying || !!editing || !!observing || removing !== undefined
                             }
                             onClick={() => {
                               setNotice("");
@@ -306,7 +337,7 @@ export default function StaffPdfImportTable({
                             type="button"
                             className={button}
                             disabled={
-                              applying || !!editing || removing !== undefined
+                              applying || !!editing || !!observing || removing !== undefined
                             }
                             onClick={() => {
                               setNotice("");
@@ -315,6 +346,9 @@ export default function StaffPdfImportTable({
                           >
                             Excluir linha
                           </button>
+                          {onObserve && <button type="button" className={button}
+                            disabled={applying || !!editing || !!observing || removing !== undefined}
+                            onClick={() => { setNotice(""); setObserving({ index, note: "" }); }}>Adicionar observação</button>}
                         </>
                       )}
                     </td>

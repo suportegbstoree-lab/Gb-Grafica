@@ -105,3 +105,22 @@ test.describe('staff panel on mobile', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
   });
 });
+
+test('deleting an assigned role leaves the employee disabled and allows removing them from the list', async ({ page }) => {
+  await page.goto('/__e2e/admin');
+  await page.getByRole('button', { name: 'Funcionários', exact: true }).click();
+  await page.getByLabel('Nome do funcionário', { exact: true }).fill('Equipe Teste');
+  await page.getByLabel('E-mail cadastrado', { exact: true }).fill('designer@example.com');
+  await page.getByLabel('Função', { exact: true }).selectOption('designer');
+  await page.getByRole('button', { name: 'Aplicar função', exact: true }).click();
+  const role = page.getByLabel('Função de designer@example.com', { exact: true });
+  await expect(role).toHaveValue('designer');
+  await page.getByRole('button', { name: 'Excluir cargo Designer' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Excluir cargo', exact: true }).click();
+  await expect(role).toHaveValue('none');
+  await expect(role).toBeEnabled();
+  await page.getByRole('button', { name: 'Excluir funcionário designer@example.com' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Excluir funcionário', exact: true }).click();
+  await expect(role).toHaveCount(0);
+  await expect(page.getByLabel('Função de admin@example.com', { exact: true })).toBeDisabled();
+});

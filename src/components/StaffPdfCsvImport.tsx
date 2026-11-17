@@ -8,12 +8,16 @@ import {
   readStaffPdfCsv,
   resolveStaffPdfCsvModel,
   staffPdfNameColumn,
+  staffPdfDeadlineColumn,
+  staffPdfObservationColumn,
+  staffPdfDeadline,
   staffPdfQuantityColumn,
 } from "../lib/staffPdfCsv";
 import { excelColumn, selectedColumnsCsv } from "../lib/spreadsheetCsv";
 import { downloadPersonalization } from "../services/personalizationExport";
 import { layoutFont } from "../lib/staffPdf";
 import type { PersonalizationFont } from "../lib/textCustomization";
+import StaffPdfObservations from "./StaffPdfObservations";
 import StaffPdfImportTable from "./StaffPdfImportTable";
 import StaffSpreadsheetCsv, { type StaffWorkbookDraft } from "./StaffSpreadsheetCsv";
 import StaffSpreadsheetPicker from "./StaffSpreadsheetPicker";
@@ -29,6 +33,7 @@ export interface StaffPdfCsvOrder {
     index: number;
     textColumn?: number;
     textIsName?: boolean;
+    observation?: string;
     textWarnings?: { blank: string; filled: string };
   };
   csvWarning: string;
@@ -46,7 +51,24 @@ export interface StaffPdfCsvNamePaste {
   ) => NonNullable<StaffPdfCsvOrder["csvRow"]["textWarnings"]>;
 }
 const input = "min-w-0 w-full rounded-lg border border-gray-700 bg-black p-2";
+interface ObservedOrder {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  separator?: string;
+  index: number;
+  headers: string[];
+  columns: ReturnType<typeof defaultStaffPdfCsvColumns>;
+  barcodeColumn: number;
+  quantityColumn: number;
+  cells: string[];
+  note: string;
+  model?: { baseId: string; layoutId: string };
+}
+const observationHeader = "observacoes";
+
 interface CsvDraft {
+  observations?: ObservedOrder[];
   source?: {
     id: string;
     name: string;
@@ -97,6 +119,7 @@ export default function StaffPdfCsvImport({
   fonts,
   busy,
   visible,
+  observationsVisible,
   fallback,
   onAdd,
   onReviewQueue,
@@ -110,6 +133,7 @@ export default function StaffPdfCsvImport({
   fonts: PersonalizationFont[];
   busy: boolean;
   visible: boolean;
+  observationsVisible: boolean;
   fallback: { baseId: string; layoutId: string };
   onAdd: (orders: StaffPdfCsvOrder[]) => Promise<void>;
   onReviewQueue: () => void;
@@ -125,6 +149,11 @@ export default function StaffPdfCsvImport({
   const csv = useStaffPdfDraft(storageOwner, "csv", emptyDraft);
   const workbook = useStaffPdfDraft<StaffWorkbookDraft | null>(storageOwner, "workbook", null);
   const { source, hasHeader, columns, overrides, codes } = csv.value;
+  const observations = csv.value.observations ?? [];
+  const [observedEditor, setObservedEditor] = React.useState<{ id: string; edit: boolean }>();
+  const observed = observations.find(order => order.id === observedEditor?.id);
+  const observationColumn = observed ? staffPdfObservationColumn(observed.headers) : -1;
+  const noteColumn = observationColumn >= 0 ? observationColumn : observed?.headers.length ?? 0;
   const [table, setTable] = React.useState(false),
     [page, setPage] = React.useState(0),
     [message, setMessage] = React.useState(""),
@@ -154,7 +183,7 @@ export default function StaffPdfCsvImport({
     const nameColumn = staffPdfNameColumn(header);
     const quantityColumn = staffPdfQuantityColumn(header);
     const rows = [header, ...expandStaffPdfQuantities(records, quantityColumn)];
-    if (nameColumn >= 0)
+    if (workbookId && nameColumn >= 0)
       for (const cells of rows.slice(1)) cells[nameColumn] = "";
     const source = {
       id: crypto.randomUUID(),
@@ -165,8 +194,8 @@ export default function StaffPdfCsvImport({
       quantityColumn,
       workbookId,
     };
-    await csv.save(() => ({
-      ...emptyDraft, source, columns,
+    await csv.save((current) => ({
+      ...emptyDraft, source, columns, observations: current.observations,
       hasHeader: quantityColumn >= 0 || Object.values(columns).some((value) => value >= 0),
     }));
     setPage(0);
@@ -407,6 +436,99 @@ export default function StaffPdfCsvImport({
         : "Linha excluída da importação.",
     );
   }
+  async function addObservation(index: number, note: string) {
+    const row = source?.rows[index];
+    if (!source || !row || block) throw new Error("O pedido não está disponível para observação.");
+    if (observations.length >= 10000) throw new Error("Exporte os pedidos em observação antes de adicionar mais.");
+    const cells = [...formatNameCell(row, nameColumn)];
+    const barcodeColumn = barcodeIndex < 0 ? source.width : barcodeIndex;
+    cells[barcodeColumn] = getBarcode(row, index);
+    const order: ObservedOrder = {
+      id: `${source.id}:${index}`, sourceId: source.id, sourceName: source.name, separator: source.separator, index,
+      headers: barcodeIndex < 0 ? [...headers, "barcode"] : headers,
+      columns, barcodeColumn, quantityColumn, cells, note, model: overrides[index],
+    };
+    await onReviseRow({ sourceId: source.id, index });
+    await csv.save(current => {
+      if (current.source?.id !== source.id || !current.source.rows[index]) return current;
+      const rows = [...current.source.rows];
+      rows[index] = null;
+      return {
+        ...current, source: { ...current.source, rows },
+        added: current.added.filter(rowIndex => rowIndex !== index),
+        observations: [...(current.observations ?? []), order],
+      };
+    });
+  }
+  function updateObservation(id: string, change?: ObservedOrder) {
+    return csv.save(current => ({
+      ...current,
+      observations: (current.observations ?? []).flatMap(order =>
+        order.id === id ? (change ? [change] : []) : [order]),
+    }));
+  }
+  async function queueObservation(id: string) {
+    const order = observations.find(item => item.id === id);
+    if (!order) throw new Error("Pedido em observação não encontrado.");
+    const { headers, columns, cells, barcodeColumn } = order;
+    const text = (cells[columns.text] || "").replace(/\r\n?/g, "\n").trim();
+    const barcode = cells[barcodeColumn]?.trim() || "";
+    const template = cells[columns.template]?.trim() || "";
+    const model = order.model ?? (template ? resolveModel(template) : fallback);
+    if (columns.text < 0 || text.length > 500 || !model?.baseId || !model.layoutId ||
+      (barcode && !staffTrackingBarcode(barcode))) {
+      throw new Error("Revise o campo de texto, o modelo e o rastreio do pedido antes de enviar.");
+    }
+    const warnings = (blank: boolean) => blankWarning(headers.filter((_, index) =>
+      index === columns.text ? blank : !cells[index]?.trim(),
+    ));
+    await onAdd([{
+      ...model, text, barcode,
+      csvRow: {
+        sourceId: order.sourceId, index: order.index, textColumn: columns.text,
+        textIsName: columns.text === staffPdfNameColumn(headers),
+        observation: order.note,
+        textWarnings: { blank: warnings(true), filled: warnings(false) },
+      },
+      csvWarning: warnings(!text),
+    }]);
+    await updateObservation(id);
+    onReviewQueue();
+  }
+  function observationDeadline(order: ObservedOrder) {
+    return order.cells[staffPdfDeadlineColumn(order.headers)] || "";
+  }
+  function exportObservations(entries = observations) {
+    const named = new Map<string, string>();
+    const columns = (headers: string[]) => {
+      const seen = new Map<string, number>();
+      return headers.map(header => {
+        const normalized = header.trim().toLocaleLowerCase("pt-BR");
+        const count = (seen.get(normalized) ?? 0) + 1;
+        seen.set(normalized, count);
+        return `${normalized}:${count}`;
+      });
+    };
+    for (const order of entries) {
+      const noteColumn = staffPdfObservationColumn(order.headers);
+      columns(order.headers).forEach((key, index) => {
+        if (index !== noteColumn && !named.has(key)) named.set(key, order.headers[index]);
+      });
+    }
+    const sorted = [...entries].sort((a, b) =>
+      (staffPdfDeadline(observationDeadline(a)) ?? Infinity) - (staffPdfDeadline(observationDeadline(b)) ?? Infinity),
+    );
+    const rows = [[...named.values(), observationHeader], ...sorted.map(order => {
+      const cells = new Map(columns(order.headers).map((key, index) => [key, order.cells[index]]));
+      return [...[...named.keys()].map(key => cells.get(key) ?? ""), order.note];
+    })];
+    const delimiters = new Set(entries.map(entry => entry.separator ?? ","));
+    const separator = delimiters.size === 1 ? entries[0].separator ?? "," : ",";
+    if (rows[0].length * Math.max(0, rows.length - 1) > 10 * 1024 * 1024)
+      throw new Error("O CSV de observações excede o limite de colunas e linhas para exportar.");
+    const content = selectedColumnsCsv(rows, rows[0].map((_, index) => index), separator);
+    downloadPersonalization(new Blob([content], { type: "text/csv;charset=utf-8" }), "pedidos-em-observacao.csv");
+  }
   function downloadReviewed() {
     if (!source) return;
     const includeBarcode =
@@ -445,6 +567,7 @@ export default function StaffPdfCsvImport({
   }
   return (
     <section className="space-y-4">
+      <div hidden={!visible} className="space-y-4">
       <StaffSpreadsheetCsv onUseCsv={useCsv} layouts={data.layouts}
         draft={workbook.value} save={workbook.save} disabled={block} />
       <section className="space-y-4 rounded-2xl border border-gray-800 p-5">
@@ -490,6 +613,11 @@ export default function StaffPdfCsvImport({
             >
               Visualizar planilha importada
             </button>
+            <button type="button" className="ml-2 rounded-lg border border-gray-700 px-3 py-2 text-sm"
+              onClick={() => {
+                try { downloadReviewed(); }
+                catch (failure) { setError((failure as Error).message); }
+              }}>Baixar CSV revisado</button>
             {transferred ? (
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span>Planilha enviada à fila para revisão.</span>
@@ -719,6 +847,45 @@ export default function StaffPdfCsvImport({
           </fieldset>
         )}
       </section>
+      </div>
+      {observationsVisible && <StaffPdfObservations
+        disabled={block}
+        orders={observations.map(order => ({
+          id: order.id,
+          reference: order.cells[order.columns.reference] || String(order.index + 1),
+          barcode: order.cells[order.barcodeColumn] || "",
+          template: order.cells[order.columns.template] || "",
+          name: order.cells[staffPdfNameColumn(order.headers)] || "",
+          deadline: observationDeadline(order),
+          note: order.note,
+        }))}
+        onOpen={(id, edit) => setObservedEditor({ id, edit })}
+        onRemove={updateObservation}
+        onQueue={queueObservation}
+        onExport={() => exportObservations()}
+      />}
+      {observationsVisible && observed && <StaffPdfImportTable
+        title="Pedido em observação"
+        name={observed.sourceName}
+        initiallyEditing={observedEditor?.edit}
+        headers={observationColumn >= 0 ? observed.headers : [...observed.headers, observationHeader]}
+        barcodeColumn={observed.barcodeColumn}
+        quantityColumn={observed.quantityColumn}
+        nameColumn={staffPdfNameColumn(observed.headers)}
+        rows={[{ index: observed.index, cells: Array.from({ length: Math.max(observed.headers.length, noteColumn + 1) }, (_, i) => i === noteColumn ? observed.note : observed.cells[i] || "") }]}
+        onRevise={async (_index, cells) => {
+          if (!cells) { await updateObservation(observed.id); setObservedEditor(undefined); return; }
+          const note = cells[noteColumn]?.trim();
+          if (!note || note.length > 2000) throw new Error("Informe uma observação de até 2000 caracteres.");
+          const next = formatNameCell(cells.slice(0, observed.headers.length), staffPdfNameColumn(observed.headers));
+          await updateObservation(observed.id, {
+            ...observed, cells: next, note,
+            model: next[observed.columns.template] === observed.cells[observed.columns.template] ? observed.model : undefined,
+          });
+        }}
+        onClose={() => setObservedEditor(undefined)}
+        onDownload={() => exportObservations([observed])}
+      />}
       {visible && table && source && (
         <StaffPdfImportTable
           name={source.name}
@@ -727,6 +894,7 @@ export default function StaffPdfCsvImport({
           barcodeColumn={barcodeIndex < 0 ? headers.length : barcodeIndex}
           quantityColumn={quantityColumn}
           nameColumn={nameColumn}
+          onObserve={addObservation}
           onRevise={reviseRow}
           onDownload={downloadReviewed}
           rows={imported.map(({ row, index }) => {

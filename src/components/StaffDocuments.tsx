@@ -43,7 +43,7 @@ export default function StaffDocuments({
   storageOwner?: string;
 }) {
   const [rows, setRows] = React.useState<StaffDocumentView[]>([]),
-    [truncated, setTruncated] = React.useState(false),
+    [next, setNext] = React.useState<string>(),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
     [busy, setBusy] = React.useState(false);
@@ -60,13 +60,13 @@ export default function StaffDocuments({
     [share, setShare] = React.useState<string | null>(null);
   const alive = React.useRef(true),
     request = React.useRef(0);
-  const load = React.useCallback(async () => {
+  const load = React.useCallback(async (cursor?: string) => {
     if (!canGenerate) return;
     const revision = ++request.current;
-    const result = await api.list();
+    const result = await api.list(cursor);
     if (alive.current && revision === request.current) {
-      setRows(result.documents);
-      setTruncated(result.truncated);
+      setRows(current => cursor ? [...current, ...result.documents.filter(row => !current.some(old => old.id === row.id))] : result.documents);
+      setNext(result.next);
     }
   }, [api, canGenerate]);
   React.useEffect(() => {
@@ -158,11 +158,8 @@ export default function StaffDocuments({
           Atualizar documentos
         </button>
       </div>
-      {truncated && (
-        <p className="text-sm text-amber-300">
-          Exibindo os 100 documentos mais recentes ainda disponíveis.
-        </p>
-      )}
+      {next && <button type="button" disabled={busy} className="rounded-lg border border-gray-700 px-4 py-2 text-sm"
+        onClick={() => void run(() => load(next))}>Carregar documentos anteriores</button>}
       <div className="space-y-4">
         {rows.map((doc) => (
           <article
@@ -219,7 +216,7 @@ export default function StaffDocuments({
                 >
                   <Mail size={16} aria-hidden="true" />
                 </button>
-                <button
+                {doc.canManage !== false && <button
                   type="button" title="Revogar links" aria-label={`Revogar links ${doc.reference}`}
                   disabled={busy}
                   onClick={() =>
@@ -233,7 +230,7 @@ export default function StaffDocuments({
                   className={deleteButton}
                 >
                   <Unlink size={16} aria-hidden="true" />
-                </button>
+                </button>}
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-3">
