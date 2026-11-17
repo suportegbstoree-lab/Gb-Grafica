@@ -208,3 +208,27 @@ test('internal PDF bases and PNG letters require the independent live template p
  await assertFails(storage.ref(`staff-pdf-bases/${randomUUID().replaceAll('-','')}/upload.pdf`).put(bytes,meta));
  for(const collection of ['_staffPdfBases','_staffPdfLayouts','_staffPdfBaseNames']){await assertFails(designer().firestore().doc(`${collection}/private`).get());await assertFails(designer().firestore().doc(`${collection}/private`).set({enabled:true}));}
 });
+
+test('order owners, fiscal staff and admins cannot bypass the API to read fiscal documents', async () => {
+  await seed([
+    ['orders/order/fiscal/checkout', { payerCpf: '52998224725' }],
+    ['orders/order/fiscal/draft', { recipientDocument: '52998224725' }],
+    ['_fiscalSettings/nfe', { defaults: { issuerState: 'SP' } }],
+    ['_customerProfiles/customer', { cpf: '52998224725', fiscalRecipient: { recipientDocument: '11222333000181' } }],
+    ['_staffRoles/designer', { ...policy, permissions: ['orders.read', 'fiscal.manage'] }],
+  ]);
+  const customer = env.authenticatedContext('customer').firestore();
+  const staff = designer().firestore();
+  const adminUid = 'fiscal-admin';
+  await seed([['_adminAccess/' + adminUid, { schemaVersion: 1, epoch: 'legacy', enabled: true }]]);
+  const adminDb = env.authenticatedContext(adminUid, { admin: true }).firestore();
+  await assertSucceeds(customer.doc('orders/order').get());
+  await assertSucceeds(staff.doc('orders/order').get());
+  await assertSucceeds(adminDb.doc('orders/order').get());
+  for (const db of [customer, staff, adminDb]) {
+    for (const entry of ['orders/order/fiscal/checkout', 'orders/order/fiscal/draft', '_fiscalSettings/nfe', '_customerProfiles/customer']) {
+      await assertFails(db.doc(entry).get());
+      await assertFails(db.doc(entry).set({ changed: true }));
+    }
+  }
+});

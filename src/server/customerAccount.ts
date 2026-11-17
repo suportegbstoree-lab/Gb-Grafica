@@ -4,6 +4,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { EMPTY_PROFILE, parseCustomerProfile } from '../lib/customerProfile.js';
 import { orderItems } from '../lib/bundles.js';
 import { OperationsError } from '../lib/operations.js';
+import { lookupPostalAddress } from './postalAddress.js';
 type Deps = {
   db: () => Firestore;
   user: (req: express.Request) => Promise<{ uid: string; name?: string }>;
@@ -42,16 +43,31 @@ export function createCustomerAccountRouters(deps: Deps) {
     action(async (req, res) => {
       const value = parseCustomerProfile(req.body);
       if (!value || !(req.body.expectedRevision === null || typeof req.body.expectedRevision === 'string'))
-        throw new OperationsError('Revise os dados pessoais, CPF, telefone e endereço.', 422);
+        throw new OperationsError('Revise os dados pessoais, o endereço e o destinatário da nota fiscal.', 422);
       const db = deps.db(),
         ref = db.collection('_customerProfiles').doc(res.locals.customer.uid);
       await db.runTransaction(async (tx) => {
         const old = (await tx.get(ref)).data();
         if ((old?.revision || null) !== req.body.expectedRevision)
           throw new OperationsError('O perfil mudou. Atualize a página antes de salvar.', 409);
-        tx.set(ref, { ...value, revision: randomUUID(), updatedAt: new Date().toISOString() });
+        const fiscalRecipient = Object.hasOwn(req.body, 'fiscalRecipient') ? value.fiscalRecipient : old?.fiscalRecipient ?? null;
+        tx.set(ref, { ...value, fiscalRecipient, revision: randomUUID(), updatedAt: new Date().toISOString() });
       });
       res.json(profileView((await ref.get()).data()));
+    }),
+  );
+  account.post(
+    '/postal-address',
+    action(async (req, res) => {
+      const cep = typeof req.body?.cep === 'string' ? req.body.cep.trim().replace('-', '') : '';
+      if (!/^\d{8}$/.test(cep)) throw new OperationsError('Informe um CEP válido.', 422);
+      deps.limit(`account-postal-address:${res.locals.customer.uid}`, 12, 60000);
+      const address = await lookupPostalAddress(cep).catch(() => {
+        throw new OperationsError('Não foi possível consultar o CEP agora. Tente novamente.', 502);
+      });
+      if (!address) throw new OperationsError('CEP não encontrado. Confira o número ou digite o endereço.', 422);
+      const { cityCode: _cityCode, ...result } = address;
+      res.json(result);
     }),
   );
   account.get(

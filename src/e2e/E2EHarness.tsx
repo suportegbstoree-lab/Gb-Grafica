@@ -159,6 +159,7 @@ const fixtureRatings: Record<string,any> = CATALOG4 ? {'1yi50l93z':{count:2,sum:
 const fixtureCustomerApi: CustomerApi = {
   profile:async()=>({...fixtureProfile}),
   saveProfile:async profile=>{fixtureProfile={...profile,revision:crypto.randomUUID()};return {...fixtureProfile};},
+  lookupAddress:async cep=>({cep,street:'Praça da Sé',neighborhood:'Sé',city:'São Paulo',state:'SP'}),
   orders:async()=>structuredClone(FIXTURE_ORDERS),ratings:async()=>structuredClone(fixtureRatings),
   reviews:async id=>({reviews:structuredClone(fixtureReviews[id] || []),rating:fixtureRatings[id] || {count:0,sum:0,average:0}}),
   review:async(id,input)=>{fixtureReviews[id]=[{id:'review',rating:input.rating,comment:input.comment,authorName:'Cliente',verifiedPurchase:true,updatedAt:new Date().toISOString()}];fixtureRatings[id]={count:1,sum:input.rating,average:input.rating};},

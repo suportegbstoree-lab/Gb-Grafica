@@ -1,4 +1,5 @@
 import { isValidCpf, isValidBrazilianPhone } from './commerce.js';
+import { isFiscalState, parseNfeRecipient, type NfeRecipient } from './nfe.js';
 export interface CustomerProfile {
   fullName: string;
   phone: string;
@@ -10,6 +11,7 @@ export interface CustomerProfile {
   neighborhood: string;
   city: string;
   state: string;
+  fiscalRecipient: NfeRecipient | null;
   revision: string | null;
 }
 export const EMPTY_PROFILE: CustomerProfile = {
@@ -23,12 +25,15 @@ export const EMPTY_PROFILE: CustomerProfile = {
   neighborhood: '',
   city: '',
   state: '',
+  fiscalRecipient: null,
   revision: null,
 };
 export function parseCustomerProfile(input: unknown): Omit<CustomerProfile, 'revision'> | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-  const data = input as Record<string, unknown>,
-    allowed = Object.keys(EMPTY_PROFILE).concat('expectedRevision');
+  const { fiscalRecipient, ...data } = input as Record<string, unknown>;
+  const recipient = fiscalRecipient == null ? null : parseNfeRecipient(fiscalRecipient);
+  if (fiscalRecipient != null && (!recipient?.recipientName || !recipient.recipientDocument)) return null;
+  const allowed = Object.keys(EMPTY_PROFILE).filter(key => key !== 'fiscalRecipient').concat('expectedRevision');
   if (
     Object.keys(data).some(
       (key) =>
@@ -38,9 +43,9 @@ export function parseCustomerProfile(input: unknown): Omit<CustomerProfile, 'rev
     return null;
   const result = Object.fromEntries(
     Object.keys(EMPTY_PROFILE)
-      .filter((key) => key !== 'revision')
+      .filter((key) => key !== 'revision' && key !== 'fiscalRecipient')
       .map((key) => [key, typeof data[key] === 'string' ? data[key].trim() : '']),
-  ) as Omit<CustomerProfile, 'revision'>;
+  ) as Omit<CustomerProfile, 'revision' | 'fiscalRecipient'>;
   if (
     Object.entries(result).some(
       ([key, value]) =>
@@ -58,37 +63,8 @@ export function parseCustomerProfile(input: unknown): Omit<CustomerProfile, 'rev
     (result.cpf && !isValidCpf(result.cpf)) ||
     (result.phone && !isValidBrazilianPhone(result.phone)) ||
     (result.cep && result.cep.length !== 8) ||
-    (result.state &&
-      ![
-        'AC',
-        'AL',
-        'AP',
-        'AM',
-        'BA',
-        'CE',
-        'DF',
-        'ES',
-        'GO',
-        'MA',
-        'MT',
-        'MS',
-        'MG',
-        'PA',
-        'PB',
-        'PR',
-        'PE',
-        'PI',
-        'RJ',
-        'RN',
-        'RS',
-        'RO',
-        'RR',
-        'SC',
-        'SP',
-        'SE',
-        'TO',
-      ].includes(result.state))
+    (result.state && !isFiscalState(result.state))
   )
     return null;
-  return result;
+  return { ...result, fiscalRecipient: recipient };
 }

@@ -10,11 +10,47 @@ export const NFE_PRODUCT_FIELDS = [
 
 export type NfeProductFields = Partial<Record<typeof NFE_PRODUCT_FIELDS[number]['key'], string>>;
 export type NfeItemDraft = NfeProductFields & { cfop?: string; icmsCode?: string; couponCents: number | null };
-export type NfeAddress = DeliveryAddress & { cityCode?: string };
-export interface NfeDraft {
+export type NfeAddress = DeliveryAddress;
+export interface NfeRecipient {
   recipientName: string;
   recipientDocument: string;
   stateRegistration: string;
+}
+export const EMPTY_NFE_RECIPIENT: NfeRecipient = { recipientName: '', recipientDocument: '', stateRegistration: '' };
+export const NFE_RECIPIENT_FIELDS = [
+  ['recipientName', 'Nome ou razão social', 120],
+  ['recipientDocument', 'CPF ou CNPJ', 24],
+  ['stateRegistration', 'Inscrição estadual (quando aplicável)', 20],
+] as const;
+export interface NfeSalesRule {
+  cfop: string;
+  icmsCode: string;
+}
+export interface NfeDefaults {
+  issuerState: string;
+  operation: string;
+  intrastate: NfeSalesRule;
+  interstate: NfeSalesRule;
+}
+export interface NfeDefaultsConfig {
+  revision: string | null;
+  defaults: NfeDefaults;
+}
+export const EMPTY_NFE_DEFAULTS: NfeDefaults = {
+  issuerState: '', operation: '', intrastate: { cfop: '', icmsCode: '' }, interstate: { cfop: '', icmsCode: '' },
+};
+const ufCodes = {
+  AC: '12', AL: '27', AP: '16', AM: '13', BA: '29', CE: '23', DF: '53', ES: '32', GO: '52',
+  MA: '21', MT: '51', MS: '50', MG: '31', PA: '15', PB: '25', PR: '41', PE: '26', PI: '22',
+  RJ: '33', RN: '24', RS: '43', RO: '11', RR: '14', SC: '42', SP: '35', SE: '28', TO: '17',
+};
+export function isFiscalState(value: string): value is keyof typeof ufCodes {
+  return Object.hasOwn(ufCodes, value);
+}
+export function validCityCode(code: string, state: string): boolean {
+  return /^\d{7}$/.test(code) && isFiscalState(state) && code.startsWith(ufCodes[state]);
+}
+export interface NfeDraft extends NfeRecipient {
   address: NfeAddress;
   operation: string;
   items: NfeItemDraft[];
@@ -22,6 +58,7 @@ export interface NfeDraft {
 export interface NfeReview {
   environment: 'disabled' | 'homologacao' | 'invalid';
   revision: string | null;
+  reviewedAt?: string;
   editable: boolean;
   paymentEnvironment: 'sandbox' | 'production' | null;
   draft: NfeDraft;
@@ -66,4 +103,36 @@ export function parseNfeDocument(value: string): string | null {
   const base = document.slice(0, 12);
   const first = digit(base);
   return document === base + first + digit(base + first) ? document : null;
+}
+
+export function parseNfeRecipient(value: unknown): NfeRecipient | null {
+  const input = fiscalRecord(value);
+  if (!input) return null;
+  const recipientName = fiscalText(input.recipientName, 120);
+  const document = fiscalText(input.recipientDocument, 24);
+  const stateRegistration = fiscalText(input.stateRegistration, 20);
+  if (recipientName === null || document === null || stateRegistration === null) return null;
+  const recipientDocument = parseNfeDocument(document);
+  if (recipientDocument === null) return null;
+  return { recipientName, recipientDocument, stateRegistration };
+}
+
+export function parseNfeDefaults(value: unknown): NfeDefaults | null {
+  const input = fiscalRecord(value);
+  if (!input) return null;
+  const issuerState = fiscalText(input.issuerState, 2)?.toUpperCase();
+  const operation = fiscalText(input.operation, 60);
+  if (issuerState === undefined || (issuerState && !isFiscalState(issuerState)) || operation === null) return null;
+  const rule = (key: 'intrastate' | 'interstate', prefix: string): NfeSalesRule | null => {
+    const row = fiscalRecord(input[key]);
+    if (!row) return null;
+    const cfop = fiscalText(row.cfop, 4);
+    const icmsCode = fiscalText(row.icmsCode, 3);
+    if (cfop === null || icmsCode === null || (cfop && (!/^\d{4}$/.test(cfop) || !cfop.startsWith(prefix))) ||
+      (icmsCode && !/^\d{2,3}$/.test(icmsCode))) return null;
+    return { cfop, icmsCode };
+  };
+  const intrastate = rule('intrastate', '5');
+  const interstate = rule('interstate', '6');
+  return intrastate && interstate ? { issuerState, operation, intrastate, interstate } : null;
 }

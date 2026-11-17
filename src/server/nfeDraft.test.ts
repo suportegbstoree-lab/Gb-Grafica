@@ -3,6 +3,7 @@ import test from 'node:test';
 import { parseNfeDocument } from '../lib/nfe';
 import { memoryFirestore } from '../../test/helpers/memoryFirestore';
 import { NfeDraftError, orderNfeDraft } from './nfeDraft';
+import { manageNfeDefaults } from './nfeDefaults';
 
 const id = 'GB-FISCAL123';
 const path = 'orders/' + id;
@@ -70,4 +71,62 @@ test('legacy paid orders without a delivery charge remain reviewable when the to
   assert.equal(review.editable, true);
   assert.equal(review.totals.shippingCents, 0);
   assert.equal(review.totals.totalCents, 3000);
+});
+
+const fiscalAddress = {
+  cep: '01001000', estado: 'SP', cidade: 'São Paulo', cityCode: '3550308', rua: 'Praça da Sé',
+  numero: '15', bairro: 'Sé', complemento: '',
+};
+const defaults = {
+  issuerState: 'SP', operation: 'Venda', intrastate: { cfop: '5102', icmsCode: '102' },
+  interstate: { cfop: '6108', icmsCode: '102' },
+};
+const checkout = { payerCpf: '52998224725', couponByItem: [245], products: [nfeCode] };
+
+test('new drafts suggest fiscal settings by destination and only mark complete drafts as reviewed', async () => {
+  const { db, docs } = memoryFirestore([
+    [path, { ...order, enderecoEntrega: fiscalAddress }], [path + '/fiscal/checkout', checkout],
+  ]);
+  const config = await manageNfeDefaults(db, 'admin', { defaults, revision: null });
+  await assert.rejects(manageNfeDefaults(db, 'admin', { defaults, revision: null }), rejects(409));
+  const initial = await orderNfeDraft(db, id, 'operator');
+  assert.equal(initial.draft.operation, 'Venda');
+  assert.equal(initial.draft.address.cityCode, '3550308');
+  assert.equal(initial.draft.items[0].cfop, '5102');
+  assert.equal(initial.draft.items[0].icmsCode, '102');
+  assert.deepEqual(initial.issues, []);
+  await assert.rejects(orderNfeDraft(db, id, 'operator', {
+    confirm: true, revision: null, draft: { ...initial.draft, address: { ...fiscalAddress, cityCode: '' } },
+  }), rejects(422));
+  await assert.rejects(orderNfeDraft(db, id, 'operator', {
+    confirm: true, revision: null, draft: { ...initial.draft, address: { ...fiscalAddress, cityCode: '3304557' } },
+  }), rejects(422));
+  const confirmed = await orderNfeDraft(db, id, 'operator', { confirm: true, draft: initial.draft, revision: null });
+  assert.ok(confirmed.reviewedAt);
+  await manageNfeDefaults(db, 'admin', { defaults: { ...defaults, operation: 'Venda de produtos' }, revision: config.revision });
+  assert.equal((await orderNfeDraft(db, id, 'operator')).draft.operation, 'Venda');
+  const updated = await orderNfeDraft(db, id, 'operator', { draft: confirmed.draft, revision: confirmed.revision });
+  assert.equal(updated.reviewedAt, undefined);
+  assert.equal(docs.get(path + '/fiscal/draft')?.reviewedAt, undefined);
+});
+
+test('interstate defaults apply to retail delivery, while CNPJ and pickup require an operator to fill the codes', async () => {
+  const { db, docs } = memoryFirestore([
+    [path, { ...order, enderecoEntrega: { ...fiscalAddress, estado: 'RJ', cidade: 'Rio de Janeiro', cityCode: '3304557' } }],
+    [path + '/fiscal/checkout', checkout],
+  ]);
+  await manageNfeDefaults(db, 'admin', { defaults, revision: null });
+  const interstate = await orderNfeDraft(db, id, 'operator');
+  assert.equal(interstate.draft.items[0].cfop, '6108');
+  docs.set(path + '/fiscal/checkout', { ...checkout, recipient: {
+    recipientName: 'Empresa Teste', recipientDocument: '11.222.333/0001-81', stateRegistration: '123456789',
+  } });
+  const company = await orderNfeDraft(db, id, 'operator');
+  assert.equal(company.draft.recipientName, 'Empresa Teste');
+  assert.equal(company.draft.recipientDocument, '11222333000181');
+  assert.equal(company.draft.stateRegistration, '123456789');
+  assert.equal(company.draft.items[0].cfop, undefined);
+  docs.set(path + '/fiscal/checkout', checkout);
+  docs.set(path, { ...order, metodoEntrega: 'retirada' });
+  assert.equal((await orderNfeDraft(db, id, 'operator')).draft.items[0].cfop, undefined);
 });

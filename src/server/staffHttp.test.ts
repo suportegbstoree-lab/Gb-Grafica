@@ -5,6 +5,7 @@ import { initializeApp, deleteApp, type App } from 'firebase-admin/app';
 import { getAuth, type DecodedIdToken, type UserRecord } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import axios from 'axios';
 import app from './app';
 import { unsubscribeToken } from './emailPreferences';
 import { DEFAULT_ROLE_PERMISSIONS } from '../lib/staffAccess';
@@ -95,6 +96,42 @@ test('fiscal draft API keeps checkout data private without a fiscal role', async
   assert.equal(draft.recipientDocument, '52998224725');
   assert.equal((await call(route, 'admin', { draft, revision })).status, 200);
 });
+test('only a full administrator can manage fiscal defaults, including when a staff role has fiscal access', async () => {
+  const epoch = 'e'.repeat(32);
+  accounts.get(employee)!.customClaims = { staffRole: 'designer', gbStaffEpoch: epoch };
+  tokens.set('fiscal', { uid: employee, ...accounts.get(employee)!.customClaims });
+  docs.set('_staffAccess/' + employee, { schemaVersion: 1, enabled: true, roleId: 'designer', epoch });
+  docs.set('_staffRoles/designer', { schemaVersion: 1, enabled: true, permissions: ['orders.read', 'fiscal.manage'], revision: epoch });
+  const endpoint = '/admin/nfe-defaults';
+  const defaults = { issuerState: 'SP', operation: 'Venda', intrastate: { cfop: '5102', icmsCode: '102' },
+    interstate: { cfop: '6108', icmsCode: '102' } };
+  assert.equal((await call(endpoint, 'buyer')).status, 403);
+  assert.equal((await call(endpoint, 'fiscal', { defaults, revision: null })).status, 403);
+  assert.equal((await call('/admin/nfe-postal-address', 'buyer', { cep: '01001000' })).status, 403);
+  const invalid = await call('/admin/nfe-postal-address', 'fiscal', { cep: '123' });
+  assert.equal(invalid.status, 422);
+  const postalLookup = mock.method(axios, 'get', async (url: string) => {
+    assert.equal(url, 'https://viacep.com.br/ws/01001000/json/');
+    return { data: { uf: 'SP', localidade: 'São Paulo', logradouro: 'Praça da Sé', bairro: 'Sé', ibge: '3550308' } };
+  });
+  try {
+    const postal = await call('/admin/nfe-postal-address', 'fiscal', { cep: '01001-000', cpf: '52998224725' });
+    assert.equal(postal.status, 200, await postal.clone().text());
+    assert.equal(postal.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual(await postal.json(), {
+      cep: '01001000', estado: 'SP', cidade: 'São Paulo', cityCode: '3550308', rua: 'Praça da Sé', bairro: 'Sé',
+    });
+  } finally { postalLookup.mock.restore(); }
+  const response = await call(endpoint, 'admin', { defaults, revision: null });
+  assert.equal(response.status, 200, await response.clone().text());
+  const saved = await response.json();
+  assert.deepEqual(saved.defaults, defaults);
+  assert.ok(saved.revision);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.equal((await call(endpoint, 'admin', { defaults, revision: null })).status, 409);
+  assert.deepEqual(await (await call(endpoint)).json(), saved);
+});
+
 test('assignment resolves a registered email, persists staff authorization and truthfully queues the email', async () => {
   const response = await assign(); assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   const data = await response.json() as { notification: { status: string } }; assert.equal(data.notification.status, 'not_configured');

@@ -117,18 +117,33 @@ O token PagBank e a conta de serviço Firebase são exclusivos do servidor. A IA
 
 ### NF-e de produtos no ADM
 
-Em **Produtos → Catálogo → Editar Produto → Classificação fiscal**, informe
-NCM, CEST (quando aplicável), origem e unidade comercial com a contabilidade.
-Em **Pedidos → Pedidos do site → Rascunho de NF-e**, confira o destinatário,
-endereço, natureza da operação, CFOP, CST/CSOSN e valores da compra. O rascunho
-pode ser salvo mesmo com pendências. A edição exige um pedido pago sem estorno
-ou cancelamento. Administradores podem delegar **Conferir e salvar rascunhos
-de NF-e** junto com **Consultar pedidos e fichas de produção**.
+Em **Loja → Informações da Loja → Padrões de NF-e**, o administrador pode salvar
+a UF do emitente, a natureza da operação e os códigos CFOP e CST/CSOSN para
+entregas dentro do estado ou para outro estado a pessoas físicas sem inscrição
+estadual informada. Use os valores da contabilidade.
+Em **Produtos → Catálogo → Editar Produto → Classificação fiscal**, cadastre
+NCM, CEST (quando aplicável), origem e unidade comercial.
 
-O backend usa os preços do pedido. Os dados fiscais disponíveis no checkout,
-incluindo o CPF do pagador e o rateio do cupom, ficam em uma subcoleção privada
-do pedido. Confirme quem deve constar como destinatário. Pedidos anteriores
-podem exigir preenchimento manual do documento e do rateio.
+Em **Pedidos → Pedidos do site → Conferir NF-e**, revise e clique em **Marcar
+como conferido**. Os dados vêm do pedido, da classificação do produto e dos
+padrões configurados. O código IBGE é obtido na consulta de CEP do checkout para
+novas entregas. Para endereços fiscais antigos ou diferentes, use **Consultar
+CEP** no rascunho e confira logradouro, número, bairro e complemento. Pedidos de
+retirada, empresas e pacotes exigem revisão fiscal específica. Rascunhos com pendências
+podem ser salvos. A edição exige um pedido pago sem estorno ou cancelamento.
+Administradores podem delegar **Conferir e salvar rascunhos de NF-e** junto com
+**Consultar pedidos e fichas de produção**.
+
+O CPF e o rateio por item ficam em `orders/{id}/fiscal/checkout`. O comprador
+pode salvar outro destinatário em **Minha conta → Dados da nota fiscal** e
+alterá-lo no checkout. O perfil privado também pode guardar o CPF do pagador e
+sugerir o endereço de entrega usando **Buscar CEP**. O destinatário escolhido
+no checkout, inclusive CNPJ e inscrição estadual, fica no registro privado do pedido. Rascunhos e conferências
+ficam em `orders/{id}/fiscal/draft`. O acesso fiscal passa pela API autenticada,
+com App Check quando habilitado e respostas sem cache. Pedidos anteriores sem
+CPF no registro fiscal exigem preenchimento autorizado. A configuração de
+padrões é privada e alterações nela se aplicam como sugestões a novos
+rascunhos, preservando o que já foi salvo.
 
 ```dotenv
 # Opcional. Variável de servidor na Vercel.

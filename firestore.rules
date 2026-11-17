@@ -210,6 +210,8 @@ service cloud.firestore {
     match /_customerProfiles/{userId} { allow read, write: if false; }
     match /_reviewOwners/{reviewId} { allow read, write: if false; }
 
+    match /_fiscalSettings/{document} { allow read, write: if false; }
+
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.userId) || can('orders.read'));
       // Orders are created and updated by the server after PagBank validation.

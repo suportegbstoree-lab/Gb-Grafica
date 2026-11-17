@@ -68,6 +68,7 @@ import {
 import { ORDER_OPERATIONS_API, type OrderOperationsApi } from '../services/orderService';
 import OrderActions from '../components/OrderActions';
 import NfeDraftEditor from '../components/NfeDraftEditor';
+import NfeDefaultsEditor from '../components/NfeDefaultsEditor';
 import { NfeProductInputs } from '../components/NfeProductFields';
 import ShipmentLabelsPanel from '../components/ShipmentLabelsPanel';
 import PromotionTargets from '../components/PromotionTargets';
@@ -258,6 +259,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
     if (!tabAllowed(activeTab)) {
       setActiveTab(allowedSections[0] || 'products'); setEditingProduct(null); setEditingPromotion(null);
       setIsFontsEditorOpen(false);
+      setNfeDefaultsOpen(false);
     }
     if (!can('orders.artwork')) { modelRequest.current++; setModelDocument(null); }
   }, [activeTab, accessKey]);
@@ -280,6 +282,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
   const fontDraftRef = React.useRef(configDraft);
   React.useEffect(() => { fontDraftRef.current = configDraft; }, [configDraft]);
   const [isUploadingFonts, setIsUploadingFonts] = useState(false);
+  const [nfeDefaultsOpen, setNfeDefaultsOpen] = useState(false);
   const [isFontsEditorOpen, setIsFontsEditorOpen] = useState(false);
   const [newSystemFont, setNewSystemFont] = useState({ nome: '', cssFamily: '' });
   const [promotionDiscountInput, setPromotionDiscountInput] = useState('');
@@ -1621,6 +1624,13 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
 
               {activeTab === 'config' && <>
                 <StoreSettingsLists config={configDraft} onChange={changes => { setConfigDraft(current => ({ ...current, ...changes })); setConfigDirty(true); }} />
+                {fullAdmin && <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-gray-800 bg-[#111111] p-6">
+                  <div><h3 className="font-bold">Padrões de NF-e</h3>
+                    <p className="mt-1 text-sm text-gray-400">UF do emitente, natureza da operação, CFOP e CST ou CSOSN.</p>
+                  </div>
+                  <button type="button" onClick={() => setNfeDefaultsOpen(true)}
+                    className="rounded-lg border border-gray-700 px-3 py-2 text-sm hover:bg-gray-800">Configurar padrões fiscais</button>
+                </section>}
                 <section aria-labelledby="default-shipping-heading" className="space-y-4 rounded-xl border border-gray-800 bg-[#111111] p-6">
                   <h3 id="default-shipping-heading" className="font-bold">Peso e embalagem padrão</h3>
                   <p className="text-sm text-gray-400">Os valores salvos preenchem os novos produtos. Você pode ajustá-los em cada produto ou combinação.</p>
@@ -1775,6 +1785,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         )}
       </main>
 
+      {fullAdmin && activeTab === 'config' && nfeDefaultsOpen && <NfeDefaultsEditor onClose={() => setNfeDefaultsOpen(false)} />}
       {isFontsEditorOpen && <EditorModal title="Fontes da personalização" compact={isUploadingFonts} busy={isUploadingAdminAsset} onClose={() => setIsFontsEditorOpen(false)}>
         <PersonalizationFontLoader fonts={configDraft.fontes_personalizacao || []} includeInactive />
         <div className={isUploadingFonts ? "space-y-0" : "space-y-5"}>
@@ -2616,7 +2627,7 @@ function OrderCard({
 
       <OrderDocuments order={order} staff canRetry={canRetryEmail} />
       {(canFulfill || canManageShipments) && <OrderActions order={order} api={operations} canFulfill={canFulfill} canManageShipments={canManageShipments} onError={onOperationError} onSuccess={onOperationSuccess} />}
-      {canManageNfe && <button type="button" onClick={() => setNfeOpen(true)} className="rounded-lg border border-pink-400/40 px-4 py-2 text-sm font-bold text-pink-300">Rascunho de NF-e</button>}
+      {canManageNfe && <button type="button" onClick={() => setNfeOpen(true)} className="rounded-lg border border-pink-400/40 px-4 py-2 text-sm font-bold text-pink-300 hover:bg-pink-400/10">Conferir NF-e</button>}
       {canManageNfe && nfeOpen && <NfeDraftEditor orderId={order.id} onClose={() => setNfeOpen(false)} />}
       {order.tracking && <p className="break-words text-xs text-cyan-300">{order.tracking.code ? `Rastreio: ${order.tracking.code} · ` : ''}{order.tracking.status}{order.tracking.eventAt ? ` · ${formatAdminDate(order.tracking.eventAt)}` : ''}</p>}
       <button type="button" onClick={() => setSheetOpen(true)} className="rounded-lg border border-gray-700 px-4 py-2 text-xs font-bold text-pink-400">Ficha de produção</button>

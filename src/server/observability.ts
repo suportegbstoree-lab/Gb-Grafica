@@ -5,7 +5,7 @@ type LogLevel = 'info' | 'warn' | 'error';
 type LogFields = Record<string, unknown>;
 
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
-const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|token|secret|password|private[_-]?key|signature|signed[_-]?url|cpf|tax[_-]?id|document|email|phone|telefone|celular|customer|cliente|address|endere[cç]o|street|neighborhood|bairro|complement|postal|cep|card|holder)/i;
+const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|token|secret|password|private[_-]?key|signature|signed[_-]?url|cpf|cnpj|recipient[_-]?name|state[_-]?registration|inscri[cç][aã]o[_-]?estadual|tax[_-]?id|document|email|phone|telefone|celular|customer|cliente|address|endere[cç]o|street|neighborhood|bairro|complement|postal|cep|card|holder)/i;
 const MAX_STRING_LENGTH = 1_000;
 const MAX_ARRAY_LENGTH = 25;
 const MAX_OBJECT_KEYS = 50;
@@ -18,6 +18,7 @@ function redactSensitiveText(value: string): string {
     .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
     .replace(/([?&](?:token|access_token|secret|password|authorization|signature|x-goog-signature|x-goog-credential|x-amz-signature|x-amz-credential|api[_-]?key)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[EMAIL_REDACTED]')
+    .replace(/\b(?:\d{14}|[A-Z0-9]{2}\.[A-Z0-9]{3}\.[A-Z0-9]{3}\/[A-Z0-9]{4}-\d{2})\b/gi, '[DOCUMENT_REDACTED]')
     .replace(/(?<!\d)\d{3}\.?\d{3}\.?\d{3}-?\d{2}(?!\d)/g, '[DOCUMENT_REDACTED]')
     .replace(/(?<!\d)(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?\d{4,5}[\s.-]?\d{4}(?!\d)/g, '[PHONE_REDACTED]')
     .replace(/[\r\n\t]+/g, ' ')

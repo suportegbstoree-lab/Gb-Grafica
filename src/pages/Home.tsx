@@ -37,6 +37,7 @@ import {
   type UploadedArtwork,
 } from '../services/artworkService';
 import { currentLegalAcceptance, LEGAL_ROUTES } from '../lib/legal';
+import { EMPTY_NFE_RECIPIENT, NFE_RECIPIENT_FIELDS, parseNfeRecipient } from '../lib/nfe';
 import { checkoutIssues, type CheckoutIssue, validateCheckoutForm } from '../lib/checkoutForm';
 import {
   createHostedCheckout,
@@ -217,6 +218,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   const [deliveryMethod, setDeliveryMethod] = useState<'retirada' | 'entrega'>('entrega');
   const [customerName, setCustomerName] = useState('');
   const [cpf, setCpf] = useState('');
+  const [fiscalRecipient, setFiscalRecipient] = useState(EMPTY_NFE_RECIPIENT);
+  const savedFiscalRecipient = useRef(EMPTY_NFE_RECIPIENT);
   const [phone, setPhone] = useState('');
   const checkoutDraftEdited = useRef(false);
   const [orderNotes, setOrderNotes] = useState('');
@@ -244,8 +247,19 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   React.useEffect(()=>{ let active=true; void customerApi.ratings().then(rows=>{if(active) {setRatings(rows);setRatingsError('');}}).catch(()=>{if(active) setRatingsError('As avaliações estão indisponíveis no momento.');});return()=>{active=false;};},[customerApi]);
   React.useEffect(()=>{setSearchTerm(new URLSearchParams(location.search).get('q') || '');},[location.search]);
   const applyFilters = (changes: Record<string,string>) => { const next=new URLSearchParams(location.search); Object.entries(changes).forEach(([key,value])=>value?next.set(key,value):next.delete(key)); navigate(`${focusedPage ? '/' : location.pathname}${next.size ? '?'+next.toString() : ''}`); };
-  const fillProfile = (profile: Profile) => { setCustomerName(profile.fullName || user?.displayName || ''); setPhone(profile.phone);setCpf(profile.cpf);setCep(profile.cep);setAddressStreet(profile.street);setAddressNumber(profile.number);setAddressComplement(profile.complement);setAddressNeighborhood(profile.neighborhood); };
-  React.useEffect(()=>{ let active=true; checkoutDraftEdited.current=false; setCustomerName(user?.displayName || '');setPhone('');setCpf('');setCep('');setAddressStreet('');setAddressNumber('');setAddressComplement('');setAddressNeighborhood(''); if(user) void customerApi.profile().then(profile=>{if(active && !checkoutDraftEdited.current) fillProfile(profile);}).catch(()=>undefined);return()=>{active=false;}; },[user?.uid,customerApi]);
+  const fillProfile = (profile: Profile) => {
+    setCustomerName(profile.fullName || user?.displayName || '');
+    setPhone(profile.phone);
+    setCpf(formatCpf(profile.cpf));
+    savedFiscalRecipient.current = profile.fiscalRecipient ?? EMPTY_NFE_RECIPIENT;
+    setFiscalRecipient(savedFiscalRecipient.current);
+    setCep(profile.cep);
+    setAddressStreet(profile.street);
+    setAddressNumber(profile.number);
+    setAddressComplement(profile.complement);
+    setAddressNeighborhood(profile.neighborhood);
+  };
+  React.useEffect(()=>{ let active=true; checkoutDraftEdited.current=false; setCustomerName(user?.displayName || '');setPhone('');setCpf('');savedFiscalRecipient.current=EMPTY_NFE_RECIPIENT;setFiscalRecipient(EMPTY_NFE_RECIPIENT);setCep('');setAddressStreet('');setAddressNumber('');setAddressComplement('');setAddressNeighborhood(''); if(user) void customerApi.profile().then(profile=>{if(active && !checkoutDraftEdited.current) fillProfile(profile);}).catch(()=>undefined);return()=>{active=false;}; },[user?.uid,customerApi]);
   const activeCategory = routeCategory?.nome || null;
   const [shippingError, setShippingError] = useState<string | null>(null);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -520,6 +534,16 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     }
 
     if (!currentCouponQuote || currentCouponQuote.error) return;
+    const hasFiscalRecipient = NFE_RECIPIENT_FIELDS.some(([key]) => fiscalRecipient[key].trim());
+    const recipient = hasFiscalRecipient ? parseNfeRecipient(fiscalRecipient) : null;
+    if (hasFiscalRecipient && (!recipient?.recipientName || !recipient.recipientDocument)) {
+      setNotice({ type: 'error', message: 'Confira o nome e o CPF ou CNPJ do destinatário da nota fiscal.' });
+      const input = document.getElementById(fiscalRecipient.recipientName.trim() ? 'fiscal-recipientDocument' : 'fiscal-recipientName');
+      const details = input?.closest('details');
+      if (details) details.open = true;
+      input?.focus();
+      return;
+    }
 
     checkoutLock.current = true;
     setIsCheckingOut(true);
@@ -557,6 +581,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         expectedCouponCode: appliedCoupon?.code ?? null,
         expectedShippingDiscountCents: appliedCoupon?.shippingDiscountCents ?? 0,
         customerName: formResult.customerName,
+        ...(recipient ? { fiscalRecipient: recipient } : {}),
         observacoes: orderNotes,
         cpf: formResult.cpf,
         phone: formResult.phone,
@@ -573,6 +598,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
       if (checkoutResult.orderId) localStorage.setItem('gb_pending_order', checkoutResult.orderId);
       setCart([]);
+      setFiscalRecipient(savedFiscalRecipient.current);
       setAcceptedLegalTerms(false);
       setCouponCode('');
       setCouponInput('');
@@ -1575,6 +1601,24 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                       className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-pink-400"
                     />
                   </div>
+
+                  <details className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <summary className="cursor-pointer text-sm font-bold hover:text-pink-700">
+                      {fiscalRecipient.recipientName.trim() ? 'Nota fiscal para outro destinatário' : 'Dados diferentes para a nota fiscal'}
+                    </summary>
+                    <p className="mt-2 text-xs text-gray-600">Por padrão, usamos o nome e o CPF do pagador. Preencha abaixo se a nota for para outra pessoa ou empresa.</p>
+                    <div className="mt-3 grid gap-3">
+                      {NFE_RECIPIENT_FIELDS.map(([key, label, maxLength]) => <label key={key} className="text-xs font-bold">
+                        {label}
+                        <input id={'fiscal-' + key} maxLength={maxLength} value={fiscalRecipient[key]}
+                          onChange={event => setFiscalRecipient(current => ({ ...current, [key]: event.target.value }))}
+                          className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-normal focus:border-pink-400" />
+                      </label>)}
+                    </div>
+                    {NFE_RECIPIENT_FIELDS.some(([key]) => fiscalRecipient[key]) && <button type="button"
+                      className="mt-3 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold hover:border-pink-500"
+                      onClick={() => setFiscalRecipient(EMPTY_NFE_RECIPIENT)}>Usar dados do pagador neste pedido</button>}
+                  </details>
 
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-3">
                     <p className="text-[11px] leading-relaxed text-gray-600">

@@ -85,3 +85,11 @@ test('limita estruturas circulares e não permite sobrescrever os campos-base do
   assert.equal(parsed.event, 'security_check');
   assert.equal(parsed.email, '[REDACTED]');
 });
+
+test('oculta identificadores fiscais e o nome do destinatário nos logs', () => {
+  const sanitized = JSON.stringify(sanitizeLogValue({
+    cnpj: '12ABC34501DE35', stateRegistration: 'IE-TESTE', recipientName: 'Destinatário Teste',
+    message: 'CNPJ 12.ABC.345/01DE-35 ou 11222333000181',
+  }));
+  assert.doesNotMatch(sanitized, /12ABC34501DE35|12\.ABC\.345\/01DE-35|11222333000181|IE-TESTE|Destinatário Teste/);
+});

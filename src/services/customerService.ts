@@ -15,6 +15,7 @@ export interface ProductReview {
 export interface CustomerApi {
   profile(): Promise<CustomerProfile>;
   saveProfile(profile: CustomerProfile): Promise<CustomerProfile>;
+  lookupAddress(cep: string): Promise<Pick<CustomerProfile, 'cep' | 'street' | 'neighborhood' | 'city' | 'state'>>;
   orders(): Promise<Order[]>;
   ratings(): Promise<Record<string, ProductRating>>;
   reviews(id: string): Promise<{ reviews: ProductReview[]; rating: ProductRating }>;
@@ -38,6 +39,7 @@ async function request<T>(path: string, body?: unknown, privateCall = true): Pro
 export const customerApi: CustomerApi = {
   profile: () => request('account/profile'),
   saveProfile: ({ revision, ...profile }) => request('account/profile', { ...profile, expectedRevision: revision }),
+  lookupAddress: cep => request('account/postal-address', { cep }),
   orders: async () => (await request<{ orders: Order[] }>('account/orders')).orders,
   ratings: async () =>
     (await request<{ ratings: Record<string, ProductRating> }>('products/ratings', undefined, false)).ratings,

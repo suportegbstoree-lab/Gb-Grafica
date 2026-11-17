@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { Firestore } from 'firebase-admin/firestore';
 import { parseMoneyToCents } from '../lib/commerce.js';
-import { fiscalRecord, fiscalText, parseNfeDocument, parseNfeProductFields, type NfeAddress, type NfeDraft, type NfeItemDraft, type NfeReview } from '../lib/nfe.js';
+import { fiscalRecord, fiscalText, isFiscalState, parseNfeDefaults, parseNfeProductFields, parseNfeRecipient, validCityCode, type NfeAddress, type NfeDraft, type NfeItemDraft, type NfeRecipient, type NfeReview } from '../lib/nfe.js';
 import type { Order } from '../types.js';
-
-export class NfeDraftError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
+import { NfeDraftError } from './nfeDraftError.js';
+import { nfeDefaultsRef } from './nfeDefaults.js';
+export { NfeDraftError } from './nfeDraftError.js';
 
 function nfeEnvironment(): NfeReview['environment'] {
   const value = process.env.NFE_ENV?.trim() || 'disabled';
@@ -18,9 +17,11 @@ export function nfeCheckoutSnapshot(
   paymentEnvironment: 'production' | 'sandbox',
   couponByItem: number[],
   catalog: ReadonlyMap<string, Record<string, unknown>>,
+  recipient?: NfeRecipient,
 ) {
   return {
     payerCpf, paymentEnvironment,
+    ...(recipient ? { recipient } : {}),
     couponByItem: items.map((_, index) => couponByItem[index] ?? 0),
     products: items.map(item => parseNfeProductFields(catalog.get(item.productId)?.fiscal) ?? {}),
   };
@@ -32,15 +33,15 @@ function field(value: unknown, length: number, label: string): string {
   return checked;
 }
 
-const states = new Set('AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' '));
 function parseAddress(input: unknown): NfeAddress {
   const data = fiscalRecord(input);
   if (!data) throw new NfeDraftError(422, 'Revise o endereço fiscal.');
   const cep = field(data.cep, 9, 'CEP').replace('-', '');
   const estado = field(data.estado, 2, 'UF').toUpperCase();
   const cityCode = field(data.cityCode, 7, 'Código IBGE do município');
-  if ((cep && !/^\d{8}$/.test(cep)) || (estado && !states.has(estado)) || (cityCode && !/^\d{7}$/.test(cityCode))) {
-    throw new NfeDraftError(422, 'Informe CEP, UF e código de município em formatos válidos.');
+  if ((cep && !/^\d{8}$/.test(cep)) || (estado && !isFiscalState(estado)) ||
+    (cityCode && (!/^\d{7}$/.test(cityCode) || (estado && !validCityCode(cityCode, estado))))) {
+    throw new NfeDraftError(422, 'Confira o CEP e a UF. O código IBGE deve corresponder à UF informada.');
   }
   return {
     cep, estado, cityCode,
@@ -88,8 +89,8 @@ function draftFromInput(input: unknown, lines: NfeReview['lines'], coupon: numbe
   if (!data || !Array.isArray(data.items) || data.items.length !== lines.length) {
     throw new NfeDraftError(422, 'Revise os dados fiscais dos itens deste pedido.');
   }
-  const document = parseNfeDocument(field(data.recipientDocument, 24, 'CPF ou CNPJ'));
-  if (document === null) throw new NfeDraftError(422, 'Informe um CPF ou CNPJ válido para o destinatário.');
+  const recipient = parseNfeRecipient(data);
+  if (!recipient) throw new NfeDraftError(422, 'Revise o nome, o CPF ou CNPJ e a inscrição estadual do destinatário.');
   const items = data.items.map((item, index): NfeItemDraft => {
     const row = fiscalRecord(item);
     if (!row) throw new NfeDraftError(422, 'Revise a classificação fiscal do item ' + (index + 1) + '.');
@@ -105,9 +106,7 @@ function draftFromInput(input: unknown, lines: NfeReview['lines'], coupon: numbe
     return { ...parsed, cfop: operation, icmsCode: icms, couponCents: discount as number | null };
   });
   return {
-    recipientName: field(data.recipientName, 120, 'Nome ou razão social'),
-    recipientDocument: document,
-    stateRegistration: field(data.stateRegistration, 20, 'Inscrição estadual'),
+    ...recipient,
     address: parseAddress(data.address),
     operation: field(data.operation, 60, 'Natureza da operação'),
     items,
@@ -118,7 +117,7 @@ function reviewIssues(draft: NfeDraft, lines: NfeReview['lines'], expectedDiscou
   const issues: string[] = [];
   if (!draft.recipientName || !draft.recipientDocument) issues.push('Confirme o nome e o documento do destinatário.');
   const { cep, rua, numero, bairro, cidade, estado, cityCode } = draft.address;
-  if (!cep || !rua || !numero || !bairro || !cidade || !estado || !cityCode) issues.push('Complete o endereço fiscal e o código IBGE do município.');
+  if (!cep || !rua || !numero || !bairro || !cidade || !estado || !validCityCode(cityCode ?? '', estado)) issues.push('Complete o endereço fiscal e o código IBGE do município.');
   if (!draft.operation) issues.push('Informe a natureza da operação.');
   if (draft.items.some(item => !item.ncm || !item.cfop || !item.unit || !item.origin || !item.icmsCode)) issues.push('Complete a classificação fiscal dos itens com a contabilidade.');
   if (draft.items.some(item => item.couponCents === null) ||
@@ -140,8 +139,9 @@ export async function orderNfeDraft(db: Firestore, orderId: string, actor: strin
     if (!order) throw new NfeDraftError(404, 'Pedido não encontrado.');
     const { lines, totals } = paymentTotals(order);
     const checkout = checkoutSnapshot.data();
-    const saved = draftSnapshot.data() as { revision: string; data: NfeDraft } | undefined;
+    const saved = draftSnapshot.data() as { revision: string; data: NfeDraft; reviewedAt?: string } | undefined;
     let revision = saved?.revision ?? null;
+    let reviewedAt = saved?.reviewedAt;
     const paid = order.paymentStatus ? order.paymentStatus === 'pago' : order.status === 'Pago';
     const editable = paid && order.fulfillmentStatus !== 'cancelado' && !Number(order.pagbankRefundedAmountCents);
     const amounts: unknown = checkout?.couponByItem;
@@ -156,8 +156,14 @@ export async function orderNfeDraft(db: Firestore, orderId: string, actor: strin
       if (!editable) throw new NfeDraftError(409, 'Somente pedidos pagos, sem cancelamento ou estorno, aceitam alterações no rascunho fiscal.');
       if (request.revision !== revision) throw new NfeDraftError(409, 'Outro operador salvou este rascunho. Reabra a NF-e para revisar a versão mais recente.');
       draft = draftFromInput(request.draft, lines, coupon);
+      if (request.confirm === true) {
+        const issue = reviewIssues(draft, lines, totals.itemCouponCents)[0];
+        if (issue) throw new NfeDraftError(422, issue);
+      }
       revision = randomUUID();
-      tx.set(draftRef, { revision, data: draft, updatedAt: new Date().toISOString(), updatedBy: actor });
+      const updatedAt = new Date().toISOString();
+      reviewedAt = request.confirm === true ? updatedAt : undefined;
+      tx.set(draftRef, { revision, data: draft, updatedAt, updatedBy: actor, ...(reviewedAt ? { reviewedAt } : {}) });
     } else if (saved) draft = saved.data;
     else {
       const atPurchase = order.itens.map((_, index) => {
@@ -168,19 +174,27 @@ export async function orderNfeDraft(db: Firestore, orderId: string, actor: strin
         !atPurchase[index] && /^[A-Za-z0-9_-]{1,100}$/.test(item.productId) ? [item.productId] : []);
       const products = new Map(await Promise.all([...new Set(catalogIds)]
         .map(async id => [id, (await tx.get(db.collection('anuncios').doc(id))).data()] as const)));
+      const address = initialAddress(order.enderecoEntrega);
+      const defaults = parseNfeDefaults((await tx.get(nfeDefaultsRef(db))).data()?.defaults);
+      const recipient = parseNfeRecipient(checkout?.recipient);
+      const recipientDocument = recipient?.recipientDocument || (typeof checkout?.payerCpf === 'string' ? checkout.payerCpf : '');
+      const saleRule = defaults?.issuerState && order.metodoEntrega === 'entrega' && isFiscalState(address.estado)
+        && recipientDocument.length === 11 && !recipient?.stateRegistration
+        ? (address.estado === defaults.issuerState ? defaults.intrastate : defaults.interstate)
+        : undefined;
       draft = {
-        recipientName: order.clienteNome || '',
-        recipientDocument: typeof checkout?.payerCpf === 'string' ? checkout.payerCpf : '',
-        stateRegistration: '', operation: '', address: initialAddress(order.enderecoEntrega),
+        recipientName: recipient?.recipientName || order.clienteNome || '',
+        recipientDocument,
+        stateRegistration: recipient?.stateRegistration ?? '', operation: defaults?.operation ?? '', address,
         items: order.itens.map((item, index) => {
           const fields = atPurchase[index] ?? parseNfeProductFields(products.get(item.productId)?.fiscal);
-          return { ...fields, couponCents: coupon?.[index] ?? null };
+          return { ...fields, ...(!lines[index].bundle ? saleRule : undefined), couponCents: coupon?.[index] ?? null };
         }),
       };
     }
     const paymentEnvironment = checkout?.paymentEnvironment;
     return {
-      environment: nfeEnvironment(), revision, editable,
+      environment: nfeEnvironment(), revision, editable, ...(reviewedAt && editable ? { reviewedAt } : {}),
       paymentEnvironment: paymentEnvironment === 'production' || paymentEnvironment === 'sandbox' ? paymentEnvironment : null,
       draft, lines, totals, couponFromCheckout: coupon !== null, issues: reviewIssues(draft, lines, totals.itemCouponCents),
     };

@@ -141,7 +141,11 @@ import { CorreiosError } from './correiosError.js';
 import { melhorEnvioConfig, quoteMelhorEnvio, type MelhorEnvioConfig } from './melhorEnvio.js';
 import { ShippingError } from './shippingError.js';
 import { shipmentLabelOperation, shipmentLabelView } from './shipmentLabelOperation.js';
-import { NfeDraftError, nfeCheckoutSnapshot, orderNfeDraft } from './nfeDraft.js';
+import { nfeCheckoutSnapshot, orderNfeDraft } from './nfeDraft.js';
+import { NfeDraftError } from './nfeDraftError.js';
+import { manageNfeDefaults } from './nfeDefaults.js';
+import { lookupPostalAddress } from './postalAddress.js';
+import { parseNfeRecipient } from '../lib/nfe.js';
 import type { ShipmentLabelView } from '../lib/shipmentLabel.js';
 import { validateShipmentSender } from './melhorEnvioShipment.js';
 import { processMelhorEnvioTracking, syncMelhorEnvioTracking } from './melhorEnvioTracking.js';
@@ -161,6 +165,7 @@ interface ShippingQuote {
 	street: string;
 	neighborhood: string;
 	city: string;
+	cityCode?: string;
 	options: MelhorEnvioShippingOption[];
 	parcels: ShippingParcel[];
 	quotedAt: string;
@@ -667,24 +672,9 @@ async function getShippingQuote(
 	const config = melhorEnvioConfig();
 
 	try {
-		const response = await axios.get<{
-			erro?: boolean;
-			logradouro?: string;
-			bairro?: string;
-			localidade?: string;
-			uf?: string;
-		}>(`https://viacep.com.br/ws/${cep}/json/`, { timeout: 5000 });
-
-		const addressData = response.data;
-		const state = addressData.uf?.trim().toUpperCase() || '';
-		const city = textValue(addressData.localidade, 90);
-
-		if (addressData.erro || !/^[A-Z]{2}$/.test(state) || !city) {
-			throw new HttpError(422, 'CEP não encontrado.');
-		}
-
-		const street = textValue(addressData.logradouro, 160);
-		const neighborhood = textValue(addressData.bairro, 60);
+		const postalAddress = await lookupPostalAddress(cep);
+		if (!postalAddress) throw new HttpError(422, 'CEP não encontrado.');
+		const { state, city, street, neighborhood, cityCode } = postalAddress;
 		const address = [street, neighborhood].filter(Boolean).join(', ')
 			? `${[street, neighborhood].filter(Boolean).join(', ')} - ${city}/${state}`
 			: `${city}/${state}`;
@@ -695,7 +685,7 @@ async function getShippingQuote(
       'Nenhum serviço disponível permite emitir a etiqueta para estes volumes. Escolha retirada ou fale com a loja.');
 		const quotedAt = new Date().toISOString();
 		return { cep, originCep: config.originCep, environment: config.environment,
-			amountCents: options[0].amount_cents, address, state, street, neighborhood, city,
+			amountCents: options[0].amount_cents, address, state, street, neighborhood, city, cityCode,
 			options, parcels, quotedAt, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString() };
 	} catch (error) {
 		if (error instanceof HttpError || error instanceof ShippingError) throw error;
@@ -1810,6 +1800,10 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			throw new HttpError(422, 'Informe nome e sobrenome.');
 		}
 		const cpf = validCpf(body.cpf);
+		const fiscalRecipient = body.fiscalRecipient === undefined ? undefined : parseNfeRecipient(body.fiscalRecipient);
+		if (body.fiscalRecipient !== undefined && (!fiscalRecipient?.recipientName || !fiscalRecipient.recipientDocument)) {
+			throw new HttpError(422, 'Confira o nome e o CPF ou CNPJ do destinatário da nota fiscal.');
+		}
 		const phone = validPhone(body.phone);
 		const deliveryMethod = body.deliveryMethod as DeliveryMethod;
 		const normalizedCart = await normalizeCart(body.items, services, firebaseUser.uid);
@@ -1838,6 +1832,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 				bairro: validAddressField(body.addressNeighborhood || shipping.neighborhood, 'o bairro', 60),
 				cidade: shipping.city,
 				estado: shipping.state,
+				...(shipping.cityCode ? { cityCode: shipping.cityCode } : {}),
 			}
 			: null;
     // Old clients without a coupon quote keep the total they already displayed.
@@ -1936,7 +1931,7 @@ const checkoutHandler = async (req: express.Request, res: express.Response) => {
 			observacoes: textValue(body.observacoes, 1000),
 			legalAcceptance,
 		};
-    const fiscalCheckout = nfeCheckoutSnapshot(orderData.itens, cpf, pagbank.environment, selection?.discounts ?? [], normalizedCart.shippingProducts);
+    const fiscalCheckout = nfeCheckoutSnapshot(orderData.itens, cpf, pagbank.environment, selection?.discounts ?? [], normalizedCart.shippingProducts, fiscalRecipient ?? undefined);
 		await createOrderWithDocuments(db, orderId, orderData as Order, process.env.ORDER_NOTIFICATION_EMAIL || '',
       selection ? async tx => {
         const current = await selectCoupon(db, firebaseUser, lines, body.couponCode, tx, shipping.amountCents);
@@ -2550,6 +2545,43 @@ app.post('/api/admin/orders/:orderId/production-label', requireAppCheck, async (
   try { await performOrderOperation(req, res, true); } catch (error) { sendError(res, error); }
 });
 
+function sendNfeError(res: express.Response, error: unknown) {
+  if (error instanceof NfeDraftError) sendError(res, new HttpError(error.status, error.message));
+  else if (error instanceof HttpError) sendError(res, error);
+  else sendError(res, new HttpError(500, 'Não foi possível acessar os dados fiscais agora. Tente novamente.'));
+}
+
+app.all('/api/admin/nfe-defaults', requireAppCheck, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    res.set('Allow', 'GET, POST').status(405).end();
+    return;
+  }
+  try {
+    const user = await requireAdminUser(req);
+    const { db } = getAdminServices();
+    await enforceDistributedRateLimit(db, 'nfe-defaults:' + user.uid, 30, 60_000);
+    res.json(await manageNfeDefaults(db, user.uid, req.method === 'POST' ? req.body ?? null : undefined));
+  } catch (error) { sendNfeError(res, error); }
+});
+
+app.post('/api/admin/nfe-postal-address', requireAppCheck, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const user = await requirePermissionUser(req, 'fiscal.manage');
+    const { db } = getAdminServices();
+    const cep = typeof req.body?.cep === 'string' ? req.body.cep.trim().replace('-', '') : '';
+    if (!/^\d{8}$/.test(cep)) throw new HttpError(422, 'Informe um CEP válido.');
+    await enforceDistributedRateLimit(db, 'nfe-postal-address:' + user.uid, 30, 60_000);
+    const result = await lookupPostalAddress(cep).catch(() => {
+      throw new HttpError(502, 'Não foi possível consultar o CEP agora. Tente novamente.');
+    });
+    if (!result?.cityCode) throw new HttpError(422, 'Não foi possível localizar o código IBGE para este CEP. Confira os dados ou preencha o município manualmente.');
+    res.json({ cep: result.cep, estado: result.state, cidade: result.city,
+      cityCode: result.cityCode, rua: result.street, bairro: result.neighborhood });
+  } catch (error) { sendNfeError(res, error); }
+});
+
 app.all('/api/admin/orders/:orderId/nfe-draft', requireAppCheck, async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -2564,7 +2596,7 @@ app.all('/api/admin/orders/:orderId/nfe-draft', requireAppCheck, async (req, res
     const change = req.method === 'POST' ? req.body ?? null : undefined;
     res.json(await orderNfeDraft(db, req.params.orderId as string, user.uid, change));
   } catch (error) {
-    sendError(res, error instanceof NfeDraftError ? new HttpError(error.status, error.message) : error);
+    sendNfeError(res, error);
   }
 });
 

@@ -102,6 +102,7 @@ export interface CartItem {
 }
 
 export interface DeliveryAddress {
+  cityCode?: string;
   cep: string;
   rua: string;
   numero: string;

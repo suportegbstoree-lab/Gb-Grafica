@@ -72,7 +72,10 @@ before(async () => {
     return { set(r: Ref, value: Record<string, unknown>) { writes.push([r, value]); }, async commit() { for (const [r, value] of writes) await r.set(value); } };
   }) as unknown as typeof db.batch);
   mock.method(getStorage(firebaseApp), 'bucket', (() => ({})) as unknown as ReturnType<typeof getStorage>['bucket']);
-  mock.method(axios, 'get', async () => ({ data: { logradouro: 'Rua Teste', bairro: 'Centro', localidade: 'São Paulo', uf: 'SP' } }));
+  mock.method(axios, 'get', async (url: string) => {
+    assert.match(url, /^https:\/\/viacep\.com\.br\/ws\/\d{8}\/json\/$/);
+    return { data: { logradouro: 'Rua Teste', bairro: 'Centro', localidade: 'São Paulo', uf: 'SP', ibge: '3550308' } };
+  });
   mock.method(axios, 'post', async (url: string, body: any, config: any) => {
     if (url === `https://${process.env.MELHOR_ENVIO_ENV === 'production' ? '' : 'sandbox.'}melhorenvio.com.br/api/v2/me/shipment/calculate`) {
       melhorEnvioCalls++;
@@ -200,6 +203,28 @@ test('HTTP: cupom de frete zera a entrega no PagBank e preserva o preço dos pro
   assert.equal(order.shipping.amount_cents, 5000);
   assert.equal(order.cupom.shippingDiscountCents, 5000);
   assert.equal(docs.get('_salesCoupons/FRETEGRATIS')?.used, 1);
+});
+
+test('HTTP: destinatário fiscal fica separado do pagamento e o município vem do CEP', async () => {
+  const recipient = { recipientName: 'Empresa Teste', recipientDocument: '11.222.333/0001-81', stateRegistration: '123456789' };
+  const response = await checkout({ shippingServiceCode: 'me:3', shippingAmountCents: 5000, fiscalRecipient: recipient });
+  assert.equal(response.status, 201, await response.clone().text());
+  const { order_id: orderId } = await response.json();
+  const order = docs.get('orders/' + orderId)!;
+  const fiscal = docs.get('orders/' + orderId + '/fiscal/checkout')!;
+  assert.equal((order.enderecoEntrega as { cityCode: string }).cityCode, '3550308');
+  assert.deepEqual(fiscal.recipient, { ...recipient, recipientDocument: '11222333000181' });
+  assert.equal(fiscal.payerCpf, '52998224725');
+  assert.equal(pagbankBodies[0].customer.tax_id, '52998224725');
+  assert.doesNotMatch(JSON.stringify(order), /52998224725|11222333000181|123456789|Empresa Teste/);
+  assert.doesNotMatch(JSON.stringify(pagbankBodies[0]), /11222333000181|123456789|Empresa Teste/);
+});
+
+test('HTTP: documento fiscal inválido é recusado antes de criar o pedido', async () => {
+  const response = await checkout({ fiscalRecipient: { recipientName: 'Empresa Teste', recipientDocument: '123456' } });
+  assert.equal(response.status, 422);
+  assert.equal(pagbankBodies.length, 0);
+  assert.ok(![...docs.keys()].some(path => path.startsWith('orders/')));
 });
 
 test('HTTP: consulta em lote exige acesso a pedidos e retorna só o estado público da etiqueta', async () => {

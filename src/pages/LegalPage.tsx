@@ -6,6 +6,7 @@ import type { SiteConfig } from '../types';
 import { contactHref, storeContacts } from '../lib/storePresentation';
 import {
   LEGAL_REVIEW_DATE,
+  LEGAL_PRIVACY_REVIEW_DATE,
   LEGAL_ROUTES,
   type LegalDocumentId,
   missingLegalBusinessFields,
@@ -61,8 +62,7 @@ function ExternalLegalLink({ href, children }: { href: string; children: ReactNo
 
 const inlineLink = 'break-words font-semibold text-[var(--legal-accent)] underline underline-offset-2 hover:decoration-2';
 const panel = 'rounded-2xl border border-[var(--legal-border)] bg-[var(--legal-surface)]';
-const reviewDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'UTC' })
-  .format(new Date(LEGAL_REVIEW_DATE));
+const reviewDateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long', timeZone: 'UTC' });
 
 function EmailLink({ address, subject }: { address?: string; subject?: string }) {
   if (!address) return <>E-mail a confirmar no cadastro da loja</>;
@@ -141,7 +141,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <ul className="list-disc space-y-2 pl-5">
               <li>dados da conta Google, como identificador, nome, e-mail e fotografia de perfil;</li>
-              <li>nome, CPF do pagador, telefone e endereço para compra, entrega e faturamento, além do CPF ou CNPJ do destinatário quando necessário para expedir o pedido;</li>
+              <li>nome, CPF do pagador, telefone e endereço para processar a compra e a entrega;</li>
+              <li>nome ou razão social, CPF ou CNPJ, endereço fiscal e inscrição estadual quando aplicável, para conferir os dados da nota fiscal. Se você informar outro destinatário fiscal, usamos os dados dele para essa finalidade. Você pode optar por salvar o destinatário em Minha conta para preencher compras futuras;</li>
               <li>itens do pedido, personalizações, histórico de pagamento e andamento da produção;</li>
               <li>arquivos de arte, nomes de arquivo e metadados necessários à produção;</li>
               <li>registros técnicos de acesso, segurança, prevenção a fraude e funcionamento do site;</li>
@@ -157,7 +158,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
             <div className="space-y-3">
               <p>
                 Os dados são tratados para autenticar a conta, preparar e executar o pedido, processar pagamento,
-                entregar ou disponibilizar o produto, atender o consumidor, cumprir obrigações legais e exercer
+                entregar ou disponibilizar o produto, atender o consumidor, cumprir obrigações legais e fiscais e exercer
                 regularmente direitos em processos administrativos ou judiciais.
               </p>
               <p>
@@ -219,7 +220,8 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
           content: (
             <p>
               Os dados são conservados pelo período necessário à execução do pedido, atendimento, garantia, cumprimento
-              de obrigações fiscais e defesa de direitos. Artes e registros técnicos não devem ser mantidos por prazo
+              de obrigações fiscais e defesa de direitos. O CPF vinculado ao pedido e os dados fiscais associados seguem os
+              prazos aplicáveis a essas finalidades. Artes e registros técnicos não devem ser mantidos por prazo
               superior ao necessário à sua finalidade. Encerrado o tratamento, serão eliminados ou anonimizados, salvo
               quando a conservação for autorizada ou exigida por lei.
             </p>
@@ -228,11 +230,14 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
         {
           title: 'Segurança e incidentes',
           content: (
-            <p>
-              São adotados controles de autenticação, autorização, acesso restrito, links temporários e validações de
-              arquivo. Nenhum sistema é absolutamente imune a incidentes; ocorrências relevantes serão tratadas e
-              comunicadas aos titulares e à ANPD quando exigido pela legislação.
-            </p>
+            <div className="space-y-3">
+              <p>Os dados salvos em Minha conta ficam no perfil privado e podem ser alterados ou removidos pelo cliente.
+                O CPF vinculado a uma compra e os demais identificadores da nota ficam em um registro fiscal separado.
+                No painel, a consulta exige permissão fiscal. Esses identificadores ficam fora da listagem geral dos pedidos.</p>
+              <p>São adotados controles de autenticação, autorização, acesso restrito, links temporários e validações de
+                arquivo. Ocorrências relevantes serão tratadas e comunicadas aos titulares e à ANPD quando exigido
+                pela legislação.</p>
+            </div>
           ),
         },
         {
@@ -624,6 +629,7 @@ function buildDocument(documentId: LegalDocumentId, config: SiteConfig): LegalDo
 
 export default function LegalPage({ documentId, config }: LegalPageProps) {
   const legalDocument = buildDocument(documentId, config);
+  const reviewDate = documentId === 'privacy' ? LEGAL_PRIVACY_REVIEW_DATE : LEGAL_REVIEW_DATE;
   const missingFields = missingLegalBusinessFields(config);
 
   usePageMetadata({
@@ -667,7 +673,7 @@ export default function LegalPage({ documentId, config }: LegalPageProps) {
         <div className="min-w-0 lg:col-start-2 lg:row-start-1">
           <h1 id="titulo-institucional" className="text-3xl font-black tracking-tight md:text-5xl">{legalDocument.title}</h1>
           <p className="mt-3 max-w-3xl text-base leading-relaxed text-[var(--legal-muted)]">{legalDocument.description}</p>
-          <time dateTime={LEGAL_REVIEW_DATE} className="mt-3 block text-sm text-[var(--legal-muted)]">Atualizado em {reviewDate}</time>
+          <time dateTime={reviewDate} className="mt-3 block text-sm text-[var(--legal-muted)]">Atualizado em {reviewDateFormat.format(new Date(reviewDate))}</time>
         </div>
 
         <aside className="lg:col-start-1 lg:row-span-2 lg:row-start-1">

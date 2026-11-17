@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { LEGAL_REVIEW_DATE, LEGAL_ROUTES } from '../src/lib/legal';
+import { LEGAL_PRIVACY_REVIEW_DATE, LEGAL_REVIEW_DATE, LEGAL_ROUTES } from '../src/lib/legal';
 
 test('institutional pages share the storefront theme and remember its setting', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light' });
@@ -55,7 +55,7 @@ test('all institutional pages are navigable at 320 px and expose their current d
     await expect(page).toHaveTitle(`${title} | GB Gráfica`);
     await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible();
     await expect(link).toHaveAttribute('aria-current', 'page');
-    await expect(page.locator('time')).toHaveAttribute('datetime', LEGAL_REVIEW_DATE);
+    await expect(page.locator('time')).toHaveAttribute('datetime', path === LEGAL_ROUTES.privacy ? LEGAL_PRIVACY_REVIEW_DATE : LEGAL_REVIEW_DATE);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   }
 

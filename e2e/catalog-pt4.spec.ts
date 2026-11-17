@@ -119,11 +119,14 @@ test('perfil mantém histórico próprio e preenche a compra após editar os dad
   await page.getByLabel('Telefone para contato', { exact: true }).fill('11987654321');
   await page.getByLabel('CPF', { exact: true }).fill('52998224725');
   await page.getByLabel('CEP', { exact: true }).fill('01001000');
-  await page.getByLabel('Rua', { exact: true }).fill('Praça da Sé');
+  await page.getByRole('button', { name: 'Buscar CEP', exact: true }).click();
+  await expect(page.getByLabel('Rua', { exact: true })).toHaveValue('Praça da Sé');
+  await expect(page.getByLabel('Estado (UF)', { exact: true })).toHaveValue('SP');
   await page.getByLabel('Número', { exact: true }).fill('12');
-  await page.getByLabel('Bairro', { exact: true }).fill('Sé');
-  await page.getByLabel('Cidade', { exact: true }).fill('São Paulo');
-  await page.getByLabel('Estado (UF)', { exact: true }).fill('SP');
+  await page.getByRole('button', { name: 'Salvar outro destinatário', exact: true }).click();
+  await page.getByLabel('Nome ou razão social', { exact: true }).fill('Empresa Teste');
+  await page.getByLabel('CPF ou CNPJ', { exact: true }).fill('11.222.333/0001-81');
+  await page.getByLabel('Inscrição estadual (quando aplicável)', { exact: true }).fill('123456789');
   await page.getByRole('button', { name: 'Salvar meus dados', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Dados pessoais salvos');
   await page
@@ -135,6 +138,11 @@ test('perfil mantém histórico próprio e preenche a compra após editar os dad
   const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
   await expect(cart.getByLabel('Nome completo')).toHaveValue('Ana Cliente');
   await expect(cart.getByLabel('Telefone para contato')).toHaveValue('11987654321');
+  await cart.getByText('Nota fiscal para outro destinatário', { exact: true }).click();
+  await expect(cart.getByLabel('CPF ou CNPJ', { exact: true })).toHaveValue('11.222.333/0001-81');
+  await cart.getByRole('button', { name: 'Usar dados do pagador neste pedido', exact: true }).click();
+  await expect(cart.getByLabel('CPF ou CNPJ', { exact: true })).toHaveValue('');
+  await expect(cart.getByLabel('CPF do pagador', { exact: false })).toHaveValue('529.982.247-25');
   await cart.getByRole('button', { name: 'OK', exact: true }).click();
   await expect(cart.getByLabel('Número', { exact: true })).toHaveValue('12');
   await expect(cart.getByLabel('Rua', { exact: true })).toHaveValue('Rua dos Testes');

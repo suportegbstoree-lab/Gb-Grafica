@@ -1,4 +1,5 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
+import axios from 'axios';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createServer } from 'node:http';
@@ -72,6 +73,40 @@ test('account data is authenticated, scoped to UID and profile round-trips witho
       ['paid'],
     );
   }));
+test('saved fiscal recipient can be reused or removed only through the owner profile', () =>
+  scenario(async c => {
+    const cpf = '529.982.247-25';
+    const recipient = { recipientName: 'Empresa Teste', recipientDocument: '11.222.333/0001-81', stateRegistration: '123456789' };
+    const saved = await c.call('/account/profile', { fullName: 'Ana Cliente', cpf, fiscalRecipient: recipient, expectedRevision: null });
+    assert.equal(saved.status, 200, await saved.clone().text());
+    assert.equal(saved.headers.get('cache-control'), 'private, no-store');
+    const owner = await saved.json();
+    assert.equal(owner.cpf, '52998224725');
+    assert.deepEqual(owner.fiscalRecipient, { ...recipient, recipientDocument: '11222333000181' });
+    assert.equal((await (await c.call('/account/profile', undefined, 'bob')).json()).fiscalRecipient, null);
+    const staleClient = await (await c.call('/account/profile', { cpf, expectedRevision: owner.revision })).json();
+    assert.deepEqual(staleClient.fiscalRecipient, owner.fiscalRecipient);
+    assert.equal((await c.call('/account/profile', { fiscalRecipient: { ...recipient, recipientDocument: '1' }, expectedRevision: staleClient.revision })).status, 422);
+    const cleared = await (await c.call('/account/profile', { cpf, fiscalRecipient: null, expectedRevision: staleClient.revision })).json();
+    assert.equal(cleared.fiscalRecipient, null);
+    assert.doesNotMatch(JSON.stringify(await (await c.call('/account/orders')).json()), /52998224725|11222333000181|Empresa Teste/);
+  }));
+
+test('account postal lookup sends only the CEP and does not replace profile data until save', () =>
+  scenario(async c => {
+    assert.equal((await c.call('/account/postal-address', { cep: '01001000' }, '')).status, 401);
+    const lookup = mock.method(axios, 'get', async (url: string) => {
+      assert.equal(url, 'https://viacep.com.br/ws/01001000/json/');
+      return { data: { localidade: 'São Paulo', uf: 'SP', logradouro: 'Praça da Sé', bairro: 'Sé', ibge: '3550308' } };
+    });
+    try {
+      const response = await c.call('/account/postal-address', { cep: '01001-000' });
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.deepEqual(await response.json(), { cep: '01001000', state: 'SP', city: 'São Paulo', street: 'Praça da Sé', neighborhood: 'Sé' });
+      assert.equal(c.docs.has('_customerProfiles/alice'), false);
+    } finally { lookup.mock.restore(); }
+  }));
+
 test('reviews require a real paid purchase belonging to the authenticated customer', () =>
   scenario(async (c) => {
     for (const [orderId, uid] of [

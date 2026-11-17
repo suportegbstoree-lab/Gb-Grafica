@@ -1,8 +1,9 @@
 export const LEGAL_REVIEW_DATE = '2026-11-14';
+export const LEGAL_PRIVACY_REVIEW_DATE = '2026-11-17';
 
 export const LEGAL_VERSIONS = {
   terms: LEGAL_REVIEW_DATE,
-  privacy: LEGAL_REVIEW_DATE,
+  privacy: LEGAL_PRIVACY_REVIEW_DATE,
   exchanges: LEGAL_REVIEW_DATE,
 } as const;
 
