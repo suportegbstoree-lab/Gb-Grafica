@@ -19,10 +19,10 @@ import { contactHref, featuredProducts, storeBenefits, storeContacts } from '../
 import ProductPdfEditor from '../components/ProductPdfEditor';
 import { productCustomization, productPrice, resolveProductProduction } from '../lib/productCustomization';
 import React, { useMemo, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import { StoreThemeControl } from '../components/StoreTheme';
 import { variantImage } from '../lib/variantImage';
-import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, Mail, Sparkles, AlertCircle, Upload, FileText, Pause, Play } from 'lucide-react';
+import { Search, ShoppingCart, Phone, Settings, CheckCircle2, ChevronRight, X, Trash2, Package, Clock, LogIn, LogOut, Loader2, Share2, Facebook, Twitter, MessageCircle, CreditCard, QrCode, Mail, Sparkles, AlertCircle, Upload, FileText, Pause, Play, UserRound, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Anuncio, SiteConfig, CartItem, Order, Category, Promocao, type PersonalizationFont } from '../types';
 import { cn } from '../lib/utils';
@@ -230,16 +230,32 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   const [currentSlide, setCurrentSlide] = useState(0);
   const [isCarouselPaused, setIsCarouselPaused] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const mobileAccount = useRef<HTMLDetailsElement>(null);
+  const mobileAccountTrigger = useRef<HTMLElement>(null);
+  const mobileFiltersId = React.useId();
   const navigate = useNavigate();
   const { categoryId, productId } = useParams();
   const location = useLocation();
+  const navigationType = useNavigationType();
+  const lastPath = useRef(location.pathname);
+  React.useLayoutEffect(() => {
+    const pathChanged = lastPath.current !== location.pathname;
+    lastPath.current = location.pathname;
+    if (pathChanged && navigationType === 'PUSH' && window.matchMedia('(width < 48rem)').matches) {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [location.pathname, navigationType]);
   const customerPreview = new URLSearchParams(location.search).get('preview') === 'customer';
   const query = new URLSearchParams(location.search);
   const section = (['destaques','promocoes','lancamentos','pacotes'].includes(location.pathname.slice(1)) ? location.pathname.slice(1) : 'todos') as CatalogSection;
   const sectionTitles = { todos: 'Todos os produtos', destaques: 'Produtos em destaque', promocoes: 'Produtos em promoção', lancamentos: 'Lançamentos', pacotes: 'Pacotes de produtos' };
+  const mobileSectionTitles: Record<CatalogSection, string> = { todos: 'Todos', destaques: 'Destaques', promocoes: 'Promoções', lancamentos: 'Lançamentos', pacotes: 'Pacotes' };
   const isProfile = location.pathname === '/minha-conta';
   const focusedPage = !!productId || isProfile;
   const showOffers = section === 'todos' && !focusedPage && !categoryId && !query.has('categoria');
+  const filterCount = [categoryId || query.get('categoria'), query.get('min'), query.get('max'), query.get('avaliacao')].filter(Boolean).length;
+  const mobileShowHighlights = showOffers && !searchTerm.trim() && !query.has('q') && filterCount === 0;
   const detailProduct = products.find(p => p.id === productId);
   const routeCategory = categories.find(category => category.id === (categoryId || query.get('categoria')));
   const [ratings, setRatings] = useState<Record<string,ProductRating>>({});
@@ -486,7 +502,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   };
 
   const scrollToProducts = () => {
-    document.getElementById('produtos')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('produtos')?.scrollIntoView({ behavior: shouldReduceMotion ? 'instant' : 'smooth', block: 'start' });
   };
 
   const selectCategory = (category: string | null) => {
@@ -497,8 +513,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
-    applyFilters({ q: searchTerm });
-    scrollToProducts();
+    applyFilters({ q: searchTerm.trim() });
+    window.requestAnimationFrame(scrollToProducts);
   };
 
   const checkout = async () => {
@@ -768,6 +784,27 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
     scrollToProducts();
   };
 
+  const closeMobileAccount = (restoreFocus = false) => {
+    if (!mobileAccount.current?.open) return;
+    if (restoreFocus) mobileAccountTrigger.current?.focus();
+    mobileAccount.current.open = false;
+  };
+
+  const checkoutAction = (mobile: boolean) => (
+    <button
+      type="button"
+      onClick={checkout}
+      aria-label={isCheckingOut ? 'Redirecionando' : 'IR PARA O PAGBANK'}
+      disabled={isCheckingOut || isCalculating || awaitingCoupon || Boolean(currentCouponQuote?.error)}
+      className={cn(
+        'w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-4 font-black text-white transition-colors hover:bg-pink-600 disabled:opacity-50',
+        mobile ? 'flex min-h-12 text-sm' : 'hidden uppercase shadow-xl shadow-gray-100 md:flex',
+      )}
+    >
+      {isCheckingOut ? <><Loader2 className="animate-spin" size={18} /> Redirecionando…</> : 'Ir para o PagBank'}
+    </button>
+  );
+
   return (
     <div className="store-shell min-h-screen bg-[#fcfcfd] text-gray-900 font-sans selection:bg-pink-100 relative overflow-hidden">
       <a
@@ -777,8 +814,8 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         Ir para os produtos
       </a>
       {/* Background Glows (Subtle) */}
-      <div className="fixed top-[-10%] left-[-10%] w-[70%] h-[70%] bg-pink-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
-      <div className="fixed bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-100/30 blur-[180px] rounded-full pointer-events-none z-0"></div>
+      <div className="fixed top-[-10%] left-[-10%] w-[70%] h-[70%] bg-pink-100/30 blur-[180px] rounded-full pointer-events-none z-0 hidden md:block"></div>
+      <div className="fixed bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-100/30 blur-[180px] rounded-full pointer-events-none z-0 hidden md:block"></div>
 
       <AnimatePresence>
         {notice && (
@@ -789,7 +826,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
             role={notice.type === 'error' ? 'alert' : 'status'}
             aria-live="polite"
             className={cn(
-              'fixed top-4 left-1/2 z-[100] flex w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 items-start gap-3 rounded-2xl border px-5 py-4 text-sm font-semibold shadow-2xl',
+              'store-notice fixed top-4 left-1/2 z-[100] flex w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 items-start gap-3 rounded-2xl border px-5 py-4 text-sm font-semibold shadow-2xl',
               notice.type === 'error' && 'border-red-200 bg-red-50 text-red-700',
               notice.type === 'success' && 'border-green-200 bg-green-50 text-green-700',
               notice.type === 'info' && 'border-pink-200 bg-white text-gray-700',
@@ -805,7 +842,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       </AnimatePresence>
 
       {/* Micro Top Bar */}
-      <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex flex-wrap justify-between items-center gap-2 text-[11px] text-white relative z-40">
+      <div className="bg-[#d14d8c] px-4 md:px-12 py-3 flex-wrap justify-between items-center gap-2 text-[11px] text-white relative z-40 hidden md:flex">
         <div className="flex flex-wrap gap-4 md:gap-8">
           {contacts.map(contact => <a key={contact.id} href={contactHref(contact)} target={contact.type === 'whatsapp' ? '_blank' : undefined} rel="noopener noreferrer" aria-label={`${contact.label}: ${contact.value}`} className="flex items-center gap-2 break-all font-bold transition-colors hover:text-pink-100">{contact.type === 'email' ? <Mail size={14} /> : <Phone size={14} />} {contact.value}</a>)}
         </div>
@@ -851,67 +888,87 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
       {/* Header */}
       <header className="store-header bg-[#fffdd6] px-4 md:px-12 py-10 grid grid-cols-1 lg:grid-cols-[1fr_2fr_1fr] items-center justify-items-center gap-6 relative z-20">
-        <div className="flex items-center group lg:justify-self-start">
+        <Link to="/" aria-label="GB Gráfica — início da loja" className="store-brand flex min-w-0 items-center group lg:justify-self-start">
           {config.logo_url && config.logo_url.trim() !== "" && !logoError ? (
             <img
+              key="store-logo"
               src={resolvePublicImage(config.logo_url)}
               alt="GB Gráfica"
-              className="h-24 w-auto object-contain transition-transform group-hover:scale-105"
+              className="store-brand-image h-24 w-auto object-contain transition-transform group-hover:scale-105"
               referrerPolicy="no-referrer"
               decoding="async"
               onError={() => setLogoError(true)}
             />
           ) : !fallbackError ? (
             <img
+              key="store-logo-fallback"
               src={DEFAULT_LOGO_URL}
               alt="GB Gráfica"
-              className="h-24 w-auto object-contain transition-transform group-hover:scale-105"
+              className="store-brand-image h-24 w-auto object-contain transition-transform group-hover:scale-105"
               referrerPolicy="no-referrer"
               decoding="async"
               onError={() => setFallbackError(true)}
             />
           ) : (
-            <div className="flex flex-col">
+            <div className="store-brand-wordmark flex flex-col">
               <div className="text-4xl font-black tracking-tighter text-[#d14d8c] leading-none">GB</div>
               <div className="text-4xl font-black tracking-tighter text-[#5dc1c1] leading-none">GRÁFICA</div>
             </div>
           )}
-        </div>
+        </Link>
 
-        <form onSubmit={submitSearch} role="search" className="flex w-full max-w-2xl relative group">
+        <form onSubmit={submitSearch} role="search" className="store-search flex w-full max-w-2xl relative group">
           <label htmlFor="store-search" className="sr-only">Buscar produtos</label>
           <input
             id="store-search"
-            type="text"
+            type="search"
+            enterKeyHint="search"
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value.slice(0, 100))}
             placeholder="Buscar produtos"
             className="w-full bg-white border-2 border-gray-100 rounded-full px-8 py-4 outline-none focus:border-pink-300 transition-all text-sm shadow-sm"
           />
-          <button type="submit" aria-label="Buscar" className="absolute right-4 top-1/2 -translate-y-1/2 text-[#5dc1c1] hover:scale-110 transition-transform">
+          <button type="submit" aria-label="Buscar" className="store-search-submit absolute right-4 top-1/2 -translate-y-1/2 text-[#5dc1c1] hover:scale-110 transition-transform">
             <Search size={28} />
           </button>
         </form>
 
-        <div className="flex gap-4 items-center lg:justify-self-end">
-          {user && <Link to="/minha-conta" className="text-xs font-bold text-pink-600">Minha conta</Link>}
-          <button type="button" onClick={openOrders} className="flex items-center gap-3 group">
+        <div className="store-header-actions flex gap-4 items-center lg:justify-self-end">
+          <details ref={mobileAccount} className="store-mobile-account md:hidden"
+            onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) closeMobileAccount(); }}
+            onKeyDown={event => { if (event.key === 'Escape' && mobileAccount.current?.open) { event.stopPropagation(); closeMobileAccount(true); } }}>
+            <summary ref={mobileAccountTrigger} className="store-header-action">
+              <UserRound size={21} aria-hidden="true" />
+              Conta
+            </summary>
+            <div className="store-mobile-account-panel bg-white text-gray-900">
+              {user ? <>
+                <Link to="/minha-conta" onClick={() => closeMobileAccount()}>Minha conta</Link>
+                <button type="button" onClick={() => { closeMobileAccount(true); openOrders(); }}>Meus Pedidos</button>
+                <button type="button" onClick={() => { closeMobileAccount(true); setIsEmailPreferencesOpen(true); }}>Preferências de e-mail</button>
+              </> : <button type="button" onClick={handleLogin} disabled={isLoggingIn}>{isLoggingIn ? 'Entrando…' : 'Entrar'}</button>}
+              {canAccessPanel && !customerPreview && <Link to="/admin" onClick={() => closeMobileAccount()}>Área Admin</Link>}
+              {!canAccessPanel && panelAccessNeedsCheck && <Link to="/admin" onClick={() => closeMobileAccount()}>Verificar acesso</Link>}
+              <a href="#atendimento" onClick={() => closeMobileAccount()}>Atendimento</a>
+              <StoreThemeControl />
+              {user && <button type="button" onClick={() => { closeMobileAccount(true); handleLogout(); }}>Sair</button>}
+            </div>
+          </details>
+          {user && <Link to="/minha-conta" className="hidden text-xs font-bold text-pink-600 md:inline">Minha conta</Link>}
+          <button type="button" onClick={openOrders} className="hidden items-center gap-3 group md:flex">
             <div className="w-12 h-12 rounded-full border-2 border-[#d14d8c]/30 flex items-center justify-center bg-white group-hover:border-[#d14d8c] transition-all shadow-sm">
               <Package size={28} className="text-[#d14d8c]" />
             </div>
             <span className="sr-only">Meus Pedidos</span>
           </button>
 
-          <button type="button" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrinho" aria-haspopup="dialog" aria-expanded={isCartOpen} className="flex items-center gap-3 group relative">
-            <div className="w-12 h-12 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
-              <ShoppingCart size={28} className="text-[#5dc1c1]" />
+          <button type="button" onClick={() => setIsCartOpen(true)} aria-label="Abrir carrinho" aria-haspopup="dialog" aria-expanded={isCartOpen} className="store-header-action flex items-center gap-3 group relative">
+            <div className="store-cart-icon w-12 h-12 rounded-full border-2 border-[#5dc1c1]/30 flex items-center justify-center bg-white group-hover:border-[#5dc1c1] transition-all shadow-sm">
+              <ShoppingCart size={28} className="text-[#5dc1c1]" aria-hidden="true" />
             </div>
-            <div className="sr-only">
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1]">Meu</span>
-              <span className="text-[11px] font-black uppercase tracking-widest text-[#5dc1c1] mt-[-4px]">Carrinho</span>
-            </div>
+            <span className="md:hidden" aria-hidden="true">Carrinho</span>
             {cart.length > 0 && (
-              <span className="absolute top-0 left-12 bg-pink-500 text-white text-[10px] w-6 h-6 rounded-full flex items-center justify-center shadow-lg border-2 border-white font-black">
+              <span className="store-cart-count absolute top-0 left-12 bg-pink-500 text-white text-[10px] w-6 h-6 rounded-full flex items-center justify-center shadow-lg border-2 border-white font-black">
                 {cart.reduce((acc, i) => acc + i.quantidade, 0)}
               </span>
             )}
@@ -920,10 +977,18 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       </header>
 
       {customerPreview && canAccessPanel && <div className="bg-gray-900 px-4 py-3 text-center text-sm text-white">Visualização como cliente · <Link to="/admin" className="underline">Voltar ao painel</Link></div>}
-      {categoryId && <div className="mx-auto max-w-7xl p-4"><Link to="/">Loja</Link> / {routeCategory?.nome || 'Categoria não encontrada'}</div>}
-      <nav aria-label="Seções da loja" className="flex flex-wrap justify-center gap-2 bg-white px-4 py-4">{Object.entries(sectionTitles).map(([key,title])=><Link key={key} to={key==='todos'?'/':'/'+key} aria-current={!focusedPage && section===key?'page':undefined} className={`rounded-full px-4 py-2 text-sm font-bold ${!focusedPage && section===key?'bg-pink-500 text-white':'text-gray-600 hover:bg-pink-50'}`}>{title}</Link>)}</nav>
+      {categoryId && <div className="mx-auto max-w-7xl p-4 max-md:hidden"><Link to="/">Loja</Link> / {routeCategory?.nome || 'Categoria não encontrada'}</div>}
+      <nav aria-label="Seções da loja" className={cn('store-sections flex flex-wrap justify-center gap-2 bg-white px-4 py-4', focusedPage && 'max-md:hidden')}>
+        {Object.entries(sectionTitles).map(([key, title]) => (
+          <Link key={key} to={key === 'todos' ? '/' : '/' + key} aria-current={!focusedPage && section === key ? 'page' : undefined}
+            className={`rounded-full px-4 py-2 text-sm font-bold ${!focusedPage && section === key ? 'bg-pink-500 text-white' : 'text-gray-600 hover:bg-pink-50'}`}>
+            <span className="hidden md:inline">{title}</span>
+            <span className="md:hidden">{mobileSectionTitles[key as CatalogSection]}</span>
+          </Link>
+        ))}
+      </nav>
       {/* Navigation */}
-      <nav aria-label="Categorias de produtos" className="bg-white px-4 md:px-12 py-4 flex flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm">
+      <nav aria-label="Categorias de produtos" className="bg-white px-4 md:px-12 py-4 hidden flex-wrap justify-center gap-x-8 md:gap-x-12 gap-y-4 relative z-30 shadow-sm md:flex">
         {categories.map((cat) => (
           <motion.button
             type="button"
@@ -961,7 +1026,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       </nav>
 
       {/* Promo Bar */}
-      <div className="bg-[#0f5e64] py-4 text-center relative z-20">
+      <div className="bg-[#0f5e64] py-4 text-center relative z-20 hidden md:block">
         <span className="text-white font-black uppercase tracking-[0.3em] text-[11px]">
           {(showOffers && promotions.find(promotion => promotionActiveAt(promotion, promotionNow))?.titulo) || 'PERSONALIZADOS FEITOS COM CUIDADO PARA VOCÊ'}
         </span>
@@ -976,7 +1041,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       </div>
 
       {/* Banner Carousel */}
-      {!focusedPage && <section className="w-full h-[500px] overflow-hidden relative group z-10" aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
+      {!focusedPage && <section className={cn('store-hero w-full h-[500px] overflow-hidden relative group z-10', imageOnlyBanner && 'store-hero-image', !mobileShowHighlights && 'max-md:hidden')} aria-roledescription="carrossel" aria-label="Destaques" aria-live={isCarouselPaused ? 'polite' : 'off'}>
         <AnimatePresence initial={false}>
           <motion.div
             key={currentSlide}
@@ -989,17 +1054,18 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
             <img
               src={activeSlide.image}
               alt={activeSlide.title || (activeSlide.branding ? "Banner da GB Gráfica" : `Destaque ${currentSlide + 1}`)}
-              className={activeSlide.productId || activeSlide.branding ? "h-full w-full bg-gray-50 object-contain" : "w-full h-full object-cover"}
+              className={cn('h-full w-full', activeSlide.productId || activeSlide.branding ? 'bg-gray-50 object-contain' : 'object-cover', activeSlide.branding && 'store-hero-brand')}
               referrerPolicy="no-referrer"
               fetchPriority="high"
               decoding="async"
               onError={(event) => {
                 const image = event.currentTarget;
-                if (!image.dataset.fallbackApplied) {
-                  image.dataset.fallbackApplied = 'true';
-                  image.src = DEFAULT_LOGO_URL;
-                  image.classList.add('object-contain', 'p-12');
+                if (image.src === DEFAULT_LOGO_URL) {
+                  image.hidden = true;
+                  return;
                 }
+                image.src = DEFAULT_LOGO_URL;
+                image.classList.add('object-contain', 'p-12');
               }}
             />
             {!imageOnlyBanner && <div className="absolute inset-0 bg-black/60" />}
@@ -1007,13 +1073,13 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         </AnimatePresence>
 
         {!imageOnlyBanner && <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center space-y-6 px-4 max-w-4xl">
+          <div className="store-hero-content text-center space-y-6 px-4 max-w-4xl">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h1 className="break-words text-4xl font-black leading-none tracking-tighter text-white md:text-7xl">
+              <h1 className="store-hero-title break-words text-4xl font-black leading-none tracking-tighter text-white md:text-7xl">
                 {activeSlide.title ? (
                   <>
                     {activeSlide.title.split('<br/>').map((line, i) => (
@@ -1039,7 +1105,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="text-white max-w-xl mx-auto text-base md:text-lg font-medium"
+              className="store-hero-caption text-white max-w-xl mx-auto text-base md:text-lg font-medium"
             >
               {activeSlide.subtitle || config.banner_subtitulo || "Produtos personalizados para eternizar os momentos mais especiais da sua vida."}
             </motion.p>
@@ -1048,7 +1114,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.6 }}
             >
-              <button type="button" onClick={handleBannerAction} className="bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl hover:scale-105 active:scale-95">
+              <button type="button" onClick={handleBannerAction} className="store-hero-button bg-gray-900 text-white px-12 py-5 rounded-full font-black text-sm uppercase tracking-widest hover:bg-pink-500 transition-all shadow-2xl hover:scale-105 active:scale-95">
                 {activeSlide.productId ? 'Ver produto' : activeSlide.link && isHttpUrl(activeSlide.link) ? 'Ver promoção' : (config.banner_botao || 'Ver Produtos')}
               </button>
             </motion.div>
@@ -1056,7 +1122,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         </div>}
 
         {/* Carousel Indicators */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
+        <div className="store-hero-controls absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-3 z-20">
           {slides.length > 1 && !shouldReduceMotion && (
             <button
               type="button"
@@ -1076,7 +1142,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
               aria-label={`Mostrar ${slide.title || (slide.branding ? "banner da loja" : `destaque ${idx + 1}`)}`}
               aria-current={currentSlide === idx}
               className={cn(
-                "h-1.5 transition-all duration-500 rounded-full",
+                "store-hero-dot h-1.5 transition-all duration-500 rounded-full",
                 currentSlide === idx ? "w-8 bg-pink-500" : "w-2 bg-gray-300 hover:bg-gray-400"
               )}
             />
@@ -1086,17 +1152,17 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
       }
       {/* Benefits */}
-      {!focusedPage && benefits.length > 0 && <section aria-label="Benefícios da loja" className="relative z-10 flex flex-wrap justify-center gap-12 border-b border-gray-100 bg-white/40 px-4 py-12 backdrop-blur-sm md:gap-24 md:px-12">
+      {!focusedPage && benefits.length > 0 && <section aria-label="Benefícios da loja" className="relative z-10 hidden flex-wrap justify-center gap-12 border-b border-gray-100 bg-white/40 px-4 py-12 backdrop-blur-sm md:flex md:gap-24 md:px-12">
         {benefits.map(benefit => <BenefitItem key={benefit.id} icon={<Sparkles size={28} />} title={benefit.title} desc={benefit.description} />)}
       </section>}
 
-      {showOffers && <FlashOffers products={products} promotions={promotions} now={promotionNow} />}
-      <main id="produtos" className="mx-auto max-w-[1920px] px-4 py-12 md:px-8 xl:px-12">
+      {showOffers && <div className={cn(!mobileShowHighlights && 'max-md:hidden')}><FlashOffers products={products} promotions={promotions} now={promotionNow} /></div>}
+      <main id="produtos" className="mx-auto max-w-[1920px] px-4 py-6 md:px-8 md:py-12 xl:px-12">
         {isProfile ? (
           <CustomerProfile uid={user?.uid} email={user?.email} api={customerApi} onSaved={fillProfile} />
         ) : productId ? (
-          <div className="mx-auto max-w-6xl space-y-8">
-            <Link to="/" className="text-sm font-bold text-pink-600">
+          <div className="mx-auto max-w-6xl space-y-4 md:space-y-8">
+            <Link to="/" className="inline-flex min-h-11 items-center text-sm font-bold text-pink-600 md:min-h-0">
               Voltar ao catálogo
             </Link>
             {!productsReady ? (
@@ -1158,22 +1224,33 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
           </div>
         ) : (
           <section aria-labelledby="products-heading" className="min-w-0">
-            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-              <h1 id="products-heading" className="text-3xl font-black text-gray-900">
-                {categoryId && !routeCategory ? 'Categoria não encontrada' : sectionTitles[section]}
-                {activeCategory && <span className="text-pink-500"> · {activeCategory}</span>}
-              </h1>
-              <ShareLinks
-                name={sectionTitles[section]}
-                notify={(message, error) => setNotice({ type: error ? 'error' : 'success', message })}
-              />
+            <div className="mb-3 flex items-center justify-between gap-2 md:mb-6 md:gap-4">
+              <div className="min-w-0">
+                <h1 id="products-heading" className="text-xl font-black text-gray-900 [overflow-wrap:anywhere] md:text-3xl">
+                  {categoryId && !routeCategory ? 'Categoria não encontrada' : sectionTitles[section]}
+                  {activeCategory && <span className="text-pink-500"> · {activeCategory}</span>}
+                </h1>
+                {productsReady && !productsError && <p className="text-sm text-gray-600 md:hidden">
+                  {visibleProducts.length} {visibleProducts.length === 1 ? 'produto' : 'produtos'}
+                </p>}
+              </div>
+              <button type="button" aria-expanded={mobileFiltersOpen} aria-controls={mobileFiltersId}
+                className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold text-gray-900 md:hidden"
+                onClick={() => setMobileFiltersOpen(open => !open)}>
+                <SlidersHorizontal size={17} aria-hidden="true" /> Filtros{filterCount > 0 && ` (${filterCount})`}
+                <ChevronDown size={15} aria-hidden="true" className={mobileFiltersOpen ? 'rotate-180' : ''} />
+              </button>
+              <div className="hidden md:block">
+                <ShareLinks name={sectionTitles[section]} notify={(message, error) => setNotice({ type: error ? 'error' : 'success', message })} />
+              </div>
             </div>
             <form
+              id={mobileFiltersId}
               aria-label="Filtros do catálogo"
-              className="mb-8 flex flex-wrap items-end gap-4 rounded-2xl border border-gray-100 bg-white p-4"
+              className={cn('store-catalog-filters mb-5 grid grid-cols-2 gap-3 rounded-2xl border border-gray-100 bg-white p-4 md:mb-8 md:flex md:flex-wrap md:items-end md:gap-4', !mobileFiltersOpen && 'max-md:hidden')}
               onSubmit={(e) => e.preventDefault()}
             >
-              <label className="text-sm">
+              <label className="col-span-2 min-w-0 text-sm">
                 Categoria
                 <select
                   aria-label="Filtrar por categoria"
@@ -1190,7 +1267,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                 </select>
               </label>
               {['min', 'max'].map((key) => (
-                <label key={key} className="text-sm">
+                <label key={key} className="min-w-0 text-sm">
                   {key === 'min' ? 'Preço mínimo (R$)' : 'Preço máximo (R$)'}
                   <input
                     aria-label={key === 'min' ? 'Preço mínimo' : 'Preço máximo'}
@@ -1203,7 +1280,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                   />
                 </label>
               ))}
-              <label className="text-sm">
+              <label className="col-span-2 min-w-0 text-sm">
                 Avaliação mínima
                 <select
                   aria-label="Filtrar por avaliação"
@@ -1244,7 +1321,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
             ) : (
               <div
                 data-testid="catalog-grid"
-                className="grid auto-rows-fr grid-cols-1 items-stretch gap-6 md:grid-cols-2 2xl:grid-cols-3"
+                className="grid auto-rows-fr grid-cols-2 items-stretch gap-3 md:gap-6 2xl:grid-cols-3"
               >
                 {visibleProducts.map((product) => (
                   <CatalogProductCard
@@ -1264,8 +1341,16 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-100 py-20 px-4 md:px-12">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
+      <footer id="atendimento" className="store-footer bg-white border-t border-gray-100 px-4 py-8 md:px-12 md:py-20">
+        {!focusedPage && benefits.length > 0 && <details className="mb-6 rounded-2xl border border-gray-100 px-4 md:hidden">
+          <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 font-bold text-gray-900">
+            Benefícios da loja <ChevronDown size={18} aria-hidden="true" />
+          </summary>
+          <dl className="space-y-3 pb-4 text-sm">
+            {benefits.map(benefit => <div key={benefit.id}><dt className="font-bold text-gray-900">{benefit.title}</dt><dd className="text-gray-600">{benefit.description}</dd></div>)}
+          </dl>
+        </details>}
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-7 mb-8 md:gap-12 md:mb-16">
           <div className="space-y-6">
             <div className="text-2xl font-black tracking-tighter text-gray-900">
               GB <span className="text-pink-500">GRÁFICA</span>
@@ -1319,18 +1404,32 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
       {/* Modals */}
       <AnimatePresence>
         {isCartOpen && (
-          <Modal title="Meu Carrinho" onClose={() => setIsCartOpen(false)}>
+          <Modal title="Meu Carrinho" onClose={() => setIsCartOpen(false)} cart
+            footer={cart.length > 0 ? (
+              <div className="store-cart-footer flex items-center justify-between gap-2 border-t border-gray-100 bg-white md:hidden">
+                <div className="min-w-0 shrink-0">
+                  <p className="text-xs text-gray-600">{deliveryMethod === 'entrega' && !shippingInfo ? 'Total sem frete' : 'Total'}</p>
+                  <strong className="block text-base text-gray-900">{formatMoney(totalCents / 100)}</strong>
+                </div>
+                <div className="min-w-0 flex-1">{checkoutAction(true)}</div>
+              </div>
+            ) : undefined}>
             {cart.length === 0 ? (
-              <div className="py-12 text-center text-gray-500">Seu carrinho está vazio.</div>
+              <div className="space-y-3 py-12 text-center text-gray-600">
+                <ShoppingCart size={30} className="mx-auto text-pink-600" aria-hidden="true" />
+                <p>Seu carrinho está vazio.</p>
+                <button type="button" onClick={() => setIsCartOpen(false)}
+                  className="inline-flex min-h-11 items-center rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-900">Continuar comprando</button>
+              </div>
             ) : (
-              <div className="space-y-6" onChangeCapture={()=>{checkoutDraftEdited.current=true;}}>
-                <div className="space-y-4 pr-2">
+              <div className="space-y-4 md:space-y-6" onChangeCapture={()=>{checkoutDraftEdited.current=true;}}>
+                <div className="space-y-3 md:space-y-4 md:pr-2">
                   {cart.map((item) => (
-                    <div key={item.id} className="flex gap-4 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                    <div key={item.id} className="flex min-w-0 gap-2.5 rounded-xl border border-gray-100 bg-gray-50 p-3 md:gap-4 md:p-4">
                       <img
                         src={item.imagem || DEFAULT_LOGO_URL}
                         alt={item.nome}
-                        className="w-16 h-16 object-cover rounded"
+                        className="h-12 w-12 shrink-0 rounded object-cover md:h-16 md:w-16"
                         loading="lazy"
                         decoding="async"
                         referrerPolicy="no-referrer"
@@ -1342,10 +1441,11 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                           }
                         }}
                       />
-                      <div className="flex-grow">
-                        <div className="flex justify-between items-start">
-                          <h4 className="font-bold text-sm">{item.nome}</h4>
-                          <button type="button" aria-label={`Remover ${item.nome} do carrinho`} onClick={() => removeFromCart(item.id)} className="text-gray-500 hover:text-red-500">
+                      <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                        <div className="flex items-start justify-between gap-1.5">
+                          <h4 className="min-w-0 pt-1 text-sm font-bold md:pt-0">{item.nome}</h4>
+                          <button type="button" aria-label={`Remover ${item.nome} do carrinho`} onClick={() => removeFromCart(item.id)}
+                            className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-lg text-gray-500 hover:text-red-500 md:min-h-0 md:min-w-0">
                             <Trash2 size={16} />
                           </button>
                         </div>
@@ -1370,14 +1470,14 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         {item.arquivoNome && (
                           <div className="mt-1 text-[10px] text-gray-500">Arte anexada: {item.arquivoNome}</div>
                         )}
-                        <div className="flex justify-between items-center mt-2">
-                          <div className="flex items-center gap-2 bg-gray-50 rounded-lg border border-gray-100 p-1">
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 md:gap-2 md:border-gray-100 md:p-1">
                             <button
                               type="button"
                               aria-label={`Diminuir quantidade de ${item.nome}`}
                               disabled={Boolean(item.bundleItems && !item.bundleQuantityAllowed)}
                               onClick={() => updateQuantity(item.id, -1)}
-                              className="w-6 h-6 flex items-center justify-center hover:bg-gray-200 rounded transition-colors"
+                              className="flex h-11 w-11 items-center justify-center rounded text-base hover:bg-gray-200 md:h-6 md:w-6"
                             >
                               -
                             </button>
@@ -1387,7 +1487,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                               aria-label={`Aumentar quantidade de ${item.nome}`}
                               disabled={Boolean(item.bundleItems && !item.bundleQuantityAllowed)}
                               onClick={() => updateQuantity(item.id, 1)}
-                              className="w-6 h-6 flex items-center justify-center hover:bg-gray-200 rounded transition-colors"
+                              className="flex h-11 w-11 items-center justify-center rounded text-base hover:bg-gray-200 md:h-6 md:w-6"
                             >
                               +
                             </button>
@@ -1408,17 +1508,17 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                 <div className="border-t border-gray-100 pt-6 space-y-4">
                   {/* Forma de Entrega */}
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Forma de Entrega</label>
+                    <label className="store-cart-label">Forma de Entrega</label>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         aria-pressed={deliveryMethod === 'entrega'}
                         onClick={() => setDeliveryMethod('entrega')}
                         className={cn(
-                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          "store-delivery-option flex items-center justify-center gap-2 rounded-lg border px-2 py-3 text-sm font-bold transition-colors md:flex-col md:px-4 md:text-[10px] md:font-black md:uppercase md:tracking-widest",
                           deliveryMethod === 'entrega'
                             ? "bg-white border-pink-400 text-pink-500 shadow-sm"
-                            : "bg-white border-gray-100 text-gray-400"
+                            : "bg-white border-gray-200 text-gray-600"
                         )}
                       >
                         <Package size={16} /> Entregar
@@ -1428,10 +1528,10 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         aria-pressed={deliveryMethod === 'retirada'}
                         onClick={() => setDeliveryMethod('retirada')}
                         className={cn(
-                          "px-4 py-3 rounded-lg text-[10px] font-black uppercase tracking-widest border transition-all flex flex-col items-center gap-2",
+                          "store-delivery-option flex items-center justify-center gap-2 rounded-lg border px-2 py-3 text-sm font-bold transition-colors md:flex-col md:px-4 md:text-[10px] md:font-black md:uppercase md:tracking-widest",
                           deliveryMethod === 'retirada'
                             ? "bg-white border-pink-400 text-pink-500 shadow-sm"
-                            : "bg-white border-gray-100 text-gray-400"
+                            : "bg-white border-gray-200 text-gray-600"
                         )}
                       >
                         <Settings size={16} /> Retirar na Loja
@@ -1441,15 +1541,15 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
 
                   {/* Pagamento hospedado */}
                   <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                    <label className="text-[10px] uppercase tracking-widest text-gray-400 block mb-3 font-black">Pagamento</label>
+                    <label className="store-cart-label">Pagamento</label>
                     <div className="flex items-center gap-3 text-gray-900">
                       <div className="flex gap-2 text-pink-500">
                         <CreditCard size={18} />
                         <QrCode size={18} />
                       </div>
                       <div>
-                        <p className="text-xs font-black uppercase tracking-widest">Checkout seguro PagBank</p>
-                        <p className="text-[11px] text-gray-500 mt-1">Cartão, Pix ou boleto na próxima etapa.</p>
+                        <p className="text-sm font-bold md:text-xs md:font-black md:uppercase md:tracking-widest">Checkout seguro PagBank</p>
+                        <p className="mt-1 text-xs text-gray-600 md:text-[11px]">Cartão, Pix ou boleto na próxima etapa.</p>
                       </div>
                     </div>
                   </div>
@@ -1457,7 +1557,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                   {/* Shipping Calculator */}
                   {deliveryMethod === 'entrega' && (
                     <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                      <label htmlFor="shipping-cep" className="text-[10px] uppercase tracking-widest text-gray-400 block mb-2 font-black">Calcular frete</label>
+                      <label htmlFor="shipping-cep" className="store-cart-label !mb-2">Calcular frete</label>
                       <div className="flex gap-2">
                         <input
                           type="text"
@@ -1482,7 +1582,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                           disabled={isCalculating || cep.length !== 8}
                           className="bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-pink-500 disabled:opacity-50 transition-colors"
                         >
-                          {isCalculating ? '...' : 'OK'}
+                          {isCalculating ? '…' : <><span className="md:hidden">Calcular</span><span className="hidden md:inline">OK</span></>}
                         </button>
                       </div>
                       {shippingInfo && (
@@ -1696,7 +1796,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                         <span>Grátis</span>
                       </div>
                     )}
-                    <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                    <div className="hidden items-center justify-between border-t border-gray-100 pt-2 md:flex">
                       <span className="text-gray-500 font-medium">Total</span>
                       <span className="text-2xl font-black text-gray-900">
                         {formatMoney(totalCents / 100)}
@@ -1705,14 +1805,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
                   </div>
                   <label className="mb-4 block text-sm">Observações do pedido (opcional)<textarea aria-label="Observações do pedido" maxLength={1000} value={orderNotes} onChange={event => setOrderNotes(event.target.value)} className="mt-2 w-full rounded-xl border border-gray-200 p-3" /></label>
                   {checkoutErrors.length > 0 && <div role="alert" className="mb-4 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-600"><p className="font-bold">Preencha os campos para continuar:</p><ul>{checkoutErrors.map(issue => <li key={issue.field}><button type="button" className="underline" onClick={() => document.getElementById(issue.field)?.focus()}>{issue.message}</button></li>)}</ul></div>}
-                  <button
-                    type="button"
-                    onClick={checkout}
-                    disabled={isCheckingOut || isCalculating || awaitingCoupon || Boolean(currentCouponQuote?.error)}
-                    className="w-full bg-gray-900 text-white font-black py-4 rounded-xl hover:bg-pink-500 transition-all shadow-xl shadow-gray-100 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isCheckingOut ? <><Loader2 className="animate-spin" size={18} /> REDIRECIONANDO...</> : "IR PARA O PAGBANK"}
-                  </button>
+                  {checkoutAction(false)}
                 </div>
 
               </div>
@@ -1873,7 +1966,7 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.9 }}
         onClick={() => { const href = contactHref(primaryContact); if (primaryContact.type === 'whatsapp') openExternal(href); else window.location.assign(href); }}
-        className="fixed bottom-8 right-8 z-40 bg-[#25D366] text-white p-4 rounded-full shadow-2xl flex items-center justify-center group"
+        className="fixed bottom-8 right-8 z-40 bg-[#25D366] text-white p-4 rounded-full shadow-2xl hidden items-center justify-center group md:flex"
       >
         {primaryContact.type === 'email' ? <Mail size={24} /> : <Phone size={24} />}
         <span className="max-w-0 overflow-hidden group-hover:max-w-xs group-hover:ml-2 transition-all duration-300 font-bold text-sm whitespace-nowrap">
@@ -1884,7 +1977,13 @@ export default function Home({ emailApi, customerApi = defaultCustomerApi,
   );
 }
 
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+function Modal({ title, children, onClose, cart = false, footer }: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  cart?: boolean;
+  footer?: React.ReactNode;
+}) {
   const closeAction = React.useRef(onClose); closeAction.current = onClose;
   const titleId = React.useId();
   const dialogRef = React.useRef<HTMLDivElement>(null);
@@ -1905,8 +2004,8 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
 
       if (event.key !== 'Tab' || !dialogRef.current) return;
       const focusable: HTMLElement[] = [...dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )].filter(element => !element.hasAttribute('hidden'));
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
+      )].filter(element => element.tabIndex >= 0 && element.getClientRects().length > 0);
       if (focusable.length === 0) return;
 
       const first = focusable[0];
@@ -1929,9 +2028,11 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={cn('fixed inset-0 z-50 flex items-center justify-center p-4', cart && 'store-cart-layer')}>
       <motion.button
         type="button"
+        tabIndex={-1}
+        aria-hidden="true"
         aria-label={`Fechar ${title}`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -1947,17 +2048,18 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-        className="relative bg-white border border-gray-100 w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+        className={cn('relative w-full max-w-lg overflow-hidden rounded-3xl border border-gray-100 bg-white shadow-2xl', cart && 'store-cart-dialog')}
       >
-        <div className="px-5 sm:px-8 py-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+        <div className="store-dialog-head flex items-center justify-between border-b border-gray-100 bg-gray-50/50 px-5 py-6 sm:px-8">
           <h3 id={titleId} className="text-xl font-black text-gray-900 tracking-tight">{title}</h3>
-          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={`Fechar ${title}`} className="text-gray-400 hover:text-pink-500 transition-colors">
+          <button ref={closeButtonRef} type="button" onClick={onClose} aria-label={`Fechar ${title}`} className="store-dialog-close text-gray-400 transition-colors hover:text-pink-500">
             <X size={24} />
           </button>
         </div>
-        <div className="p-5 sm:p-8 overflow-y-auto max-h-[calc(90vh-80px)] custom-scrollbar">
+        <div className="store-dialog-body max-h-[calc(90vh-80px)] overflow-y-auto p-5 custom-scrollbar sm:p-8">
           {children}
         </div>
+        {footer}
       </motion.div>
     </div>
   );
@@ -2248,11 +2350,11 @@ function ProductCard({
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
-      className="@container/product min-w-0 max-w-full overflow-hidden [overflow-wrap:anywhere] bg-white/60 backdrop-blur-sm border border-gray-100 rounded-[2.5rem] p-5 sm:p-8 hover:border-pink-200 transition-all group shadow-sm hover:shadow-md"
+      className="store-product-detail @container/product min-w-0 max-w-full overflow-hidden [overflow-wrap:anywhere] bg-white/60 backdrop-blur-sm border border-gray-100 rounded-[2.5rem] p-5 sm:p-8 hover:border-pink-200 transition-all group shadow-sm hover:shadow-md"
     >
       <div className="flex min-w-0 flex-col gap-6 @3xl/product:flex-row @3xl/product:gap-10">
       <div className="min-w-0 max-w-full w-full @3xl/product:w-80 flex-shrink-0 flex flex-col gap-4">
-        <div className="aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 relative group-hover:shadow-[0_0_30px_rgba(244,114,182,0.1)] transition-all">
+        <div className="store-product-image aspect-square bg-gray-50 rounded-2xl overflow-hidden border border-gray-100 relative group-hover:shadow-[0_0_30px_rgba(244,114,182,0.1)] transition-all">
           <img
             key={activeImage}
             src={activeImage}
@@ -2295,16 +2397,16 @@ function ProductCard({
       </div>
 
       <div className="min-w-0 flex-1 flex flex-col">
-        <div className="flex min-w-0 justify-between items-start gap-3 mb-4">
+        <div className="mb-2 flex min-w-0 items-start justify-between gap-3 md:mb-4">
           <h3 className="min-w-0 text-2xl font-black text-gray-900 tracking-tight">{product.nome}</h3>
           {product.lancamento && <div className="shrink-0 bg-pink-50 text-pink-500 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Novo</div>}
         </div>
-        <p className="text-sm text-gray-500 mb-8 leading-relaxed max-w-2xl font-medium">{product.desc}</p>
+        <p className="mb-5 max-w-2xl text-sm font-medium leading-relaxed text-gray-600 md:mb-8">{product.desc}</p>
 
-        <div className="grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-6 mb-10">
+        <div className="mb-6 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-4 empty:hidden md:mb-10 md:gap-6">
           {product.atributos.map(attr => (
             <div key={attr.nome} className="min-w-0 flex flex-col">
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-4">{attr.nome}</span>
+              <span className="mb-2 text-sm font-bold text-gray-700 md:mb-4 md:text-[10px] md:uppercase md:tracking-[0.2em]">{attr.nome}</span>
               <div className="flex flex-col gap-2">
                 {attr.opcoes.map(option => {
                   const reference = optionReferenceImage(attr.configuracao?.[option]);
@@ -2315,7 +2417,7 @@ function ProductCard({
                     onClick={() => handleSelect(attr.nome, option)}
                     aria-pressed={selections[attr.nome] === option}
                     className={cn(
-                      "flex items-center gap-2 text-left px-4 py-3 rounded-xl border text-xs font-bold transition-all",
+                      "flex min-h-11 items-center gap-2 rounded-xl border px-4 py-3 text-left text-sm font-bold transition-all md:min-h-0 md:text-xs",
                       selections[attr.nome] === option
                         ? "bg-gradient-to-r from-pink-400 to-purple-500 border-transparent text-white shadow-lg shadow-pink-100"
                         : "bg-gray-50 border-gray-100 text-gray-500 hover:border-pink-200 hover:text-pink-600"

@@ -221,7 +221,45 @@ test('gera o modelo composto e envia texto, fonte, posição e arquivo ao checko
 });
 
 test.describe('loja em viewport móvel', () => {
-  test.use({ viewport: { width: 390, height: 844 } });
+  test.use({
+    isMobile: true,
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+    reducedMotion: 'reduce',
+  });
+
+  test('encontra produtos, filtra categorias e abre a conta na loja móvel', async ({ page }) => {
+    const header = page.locator('header');
+    const filters = page.getByRole('button', { name: 'Filtros', exact: true });
+    const category = page.getByLabel('Filtrar por categoria');
+    const grid = page.getByTestId('catalog-grid');
+    const heading = page.locator('#products-heading');
+
+    await expect(grid.locator('article').first()).toBeInViewport();
+    await expect(category).toBeHidden();
+    await filters.tap();
+    await category.selectOption('Livros de Receita');
+    await expect(heading).toContainText('Livros de Receita');
+    await expect(grid.locator('article')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Filtros (1)' })).toHaveAttribute('aria-expanded', 'true');
+    await page.getByRole('button', { name: 'Limpar filtros' }).tap();
+
+    const search = header.getByRole('searchbox', { name: 'Buscar produtos' });
+    await search.fill('carimbo');
+    await header.getByRole('button', { name: 'Buscar', exact: true }).tap();
+    await expect(page).toHaveURL(/q=carimbo/);
+    await expect(grid.locator('article')).toHaveCount(1);
+    await expect(grid).toContainText('Carimbo');
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect.poll(() => header.evaluate(element => element.getBoundingClientRect().top)).toBe(0);
+    const account = header.locator('summary').filter({ hasText: 'Conta' });
+    await account.tap();
+    await expect(header.getByRole('link', { name: 'Atendimento', exact: true })).toBeVisible();
+    await header.getByRole('link', { name: 'Minha conta', exact: true }).tap();
+    await expect(page).toHaveURL(/\/minha-conta$/);
+    await expect(page.getByRole('heading', { name: 'Minha conta', exact: true })).toBeInViewport();
+  });
 
   test('não cria rolagem horizontal e mantém o carrinho operável', async ({ page }) => {
     const overflow = await page.evaluate(() => ({
@@ -233,14 +271,27 @@ test.describe('loja em viewport móvel', () => {
     await page.locator('#produtos').getByRole('button', { name: 'Adicionar ao Carrinho' }).first().click();
     await expect(page.getByRole('dialog', { name: 'Meu Carrinho' })).toHaveCount(0);
     await expect(page.getByRole('status')).toContainText('Adicionado ao carrinho.');
-    await page.getByRole('button', { name: 'Abrir carrinho', exact: true }).click();
+    const trigger = page.getByRole('button', { name: 'Abrir carrinho', exact: true });
+    await trigger.click();
     const cart = page.getByRole('dialog', { name: 'Meu Carrinho' });
     await expect(cart).toBeVisible();
-    const box = await cart.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.width).toBeLessThanOrEqual(390);
+    await expect(cart).toHaveCSS('width', '390px');
+
+    const pay = cart.getByRole('button', { name: 'IR PARA O PAGBANK', exact: true });
+    await expect(pay).toBeInViewport();
+    await expect(cart.getByText('Total sem frete', { exact: true })).toBeInViewport();
+
+    await cart.getByLabel('Calcular frete').fill('14400000');
+    await cart.getByRole('button', { name: 'Calcular', exact: true }).tap();
+    await expect(cart.getByRole('radio', { name: /Jadlog/ })).toBeVisible();
+    await cart.getByRole('button', { name: 'Retirar na Loja' }).tap();
+    await expect(cart.getByRole('paragraph').filter({ hasText: /^Total$/ })).toBeInViewport();
+    await cart.getByLabel('Observações do pedido').scrollIntoViewIfNeeded();
+    await expect(pay).toBeInViewport();
+    await expect(cart.getByRole('button', { name: 'Fechar Meu Carrinho' })).toBeInViewport();
 
     await page.keyboard.press('Escape');
     await expect(cart).toHaveCount(0);
+    await expect(trigger).toBeFocused();
   });
 });

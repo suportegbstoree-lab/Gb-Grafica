@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-test('vitrine tem cards uniformes e grade de três, duas e uma colunas sem transbordar', async ({ page }) => {
+test('vitrine tem cards uniformes e grade de três ou duas colunas sem transbordar', async ({ page }) => {
   await page.goto('/?catalog=4');
   const grid = page.getByTestId('catalog-grid');
   await expect(grid.locator('article')).toHaveCount(6);
@@ -7,7 +7,8 @@ test('vitrine tem cards uniformes e grade de três, duas e uma colunas sem trans
   for (const [width, columns] of [
     [1920, 3],
     [1100, 2],
-    [390, 1],
+    [390, 2],
+    [320, 2],
   ]) {
     await page.setViewportSize({ width, height: 1000 });
     expect(await grid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(columns);
