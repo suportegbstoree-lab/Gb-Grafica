@@ -1018,6 +1018,19 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       key.startsWith("_operationsActivity/"),
     );
     assert.equal(activities.length, 1);
+    const channelRequest = { requestId: "0".repeat(36), marketplace: "shopee", name: "Produção - Shopee" };
+    const classifiedBatch = await request("/library/batches", "generator", channelRequest);
+    assert.equal(classifiedBatch.status, 201);
+    const { batch: shopee } = await classifiedBatch.json();
+    assert.equal(shopee.marketplace, "shopee");
+    assert.equal((await (await request("/library/batches", "generator", channelRequest)).json()).batch.id, shopee.id);
+    assert.equal((await request("/library/batches", "generator", { ...channelRequest, marketplace: "tiktok" })).status, 409);
+    const shopeeItems = "/library/batches/" + shopee.id + "/items";
+    assert.equal((await request(shopeeItems, "generator", body)).status, 409);
+    assert.equal((await request(shopeeItems, "generator", { ...body, job: { ...job, marketplace: "tiktok" } })).status, 409);
+    const shopeeItem = await request(shopeeItems, "generator", { ...body, job: { ...job, marketplace: "shopee" } });
+    assert.equal(shopeeItem.status, 201);
+    assert.equal((await shopeeItem.json()).job.marketplace, "shopee");
     objects.delete(path);
     docs.delete(`_staffPdfBases/${baseId}`);
     docs.delete(`_staffPdfLayouts/${layoutId}`);
@@ -1065,7 +1078,7 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       };
     };
     assert.deepEqual(await cleanupStaffPdfBatches(services, time()), {
-      deleted: 2,
+      deleted: 3,
       failed: 0,
     });
     assert.equal(
@@ -1073,6 +1086,7 @@ test("batch recipes snapshot inputs, preserve tracking and enforce ownership, id
       false,
     );
     assert.equal(docs.has(`_staffPdfBatches/${batch.id}`), false);
+    assert.equal(docs.has(`_staffPdfBatches/${shopee.id}`), false);
   }));
 
 test("batch recipes freeze font files and decorative initials instead of linking current catalog assets", async () =>

@@ -1,3 +1,4 @@
+import { isStaffPdfMarketplace, type StaffPdfMarketplace } from "./staffPdfMarketplace.js";
 import { normalizeStaffPdfCompoundMarker, type StaffPdfCompoundMarker } from "./staffPdfCompound.js";
 import {
   isStaffBarcodeVersion,
@@ -182,6 +183,8 @@ function normalizePdfTextEffects(value: unknown): StaffPdfTextEffects {
 
 export interface StaffPdfJob {
   compoundMarker?: StaffPdfCompoundMarker;
+  marketplace?: StaffPdfMarketplace;
+  marketplaceMarker?: StaffPdfCompoundMarker;
   schemaVersion: 1;
   allowEmptyText?: true;
   barcode?: string;
@@ -549,6 +552,8 @@ export function normalizeStaffPdfJob(
   if (
     !object(value) ||
     value.schemaVersion !== 1 ||
+    (value.marketplace !== undefined && !isStaffPdfMarketplace(value.marketplace)) ||
+    (value.marketplaceMarker !== undefined && !value.marketplace) ||
     (value.allowEmptyText !== undefined && value.allowEmptyText !== true) ||
     (value.barcodeVersion !== undefined &&
       !isStaffBarcodeVersion(value.barcodeVersion)) ||
@@ -584,6 +589,8 @@ export function normalizeStaffPdfJob(
     throw new Error("O identificador exige um código de barras.");
   return {
     ...(value.compoundMarker === undefined ? {} : { compoundMarker: normalizeStaffPdfCompoundMarker(value.compoundMarker) }),
+    ...(isStaffPdfMarketplace(value.marketplace) ? { marketplace: value.marketplace } : {}),
+    ...(value.marketplaceMarker === undefined ? {} : { marketplaceMarker: normalizeStaffPdfCompoundMarker(value.marketplaceMarker) }),
     ...(value.allowEmptyText ? { allowEmptyText: true as const } : {}),
     ...(value.barcodeVersion === undefined
       ? {}

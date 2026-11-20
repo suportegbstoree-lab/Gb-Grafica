@@ -11,6 +11,7 @@ import {
   parseStaffPdfCsv,
   resolveStaffPdfCsvModel,
 } from "./staffPdfCsv.js";
+import { staffPdfMarketplace } from "./staffPdfMarketplace.js";
 import { selectedColumnsCsv } from "./spreadsheetCsv.js";
 import { defaultPdfLayout, type StaffPdfBase } from "./staffPdf.js";
 
@@ -29,6 +30,7 @@ test("the office CSV accepts its desktop header, quoted delimiters and multiline
     reference: 0,
     template: 3,
     text: 4,
+    marketplace: -1,
   });
   assert.equal(defaultStaffPdfCsvColumns(["af_clean", "nome"]).template, 0);
   assert.equal(row[0], "00123");
@@ -235,4 +237,15 @@ test("explicit base association disambiguates identical PDF names in different c
     resolveStaffPdfCsvModel(layouts[1].name, [a, b], layouts)?.baseId,
     "b",
   );
+});
+
+test("marketplace detection accepts decorated names and leaves missing or ambiguous values for review", () => {
+  for (const text of ["Loja TIKTOKSHOPBR 002", " canal: Tík_Tók Shop ", "Tik.Tok-Shop BR"])
+    assert.equal(staffPdfMarketplace(text), "tiktok");
+  for (const text of ["SP | SHOPEE - Vendas", "ShopeeBR #01", "plataforma:shópee_brasil"])
+    assert.equal(staffPdfMarketplace(text), "shopee");
+  for (const text of ["", "01045", "TikTok Shop / Shopee", "mistiktok", "shopeeoutlet"])
+    assert.equal(staffPdfMarketplace(text), undefined);
+  assert.equal(defaultStaffPdfCsvColumns(["nome", "Canal de vendas"]).marketplace, 1);
+  assert.equal(defaultStaffPdfCsvColumns(["Nº do pedido da plataforma"]).marketplace, -1);
 });

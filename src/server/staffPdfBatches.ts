@@ -12,6 +12,7 @@ import {
   staffPdfFont,
   type StaffPdfJob,
 } from "../lib/staffPdf.js";
+import { isStaffPdfMarketplace } from "../lib/staffPdfMarketplace.js";
 import { parsePrintProfile } from "../lib/printProfile.js";
 import {
   isStaffPdfSimpleJob,
@@ -83,6 +84,7 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
     id,
     reference: data.reference,
     ...(data.name ? { name: data.name } : {}),
+    ...(isStaffPdfMarketplace(data.marketplace) ? { marketplace: data.marketplace } : {}),
     createdAt: data.createdAt,
     expiresAt: data.expiresAt,
     ownerName: data.ownerName,
@@ -243,10 +245,19 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
       const id = idFor(user.uid, req.body?.requestId);
       const ref = services().db.collection("_staffPdfBatches").doc(id);
       const name = batchName(req.body?.name ?? "");
+      const marketplace: unknown = req.body?.marketplace;
+      if (marketplace !== undefined && !isStaffPdfMarketplace(marketplace))
+        throw new OperationsError("Origem do lote inválida.");
       const owner = await activityActor(services().db, user);
       await services().db.runTransaction(async (tx) => {
-        if ((await tx.get(ref)).exists) return;
+        const existing = (await tx.get(ref)).data();
+        if (existing) {
+          if (existing.marketplace !== marketplace)
+            throw new OperationsError("A origem do lote mudou durante a geração.", 409);
+          return;
+        }
         tx.create(ref, {
+          ...(marketplace ? { marketplace } : {}),
           ownerId: user.uid,
           ownerName: owner.actorName,
           name,
@@ -431,6 +442,9 @@ export function createStaffPdfBatchRouter(deps: StaffDocumentDeps) {
         fitMargin = layout.layout.fit_margin;
         initialSize = staffPdfInitialSize(layout.layout);
       }
+      if ((isStaffPdfSimpleJob(job) ? undefined : job.marketplace) !== batch.marketplace)
+        throw new OperationsError("A origem do pedido precisa corresponder ao lote.", 409);
+
       async function snapshotFonts(job: StaffPdfBatchJob) {
         const snapshots = [];
         const ids = isStaffPdfSimpleJob(job)

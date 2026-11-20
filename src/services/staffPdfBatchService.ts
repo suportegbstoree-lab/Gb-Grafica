@@ -10,8 +10,8 @@ import { exportStaffPdf } from "./staffPdfRender";
 
 export const staffPdfBatchApi: StaffPdfBatchApi = {
   list: (cursor) => staffPdfRequest(`/batches${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
-  create: async (requestId, name) =>
-    (await staffPdfRequest("/batches", { requestId, name })).batch,
+  create: async (requestId, name, marketplace) =>
+    (await staffPdfRequest("/batches", { requestId, name, marketplace })).batch,
   rename: async (id, name) =>
     (await staffPdfRequest(`/batches/${id}/name`, { name })).batch,
   items: (id, cursor) => staffPdfRequest(`/batches/${id}/items${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),

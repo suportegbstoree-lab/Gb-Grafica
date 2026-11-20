@@ -10,6 +10,7 @@ import {
   createStaffSkuMatcher,
   expandStaffPdfQuantities,
   staffOrderColumn,
+  staffPdfMarketplaceColumn,
   staffSheetColumn,
   STAFF_SHEET_FIELDS,
   type StaffSheetField,
@@ -45,6 +46,8 @@ export default function StaffSpreadsheetCsv({
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const current = draft?.book.sheets[draft.sheet];
+  const originColumn = staffPdfMarketplaceColumn(current?.rows[0] ?? []);
+  const originMapping = draft?.mapping.origem ?? (originColumn < 0 ? "" : excelColumn(originColumn));
 
   function sheetSettings(workbook: StaffWorkbook, index: number) {
     const header = workbook.sheets[index].rows[0] ?? [];
@@ -99,9 +102,10 @@ export default function StaffSpreadsheetCsv({
       const header = current.rows[0] ?? [];
       const orderIndex = staffOrderColumn(header);
       const entries = STAFF_SHEET_FIELDS.map(({ key, label }) => {
-        const index = staffSheetColumn(mapping[key], current.columns, header);
+        const column = key === "origem" ? originMapping : mapping[key];
+        const index = staffSheetColumn(column, current.columns, header);
         if (
-          (mapping[key].trim() || key === "modelo") && index < 0
+          (column.trim() || key === "modelo") && index < 0
         )
           throw new Error(`Informe uma coluna válida para ${label}.`);
         return [key, index] as const;
@@ -110,7 +114,7 @@ export default function StaffSpreadsheetCsv({
         StaffSheetField,
         number
       >;
-      const optional = (["prazo_envio", "quantidade_itens"] as const).filter(
+      const optional = (["prazo_envio", "quantidade_itens", "origem"] as const).filter(
         (key) => columns[key] >= 0,
       );
       const headers = [
@@ -211,7 +215,7 @@ export default function StaffSpreadsheetCsv({
                 <input
                   className={field}
                   placeholder="Letra ou nome da coluna"
-                  value={draft.mapping[key]}
+                  value={key === "origem" ? originMapping : draft.mapping[key]}
                   onChange={(e) => {
                     const value = e.target.value;
                     void save((previous) => previous && {
@@ -225,7 +229,7 @@ export default function StaffSpreadsheetCsv({
           </div>
           <p className="text-sm text-gray-400">
             Use a letra da coluna, como AF, ou o texto do cabeçalho. O número do
-            pedido é lido pelo cabeçalho da planilha.
+            pedido é lido pelo cabeçalho da planilha. Ao indicar a origem, a fila separa TikTok e Shopee.
           </p>
           <div className="flex flex-wrap gap-3">
             <button

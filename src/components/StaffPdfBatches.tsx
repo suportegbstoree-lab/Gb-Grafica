@@ -1,5 +1,6 @@
 import React from "react";
 import { Download, FileDown, Printer, TextCursorInput } from "lucide-react";
+import { STAFF_PDF_MARKETPLACE_LABELS } from "../lib/staffPdfMarketplace";
 import { STAFF_PDF_BATCH_NAME_MAX } from "../lib/staffPdfBatch";
 import type {
   StaffPdfBatchApi,
@@ -176,6 +177,8 @@ export default function StaffPdfBatches({
           >
             <summary className="cursor-pointer text-sm">
               {batch.name || batch.reference} ·{" "}
+              {batch.marketplace && !batch.name?.endsWith(STAFF_PDF_MARKETPLACE_LABELS[batch.marketplace]) &&
+                `${STAFF_PDF_MARKETPLACE_LABELS[batch.marketplace]} · `}
               {new Date(batch.createdAt).toLocaleString("pt-BR")} ·{" "}
               {batch.count} arquivo(s)
             </summary>

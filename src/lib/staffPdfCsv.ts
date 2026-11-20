@@ -120,6 +120,16 @@ export function staffOrderColumn(headers: string[]) {
   );
 }
 
+const marketplaceHeaders = [
+  "origem", "origem_do_pedido", "canal_de_venda", "canal_de_vendas", "canal",
+  "plataforma", "plataforma_de_venda", "marketplace", "market_place", "sales_channel",
+] as const;
+
+export function staffPdfMarketplaceColumn(headers: string[]) {
+  const names = headers.map(key);
+  return marketplaceHeaders.map(alias => names.indexOf(alias)).find(index => index >= 0) ?? -1;
+}
+
 export function defaultStaffPdfCsvColumns(headers: string[]) {
   const names = headers.map(key);
   const find = (choices: string[]) =>
@@ -159,6 +169,7 @@ export function defaultStaffPdfCsvColumns(headers: string[]) {
       staffOrderColumn(headers) >= 0
         ? staffOrderColumn(headers)
         : find(["codigo", "serial", "rastreio", "barcode", "tracking"]),
+    marketplace: staffPdfMarketplaceColumn(headers),
   };
 }
 
@@ -287,6 +298,7 @@ export const STAFF_SHEET_FIELDS = [
     label: "Quantidade de itens",
     aliases: quantityHeaders,
   },
+  { key: "origem", label: "Origem do pedido", aliases: marketplaceHeaders },
 ] as const;
 export type StaffSheetField = (typeof STAFF_SHEET_FIELDS)[number]["key"];
 export function staffPdfObservationColumn(headers: string[]) {

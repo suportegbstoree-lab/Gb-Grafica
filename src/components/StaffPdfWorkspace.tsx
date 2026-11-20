@@ -21,7 +21,8 @@ import StaffPdfBatches from "./StaffPdfBatches";
 import StaffPdfQueueProgress, {
   type StaffPdfQueueProgressValue,
 } from "./StaffPdfQueueProgress";
-import { STAFF_PDF_BATCH_NAME_MAX, type StaffPdfRecipe } from "../lib/staffPdfBatch";
+import { STAFF_PDF_MARKETPLACE_LABELS, type StaffPdfMarketplace } from "../lib/staffPdfMarketplace";
+import { STAFF_PDF_BATCH_NAME_MAX, staffPdfMarketplaceBatchName, type StaffPdfRecipe } from "../lib/staffPdfBatch";
 import { formatStaffPdfPersonName } from "../lib/staffPdfCsv";
 import { Barcode, Edit2, Search, Trash2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
@@ -296,6 +297,7 @@ export default function StaffPdfWorkspace({
     code = barcode,
     allowEmptyText = false,
     size?: StaffBarcodeSize,
+    marketplace?: StaffPdfMarketplace,
   ): QueueItem {
     const resolvedCode = code.trim() ? normalizeStaffBarcode(code) : undefined;
     const filename =
@@ -308,6 +310,7 @@ export default function StaffPdfWorkspace({
     const job = normalizeStaffPdfJob(
       {
         schemaVersion: 1,
+        ...(marketplace ? { marketplace } : {}),
         ...(allowEmptyText ? { allowEmptyText: true } : {}),
         ...(resolvedCode ? {
           barcode: resolvedCode,
@@ -391,6 +394,7 @@ export default function StaffPdfWorkspace({
             order.barcode,
             !order.text,
             replacing ? barcodeOverrideOf(replacing) : undefined,
+            order.marketplace,
           ),
           csvRow: order.csvRow,
           csvWarning: order.csvWarning,
@@ -778,17 +782,36 @@ export default function StaffPdfWorkspace({
       const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
       if (alive.current) setData(current);
       const newItems = pending.filter(item => !item.batchId && !item.batchPlan);
-      const repeated = staffPdfRepeatedBarcodes(newItems);
+      const groups = new Map<StaffPdfMarketplace | undefined, QueueItem[]>();
+      for (const item of newItems) {
+        const marketplace = item.job.marketplace;
+        const group = groups.get(marketplace);
+        if (group) group.push(item);
+        else groups.set(marketplace, [item]);
+      }
       const marker = current.compoundMarker ?? DEFAULT_STAFF_PDF_COMPOUND_MARKER;
-      const compoundMarker = (job: StaffPdfJob) => job.barcode && repeated.has(job.barcode) ? marker : undefined;
-      if (batches) {
-        const unassigned = new Set(newItems.map(item => item.id));
-        if (unassigned.size) {
-          const batchPlan = { requestId: crypto.randomUUID(), name: batchName.trim() || undefined };
-          await setQueue((old) => old.map((item) =>
-            unassigned.has(item.id) ? { ...item, batchPlan, job: { ...item.job, compoundMarker: compoundMarker(item.job) } } : item,
-          ));
+      const planned = new Map<string, QueueItem>();
+      for (const [marketplace, group] of groups) {
+        const repeated = staffPdfRepeatedBarcodes(group);
+        const batchPlan = batches ? {
+          requestId: crypto.randomUUID(),
+          name: marketplace ? staffPdfMarketplaceBatchName(batchName, marketplace) : batchName.trim() || undefined,
+        } : undefined;
+        for (const item of group) {
+          const compound = item.job.barcode !== undefined && repeated.has(item.job.barcode);
+          planned.set(item.id, {
+            ...item,
+            ...(batchPlan ? { batchPlan } : {}),
+            job: {
+              ...item.job,
+              compoundMarker: compound ? marker : undefined,
+              marketplaceMarker: marketplace && !compound ? marker : undefined,
+            },
+          });
         }
+      }
+      if (batches && planned.size) {
+        await setQueue(old => old.map(item => planned.get(item.id) ?? item));
       }
       const batchIds = new Map<string, string>();
       const attemptLimit = batches ? BATCH_ATTEMPTS_PER_WINDOW : 20;
@@ -828,7 +851,7 @@ export default function StaffPdfWorkspace({
               (!b || b.revision !== item.job.baseRevision || !t || t.revision !== item.job.layoutRevision)) {
             throw new Error("A base ou o molde mudou. Edite este item novamente.");
           }
-          let effectiveJob = batches ? item.job : { ...item.job, compoundMarker: compoundMarker(item.job) };
+          let effectiveJob = batches ? item.job : planned.get(item.id)?.job ?? item.job;
           if (!item.batchId && isCsvName(item.csvRow)) {
             const [main, ...extras] = effectiveJob.lines;
             const text = formatStaffPdfPersonName(main.text);
@@ -861,7 +884,7 @@ export default function StaffPdfWorkspace({
               const plan = item.batchPlan!;
               batchId = batchIds.get(plan.requestId);
               if (!batchId) {
-                batchId = (await retryStaffPdfRateLimit(() => batches.create(plan.requestId, plan.name), canFinish)).id;
+                batchId = (await retryStaffPdfRateLimit(() => batches.create(plan.requestId, plan.name, job.marketplace), canFinish)).id;
                 batchIds.set(plan.requestId, batchId);
               }
               if (!alive.current || !generationAllowed.current) break;
@@ -959,6 +982,7 @@ export default function StaffPdfWorkspace({
         !!(editingItem?.csvRow || editingItem?.job.allowEmptyText) &&
           !lines.some((line) => line.text.trim()),
         barcodeOverride,
+        editingItem?.job.marketplace,
       );
       if (csvRow) {
         const text = item.job.lines[0].text;
@@ -1519,6 +1543,9 @@ export default function StaffPdfWorkspace({
                       <p className="break-words text-sm">
                         {item.job.lines.map((line) => line.text).filter(Boolean).join(" / ")}
                       </p>
+                      {item.job.marketplace && (
+                        <p className="text-xs text-gray-300">Origem · {STAFF_PDF_MARKETPLACE_LABELS[item.job.marketplace]}</p>
+                      )}
                       {(item.csvWarning || item.job.allowEmptyText) && (
                         <p className="break-words text-xs text-amber-300">
                           Campos em branco no CSV: {item.csvWarning || "Nome"}.

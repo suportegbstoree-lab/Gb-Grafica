@@ -1,3 +1,4 @@
+import { STAFF_PDF_MARKETPLACE_LABELS, type StaffPdfMarketplace } from "./staffPdfMarketplace.js";
 import type { StaffPdfJob } from "./staffPdf.js";
 import type { StaffBarcodeVersion } from "./staffPdfBarcode.js";
 
@@ -6,6 +7,15 @@ export function staffPdfBatchName(value: unknown): string {
   if (typeof value !== "string" || value.length > STAFF_PDF_BATCH_NAME_MAX || /[\x00-\x1f\x7f]/.test(value))
     throw new Error("Informe um nome de lote com até 80 caracteres.");
   return value.trim().normalize("NFC");
+}
+
+export function staffPdfMarketplaceBatchName(name: string, marketplace: StaffPdfMarketplace) {
+  const label = STAFF_PDF_MARKETPLACE_LABELS[marketplace];
+  const prefix = name.trim().normalize("NFC")
+    .slice(0, STAFF_PDF_BATCH_NAME_MAX - label.length - 3)
+    .replace(/[\uD800-\uDBFF]$/, "")
+    .trimEnd();
+  return prefix ? `${prefix} - ${label}` : label;
 }
 
 import type { PrintProfile } from "./printProfile.js";
@@ -29,6 +39,7 @@ export interface StaffPdfBatchView {
   id: string;
   reference: string;
   name?: string;
+  marketplace?: StaffPdfMarketplace;
   createdAt: string;
   expiresAt: string;
   ownerName: string;
@@ -70,7 +81,7 @@ export type StaffPdfArchiveResult =
 export interface StaffPdfBatchApi {
   list(cursor?: string): Promise<{ batches: StaffPdfBatchView[]; next?: string }>;
   rename(id: string, name: string): Promise<StaffPdfBatchView>;
-  create(requestId: string, name?: string): Promise<StaffPdfBatchView>;
+  create(requestId: string, name?: string, marketplace?: StaffPdfMarketplace): Promise<StaffPdfBatchView>;
   items(batchId: string, cursor?: string): Promise<{ items: StaffPdfBatchItemView[]; next?: string }>;
   save(
     batchId: string,

@@ -290,7 +290,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
           persistBatches();
           return batch.view;
         },
-        create: async (requestId, name) => {
+        create: async (requestId, name, marketplace) => {
           const id = requestId.replaceAll("-", "");
           const existing = batches.get(id);
           if (existing) return existing.view;
@@ -303,6 +303,7 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
             expiresAt: new Date(Date.now() + 3 * 86400000).toISOString(),
             ownerName: "Equipe de teste",
             name,
+            marketplace,
             count: 0,
           };
           batches.set(id, { view, records: new Map() });

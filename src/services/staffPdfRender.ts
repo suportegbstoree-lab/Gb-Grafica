@@ -1,4 +1,5 @@
-import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
+import { DEFAULT_STAFF_PDF_COMPOUND_MARKER, type StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
+import { STAFF_PDF_MARKETPLACE_LABELS, type StaffPdfMarketplace } from "../lib/staffPdfMarketplace";
 import { staffBarcodeCanvas } from "./staffPdfBarcode";
 import { staffBarcodeBoxes } from "../lib/staffPdfBarcode";
 import { PDFDocument, degrees, rgb, StandardFonts, type PDFPage } from "pdf-lib";
@@ -426,9 +427,14 @@ function textOverlayRegion(
 }
 
 export async function drawStaffPdfCompoundMarker(
-  pdf: PDFDocument, page: PDFPage, barcode: string, marker: StaffPdfCompoundMarker,
+  pdf: PDFDocument, page: PDFPage, barcode: string | undefined, marker: StaffPdfCompoundMarker,
+  marketplace?: StaffPdfMarketplace,
 ) {
-  const text = `pedido composto ${barcode}`;
+  const text = [
+    marketplace && STAFF_PDF_MARKETPLACE_LABELS[marketplace],
+    barcode && `pedido composto ${barcode}`,
+  ].filter(Boolean).join(" - ");
+  if (!text) return;
   const font = await pdf.embedFont(marker.font === "courier" ? StandardFonts.Courier : StandardFonts.Helvetica);
   const crop = page.getCropBox();
   const { width, height } = crop;
@@ -598,8 +604,10 @@ export async function exportStaffPdf(
           job.barcodeSize,
         ))
           sheet.drawImage(barcode, box);
-      if (index === 0 && job.compoundMarker && job.barcode)
-        await drawStaffPdfCompoundMarker(pdf, sheet, job.barcode, job.compoundMarker);
+      if (index === 0 && (job.marketplace || job.compoundMarker)) {
+        const marker = job.compoundMarker ?? job.marketplaceMarker ?? DEFAULT_STAFF_PDF_COMPOUND_MARKER;
+        await drawStaffPdfCompoundMarker(pdf, sheet, job.compoundMarker ? job.barcode : undefined, marker, job.marketplace);
+      }
     }
     return new Blob([new Uint8Array(await pdf.save())], {
       type: "application/pdf",

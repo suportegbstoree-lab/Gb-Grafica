@@ -15,6 +15,13 @@ import { zipSync, unzipSync, strToU8 } from "fflate";
 import { parseStaffPdfCsv } from "../src/lib/staffPdfCsv";
 import { defaultPdfLayout } from "../src/lib/staffPdf";
 
+function printedCommands(pdf: PDFDocument, index: number) {
+  const streams = pdf.getPage(index).node.Contents() as PDFArray | undefined;
+  return streams ? Array.from({ length: streams.size() }, (_, i) =>
+    Buffer.from(decodePDFRawStream(streams.lookup(i, PDFRawStream)).decode()).toString(),
+  ).join("\n").toLowerCase() : "";
+}
+
 test("renames an uploaded PDF and reopens its existing mold", async ({ page }) => {
   await page.goto("/__e2e/staff-pdf");
   await page.getByRole("button", { name: "Bases e moldes", exact: true }).click();
@@ -520,7 +527,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2.0</v></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c><c r="G1" t="inlineStr"><is><t>Conta da loja</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2.0</v></c><c r="G2" t="inlineStr"><is><t>Conta 01 - TIK_TOK Shop</t></is></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf?resume");
@@ -535,10 +542,12 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   });
   await context.setOffline(true);
   await page.getByLabel("SKU", { exact: true }).fill("Modelo do SKU");
+  await page.getByLabel("Origem do pedido", { exact: true }).fill("Conta da loja");
   await context.setOffline(false);
   await page.reload();
   await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
   await expect(page.getByLabel("SKU", { exact: true })).toHaveValue("Modelo do SKU");
+  await expect(page.getByLabel("Origem do pedido", { exact: true })).toHaveValue("Conta da loja");
   const downloading = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Baixar CSV selecionado", exact: true })
@@ -547,9 +556,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   const csv = await readFile((await file.path())!, "utf8");
   expect(csv).toContain("00123");
   expect(csv).toContain(
-    '"pedido_plataforma","barcode","af_clean","nome","prazo_envio","quantidade_itens"',
+    '"pedido_plataforma","barcode","af_clean","nome","prazo_envio","quantidade_itens","origem"',
   );
-  expect(csv.split(/\r?\n/).filter((line) => line === '"00123",,"Kit de teste",,,"1"'))
+  expect(csv.split(/\r?\n/).filter((line) => line === '"00123",,"Kit de teste",,,"1","Conta 01 - TIK_TOK Shop"'))
     .toHaveLength(2);
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
@@ -565,6 +574,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await page.reload();
   await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
   const record = page.getByRole("row").filter({ has: page.getByLabel("Base do registro 2") });
+  await expect(record.getByText("TikTok", { exact: true })).toBeVisible();
   await expect(record).toContainText("Campos em branco: barcode, nome, prazo_envio.");
   await page
     .getByRole("button", { name: "Visualizar planilha importada" })
@@ -580,6 +590,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     "nome",
     "prazo_envio",
     "quantidade_itens",
+    "origem",
     "Entrega",
     "Ações",
   ]);
@@ -1441,14 +1452,8 @@ test("compound marker is printed only on PDFs with duplicate tracking within the
   const marker = Buffer.from("pedido composto BR264666798641W").toString("hex");
   for (const [name, data] of Object.entries(files)) {
     const pdf = await PDFDocument.load(data);
-    const commands = (index: number) => {
-      const streams = pdf.getPage(index).node.Contents() as PDFArray | undefined;
-      return streams ? Array.from({ length: streams.size() }, (_, i) =>
-        Buffer.from(decodePDFRawStream(streams.lookup(i, PDFRawStream)).decode()).toString(),
-      ).join("\n").toLowerCase() : "";
-    };
-    expect(commands(0).includes(marker)).toBe(name.includes("BR264666798641W"));
-    expect(commands(1)).not.toContain(marker);
+    expect(printedCommands(pdf, 0).includes(marker)).toBe(name.includes("BR264666798641W"));
+    expect(printedCommands(pdf, 1)).not.toContain(marker);
   }
 });
 
@@ -1490,4 +1495,61 @@ test("compound marker previews existing PDF bases and follows the selected page 
   await editor.getByRole("button", { name: "Atualizar prévia" }).click();
   await expect.poll(() => hasMarkerAt(25)).toBe(true);
   expect(await hasMarkerAt(94.3)).toBe(false);
+});
+
+test("marketplace batches consolidate only their own orders and print the origin on each PDF", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches");
+  await page.getByRole("button", { name: "Planilha e CSV" }).click();
+  const tracking = "BR264666798641W";
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "marketplaces.csv", mimeType: "text/csv",
+    buffer: Buffer.from([
+      "pedido_plataforma,barcode,modelo,nome,quantidade_itens,Conta da loja",
+      "TIK-001," + tracking + ",Kit de teste,ANA,2,LOJA-01 / TIK.TOK Shop",
+      "SHP-001," + tracking + ",Kit de teste,BIA,1,ShopeeBR #02",
+      "SHP-002,,Kit de teste,CLARA,1,Código 1001",
+    ].join("\n")),
+  });
+  await page.getByRole("combobox", { name: "Coluna da origem do pedido", exact: true }).selectOption({ label: "Conta da loja" });
+  const send = page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" });
+  await send.click();
+  await expect(page.getByText("1 pendente(s)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Origem não reconhecida. Edite a linha e informe TikTok ou Shopee.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
+  const table = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
+  const unknown = table.getByRole("row").filter({ hasText: "SHP-002" });
+  await unknown.getByRole("button", { name: "Editar linha", exact: true }).click();
+  await unknown.getByRole("textbox", { name: /^Conta da loja, linha/ }).fill("Shopee - Região Sul");
+  await unknown.getByRole("button", { name: "Salvar linha", exact: true }).click();
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await send.click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByText("Origem · TikTok", { exact: true })).toHaveCount(2);
+  await expect(page.getByText("Origem · Shopee", { exact: true })).toHaveCount(2);
+  await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Produção de hoje");
+  // The missing tracking number is an existing optional review warning.
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Gerar mesmo assim" }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(4, { timeout: 45_000 });
+  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
+
+  for (const origin of ["TikTok", "Shopee"] as const) {
+    const summary = page.getByText(new RegExp("^Produção de hoje - " + origin + " ·.*2 arquivo"));
+    await summary.click();
+    const downloading = page.waitForEvent("download");
+    await summary.locator("..").getByRole("button", { name: "Baixar PDF unido", exact: true }).click();
+    const download = await downloading;
+    expect(download.suggestedFilename()).toBe("Produção de hoje - " + origin + ".pdf");
+    const merged = await PDFDocument.load(await readFile((await download.path())!));
+    expect(merged.getPageCount()).toBe(8);
+    const other = origin === "TikTok" ? "Shopee" : "TikTok";
+    const marker = origin === "TikTok" ? "TikTok - pedido composto " + tracking : "Shopee";
+    for (const index of [0, 4]) {
+      const commands = printedCommands(merged, index);
+      expect(commands).toContain(Buffer.from(marker).toString("hex"));
+      expect(commands).not.toContain(Buffer.from(other).toString("hex"));
+      if (origin === "Shopee") expect(commands).not.toContain(Buffer.from("pedido composto").toString("hex"));
+      expect(printedCommands(merged, index + 1)).not.toContain(Buffer.from(origin).toString("hex"));
+    }
+  }
 });

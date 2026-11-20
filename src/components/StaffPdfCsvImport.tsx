@@ -10,9 +10,15 @@ import {
   staffPdfNameColumn,
   staffPdfDeadlineColumn,
   staffPdfObservationColumn,
+  staffPdfMarketplaceColumn,
   staffPdfDeadline,
   staffPdfQuantityColumn,
 } from "../lib/staffPdfCsv";
+import {
+  STAFF_PDF_MARKETPLACE_LABELS,
+  staffPdfMarketplace,
+  type StaffPdfMarketplace,
+} from "../lib/staffPdfMarketplace";
 import { excelColumn, selectedColumnsCsv } from "../lib/spreadsheetCsv";
 import { downloadPersonalization } from "../services/personalizationExport";
 import { layoutFont } from "../lib/staffPdf";
@@ -28,6 +34,7 @@ export interface StaffPdfCsvOrder {
   layoutId: string;
   text: string;
   barcode: string;
+  marketplace?: StaffPdfMarketplace;
   csvRow: {
     sourceId: string;
     index: number;
@@ -66,6 +73,7 @@ interface ObservedOrder {
   model?: { baseId: string; layoutId: string };
 }
 const observationHeader = "observacoes";
+const marketplaceIssue = "Origem não reconhecida. Edite a linha e informe TikTok ou Shopee.";
 
 interface CsvDraft {
   observations?: ObservedOrder[];
@@ -87,7 +95,7 @@ interface CsvDraft {
 }
 const emptyDraft: CsvDraft = {
   hasHeader: true,
-  columns: { text: -1, template: -1, reference: -1 },
+  columns: { text: -1, template: -1, reference: -1, marketplace: -1 },
   overrides: {},
   codes: {},
   added: [],
@@ -213,6 +221,7 @@ export default function StaffPdfCsvImport({
       )
     : [];
   const nameColumn = staffPdfNameColumn(headers);
+  const marketplaceColumn = columns.marketplace ?? staffPdfMarketplaceColumn(headers);
   React.useImperativeHandle(ref, () => ({
     isNameColumn: (row) => nameColumn >= 0 && row.sourceId === source?.id && row.textColumn === nameColumn,
     updateText({ sourceId, index, textColumn }, text) {
@@ -312,7 +321,11 @@ export default function StaffPdfCsvImport({
     const mold = data.layouts.find((mold) => mold.id === model?.layoutId);
     const reference = row[columns.reference]?.trim() || String(index + 1);
     const textWarnings = rowWarnings(row, barcode, columns.text);
+    const origin = row[marketplaceColumn]?.trim() ?? "";
+    const marketplace = staffPdfMarketplace(origin);
     return {
+      origin,
+      marketplace,
       index,
       template,
       reference,
@@ -341,7 +354,9 @@ export default function StaffPdfCsvImport({
               ? "Confira a base e o molde."
               : barcode && !staffTrackingBarcode(barcode)
                 ? "Informe um número de rastreio válido."
-                : "",
+                : marketplaceColumn >= 0 && !marketplace
+                  ? marketplaceIssue
+                  : "",
     };
   }
   const preview = pending
@@ -446,7 +461,8 @@ export default function StaffPdfCsvImport({
     const order: ObservedOrder = {
       id: `${source.id}:${index}`, sourceId: source.id, sourceName: source.name, separator: source.separator, index,
       headers: barcodeIndex < 0 ? [...headers, "barcode"] : headers,
-      columns, barcodeColumn, quantityColumn, cells, note, model: overrides[index],
+      columns: { ...columns, marketplace: marketplaceColumn },
+      barcodeColumn, quantityColumn, cells, note, model: overrides[index],
     };
     await onReviseRow({ sourceId: source.id, index });
     await csv.save(current => {
@@ -479,11 +495,14 @@ export default function StaffPdfCsvImport({
       (barcode && !staffTrackingBarcode(barcode))) {
       throw new Error("Revise o campo de texto, o modelo e o rastreio do pedido antes de enviar.");
     }
+    const column = columns.marketplace ?? staffPdfMarketplaceColumn(headers);
+    const marketplace = staffPdfMarketplace(cells[column] ?? "");
+    if (column >= 0 && !marketplace) throw new Error(marketplaceIssue);
     const warnings = (blank: boolean) => blankWarning(headers.filter((_, index) =>
       index === columns.text ? blank : !cells[index]?.trim(),
     ));
     await onAdd([{
-      ...model, text, barcode,
+      ...model, text, barcode, marketplace,
       csvRow: {
         sourceId: order.sourceId, index: order.index, textColumn: columns.text,
         textIsName: columns.text === staffPdfNameColumn(headers),
@@ -641,19 +660,20 @@ export default function StaffPdfCsvImport({
               />
               A primeira linha é o cabeçalho
             </label>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {(["text", "template", "reference"] as const).map((field) => (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {(["text", "template", "reference", "marketplace"] as const).map((field) => (
                 <label key={field} className="text-sm">
                   {
                     {
                       text: "Coluna do texto",
                       template: "Coluna do modelo",
                       reference: "Coluna da referência",
+                      marketplace: "Coluna da origem do pedido",
                     }[field]
                   }
                   <select
                     className={input}
-                    value={columns[field]}
+                    value={field === "marketplace" ? marketplaceColumn : columns[field]}
                     onChange={(e) => {
                       const column = Number(e.target.value);
                       void csv.save((current) => ({
@@ -664,7 +684,7 @@ export default function StaffPdfCsvImport({
                     <option value={-1}>
                       {field === "template"
                         ? "Usar base e molde do pedido aberto"
-                        : "Selecione a coluna"}
+                        : field === "marketplace" ? "Sem separação por origem" : "Selecione a coluna"}
                     </option>
                     {headers.map((header, index) => (
                       <option key={index} value={index}>
@@ -686,6 +706,7 @@ export default function StaffPdfCsvImport({
                   <thead className="sticky top-0 bg-gray-950">
                     <tr>
                       <th className="w-28 p-2">Registro</th>
+                      {marketplaceColumn >= 0 && <th className="p-2">Origem</th>}
                       <th className="p-2">Texto</th>
                       <th className="p-2">Base</th>
                       <th className="p-2">Molde</th>
@@ -702,6 +723,10 @@ export default function StaffPdfCsvImport({
                           <br />
                           {row.reference}
                         </td>
+                        {marketplaceColumn >= 0 && <td className="break-words p-2">
+                          <span>{row.marketplace ? STAFF_PDF_MARKETPLACE_LABELS[row.marketplace] : "Não reconhecida"}</span>
+                          {row.origin && <div className="text-xs text-gray-400">{row.origin.slice(0, 160)}</div>}
+                        </td>}
                         <td className="whitespace-pre-wrap break-words p-2">
                           {row.text || "—"}
                           <label className="mt-2 block text-xs">

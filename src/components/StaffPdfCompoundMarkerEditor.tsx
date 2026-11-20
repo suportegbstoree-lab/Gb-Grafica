@@ -51,7 +51,7 @@ export default function StaffPdfCompoundMarkerEditor({
         source.current = { key: sourceKey, pdf: original };
         const document = await PDFDocument.create();
         const page = await addStaffPdfSourcePage(document, original.getPage(0));
-        await drawStaffPdfCompoundMarker(document, page, "BR264666798641W", settings);
+        await drawStaffPdfCompoundMarker(document, page, "BR264666798641W", settings, "tiktok");
         const bytes = await document.save();
         if (active) setPreview({
           key: sourceKey,
@@ -77,7 +77,7 @@ export default function StaffPdfCompoundMarkerEditor({
     <EditorModal wide title="Identificador visual" busy={busy} onClose={onClose} closeLabel="Fechar identificador visual" doneLabel="Voltar" footerText=""
       footerActions={<button type="button" disabled={busy}
         className="rounded-lg bg-pink-600 px-4 py-2 font-bold disabled:opacity-40" onClick={() => void save()}>Salvar identificador</button>}>
-      <p className="mb-3 text-sm text-gray-300">A posição vale para a primeira página dos PDFs com rastreio repetido no lote. Use uma base de exemplo para conferir o espaço entre a arte e as linhas de corte.</p>
+      <p className="mb-3 text-sm text-gray-300">O identificador fica na primeira página e mostra a origem do pedido quando informada. Se o rastreio se repetir no mesmo lote, ele também marca o pedido como composto. Use uma base de exemplo para conferir a posição.</p>
       {error && <p role="alert" className="mb-3 text-red-300">{error}</p>}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <fieldset disabled={busy} className="min-w-0 space-y-3">
