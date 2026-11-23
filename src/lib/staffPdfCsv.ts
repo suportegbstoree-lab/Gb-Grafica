@@ -121,12 +121,19 @@ export function staffOrderColumn(headers: string[]) {
 }
 
 const marketplaceHeaders = [
-  "origem", "origem_do_pedido", "canal_de_venda", "canal_de_vendas", "canal",
-  "plataforma", "plataforma_de_venda", "marketplace", "market_place", "sales_channel",
+  "origem_do_pedido", "plataformas", "plataforma", "plataforma_de_venda",
+  "plataforma_de_vendas", "canal_de_venda", "canal_de_vendas", "marketplace",
+  "market_place", "sales_channel", "canal", "origem",
 ] as const;
 
-export function staffPdfMarketplaceColumn(headers: string[]) {
-  const names = headers.map(key);
+function isStaffPdfFiscalOriginHeader(value: string) {
+  return key(value) === "origem" && /[*＊]/.test(value);
+}
+
+export function staffPdfMarketplaceColumn(headers: string[], previous = -1) {
+  const priorHeader = headers[previous] ?? "";
+  if (previous >= 0 && key(priorHeader) !== "origem") return previous;
+  const names = headers.map(value => isStaffPdfFiscalOriginHeader(value) ? "" : key(value));
   return marketplaceHeaders.map(alias => names.indexOf(alias)).find(index => index >= 0) ?? -1;
 }
 

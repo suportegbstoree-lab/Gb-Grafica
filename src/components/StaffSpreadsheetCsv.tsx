@@ -28,6 +28,7 @@ export interface StaffWorkbookDraft {
   sheet: number;
   start: number;
   mapping: Mapping;
+  originOverride?: string;
 }
 
 export default function StaffSpreadsheetCsv({
@@ -46,14 +47,21 @@ export default function StaffSpreadsheetCsv({
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const current = draft?.book.sheets[draft.sheet];
-  const originColumn = staffPdfMarketplaceColumn(current?.rows[0] ?? []);
-  const originMapping = draft?.mapping.origem ?? (originColumn < 0 ? "" : excelColumn(originColumn));
+  const header = current?.rows[0] ?? [];
+  const previousOrigin = draft?.mapping.origem ?? "";
+  const previousColumn = staffSheetColumn(previousOrigin, current?.columns ?? 0, header);
+  const originColumn = staffPdfMarketplaceColumn(header, previousColumn);
+  const originMapping = draft?.originOverride ?? (
+    previousColumn >= 0 && previousColumn === originColumn ? previousOrigin
+      : originColumn >= 0 ? excelColumn(originColumn) : ""
+  );
 
   function sheetSettings(workbook: StaffWorkbook, index: number) {
     const header = workbook.sheets[index].rows[0] ?? [];
     return {
       sheet: index,
       start: 2,
+      originOverride: undefined,
       mapping: Object.fromEntries(
         STAFF_SHEET_FIELDS.map(({ key, aliases }) => {
           const normalize = (value: string) =>
@@ -63,7 +71,7 @@ export default function StaffSpreadsheetCsv({
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_|_$/g, "");
-          const found = header.findIndex((value) =>
+          const found = key === "origem" ? staffPdfMarketplaceColumn(header) : header.findIndex((value) =>
             aliases.some((alias) => alias === normalize(value ?? "")),
           );
           return [key, found < 0 ? "" : excelColumn(found)];
@@ -220,7 +228,9 @@ export default function StaffSpreadsheetCsv({
                     const value = e.target.value;
                     void save((previous) => previous && {
                       ...previous,
-                      mapping: { ...previous.mapping, [key]: value },
+                      ...(key === "origem"
+                        ? { originOverride: value }
+                        : { mapping: { ...previous.mapping, [key]: value } }),
                     });
                   }}
                 />
@@ -229,7 +239,7 @@ export default function StaffSpreadsheetCsv({
           </div>
           <p className="text-sm text-gray-400">
             Use a letra da coluna, como AF, ou o texto do cabeçalho. O número do
-            pedido é lido pelo cabeçalho da planilha. Ao indicar a origem, a fila separa TikTok e Shopee.
+            pedido é lido pelo cabeçalho da planilha. No UpSeller, use a coluna Plataformas para separar TikTok e Shopee.
           </p>
           <div className="flex flex-wrap gap-3">
             <button

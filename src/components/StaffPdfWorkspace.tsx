@@ -712,6 +712,33 @@ export default function StaffPdfWorkspace({
     if (running.current || !queueReady) return;
     const pending = queue.filter((item) => item.status === "queued" || item.status === "error");
     if (!pending.length) return;
+    const csv = csvImport.current;
+    const newItems = pending.filter(item => !item.batchId && !item.batchPlan);
+    const classified: QueueItem[] = [];
+    let invalidOrigins = 0;
+    for (const item of newItems) {
+      if (!item.csvRow) {
+        classified.push(item);
+        continue;
+      }
+      if (!csv?.marketplaceReady) {
+        setError("Aguarde a recuperação da planilha e tente processar novamente.");
+        return;
+      }
+      const origin = csv.readMarketplace(item.csvRow);
+      if (origin?.invalid) {
+        invalidOrigins++;
+      } else if (origin && origin.channel !== item.job.marketplace) {
+        classified.push({ ...item, job: { ...item.job, marketplace: origin.channel } });
+      } else {
+        classified.push(item);
+      }
+    }
+    if (invalidOrigins) {
+      setError(`Origem pendente em ${invalidOrigins} pedido(s) da fila. Confira a coluna da origem e corrija as linhas na planilha importada.`);
+      setTab("csv");
+      return;
+    }
     const pendingIds = new Set(pending.map((item) => item.id));
     running.current = true;
     stop.current = false;
@@ -781,9 +808,8 @@ export default function StaffPdfWorkspace({
       if (!navigator.onLine) throw new TypeError("Network offline");
       const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
       if (alive.current) setData(current);
-      const newItems = pending.filter(item => !item.batchId && !item.batchPlan);
       const groups = new Map<StaffPdfMarketplace | undefined, QueueItem[]>();
-      for (const item of newItems) {
+      for (const item of classified) {
         const marketplace = item.job.marketplace;
         const group = groups.get(marketplace);
         if (group) group.push(item);

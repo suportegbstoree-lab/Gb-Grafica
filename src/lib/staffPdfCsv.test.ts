@@ -8,6 +8,7 @@ import {
   staffOrderColumn,
   staffSheetColumn,
   staffPdfQuantityColumn,
+  staffPdfMarketplaceColumn,
   parseStaffPdfCsv,
   resolveStaffPdfCsvModel,
 } from "./staffPdfCsv.js";
@@ -240,12 +241,21 @@ test("explicit base association disambiguates identical PDF names in different c
 });
 
 test("marketplace detection accepts decorated names and leaves missing or ambiguous values for review", () => {
-  for (const text of ["Loja TIKTOKSHOPBR 002", " canal: Tík_Tók Shop ", "Tik.Tok-Shop BR"])
+  for (const text of ["Loja TIKTOKSHOPBR 002", " canal: Tík_Tók Shop ", "Tik.Tok-Shop BR", "TikTokShopBrasil"])
     assert.equal(staffPdfMarketplace(text), "tiktok");
-  for (const text of ["SP | SHOPEE - Vendas", "ShopeeBR #01", "plataforma:shópee_brasil"])
+  for (const text of ["SP | SHOPEE - Vendas", "ShopeeBR #01", "plataforma:shópee_brasil", "ShopeeBrasil"])
     assert.equal(staffPdfMarketplace(text), "shopee");
   for (const text of ["", "01045", "TikTok Shop / Shopee", "mistiktok", "shopeeoutlet"])
     assert.equal(staffPdfMarketplace(text), undefined);
   assert.equal(defaultStaffPdfCsvColumns(["nome", "Canal de vendas"]).marketplace, 1);
   assert.equal(defaultStaffPdfCsvColumns(["Nº do pedido da plataforma"]).marketplace, -1);
+});
+
+test("UpSeller marketplaces use Plataformas and discard a previously selected fiscal Origem*", () => {
+  const headers = ["Nº de Pedido da Plataforma", "Plataformas", "SKU", "Origem*"];
+  assert.equal(staffPdfMarketplaceColumn(headers), 1);
+  assert.equal(staffPdfMarketplaceColumn(headers, 3), 1);
+  assert.equal(staffPdfMarketplaceColumn(["Nome", "Origem*"]), -1);
+  assert.equal(staffPdfMarketplaceColumn(["origem", "Plataformas"], 0), 1);
+  assert.equal(staffPdfMarketplaceColumn(["nome", "origem"]), 1);
 });

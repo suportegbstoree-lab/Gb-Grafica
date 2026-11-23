@@ -527,7 +527,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="s1" Target="worksheets/sheet1.xml"/></Relationships>',
     ),
     "xl/worksheets/sheet1.xml": strToU8(
-      `<worksheet xmlns="${ns}"><dimension ref="A1:G2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c><c r="G1" t="inlineStr"><is><t>Conta da loja</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2.0</v></c><c r="G2" t="inlineStr"><is><t>Conta 01 - TIK_TOK Shop</t></is></c></row></sheetData></worksheet>`,
+      `<worksheet xmlns="${ns}"><dimension ref="A1:I2"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Nome</t></is></c><c r="B1" t="inlineStr"><is><t>Nº de Pedido da Plataforma</t></is></c><c r="C1" t="inlineStr"><is><t>Modelo do SKU</t></is></c><c r="E1" t="inlineStr"><is><t>Prazo de Envio</t></is></c><c r="F1" t="inlineStr"><is><t>Qtd. do Produto</t></is></c><c r="G1" t="inlineStr"><is><t>Conta da loja</t></is></c><c r="H1" t="inlineStr"><is><t>Plataformas</t></is></c><c r="I1" t="inlineStr"><is><t>Origem*</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Ana</t></is></c><c r="B2" t="inlineStr"><is><t>00123</t></is></c><c r="C2" t="inlineStr"><is><t>CADERNO - Kit de teste - BR</t></is></c><c r="D2" t="inlineStr"><is><t>Fora</t></is></c><c r="F2"><v>2.0</v></c><c r="G2" t="inlineStr"><is><t>Conta 01 - TIK_TOK Shop</t></is></c><c r="H2" t="inlineStr"><is><t>Shopee</t></is></c><c r="I2"><v>0</v></c></row></sheetData></worksheet>`,
     ),
   });
   await page.goto("/__e2e/staff-pdf?resume");
@@ -540,6 +540,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from(bytes),
   });
+  await expect(page.getByLabel("Origem do pedido", { exact: true })).toHaveValue("H");
   await context.setOffline(true);
   await page.getByLabel("SKU", { exact: true }).fill("Modelo do SKU");
   await page.getByLabel("Origem do pedido", { exact: true }).fill("Conta da loja");
@@ -1552,4 +1553,51 @@ test("marketplace batches consolidate only their own orders and print the origin
       expect(printedCommands(merged, index + 1)).not.toContain(Buffer.from(origin).toString("hex"));
     }
   }
+});
+
+test("a marketplace mapping added after queuing survives reload and separates the pending PDFs", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches&resume");
+  const sheets = page.getByRole("button", { name: "Planilha e CSV", exact: true });
+  await sheets.click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "export-upseller.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from([
+      "pedido_plataforma,modelo,nome,barcode,Plataformas,Origem*",
+      "001,Kit de teste,Ana,BR2684621549924,TikTokShopBrasil,0",
+      "002,Kit de teste,Bia,BR2684621549925,Shopee,0",
+    ].join("\n")),
+  });
+  const platform = page.getByRole("combobox", { name: "Coluna da origem do pedido", exact: true });
+  await expect(platform).toHaveValue("4");
+  const totals = page.getByText("TikTok: 1 · Shopee: 1 · Origem a revisar: 0", { exact: true });
+  await expect(totals).toBeVisible();
+  await platform.selectOption("-1");
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByText(/^Origem ·/)).toHaveCount(0);
+  await sheets.click();
+  await expect(platform).toHaveValue("-1");
+  await platform.selectOption({ label: "Origem*" });
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Origem pendente em 2 pedido(s) da fila.");
+  await expect(page.getByText("Lotes anteriores · 0", { exact: true })).toBeVisible();
+  await platform.selectOption({ label: "Plataformas" });
+  await expect(totals).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Fila principal · 2" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Processar fila", exact: true }).click();
+  await expect(page.getByText(/A conexão foi interrompida/)).toBeVisible();
+  await expect(page.getByText("Origem · TikTok", { exact: true })).toBeVisible();
+  await expect(page.getByText("Origem · Shopee", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Continuar lote", exact: true }).click();
+  await expect(page.getByText(/A conexão foi interrompida/)).toBeVisible();
+  await page.getByRole("button", { name: "Continuar lote", exact: true }).click();
+  await expect(page.getByRole("article").filter({ hasText: "Concluído" })).toHaveCount(2);
+  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
+  await expect(page.getByText(/^TikTok ·.*1 arquivo/)).toBeVisible();
+  await expect(page.getByText(/^Shopee ·.*1 arquivo/)).toBeVisible();
 });

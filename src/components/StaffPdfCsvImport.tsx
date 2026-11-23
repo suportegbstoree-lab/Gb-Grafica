@@ -46,6 +46,8 @@ export interface StaffPdfCsvOrder {
   csvWarning: string;
 }
 export interface StaffPdfCsvImportHandle {
+  marketplaceReady: boolean;
+  readMarketplace(row: StaffPdfCsvOrder["csvRow"]): { channel?: StaffPdfMarketplace; invalid?: true } | undefined;
   updateText(row: StaffPdfCsvOrder["csvRow"], text: string): void;
   isNameColumn(row: StaffPdfCsvOrder["csvRow"]): boolean;
 }
@@ -88,6 +90,7 @@ interface CsvDraft {
     workbookId?: string;
   };
   hasHeader: boolean;
+  marketplaceOverride?: number;
   columns: ReturnType<typeof defaultStaffPdfCsvColumns>;
   overrides: Record<number, { baseId: string; layoutId: string }>;
   codes: Record<number, string>;
@@ -221,8 +224,17 @@ export default function StaffPdfCsvImport({
       )
     : [];
   const nameColumn = staffPdfNameColumn(headers);
-  const marketplaceColumn = columns.marketplace ?? staffPdfMarketplaceColumn(headers);
+  const marketplaceColumn = csv.value.marketplaceOverride ?? staffPdfMarketplaceColumn(headers, columns.marketplace);
   React.useImperativeHandle(ref, () => ({
+    marketplaceReady: csv.ready,
+    readMarketplace({ sourceId, index }) {
+      if (source?.id !== sourceId || (hasHeader && index === headerIndex)) return;
+      const cells = source.rows[index];
+      if (!cells) return;
+      if (marketplaceColumn < 0) return csv.value.marketplaceOverride === -1 ? {} : undefined;
+      const channel = staffPdfMarketplace(cells[marketplaceColumn] ?? "");
+      return channel ? { channel } : { invalid: true };
+    },
     isNameColumn: (row) => nameColumn >= 0 && row.sourceId === source?.id && row.textColumn === nameColumn,
     updateText({ sourceId, index, textColumn }, text) {
       if (textColumn === undefined) return;
@@ -238,7 +250,7 @@ export default function StaffPdfCsvImport({
         return { ...current, source: { ...source, rows } };
       });
     },
-  }), [source?.id, nameColumn, csv.save]);
+  }), [source, nameColumn, csv.save, csv.ready, csv.value.marketplaceOverride, marketplaceColumn, hasHeader, headerIndex]);
   React.useEffect(() => {
     if (!source?.ignoredColumns || !hasHeader) return;
     void csv.save((current) => {
@@ -264,6 +276,15 @@ export default function StaffPdfCsvImport({
         ? [{ row: formatNameCell(row, nameColumn), index }]
         : [],
     ) ?? [], [source, hasHeader, headerIndex, nameColumn]);
+  const origins = React.useMemo(() => {
+    if (marketplaceColumn < 0) return;
+    const counts = { tiktok: 0, shopee: 0, unknown: 0 };
+    for (const { row } of imported) {
+      const channel = staffPdfMarketplace(row[marketplaceColumn] ?? "");
+      counts[channel ?? "unknown"]++;
+    }
+    return counts;
+  }, [imported, marketplaceColumn]);
   const added = new Set(csv.value.added);
   const pending = imported.filter(({ index }) =>
     !added.has(index) && !queuedRows.has(`${source?.id}:${index}`),
@@ -637,6 +658,26 @@ export default function StaffPdfCsvImport({
                 try { downloadReviewed(); }
                 catch (failure) { setError((failure as Error).message); }
               }}>Baixar CSV revisado</button>
+            <label className="block max-w-md text-sm">
+              Coluna da origem do pedido
+              <select className={input} value={marketplaceColumn}
+                onChange={event => {
+                  const marketplaceOverride = Number(event.target.value);
+                  void csv.save(current => ({ ...current, marketplaceOverride }));
+                }}>
+                <option value={-1}>Sem separação por origem</option>
+                {headers.map((header, index) => <option key={index} value={index}>{header}</option>)}
+              </select>
+            </label>
+            {origins ? (
+              <p className="text-xs text-gray-300">
+                TikTok: {origins.tiktok} · Shopee: {origins.shopee} · Origem a revisar: {origins.unknown}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400">
+                Selecione Plataformas para separar os pedidos do UpSeller. Se o CSV não tiver essa coluna, converta o XLSX original com a origem selecionada.
+              </p>
+            )}
             {transferred ? (
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span>Planilha enviada à fila para revisão.</span>
@@ -660,20 +701,19 @@ export default function StaffPdfCsvImport({
               />
               A primeira linha é o cabeçalho
             </label>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {(["text", "template", "reference", "marketplace"] as const).map((field) => (
+            <div className="grid gap-3 sm:grid-cols-3">
+              {(["text", "template", "reference"] as const).map((field) => (
                 <label key={field} className="text-sm">
                   {
                     {
                       text: "Coluna do texto",
                       template: "Coluna do modelo",
                       reference: "Coluna da referência",
-                      marketplace: "Coluna da origem do pedido",
                     }[field]
                   }
                   <select
                     className={input}
-                    value={field === "marketplace" ? marketplaceColumn : columns[field]}
+                    value={columns[field]}
                     onChange={(e) => {
                       const column = Number(e.target.value);
                       void csv.save((current) => ({
@@ -684,7 +724,7 @@ export default function StaffPdfCsvImport({
                     <option value={-1}>
                       {field === "template"
                         ? "Usar base e molde do pedido aberto"
-                        : field === "marketplace" ? "Sem separação por origem" : "Selecione a coluna"}
+                        : "Selecione a coluna"}
                     </option>
                     {headers.map((header, index) => (
                       <option key={index} value={index}>
