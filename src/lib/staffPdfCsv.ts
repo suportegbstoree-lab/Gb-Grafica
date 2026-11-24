@@ -126,7 +126,7 @@ const marketplaceHeaders = [
   "market_place", "sales_channel", "canal", "origem",
 ] as const;
 
-function isStaffPdfFiscalOriginHeader(value: string) {
+export function isStaffPdfFiscalOriginHeader(value: string) {
   return key(value) === "origem" && /[*＊]/.test(value);
 }
 
@@ -306,6 +306,11 @@ export const STAFF_SHEET_FIELDS = [
     aliases: quantityHeaders,
   },
   { key: "origem", label: "Origem do pedido", aliases: marketplaceHeaders },
+  {
+    key: "nome",
+    label: "Nome para personalização (opcional)",
+    aliases: ["nome_para_personalizacao", "nome_personalizado"],
+  },
 ] as const;
 export type StaffSheetField = (typeof STAFF_SHEET_FIELDS)[number]["key"];
 export function staffPdfObservationColumn(headers: string[]) {

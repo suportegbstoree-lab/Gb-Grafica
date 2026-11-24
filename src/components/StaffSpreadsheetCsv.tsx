@@ -110,7 +110,7 @@ export default function StaffSpreadsheetCsv({
       const header = current.rows[0] ?? [];
       const orderIndex = staffOrderColumn(header);
       const entries = STAFF_SHEET_FIELDS.map(({ key, label }) => {
-        const column = key === "origem" ? originMapping : mapping[key];
+        const column = key === "origem" ? originMapping : mapping[key] ?? "";
         const index = staffSheetColumn(column, current.columns, header);
         if (
           (column.trim() || key === "modelo") && index < 0
@@ -150,7 +150,7 @@ export default function StaffSpreadsheetCsv({
             row[orderIndex] ?? "",
             row[columns.barcode] ?? "",
             match(row[columns.modelo] ?? ""),
-            "",
+            row[columns.nome] ?? "",
             ...optional.map((key) => row[columns[key]] ?? ""),
           ]),
         ],
@@ -223,7 +223,7 @@ export default function StaffSpreadsheetCsv({
                 <input
                   className={field}
                   placeholder="Letra ou nome da coluna"
-                  value={key === "origem" ? originMapping : draft.mapping[key]}
+                  value={key === "origem" ? originMapping : draft.mapping[key] ?? ""}
                   onChange={(e) => {
                     const value = e.target.value;
                     void save((previous) => previous && {
@@ -240,6 +240,7 @@ export default function StaffSpreadsheetCsv({
           <p className="text-sm text-gray-400">
             Use a letra da coluna, como AF, ou o texto do cabeçalho. O número do
             pedido é lido pelo cabeçalho da planilha. No UpSeller, use a coluna Plataformas para separar TikTok e Shopee.
+            Se você já preencheu os nomes para impressão no XLSX, indique a coluna em Nome para personalização.
           </p>
           <div className="flex flex-wrap gap-3">
             <button

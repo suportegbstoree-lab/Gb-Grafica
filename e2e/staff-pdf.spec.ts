@@ -563,6 +563,7 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
     .toHaveLength(2);
   expect(csv).not.toContain("Ignorar");
   expect(csv).not.toContain("Fora");
+  await page.getByRole("textbox", { name: "Nome para personalização (opcional)" }).fill("Nome");
 
   await expect(
     page.getByRole("button", { name: "Baixar CSV com todas as colunas" }),
@@ -575,8 +576,9 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await page.reload();
   await page.getByRole("button", { name: "Planilha e CSV", exact: true }).click();
   const record = page.getByRole("row").filter({ has: page.getByLabel("Base do registro 2") });
-  await expect(record.getByText("TikTok", { exact: true })).toBeVisible();
-  await expect(record).toContainText("Campos em branco: barcode, nome, prazo_envio.");
+  await expect(record.getByRole("combobox", { name: "Origem do registro 2" })).toHaveValue("tiktok");
+  await expect(record.getByRole("cell").filter({ hasText: /^Ana/ })).toBeVisible();
+  await expect(record).toContainText("Campos em branco: barcode, prazo_envio.");
   await page
     .getByRole("button", { name: "Visualizar planilha importada" })
     .click();
@@ -616,14 +618,14 @@ test("XLSX field mapping normalizes SKU and preserves literal codes", async ({
   await expect(page.getByLabel("SKU", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
   await expect(page.getByRole("article")).toContainText(
-    "Kit de teste BR2684621549924",
+    "Kit de teste Ana BR2684621549924",
   );
   await page.getByRole("button", { name: "Editar item da fila" }).click();
   const text = page.getByRole("textbox", {
     name: "Texto principal",
     exact: true,
   });
-  await expect(text).toHaveValue("");
+  await expect(text).toHaveValue("Ana");
   await text.fill("ANA REVISADA");
   await page.getByRole("button", { name: "Atualizar item da fila" }).click();
   await expect(page.getByRole("article")).toContainText("Ana Revisada");
@@ -1514,17 +1516,21 @@ test("marketplace batches consolidate only their own orders and print the origin
   await page.getByRole("combobox", { name: "Coluna da origem do pedido", exact: true }).selectOption({ label: "Conta da loja" });
   const send = page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" });
   await send.click();
-  await expect(page.getByText("1 pendente(s)", { exact: true })).toBeVisible();
-  await expect(page.getByText("Origem não reconhecida. Edite a linha e informe TikTok ou Shopee.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Planilha enviada à fila para revisão.")).toBeVisible();
   await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
   const table = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
   const unknown = table.getByRole("row").filter({ hasText: "SHP-002" });
   await unknown.getByRole("button", { name: "Editar linha", exact: true }).click();
-  await unknown.getByRole("textbox", { name: /^Conta da loja, linha/ }).fill("Shopee - Região Sul");
+  await unknown.getByRole("textbox", { name: /^nome, linha/ }).fill("CLARA REVISADA");
   await unknown.getByRole("button", { name: "Salvar linha", exact: true }).click();
+  const marketplace = unknown.getByRole("combobox", { name: /^Origem da linha/ });
+  await expect(marketplace).toHaveValue("");
+  await marketplace.selectOption("shopee");
   await table.getByRole("button", { name: "Fechar", exact: true }).click();
-  await send.click();
   await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("heading", { name: "Fila principal · 4" })).toBeVisible();
+  const needsOrigin = page.getByRole("article").filter({ hasText: "Clara Revisada" });
+  await expect(needsOrigin.getByRole("combobox", { name: "Origem do pedido" })).toHaveValue("shopee");
   await expect(page.getByText("Origem · TikTok", { exact: true })).toHaveCount(2);
   await expect(page.getByText("Origem · Shopee", { exact: true })).toHaveCount(2);
   await page.getByRole("textbox", { name: "Nome do lote (opcional)" }).fill("Produção de hoje");
@@ -1584,6 +1590,7 @@ test("a marketplace mapping added after queuing survives reload and separates th
   await page.getByRole("button", { name: "Processar fila", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Origem pendente em 2 pedido(s) da fila.");
   await expect(page.getByText("Lotes anteriores · 0", { exact: true })).toBeVisible();
+  await sheets.click();
   await platform.selectOption({ label: "Plataformas" });
   await expect(totals).toBeVisible();
   await page.reload();
@@ -1600,4 +1607,42 @@ test("a marketplace mapping added after queuing survives reload and separates th
   await page.getByText("Lotes anteriores · 2", { exact: true }).click();
   await expect(page.getByText(/^TikTok ·.*1 arquivo/)).toBeVisible();
   await expect(page.getByText(/^Shopee ·.*1 arquivo/)).toBeVisible();
+});
+
+test("manual marketplace selection works without an origin column and one pending order does not block printing", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?batches");
+  const sheets = page.getByRole("button", { name: "Planilha e CSV", exact: true });
+  await sheets.click();
+  await page.getByLabel("Arquivo CSV").setInputFiles({
+    name: "pedidos-revisados.csv", mimeType: "text/csv",
+    buffer: Buffer.from("pedido_plataforma,modelo,nome,barcode\n" +
+      "001,Kit de teste,Ana,BR2684621549924\n" +
+      "002,Kit de teste,Bia,BR2684621549925"),
+  });
+  await page.getByRole("button", { name: "Visualizar planilha importada" }).click();
+  const table = page.getByRole("dialog", { name: "Planilha dos pedidos importados" });
+  await table.getByRole("combobox", { name: "Origem da linha 2" }).selectOption("shopee");
+  await table.getByRole("button", { name: "Fechar", exact: true }).click();
+  await expect(page.getByText("TikTok: 0 · Shopee: 1 · Origem a revisar: 1")).toBeVisible();
+  await page.getByRole("button", { name: "Enviar todos os pedidos válidos à fila" }).click();
+  await page.getByRole("button", { name: "Revisar fila principal" }).click();
+  await expect(page.getByRole("heading", { name: "Fila principal · 2" })).toBeVisible();
+  const process = page.getByRole("button", { name: "Processar fila", exact: true });
+  const waiting = page.getByRole("article").filter({ hasText: "Bia" });
+  await process.click();
+  await expect(page.getByRole("alert")).toContainText("Origem pendente em 1 pedido(s)");
+  await expect(page.getByRole("article").filter({ hasText: "Ana" })).toContainText("Concluído");
+  await expect(waiting).toContainText("Na fila");
+  await waiting.getByRole("combobox", { name: "Origem do pedido" }).selectOption("tiktok");
+  await process.click();
+  await expect(waiting).toContainText("Concluído");
+  await page.getByText("Lotes anteriores · 2", { exact: true }).click();
+  await expect(page.getByText(/^Shopee ·.*1 arquivo/)).toBeVisible();
+  await expect(page.getByText(/^TikTok ·.*1 arquivo/)).toBeVisible();
+
+  await sheets.click();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Baixar CSV revisado", exact: true }).click();
+  const csv = parseStaffPdfCsv(await readFile((await (await download).path())!, "utf8"));
+  expect(csv.map(row => row.at(-1))).toEqual(["origem", "Shopee", "TikTok"]);
 });

@@ -58,6 +58,7 @@ import { exportStaffPdf } from "../services/staffPdfRender";
 import { downloadPersonalization } from "../services/personalizationExport";
 import StaffPdfTextEditor from "./StaffPdfTextEditor";
 import StaffPdfPicker from "./StaffPdfPicker";
+import StaffPdfMarketplaceSelect from "./StaffPdfMarketplaceSelect";
 import StaffPdfPreview from "./StaffPdfPreview";
 import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
 import StaffPdfCsvImport, {
@@ -450,6 +451,7 @@ export default function StaffPdfWorkspace({
         textColumn === pastedName.column ? pastedName.text : main.text;
       const textWarnings = pastedName.textWarnings(textColumn);
       const csvRow = {
+        ...existing.csvRow,
         ...row,
         ...(textColumn >= 0 ? { textColumn } : {}),
         ...(textColumn === pastedName.column ? { textIsName: true } : {}),
@@ -541,6 +543,7 @@ export default function StaffPdfWorkspace({
               (!Number.isSafeInteger(csvRow.textColumn) ||
                 csvRow.textColumn < 0)) ||
             (csvRow.textIsName !== undefined && typeof csvRow.textIsName !== "boolean") ||
+            (csvRow.marketplacePending !== undefined && csvRow.marketplacePending !== true) ||
             (csvRow.observation !== undefined && (typeof csvRow.observation !== "string" || csvRow.observation.length > 2000)) ||
             (csvRow.textWarnings !== undefined &&
               (typeof csvRow.textWarnings?.blank !== "string" ||
@@ -708,35 +711,67 @@ export default function StaffPdfWorkspace({
       if (alive.current && version === revision.current) setBusy(false);
     }
   }
+  function updateQueuedMarketplace(row: StaffPdfCsvOrder["csvRow"], marketplace: StaffPdfMarketplace) {
+    const key = csvRowKey(row);
+    return setQueue(old => {
+      const item = old.find(entry => entry.csvRow && csvRowKey(entry.csvRow) === key);
+      if (!item?.csvRow || item.batchId || item.batchPlan || item.status === "ready") return old;
+      const updated = {
+        ...item,
+        job: { ...item.job, marketplace },
+        csvRow: { ...item.csvRow, marketplacePending: undefined },
+      };
+      return old.map(entry => entry.id === item.id ? updated : entry);
+    });
+  }
+
+  async function changeQueueMarketplace(item: QueueItem, marketplace: StaffPdfMarketplace) {
+    if (!item.csvRow || running.current || item.batchId || item.batchPlan || item.status === "ready") return;
+    running.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await updateQueuedMarketplace(item.csvRow, marketplace);
+      await csvImport.current?.updateMarketplace(item.csvRow, marketplace);
+    } catch (error) {
+      if (alive.current) setError((error as Error).message);
+    } finally {
+      running.current = false;
+      if (alive.current) setBusy(false);
+    }
+  }
+
   async function process() {
     if (running.current || !queueReady) return;
-    const pending = queue.filter((item) => item.status === "queued" || item.status === "error");
-    if (!pending.length) return;
+    const candidates = queue.filter(item => item.status === "queued" || item.status === "error");
+    if (!candidates.length) return;
     const csv = csvImport.current;
-    const newItems = pending.filter(item => !item.batchId && !item.batchPlan);
-    const classified: QueueItem[] = [];
+    const pending: QueueItem[] = [];
     let invalidOrigins = 0;
-    for (const item of newItems) {
-      if (!item.csvRow) {
-        classified.push(item);
+    for (const item of candidates) {
+      const row = item.csvRow;
+      if (!row || item.batchId || item.batchPlan) {
+        pending.push(item);
         continue;
       }
       if (!csv?.marketplaceReady) {
         setError("Aguarde a recuperação da planilha e tente processar novamente.");
         return;
       }
-      const origin = csv.readMarketplace(item.csvRow);
-      if (origin?.invalid) {
+      const origin = csv.readMarketplace(row);
+      if (origin?.invalid || (!origin && row.marketplacePending && !item.job.marketplace)) {
         invalidOrigins++;
-      } else if (origin && origin.channel !== item.job.marketplace) {
-        classified.push({ ...item, job: { ...item.job, marketplace: origin.channel } });
-      } else {
-        classified.push(item);
+        continue;
       }
+      pending.push(origin && origin.channel !== item.job.marketplace
+        ? { ...item, job: { ...item.job, marketplace: origin.channel } }
+        : item);
     }
-    if (invalidOrigins) {
-      setError(`Origem pendente em ${invalidOrigins} pedido(s) da fila. Confira a coluna da origem e corrija as linhas na planilha importada.`);
-      setTab("csv");
+    const originNotice = invalidOrigins
+      ? "Origem pendente em " + invalidOrigins + " pedido(s) da fila. Escolha TikTok ou Shopee na revisão."
+      : "";
+    if (!pending.length) {
+      setError(originNotice);
       return;
     }
     const pendingIds = new Set(pending.map((item) => item.id));
@@ -809,7 +844,8 @@ export default function StaffPdfWorkspace({
       const current = pending.every((item) => batches && item.batchId) ? data : await api.list();
       if (alive.current) setData(current);
       const groups = new Map<StaffPdfMarketplace | undefined, QueueItem[]>();
-      for (const item of classified) {
+      for (const item of pending) {
+        if (item.batchId || item.batchPlan) continue;
         const marketplace = item.job.marketplace;
         const group = groups.get(marketplace);
         if (group) group.push(item);
@@ -963,6 +999,7 @@ export default function StaffPdfWorkspace({
         setBatchRevision((old) => old + 1);
         report(disconnected || stop.current || !generationAllowed.current ? "paused" : "completed");
         await onGenerated().catch(() => undefined);
+        if (originNotice) setError(originNotice);
         setMessage(
           disconnected
             ? `${successes} documento(s) concluído(s). A conexão foi interrompida. Use Continuar lote quando voltar.`
@@ -1279,9 +1316,15 @@ export default function StaffPdfWorkspace({
             onAdd={importOrders}
             onReviewQueue={() => setTab("edit")}
             onReviseRow={reviseCsvRow}
+            onMarketplace={updateQueuedMarketplace}
             reviewRequest={csvReview}
             storageOwner={storageOwner}
             queuedRows={queuedRows}
+            lockedOrigins={new Set([
+              ...lockedCsvRows.current,
+              ...queue.flatMap(item => item.csvRow && (item.batchId || item.batchPlan || item.status === "ready")
+                ? [csvRowKey(item.csvRow)] : []),
+            ])}
           />
         </div>
       )}
@@ -1571,6 +1614,14 @@ export default function StaffPdfWorkspace({
                       </p>
                       {item.job.marketplace && (
                         <p className="text-xs text-gray-300">Origem · {STAFF_PDF_MARKETPLACE_LABELS[item.job.marketplace]}</p>
+                      )}
+                      {item.csvRow && !item.batchId && !item.batchPlan && item.status !== "ready" && (
+                        <label className="block w-fit text-xs text-gray-300">
+                          Origem do pedido
+                          <StaffPdfMarketplaceSelect label="Origem do pedido" value={item.job.marketplace}
+                            pending={item.csvRow.marketplacePending} disabled={busy}
+                            onChange={marketplace => void changeQueueMarketplace(item, marketplace)} />
+                        </label>
                       )}
                       {(item.csvWarning || item.job.allowEmptyText) && (
                         <p className="break-words text-xs text-amber-300">

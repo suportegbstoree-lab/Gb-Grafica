@@ -1,5 +1,7 @@
 import React from "react";
 import EditorModal from "./EditorModal";
+import StaffPdfMarketplaceSelect from "./StaffPdfMarketplaceSelect";
+import type { StaffPdfMarketplace } from "../lib/staffPdfMarketplace";
 
 export default function StaffPdfImportTable({
   name,
@@ -12,12 +14,13 @@ export default function StaffPdfImportTable({
   onDownload,
   onClose,
   onObserve,
+  onMarketplace,
   initiallyEditing = false,
   title = "Planilha dos pedidos importados",
 }: {
   name: string;
   headers: string[];
-  rows: { index: number; cells: string[] }[];
+  rows: { index: number; cells: string[]; marketplace?: StaffPdfMarketplace; marketplaceLocked?: boolean }[];
   barcodeColumn: number;
   nameColumn: number;
   quantityColumn: number;
@@ -29,6 +32,7 @@ export default function StaffPdfImportTable({
   onDownload: () => void;
   onClose: () => void;
   onObserve?: (index: number, note: string) => Promise<void>;
+  onMarketplace?: (index: number, channel: StaffPdfMarketplace) => Promise<void>;
   initiallyEditing?: boolean;
   title?: string;
 }) {
@@ -194,7 +198,7 @@ export default function StaffPdfImportTable({
           <tbody>
             {rows
               .slice(currentPage * 50, (currentPage + 1) * 50)
-              .map(({ index, cells }) => {
+              .map(({ index, cells, marketplace, marketplaceLocked }) => {
                 const count = counts.get(cells[barcodeColumn]?.trim()) || 0;
                 const draft = editing?.index === index ? editing : undefined;
                 return (
@@ -346,6 +350,11 @@ export default function StaffPdfImportTable({
                           >
                             Excluir linha
                           </button>
+                          {onMarketplace && (
+                            <StaffPdfMarketplaceSelect label={"Origem da linha " + (index + 1)}
+                              value={marketplace} disabled={applying || marketplaceLocked || !!editing || !!observing || removing !== undefined}
+                              onChange={channel => void onMarketplace(index, channel)} />
+                          )}
                           {onObserve && <button type="button" className={button}
                             disabled={applying || !!editing || !!observing || removing !== undefined}
                             onClick={() => { setNotice(""); setObserving({ index, note: "" }); }}>Adicionar observação</button>}
