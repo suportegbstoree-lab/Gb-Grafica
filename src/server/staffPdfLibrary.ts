@@ -6,6 +6,7 @@ import {
   scheduleRetiredCatalogDocument,
 } from "./catalogRetention.js";
 import express from "express";
+import { staffLabelCategoryRouter } from "./staffLabelCategories.js";
 import {
   normalizePdfCategory,
   pdfBaseIdentity,
@@ -247,6 +248,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       );
     return actor;
   };
+  router.use("/label-categories", staffLabelCategoryRouter(() => services().db));
   router.use("/batches", createStaffPdfBatchRouter(deps));
   const markerSettings = () => services().db.collection("_staffPdfSettings").doc("compound-marker");
   router.post("/compound-marker", action(async (req, res) => {

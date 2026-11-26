@@ -1429,3 +1429,25 @@ test("an archive resumes both stages and preserves the page order of all 501 sto
     assert.equal((await (await request(endpoint, "generator", {})).json()).url, built.url);
     assert.equal(downloads.length, readCount);
   }));
+
+test("a categoria das etiquetas é compartilhada, idempotente e protege escolhas concorrentes", async () =>
+  scenario(async ({request}) => {
+    const route = "/library/label-categories", key = "a".repeat(64);
+    const create = (name:string) => request(route + "/create","generator",{name});
+    const lookup = () => request(route + "/lookup","another-generator",{keys:[key]});
+    assert.equal((await request(route + "/create","manager",{name:"Adesivos"})).status,403);
+    assert.equal((await create(" ")).status,422);
+    assert.deepEqual(await (await lookup()).json(), {categories:[],assignments:{}});
+    const [a,b] = await Promise.all([create("Caderneta saúde"),create("  Caderneta SAUDE  ")]);
+    const cat = await a.json();
+    assert.deepEqual(cat,await b.json());
+    const second = await (await create("Adesivos")).json();
+    const assign = (categoryId:string, role = "generator") => request(route + "/assign",role,{key,categoryId});
+    assert.equal((await assign("c".repeat(64))).status,404);
+    const both = await Promise.all([assign(cat.id), assign(second.id,"another-generator")]);
+    assert.deepEqual(both.map(r=>r.status).sort(),[200,409]);
+    const {assignments,categories} = await (await lookup()).json();
+    assert.equal(categories.length,2);
+    assert.equal((await assign(assignments[key])).status,200);
+    assert.equal((await request(route + "/lookup","generator",{keys:["malformado"]})).status,422);
+  }));

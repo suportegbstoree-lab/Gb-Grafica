@@ -6,7 +6,7 @@ import {
   type StaffPdfBatchView,
   type StaffPdfRecipe,
 } from "../lib/staffPdfBatch";
-import type { StaffPdfApi } from "../services/staffPdfService";
+import { labelCategoryClient, type StaffPdfApi } from "../services/staffPdfService";
 import type { StaffBarcodeSize } from "../lib/staffPdfBarcode";
 import {
   DEFAULT_DECORATIVE_INITIAL_PERCENT,
@@ -81,7 +81,15 @@ export function useStaffPdfFixture(batchesEnabled: boolean, smallPdf = false, re
     let loseBaseResponse = new URLSearchParams(location.search).has("base-upload-retry");
     let compoundMarker: StaffPdfCompoundMarker | undefined;
     let barcodeDefault: StaffBarcodeSize | undefined;
+    const store = new URLSearchParams(location.search).get("label-store") || "fixture";
     const value: StaffPdfApi = {
+      labelCategories: labelCategoryClient(async (path, body) => {
+        const response = await fetch("/__e2e/label-api/" + encodeURIComponent(store) + path.replace("/label-categories", ""), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        if (!response.ok) throw Object.assign(new Error("Falha ao consultar a categoria."), {status:response.status});
+        return response.json();
+      }),
       list: async () => ({
         bases: structuredClone(bases),
         layouts: structuredClone(layouts),

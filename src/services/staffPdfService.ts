@@ -1,3 +1,4 @@
+import type { LabelCategoryApi, LabelCategoryDirectory } from "../lib/staffLabelImport";
 import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { staffPdfBatchApi } from "./staffPdfBatchService";
@@ -34,6 +35,7 @@ export interface StaffPdfLibrary {
   compoundMarker?: StaffPdfCompoundMarker;
 }
 export interface StaffPdfApi {
+  labelCategories?: LabelCategoryApi;
   batches?: StaffPdfBatchApi;
   list(): Promise<StaffPdfLibrary>;
   saveCompoundMarker(marker: StaffPdfCompoundMarker): Promise<void>;
@@ -82,7 +84,24 @@ export interface StaffPdfApi {
 export { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 import { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 
+export function labelCategoryClient(request: (path:string, body:unknown)=>Promise<any>): LabelCategoryApi {
+  return {
+    async lookup(keys) {
+      const result: LabelCategoryDirectory = { categories: [], assignments: {} };
+      for (let start = 0; start === 0 || start < keys.length; start += 300) {
+        const reply = await request("/label-categories/lookup", { keys: keys.slice(start, start + 300), includeCategories: start === 0 });
+        if (start === 0) result.categories = reply.categories;
+        Object.assign(result.assignments, reply.assignments);
+      }
+      return result;
+    },
+    create: name => request("/label-categories/create", { name }),
+    assign: (key, categoryId) => request("/label-categories/assign", { key, categoryId }),
+  };
+}
+
 export const staffPdfApi: StaffPdfApi = {
+  labelCategories: labelCategoryClient(staffPdfRequest),
   saveCompoundMarker: (marker) => staffPdfRequest("/compound-marker", { marker }),
   batches: staffPdfBatchApi,
   list: () => staffPdfRequest(""),

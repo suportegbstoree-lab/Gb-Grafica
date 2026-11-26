@@ -1,5 +1,7 @@
 import { mountE2EOperations } from './e2e-operations.js';
 import express from 'express';
+import { memoryFirestore } from '../test/helpers/memoryFirestore.js';
+import { staffLabelCategoryRouter } from '../src/server/staffLabelCategories.js';
 import { createServer as createViteServer } from 'vite';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -23,6 +25,16 @@ async function startE2EServer() {
   app.post('/__e2e/uploads/:id', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => { blobs.set(req.params.id, { bytes: req.body, type: req.get('content-type') || 'image/png' }); res.json({ url: `/__e2e/uploads/${req.params.id}` }); });
   app.get('/__e2e/uploads/:id', (req, res) => { const blob = blobs.get(req.params.id); if (!blob) { res.sendStatus(404); return; } res.type(blob.type).send(blob.bytes); });
   app.use(express.json({ limit: '100kb' }));
+  const labelFixtures = new Map<string, express.Router>();
+  app.use('/__e2e/label-api/:store', (req, res, next) => {
+    const store = req.params.store;
+    if (!labelFixtures.has(store)) {
+      const { db } = memoryFirestore();
+      labelFixtures.set(store, staffLabelCategoryRouter(() => db));
+    }
+    res.locals.user = { permissions: ['documents.generate'] };
+    labelFixtures.get(store)!(req, res, next);
+  });
   mountE2EOperations(app);
   process.env.EMAIL_BANNER_URL = `http://${HOST}:${PORT}/email/gb-grafica-banner.png`;
   app.post('/__e2e/email-preview', (request, response) => {
