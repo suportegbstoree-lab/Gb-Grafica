@@ -99,29 +99,24 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
     await expect(next.getByText(/Adesivo · SKU 011 · Adesivos/)).toBeVisible();
     await expect(next.getByText(/Planner · SKU 010 · Cadernos personalizados/)).toHaveCount(2);
     const secondPage = next.getByRole("listitem").filter({ hasText: "Página 2" });
-    const opening = other.waitForEvent("popup");
-    await secondPage.getByRole("button", { name: "Visualizar" }).click();
-    const preview = await opening;
-    await expect(preview.locator("img")).toHaveAttribute("alt", "Etiqueta da página 2");
-    await preview.close();
-    // Intercept the OS dialog, but exercise the real click, PDF rendering and print call.
-    await other.evaluate(() => {
-      const open = window.open.bind(window);
-      window.open = (...args) => {
-        const popup = open(...args);
-        if (popup)
-          popup.print = () => {
-            popup.document.body.dataset.printed = "yes";
-          };
-        return popup;
-      };
-    });
-    const printing = other.waitForEvent("popup");
+    await secondPage.getByRole("button", { name: "Visualizar", exact: true }).click();
+    const preview = other.getByRole("dialog", { name: "Visualizar etiqueta · Página 2", exact: true });
+    const pdfBytes = await preview
+      .locator('iframe[title="PDF das etiquetas"]')
+      .evaluate(async (element: HTMLIFrameElement) =>
+        Array.from(new Uint8Array(await (await fetch(element.src)).arrayBuffer())),
+      );
+    expect((await PDFDocument.load(new Uint8Array(pdfBytes))).getPageCount()).toBe(1);
+    await preview.getByRole("button", { name: "Fechar visualização", exact: true }).click();
     await next.getByRole("button", { name: "Imprimir etiquetas do arquivo" }).click();
-    const sheets = await printing;
-    await expect(sheets.locator("body")).toHaveAttribute("data-printed", "yes");
-    await expect(sheets.getByRole("img")).toHaveCount(2);
-    await sheets.close();
+    const sheets = other.getByRole("dialog", { name: "Visualizar etiquetas do arquivo", exact: true });
+    const combined = await sheets
+      .locator('iframe[title="PDF das etiquetas"]')
+      .evaluate(async (element: HTMLIFrameElement) =>
+        Array.from(new Uint8Array(await (await fetch(element.src)).arrayBuffer())),
+      );
+    expect((await PDFDocument.load(new Uint8Array(combined))).getPageCount()).toBe(2);
+    await sheets.getByRole("button", { name: "Fechar visualização", exact: true }).click();
     await next.getByText("Gerenciar categorias (2)").click();
     await next.getByRole("button", { name: "Editar categoria Adesivos" }).click();
     await next.getByLabel("Novo nome da categoria").fill("Cartelas");
@@ -233,8 +228,13 @@ test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async (
   await expect(page.getByText(/Envio incompleto · 20 de 21/)).toBeVisible();
   await page.unroute(route);
   const resumedPages: number[] = [];
-  await page.route(route, async request => {
-    resumedPages.push(...request.request().postDataJSON().pages.map((p: {number: number}) => p.number));
+  await page.route(route, async (request) => {
+    resumedPages.push(
+      ...request
+        .request()
+        .postDataJSON()
+        .pages.map((p: { number: number }) => p.number),
+    );
     return request.continue();
   });
   await page.reload();
@@ -248,50 +248,99 @@ test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async (
   await expect(page.getByLabel("PDF em revisão")).toHaveCount(0);
 });
 
-test("visualiza e imprime a etiqueta quando defaultView da nova janela é null", async ({ page }) => {
+test("visualiza e imprime o PDF salvo dentro do painel com a política de segurança do site", async ({
+  page,
+}) => {
   await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
   await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   const pane = page.getByRole("region", { name: "Importação de etiquetas" });
-  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
-  await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
+  const file = pane.getByLabel("PDFs de etiquetas", { exact: true });
+  await expect(file).toBeEnabled();
+  await file.setInputFiles({
     name: "visualizacao.pdf",
     mimeType: "application/pdf",
     buffer: await makeLabels([{ tracking: "BR123456789012A", rows: [["010", "Planner", 1]] }]),
   });
   await pane.getByText("Conferir etiquetas (1)").click();
-  const securityHeaders = (await page.request.get("/__e2e/email-csp")).headers();
+  await page.evaluate(() => {
+    const state = { blobs: new Map<string, Blob>(), revoked: [] as string[] };
+    (window as any).__labelViewer = state;
+    const create = URL.createObjectURL.bind(URL),
+      revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      if (blob instanceof Blob) state.blobs.set(url, blob);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      state.revoked.push(url);
+      revoke(url);
+    };
+  });
+  const headers = (await page.request.get("/__e2e/email-csp")).headers();
   await page.evaluate((policy) => {
     const meta = document.createElement("meta");
     meta.httpEquiv = "Content-Security-Policy";
     meta.content = policy;
     document.head.append(meta);
-  }, securityHeaders["content-security-policy"]);
-  await page.evaluate(() => {
-    const open = window.open.bind(window);
-    window.open = (...args) => {
-      const popup = open(...args);
-      if (popup) {
-        Object.defineProperty(popup.document, "defaultView", { configurable: true, get: () => null });
-        popup.print = () => { popup.document.body.dataset.printed = "yes"; };
-      }
-      return popup;
+    window.open = () => {
+      throw new Error("Uma visualização interna não deve abrir outra aba.");
+    };
+  }, headers["content-security-policy"]);
+  const originalUrl = page.url();
+  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
+  const modal = page.getByRole("dialog", { name: "Visualizar etiqueta · Página 1", exact: true });
+  const frame = modal.locator('iframe[title="PDF das etiquetas"]');
+  await expect(frame).toHaveAttribute("src", /^blob:/);
+  const pdfBytes = await frame.evaluate(async (frame: HTMLIFrameElement) =>
+    Array.from(new Uint8Array(await (window as any).__labelViewer.blobs.get(frame.src).arrayBuffer())),
+  );
+  const pdf = await PDFDocument.load(new Uint8Array(pdfBytes));
+  expect(pdf.getPageCount()).toBe(1);
+  expect(pdf.getPage(0).getSize()).toEqual({ width: 450, height: 400 });
+  await expect(modal.getByRole("button", { name: "Imprimir", exact: true })).toBeEnabled();
+  await frame.evaluate((frame: HTMLIFrameElement) => {
+    frame.contentWindow!.print = () => {
+      frame.dataset.printed = "yes";
     };
   });
-  const opening = page.waitForEvent("popup");
-  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
-  const preview = await opening;
-  await expect(preview.getByRole("img", { name: "Etiqueta da página 1" })).toBeVisible();
-  await expect(preview.getByRole("button", { name: "Imprimir", exact: true })).toBeEnabled();
-  await expect.poll(() => preview.getByRole("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await modal.getByRole("button", { name: "Imprimir", exact: true }).click();
+  await expect(frame).toHaveAttribute("data-printed", "yes");
   await expect(pane.getByRole("alert")).toHaveCount(0);
-  await preview.getByRole("button", { name: "Imprimir", exact: true }).click();
-  await expect(preview.locator("body")).toHaveAttribute("data-printed", "yes");
-  await preview.close();
+  expect(page.url()).toBe(originalUrl);
+  const resource = await frame.getAttribute("src");
+  await modal.getByRole("button", { name: "Fechar visualização", exact: true }).click();
+  expect(
+    await page.evaluate((url) => (window as any).__labelViewer.revoked.includes(url), resource),
+  ).toBe(true);
+});
 
-  const printing = page.waitForEvent("popup");
-  await pane.getByRole("button", { name: "Imprimir etiquetas do arquivo" }).click();
-  const sheets = await printing;
-  await expect(sheets.locator("body")).toHaveAttribute("data-printed", "yes");
-  await expect(sheets.getByRole("img", { name: "Etiqueta da página 1" })).toBeVisible();
-  await sheets.close();
+test("o viewer informa a falha de download e permite tentar novamente no próprio painel", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  const pane = page.getByRole("region", { name: "Importação de etiquetas" });
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
+    name: "retry.pdf",
+    mimeType: "application/pdf",
+    buffer: await makeLabels([null]),
+  });
+  await pane.getByText("Conferir etiquetas (1)").click();
+  const download = "**/__e2e/uploads/**";
+  await page.route(download, (route) => route.fulfill({ status: 503, body: "Indisponível" }));
+  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
+  const modal = page.getByRole("dialog", { name: "Visualizar etiqueta · Página 1", exact: true });
+  await expect(modal.getByRole("alert")).toHaveText(
+    "Não foi possível baixar a etiqueta salva. Tente novamente.",
+  );
+  await page.unroute(download);
+  await modal.getByRole("button", { name: "Tentar novamente", exact: true }).click();
+  await expect(modal.locator('iframe[title="PDF das etiquetas"]')).toBeVisible();
+  await expect(modal.getByRole("alert")).toHaveCount(0);
+  await modal.getByRole("button", { name: "Fechar visualização", exact: true }).click();
+  await expect(
+    pane.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }),
+  ).toBeEnabled();
 });

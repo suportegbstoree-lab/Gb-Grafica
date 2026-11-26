@@ -24,12 +24,12 @@ export async function staffPdfRequest(
     throw Object.assign(new Error(data.error || "Não foi possível acessar os PDFs internos."), { status: response.status });
   return data;
 }
-export async function readStaffPdf(url: string) {
+export async function readStaffPdf(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     credentials: "omit",
     redirect: "error",
     referrerPolicy: "no-referrer",
-    signal: AbortSignal.timeout(60000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
   });
   if (
     !response.ok ||

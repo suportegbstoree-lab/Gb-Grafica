@@ -1,6 +1,6 @@
 import type {
   LabelArchiveApi,
-  LabelArchiveHeader,
+  LabelArchiveRef,
   LabelImport,
   LabelTransferPage,
 } from "../lib/staffLabelImport";
@@ -64,92 +64,51 @@ export async function uploadLabelPages(
   await flush();
 }
 
-// Print at the original physical dimensions. The printable window only contains
-// pixels rendered by PDF.js, even for a PDF with interactive content.
-export async function openLabels(
+/** Read the private, persisted PDFs for the in-panel viewer. */
+export async function labelPdfFile(
   api: LabelArchiveApi,
-  header: LabelArchiveHeader,
+  ref: LabelArchiveRef,
   numbers: number[],
-  print: boolean,
-) {
-  const popup = window.open("", "_blank");
-  if (!popup) throw new Error("Permita abrir uma nova janela para visualizar as etiquetas.");
-  popup.opener = null;
-  const doc = popup.document;
-  doc.title = header.name;
-  doc.documentElement.lang = "pt-BR";
-  const status = doc.createElement("p");
-  status.textContent = "Carregando etiquetas…";
-  doc.body.append(status);
-  try {
-    const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
-    GlobalWorkerOptions.workerSrc = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-    const style = doc.createElement("style");
-    style.textContent =
-      "body{margin:0;background:#eee;color:#151515;font:16px system-ui}p,button{margin:12px}img{display:block;max-width:100%;height:auto;margin:0 auto 12px;background:white}@media print{body{background:white}p,button{display:none}img{margin:0;break-after:page;max-width:none}img:last-child{break-after:auto}}";
-    doc.head.append(style);
-    for (let start = 0; start < numbers.length; start += 12) {
-      const selection = numbers.slice(start, start + 12);
-      const urls = await api.links({ id: header.id, revision: header.revision }, selection);
-      for (const [index, url] of urls.entries()) {
-        if (popup.closed) return;
-        const response = await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" });
-        if (!response.ok)
-          throw new Error("Não foi possível abrir a etiqueta. Atualize a lista e tente novamente.");
-        const task = getDocument({
-          data: new Uint8Array(await response.arrayBuffer()),
-          enableXfa: false,
-        });
-        try {
-          const page = await (await task.promise).getPage(1);
-          const original = page.getViewport({ scale: 1 });
-          const scale = Math.min(
-            300 / 72,
-            4096 / Math.max(original.width, original.height),
-            Math.sqrt(12000000 / (original.width * original.height)),
-          );
-          const viewport = page.getViewport({ scale });
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          await page.render({ canvas, viewport }).promise;
-          const png = await new Promise<Blob>((resolve, reject) =>
-            canvas.toBlob(
-              (blob) =>
-                blob ? resolve(blob) : reject(new Error("Não foi possível preparar a impressão.")),
-              "image/png",
-            ),
-          );
-          canvas.width = canvas.height = 0;
-          const img = doc.createElement("img");
-          img.alt = "Etiqueta da página " + selection[index];
-          const key = "label" + selection[index];
-          style.sheet!.insertRule(
-            "@page " + key + " {size:" + original.width + "pt " + original.height + "pt;margin:0}",
-          );
-          img.style.page = key;
-          img.style.width = original.width + "pt";
-          // Embed the rendered image so the preview is independent of the popup's
-          // defaultView and the lifetime of object URLs in another window.
-          img.src = await dataUrl(png);
-          await img.decode();
-          doc.body.append(img);
-        } finally {
-          await task.destroy();
-        }
+  signal: AbortSignal,
+): Promise<Blob> {
+  if (!numbers.length) throw new Error("Selecione ao menos uma etiqueta.");
+  const { readStaffPdf } = await import("./staffPdfRequest");
+  const { PDFDocument } = await import("pdf-lib");
+  const combined = numbers.length > 1 ? await PDFDocument.create({ updateMetadata: false }) : undefined;
+  for (let start = 0; start < numbers.length; start += 12) {
+    signal.throwIfAborted();
+    const selection = numbers.slice(start, start + 12);
+    const urls = await api.links(ref, selection);
+    signal.throwIfAborted();
+    if (
+      !Array.isArray(urls) ||
+      urls.length !== selection.length ||
+      urls.some((url) => typeof url !== "string" || !url.trim())
+    )
+      throw new Error("Não foi possível localizar o PDF das etiquetas. Atualize a importação.");
+    for (const url of urls) {
+      signal.throwIfAborted();
+      let blob: Blob;
+      try {
+        blob = await readStaffPdf(url, signal);
+      } catch {
+        signal.throwIfAborted();
+        throw new Error("Não foi possível baixar a etiqueta salva. Tente novamente.");
       }
+      signal.throwIfAborted();
+      let source;
+      try {
+        source = await PDFDocument.load(await blob.arrayBuffer(), { updateMetadata: false });
+      } catch {
+        throw new Error("O arquivo salvo da etiqueta não é um PDF válido.");
+      }
+      if (source.getPageCount() !== 1)
+        throw new Error("O PDF salvo deve conter uma etiqueta por página.");
+      if (!combined) return blob;
+      const [page] = await combined.copyPages(source, [0]);
+      combined.addPage(page);
     }
-    status.remove();
-    const button = doc.createElement("button");
-    button.textContent = "Imprimir";
-    button.onclick = () => popup.print();
-    doc.body.prepend(button);
-    if (print && !popup.closed) {
-      popup.focus();
-      popup.print();
-    }
-  } catch (error) {
-    popup.close();
-    throw error;
   }
+  signal.throwIfAborted();
+  return new Blob([new Uint8Array(await combined!.save())], { type: "application/pdf" });
 }

@@ -12,7 +12,8 @@ import {
   type ImportedProduct,
 } from "../lib/staffLabelImport";
 import ConfirmDialog from "./ConfirmDialog";
-import { openLabels, uploadLabelPages } from "../services/staffLabelArchive";
+import StaffLabelViewer from "./StaffLabelViewer";
+import { uploadLabelPages } from "../services/staffLabelArchive";
 import { listLabelImports, readLabelImport, forgetLocalLabelImport } from "../services/staffLabelImport";
 
 const button =
@@ -139,6 +140,11 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
   type Removal =
     | { kind: "category"; category: LabelCategory }
     | { kind: "file" | "page"; header: LabelArchiveHeader; number?: number };
+  const [viewer, setViewer] = React.useState<{
+    header: LabelArchiveHeader;
+    numbers: number[];
+    print: boolean;
+  }>();
   const [removal, setRemoval] = React.useState<Removal>();
   const [directory, setDirectory] = React.useState<LabelCategoryDirectory>(emptyDirectory);
   const [onlineReady, setOnlineReady] = React.useState(false);
@@ -316,7 +322,10 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
     });
   }
   function showPages(numbers: number[], print = false) {
-    if (header) void run("Abrindo etiquetas…", () => openLabels(api.archive, header, numbers, print));
+    if (header) {
+      setError("");
+      setViewer({ header, numbers, print });
+    }
   }
   function remove() {
     if (!removal) return;
@@ -739,6 +748,15 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
             </button>
           )}
         </>
+      )}
+      {viewer && (
+        <StaffLabelViewer
+          api={api.archive}
+          header={viewer.header}
+          numbers={viewer.numbers}
+          printOnOpen={viewer.print}
+          onClose={() => setViewer(undefined)}
+        />
       )}
       {removal && (
         <ConfirmDialog
