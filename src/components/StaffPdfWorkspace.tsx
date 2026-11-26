@@ -1299,7 +1299,7 @@ export default function StaffPdfWorkspace({
         </p>
       )}
       {labelsOpened && canGenerate && api.labelCategories && (
-        <div hidden={!visible || tab !== "labels"}><StaffLabelCategories api={api.labelCategories} owner={storageOwner} /></div>
+        <div key={storageOwner} hidden={!visible || tab !== "labels"}><StaffLabelCategories api={api.labelCategories} owner={storageOwner} /></div>
       )}
       {progress && <StaffPdfQueueProgress value={progress} />}
       {visible && tab === "library" && canManage && (

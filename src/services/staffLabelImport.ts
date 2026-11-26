@@ -73,28 +73,12 @@ export async function listLabelImports(owner: string): Promise<LabelImport[]> {
     request.onerror = () => reject(request.error);
   });
 }
-export async function updateLabelImport(
-  owner: string,
-  id: string,
-  change: (current?: LabelImport) => LabelImport,
-): Promise<LabelImport> {
+export async function forgetLocalLabelImport(owner: string, id: string) {
   const db = await openDatabase();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("imports", "readwrite", { durability: "strict" });
-    const store = tx.objectStore("imports");
-    const key = [owner, id],
-      request = store.get(key);
-    let saved: LabelImport, failure: unknown;
-    request.onsuccess = () => {
-      try {
-        saved = change(request.result);
-        if (saved !== request.result) store.put(saved, key);
-      } catch (error) {
-        failure = error;
-        tx.abort();
-      }
-    };
-    tx.oncomplete = () => resolve(saved);
-    tx.onabort = () => reject(failure || new Error("O navegador não conseguiu salvar a importação."));
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("imports", "readwrite");
+    tx.objectStore("imports").delete([owner,id]);
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error);
   });
 }

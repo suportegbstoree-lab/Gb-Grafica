@@ -1,4 +1,4 @@
-import type { LabelCategoryApi, LabelCategoryDirectory } from "../lib/staffLabelImport";
+import type { LabelCategoryApi, LabelCategoryDirectory, LabelArchiveHeader, ImportedLabel } from "../lib/staffLabelImport";
 import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
 import { staffPdfBatchApi } from "./staffPdfBatchService";
@@ -84,18 +84,66 @@ export interface StaffPdfApi {
 export { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 import { staffPdfRequest, readStaffPdf } from "./staffPdfRequest";
 
-export function labelCategoryClient(request: (path:string, body:unknown)=>Promise<any>): LabelCategoryApi {
+export function labelCategoryClient(
+  request: (path: string, body: unknown) => Promise<any>,
+): LabelCategoryApi {
+  async function call(action: string, body: object) {
+    const path = "/label-categories/archive/" + action;
+    try {
+      return await request(path, body);
+    } catch (error) {
+      if ((error as { status?: number }).status !== 429) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 61_000));
+      return request(path, body);
+    }
+  }
   return {
+    archive: {
+      async list() {
+        const headers: LabelArchiveHeader[] = [];
+        for (;;) {
+          const next: LabelArchiveHeader[] = await call("list", { after: headers.at(-1)?.id });
+          headers.push(...next);
+          if (next.length < 100) return headers;
+        }
+      },
+      async read(ref) {
+        const pages: ImportedLabel[] = [];
+        let after = 0;
+        for (;;) {
+          const data = await call("read", { ...ref, after });
+          pages.push(...data.pages);
+          if (data.after === null) return pages;
+          after = data.after;
+        }
+      },
+      begin: (id, name, total) => call("begin", { id, name, total }),
+      upload: (ref, pages) => call("upload/pages", { ...ref, pages }),
+      part: (ref, number, part, data) => call("upload/part", { ...ref, number, part, data }),
+      identify: (ref, number, products) => call("identify", { ...ref, number, products }),
+      confirm: (ref) => call("confirm", ref),
+      links: (ref, numbers) => call("links", { ...ref, numbers }),
+      async remove(ref, number) {
+        while (!(await call("remove", { ...ref, number })).done) {
+          /* next group of labels */
+        }
+      },
+    },
+    rename: (id, expectedName, name) => request("/label-categories/rename", { id, expectedName, name }),
+    remove: (id, expectedName) => request("/label-categories/remove", { id, expectedName }),
     async lookup(keys) {
       const result: LabelCategoryDirectory = { categories: [], assignments: {} };
       for (let start = 0; start === 0 || start < keys.length; start += 300) {
-        const reply = await request("/label-categories/lookup", { keys: keys.slice(start, start + 300), includeCategories: start === 0 });
+        const reply = await request("/label-categories/lookup", {
+          keys: keys.slice(start, start + 300),
+          includeCategories: start === 0,
+        });
         if (start === 0) result.categories = reply.categories;
         Object.assign(result.assignments, reply.assignments);
       }
       return result;
     },
-    create: name => request("/label-categories/create", { name }),
+    create: (name) => request("/label-categories/create", { name }),
     assign: (key, categoryId) => request("/label-categories/assign", { key, categoryId }),
   };
 }

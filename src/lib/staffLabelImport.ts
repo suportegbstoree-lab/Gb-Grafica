@@ -54,14 +54,17 @@ export function parseLabelPage(fragments: TextFragment[]): LabelPage {
   const [number, sku, description, variation, quantity] = columns;
   const slack = scale * 0.6;
   const region = points.filter(
-    (p) => p.x >= number.x - slack && p.x <= quantity.x + quantity.width + 3 * scale && p.y > scale * 0.65,
+    (p) =>
+      p.x >= number.x - slack && p.x <= quantity.x + quantity.width + 3 * scale && p.y > scale * 0.65,
   );
   const footer = region
     .filter((p) => /^total$/i.test(p.text) && p.x >= variation.x - slack)
     .sort((a, b) => a.y - b.y)[0];
   if (!footer) return pending("Fim da tabela de produtos não identificado.");
   const body = region.filter((p) => p.y < footer.y - slack);
-  const starts = body.filter((p) => p.x < sku.x - slack && /^\d+$/.test(p.text)).sort((a, b) => a.y - b.y);
+  const starts = body
+    .filter((p) => p.x < sku.x - slack && /^\d+$/.test(p.text))
+    .sort((a, b) => a.y - b.y);
   if (!starts.length) return pending("Nenhum item legível na tabela.");
   for (const [index, start] of starts.entries()) {
     if (Number(start.text) !== index + 1) return pending("Numeração dos itens incompleta.");
@@ -107,6 +110,9 @@ export interface LabelCategoryDirectory {
   assignments: Record<string, string>;
 }
 export interface LabelCategoryApi {
+  archive: LabelArchiveApi;
+  rename(id: string, expectedName: string, name: string): Promise<void>;
+  remove(id: string, expectedName: string): Promise<void>;
   lookup(keys: string[]): Promise<LabelCategoryDirectory>;
   create(name: string): Promise<LabelCategory>;
   assign(key: string, categoryId: string): Promise<void>;
@@ -117,6 +123,7 @@ export interface ImportedProduct extends ProductIdentityFields {
   key: string;
 }
 export interface ImportedLabel {
+  number?: number;
   products: ImportedProduct[];
   issue?: string;
 }
@@ -158,4 +165,33 @@ export function missingLabelCategories(pages: ImportedLabel[], assignments: Reco
   return pages.filter(
     (page) => page.issue || !page.products.length || page.products.some((p) => !assignments[p.key]),
   ).length;
+}
+
+export interface LabelArchiveHeader {
+  id: string;
+  revision: string;
+  name: string;
+  importedAt: number;
+  total: number;
+  count: number;
+  state: "uploading" | "ready" | "deleting";
+  confirmed: boolean;
+}
+export type LabelArchiveRef = Pick<LabelArchiveHeader, "id" | "revision">;
+export interface LabelTransferPage {
+  number: number;
+  label: ImportedLabel;
+  data?: string;
+  parts?: number;
+}
+export interface LabelArchiveApi {
+  list(): Promise<LabelArchiveHeader[]>;
+  read(ref: LabelArchiveRef): Promise<ImportedLabel[]>;
+  begin(id: string, name: string, total: number): Promise<LabelArchiveHeader>;
+  upload(ref: LabelArchiveRef, pages: LabelTransferPage[]): Promise<void>;
+  part(ref: LabelArchiveRef, number: number, part: number, data: string): Promise<void>;
+  identify(ref: LabelArchiveRef, number: number, products: ImportedProduct[]): Promise<void>;
+  confirm(ref: LabelArchiveRef): Promise<void>;
+  links(ref: LabelArchiveRef, numbers: number[]): Promise<string[]>;
+  remove(ref: LabelArchiveRef, number?: number): Promise<void>;
 }

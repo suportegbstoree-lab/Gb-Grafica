@@ -1,8 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-async function makeLabels(pages: Array<{ tracking: string; rows: Array<[string, string, number]> } | null>) {
+async function makeLabels(
+  pages: Array<{ tracking: string; rows: Array<[string, string, number]> } | null>,
+) {
   const pdf = await PDFDocument.create();
   for (const label of pages) {
     const page = pdf.addPage([450, 400]);
@@ -51,6 +53,7 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
     "dia.pdf",
     await makeLabels([{ tracking: "BR123456789012C", rows: [["010", "Planner", 1]] }]),
   );
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles([weekly, single]);
   await expect(pane.getByText("Crie a primeira categoria", { exact: false })).toBeVisible();
   const finish = pane.getByRole("button", { name: "Concluir importação" });
@@ -79,6 +82,7 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
   await sticker.getByRole("button", { name: "Confirmar categoria" }).click();
   await finish.click();
   await expect(pane.getByText("Importação concluída · 2 etiqueta(s).", { exact: true })).toBeVisible();
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(weekly);
   await expect(pane.getByRole("status")).toContainText("0 PDF(s) novo(s)");
   await expect(pane.getByLabel("PDF em revisão").locator("option")).toHaveCount(2);
@@ -87,11 +91,58 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
     await other.goto(url + "&owner=outra-pessoa");
     await other.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
     const next = other.getByRole("region", { name: "Importação de etiquetas" });
-    await next.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(weekly);
-    await expect(next.getByRole("button", { name: "Concluir importação" })).toBeEnabled();
+    await next
+      .getByLabel("PDF em revisão")
+      .selectOption({ label: "semana.pdf · 2 etiqueta(s) · Concluído" });
+    await expect(next.getByText("Importação concluída · 2 etiqueta(s).")).toBeVisible();
     await next.getByText("Conferir etiquetas (2)").click();
     await expect(next.getByText(/Adesivo · SKU 011 · Adesivos/)).toBeVisible();
     await expect(next.getByText(/Planner · SKU 010 · Cadernos personalizados/)).toHaveCount(2);
+    const secondPage = next.getByRole("listitem").filter({ hasText: "Página 2" });
+    const opening = other.waitForEvent("popup");
+    await secondPage.getByRole("button", { name: "Visualizar" }).click();
+    const preview = await opening;
+    await expect(preview.locator("img")).toHaveAttribute("alt", "Etiqueta da página 2");
+    await preview.close();
+    // Intercept the OS dialog, but exercise the real click, PDF rendering and print call.
+    await other.evaluate(() => {
+      const open = window.open.bind(window);
+      window.open = (...args) => {
+        const popup = open(...args);
+        if (popup)
+          popup.print = () => {
+            popup.document.body.dataset.printed = "yes";
+          };
+        return popup;
+      };
+    });
+    const printing = other.waitForEvent("popup");
+    await next.getByRole("button", { name: "Imprimir etiquetas do arquivo" }).click();
+    const sheets = await printing;
+    await expect(sheets.locator("body")).toHaveAttribute("data-printed", "yes");
+    await expect(sheets.getByRole("img")).toHaveCount(2);
+    await sheets.close();
+    await next.getByText("Gerenciar categorias (2)").click();
+    await next.getByRole("button", { name: "Editar categoria Adesivos" }).click();
+    await next.getByLabel("Novo nome da categoria").fill("Cartelas");
+    await next.getByRole("button", { name: "Salvar nome" }).click();
+    await expect(next.getByText(/Adesivo · SKU 011 · Cartelas/)).toBeVisible();
+    await next.getByRole("button", { name: "Excluir categoria Cartelas" }).click();
+    await other.getByRole("button", { name: "Confirmar exclusão" }).click();
+    await expect(next.getByText(/Faltam categorias em 1 de 2/)).toBeVisible();
+    const firstPage = next.getByRole("listitem").filter({ hasText: "Página 1" });
+    await firstPage.getByRole("button", { name: "Excluir etiqueta" }).click();
+    await other.getByRole("button", { name: "Voltar", exact: true }).click();
+    await expect(firstPage).toBeVisible();
+    await firstPage.getByRole("button", { name: "Excluir etiqueta" }).click();
+    await other.getByRole("button", { name: "Confirmar exclusão" }).click();
+    await expect(firstPage).toHaveCount(0);
+    await expect(secondPage).toBeVisible();
+    await next.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }).click();
+    await other.getByRole("button", { name: "Confirmar exclusão" }).click();
+    await expect(next.getByLabel("PDF em revisão").locator("option")).toHaveCount(1);
+    await pane.getByRole("button", { name: "Atualizar importações e categorias" }).click();
+    await expect(pane.getByLabel("PDF em revisão").locator("option")).toHaveCount(1);
   } finally {
     await other.close();
   }
@@ -99,6 +150,7 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
 test("uma página sem texto exige identificação e categoria antes de concluir", async ({ page }) => {
   await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
   await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await page
     .getByLabel("PDFs de etiquetas", { exact: true })
     .setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: await makeLabels([null]) });
@@ -109,4 +161,89 @@ test("uma página sem texto exige identificação e categoria antes de concluir"
   await page.getByRole("button", { name: "Confirmar produtos da etiqueta" }).click();
   await expect(page.getByRole("article")).toContainText("SKU 00012");
   await expect(page.getByRole("button", { name: "Concluir importação" })).toBeDisabled();
+});
+
+test("envia uma revisão antiga ao Firebase preservando a identificação manual", async ({ page }) => {
+  const file = { name: "antigo.pdf", mimeType: "application/pdf", buffer: await makeLabels([null]) };
+  const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
+  const record = {
+    id: hash(file.buffer),
+    name: file.name,
+    importedAt: Date.now(),
+    pages: [
+      {
+        products: [
+          {
+            key: hash(JSON.stringify(["sku", "MANUAL"])),
+            sku: "MANUAL",
+            description: "Identificado pela equipe",
+            variation: "",
+          },
+        ],
+      },
+    ],
+  };
+  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
+  await page.evaluate(async (record) => {
+    await new Promise<void>((resolve, reject) => {
+      const pending = indexedDB.open("gb-label-imports", 1);
+      pending.onupgradeneeded = () => pending.result.createObjectStore("imports");
+      pending.onsuccess = () => {
+        const db = pending.result,
+          tx = db.transaction("imports", "readwrite");
+        tx.objectStore("imports").put(record, ["fixture-owner", record.id]);
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+      pending.onerror = () => reject(pending.error);
+    });
+  }, record);
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await expect(page.getByText(/Esta revisão foi salva neste navegador/)).toBeVisible();
+  await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(file);
+  await expect(page.getByRole("article")).toContainText("Identificado pela equipe");
+  await page.reload();
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await expect(page.getByRole("article")).toContainText("SKU MANUAL");
+  await expect(
+    page.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }),
+  ).toBeEnabled();
+});
+
+test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  const file = {
+    name: "semana-interrompida.pdf",
+    mimeType: "application/pdf",
+    buffer: await makeLabels(Array.from({ length: 21 }, () => null)),
+  };
+  let batches = 0;
+  const route = "**/archive/upload/pages";
+  await page.route(route, async (r) => {
+    if (++batches === 2) return r.fulfill({ status: 503, contentType: "application/json", body: "{}" });
+    return r.continue();
+  });
+  await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(file);
+  await expect(page.getByText(/Envio incompleto · 20 de 21/)).toBeVisible();
+  await page.unroute(route);
+  const resumedPages: number[] = [];
+  await page.route(route, async request => {
+    resumedPages.push(...request.request().postDataJSON().pages.map((p: {number: number}) => p.number));
+    return request.continue();
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(file);
+  await expect(page.getByText("Conferir etiquetas (21)")).toBeVisible();
+  expect(resumedPages).toEqual([21]);
+  await page.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }).click();
+  await page.getByRole("button", { name: "Confirmar exclusão" }).click();
+  await expect(page.getByLabel("PDF em revisão")).toHaveCount(0);
 });

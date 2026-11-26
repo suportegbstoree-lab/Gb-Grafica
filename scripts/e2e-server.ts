@@ -24,13 +24,27 @@ async function startE2EServer() {
   const blobs = new Map<string, { bytes: Buffer; type: string }>();
   app.post('/__e2e/uploads/:id', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => { blobs.set(req.params.id, { bytes: req.body, type: req.get('content-type') || 'image/png' }); res.json({ url: `/__e2e/uploads/${req.params.id}` }); });
   app.get('/__e2e/uploads/:id', (req, res) => { const blob = blobs.get(req.params.id); if (!blob) { res.sendStatus(404); return; } res.type(blob.type).send(blob.bytes); });
+  app.use('/__e2e/label-api/:store/archive/upload', express.json({limit:'3mb'}));
   app.use(express.json({ limit: '100kb' }));
   const labelFixtures = new Map<string, express.Router>();
   app.use('/__e2e/label-api/:store', (req, res, next) => {
     const store = req.params.store;
     if (!labelFixtures.has(store)) {
       const { db } = memoryFirestore();
-      labelFixtures.set(store, staffLabelCategoryRouter(() => db));
+      const bucket = {
+        file: (path: string) => {
+          const id = store + "-" + path.replaceAll("/", "-");
+          return {
+            save: async (bytes: Buffer) => {
+              if (blobs.has(id)) throw Object.assign(new Error("exists"),{code:412});
+              blobs.set(id,{bytes,type:"application/pdf"});
+            },
+            delete: async () => { blobs.delete(id); return [{}]; },
+            getSignedUrl: async () => ["/__e2e/uploads/" + id],
+          };
+        },
+      };
+      labelFixtures.set(store, staffLabelCategoryRouter(() => db, () => bucket as any));
     }
     res.locals.user = { permissions: ['documents.generate'] };
     labelFixtures.get(store)!(req, res, next);

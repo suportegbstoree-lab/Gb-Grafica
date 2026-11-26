@@ -1451,3 +1451,112 @@ test("a categoria das etiquetas é compartilhada, idempotente e protege escolhas
     assert.equal((await assign(assignments[key])).status,200);
     assert.equal((await request(route + "/lookup","generator",{keys:["malformado"]})).status,422);
   }));
+
+test("as etiquetas são PDFs privados de uma página, compartilhados e removidos pelo número original", async () =>
+  scenario(async ({ request, objects, docs }) => {
+    const root = "/library/label-categories/archive/";
+    const id = "a".repeat(64);
+    const call = (path: string, data: object, role = "generator") => request(root + path, role, data);
+    for (const path of [
+      "list",
+      "read",
+      "begin",
+      "upload/part",
+      "upload/pages",
+      "identify",
+      "links",
+      "confirm",
+      "remove",
+    ])
+      assert.equal((await call(path, {}, "manager")).status, 403);
+    const begin = async () => (await call("begin", { id, name: "semana.pdf", total: 3 })).json();
+    const { revision } = await begin();
+    const ref = { id, revision };
+    const one = Buffer.from(await pdf(1));
+    const label = { products: [{ sku: "10", description: "Adesivo", variation: "" }] };
+    const upload = (pages: any[]) => call("upload/pages", { ...ref, pages });
+    const send = (number: number) => upload([{ number, data: one.toString("base64"), label }]);
+    assert.equal(
+      (await upload([{ number: 2, data: Buffer.from(await pdf(2)).toString("base64"), label }])).status,
+      422,
+    );
+    assert.equal((await send(1)).status, 200);
+    assert.equal((await send(1)).status, 200);
+    assert.equal((await begin()).count, 1);
+    assert.equal((await call("confirm", ref)).status, 409);
+    assert.equal((await begin()).revision, revision);
+    const half = Math.floor(one.length / 2);
+    assert.equal(
+      (
+        await call("upload/part", {
+          ...ref,
+          number: 2,
+          part: 1,
+          data: one.subarray(0, half).toString("base64"),
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await upload([{ number: 2, parts: 2, label }])).status, 409);
+    assert.equal(
+      (
+        await call("upload/part", {
+          ...ref,
+          number: 2,
+          part: 2,
+          data: one.subarray(half).toString("base64"),
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await upload([{ number: 2, parts: 2, label }])).status, 200);
+    assert.equal((await send(3)).status, 200);
+    assert.equal((await begin()).state, "ready");
+    assert.equal([...docs.keys()].filter((k) => String(k).includes("/parts/")).length, 0);
+    assert.equal(objects.size, 3);
+    for (const stored of objects.values())
+      assert.equal((await PDFDocument.load(stored.bytes)).getPageCount(), 1);
+    const links = (numbers: number[]) => call("links", { ...ref, numbers }, "another-generator");
+    assert.equal((await links([2])).status, 200);
+    assert.equal((await call("remove", { ...ref, number: 2 }, "another-generator")).status, 200);
+    assert.equal(objects.size, 2);
+    assert.equal((await links([2])).status, 409);
+    const visible = await (await call("read", { ...ref, after: 0 }, "another-generator")).json();
+    assert.deepEqual(
+      visible.pages.map((p: any) => p.number),
+      [1, 3],
+    );
+    assert.equal((await begin()).count, 2);
+    assert.equal((await send(2)).status, 409);
+    assert.equal((await call("remove", ref)).status, 200);
+    assert.equal(objects.size, 0);
+    assert.deepEqual(await (await call("list", {})).json(), []);
+    const fresh = await begin();
+    assert.notEqual(fresh.revision, revision);
+    assert.equal((await call("remove", ref)).status, 409);
+  }));
+
+test("renomear uma categoria legada mantém os vínculos e recriar um nome excluído exige nova classificação", async () =>
+  scenario(async ({ request, docs }) => {
+    const root = "/library/label-categories/",
+      key = "f".repeat(64);
+    const id = createHash("sha256").update("cadernos").digest("hex");
+    docs.set("_staffLabelCategories/" + id, { name: "Cadernos" });
+    const call = (path: string, body: object) => request(root + path, "generator", body);
+    assert.equal((await call("assign", { key, categoryId: id })).status, 200);
+    assert.equal((await call("rename", { id, expectedName: "Cadernos", name: "Agendas" })).status, 200);
+    assert.equal((await (await call("create", { name: "Agendas" })).json()).id, id);
+    const other = await (await call("create", { name: "Cadernos" })).json();
+    assert.notEqual(other.id, id);
+    assert.equal((await call("rename", { id, expectedName: "Agendas", name: "Cadernos" })).status, 409);
+    assert.equal((await call("remove", { id, expectedName: "Cadernos" })).status, 409);
+    assert.equal((await (await call("lookup", { keys: [key] })).json()).assignments[key], id);
+    assert.equal((await call("remove", { id, expectedName: "Agendas" })).status, 200);
+    assert.deepEqual(
+      (await (await call("lookup", { keys: [key], includeCategories: false })).json()).assignments,
+      {},
+    );
+    const replacement = await (await call("create", { name: "Agendas" })).json();
+    assert.notEqual(replacement.id, id);
+    assert.equal((await call("assign", { key, categoryId: replacement.id })).status, 200);
+  }));

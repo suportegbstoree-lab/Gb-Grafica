@@ -417,13 +417,18 @@ app.post('/api/admin/catalog/config/main', express.json({
   },
 }));
 
-app.use(express.json({
+const defaultJson = express.json({
 	limit: '256kb',
 	verify: (request, _response, buffer) => {
 		(request as RawBodyRequest).rawBody = buffer.toString('utf8');
     (request as RawBodyRequest).rawBodyBytes = Buffer.from(buffer);
 	},
-}));
+});
+app.use((req, res, next) => {
+  // The label router parses its larger PDF batches after checking the employee's permission.
+  if (req.path.startsWith('/api/admin/pdf-library/label-categories/archive/upload/')) return next();
+  defaultJson(req, res, next);
+});
 
 const requireAppCheck: express.RequestHandler = async (req, res, next) => {
 	const mode = configuredAppCheckMode(process.env.FIREBASE_APP_CHECK_MODE);
