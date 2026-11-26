@@ -5,14 +5,18 @@ import type {
   LabelTransferPage,
 } from "../lib/staffLabelImport";
 
-async function encode(bytes: Uint8Array) {
+async function dataUrl(blob: Blob) {
   const reader = new FileReader();
   return new Promise<string>((resolve, reject) => {
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(new Blob([new Uint8Array(bytes)]));
+    reader.readAsDataURL(blob);
   });
 }
+async function encode(bytes: Uint8Array) {
+  return (await dataUrl(new Blob([new Uint8Array(bytes)]))).split(",")[1];
+}
+
 export async function uploadLabelPages(
   api: LabelArchiveApi,
   file: File,
@@ -125,8 +129,9 @@ export async function openLabels(
           );
           img.style.page = key;
           img.style.width = original.width + "pt";
-          // The popup owns these URLs so the browser frees them when it closes.
-          img.src = doc.defaultView!.URL.createObjectURL(png);
+          // Embed the rendered image so the preview is independent of the popup's
+          // defaultView and the lifetime of object URLs in another window.
+          img.src = await dataUrl(png);
           await img.decode();
           doc.body.append(img);
         } finally {

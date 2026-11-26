@@ -247,3 +247,51 @@ test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async (
   await page.getByRole("button", { name: "Confirmar exclusão" }).click();
   await expect(page.getByLabel("PDF em revisão")).toHaveCount(0);
 });
+
+test("visualiza e imprime a etiqueta quando defaultView da nova janela é null", async ({ page }) => {
+  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
+  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  const pane = page.getByRole("region", { name: "Importação de etiquetas" });
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
+    name: "visualizacao.pdf",
+    mimeType: "application/pdf",
+    buffer: await makeLabels([{ tracking: "BR123456789012A", rows: [["010", "Planner", 1]] }]),
+  });
+  await pane.getByText("Conferir etiquetas (1)").click();
+  const securityHeaders = (await page.request.get("/__e2e/email-csp")).headers();
+  await page.evaluate((policy) => {
+    const meta = document.createElement("meta");
+    meta.httpEquiv = "Content-Security-Policy";
+    meta.content = policy;
+    document.head.append(meta);
+  }, securityHeaders["content-security-policy"]);
+  await page.evaluate(() => {
+    const open = window.open.bind(window);
+    window.open = (...args) => {
+      const popup = open(...args);
+      if (popup) {
+        Object.defineProperty(popup.document, "defaultView", { configurable: true, get: () => null });
+        popup.print = () => { popup.document.body.dataset.printed = "yes"; };
+      }
+      return popup;
+    };
+  });
+  const opening = page.waitForEvent("popup");
+  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
+  const preview = await opening;
+  await expect(preview.getByRole("img", { name: "Etiqueta da página 1" })).toBeVisible();
+  await expect(preview.getByRole("button", { name: "Imprimir", exact: true })).toBeEnabled();
+  await expect.poll(() => preview.getByRole("img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+  await expect(pane.getByRole("alert")).toHaveCount(0);
+  await preview.getByRole("button", { name: "Imprimir", exact: true }).click();
+  await expect(preview.locator("body")).toHaveAttribute("data-printed", "yes");
+  await preview.close();
+
+  const printing = page.waitForEvent("popup");
+  await pane.getByRole("button", { name: "Imprimir etiquetas do arquivo" }).click();
+  const sheets = await printing;
+  await expect(sheets.locator("body")).toHaveAttribute("data-printed", "yes");
+  await expect(sheets.getByRole("img", { name: "Etiqueta da página 1" })).toBeVisible();
+  await sheets.close();
+});
