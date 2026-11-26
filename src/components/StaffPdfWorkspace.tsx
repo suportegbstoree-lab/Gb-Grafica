@@ -61,7 +61,6 @@ import StaffPdfPicker from "./StaffPdfPicker";
 import StaffPdfMarketplaceSelect from "./StaffPdfMarketplaceSelect";
 import StaffPdfPreview from "./StaffPdfPreview";
 import StaffPdfLibraryEditor from "./StaffPdfLibraryEditor";
-import StaffLabelCategories from "./StaffLabelCategories";
 import StaffPdfCsvImport, {
   type StaffPdfCsvOrder,
   type StaffPdfCsvImportHandle,
@@ -141,7 +140,7 @@ export default function StaffPdfWorkspace({
       layouts: [],
       truncated: false,
     }),
-    [tab, setTab] = React.useState<"edit" | "library" | "csv" | "labels" | "observations">(canGenerate ? "edit" : "library"),
+    [tab, setTab] = React.useState<"edit" | "library" | "csv" | "observations">(canGenerate ? "edit" : "library"),
     [busy, setBusy] = React.useState(false),
     [error, setError] = React.useState(""),
     [message, setMessage] = React.useState(""),
@@ -182,7 +181,6 @@ export default function StaffPdfWorkspace({
     [progress, setProgress] = React.useState<StaffPdfQueueProgressValue>(),
     [stopRequested, setStopRequested] = React.useState(false),
     [csvReview, setCsvReview] = React.useState(0),
-    [labelsOpened, setLabelsOpened] = React.useState(false),
     [confirmBlanks, setConfirmBlanks] = React.useState(false),
     [queuePage, setQueuePage] = React.useState(0),
     [editingId, setEditingId] = React.useState<string | null>(null),
@@ -1268,8 +1266,6 @@ export default function StaffPdfWorkspace({
             Planilha e CSV
           </button>
         )}
-        {canGenerate && api.labelCategories && <button type="button" disabled={busy} onClick={() => { setLabelsOpened(true); setTab("labels"); }}
-          aria-pressed={tab === "labels"} className="rounded-lg border border-gray-700 px-4 py-2">Importar etiquetas</button>}
         {canGenerate && <button type="button" disabled={busy} onClick={() => setTab("observations")}
           aria-pressed={tab === "observations"} className="rounded-lg border border-gray-700 px-4 py-2">
           Pedidos em Observação
@@ -1297,9 +1293,6 @@ export default function StaffPdfWorkspace({
           A biblioteca excede os limites da listagem. Refine o cadastro antes de
           adicionar mais itens.
         </p>
-      )}
-      {labelsOpened && canGenerate && api.labelCategories && (
-        <div key={storageOwner} hidden={!visible || tab !== "labels"}><StaffLabelCategories api={api.labelCategories} owner={storageOwner} /></div>
       )}
       {progress && <StaffPdfQueueProgress value={progress} />}
       {visible && tab === "library" && canManage && (

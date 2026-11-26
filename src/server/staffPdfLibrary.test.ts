@@ -1560,3 +1560,117 @@ test("renomear uma categoria legada mantém os vínculos e recriar um nome exclu
     assert.notEqual(replacement.id, id);
     assert.equal((await call("assign", { key, categoryId: replacement.id })).status, 200);
   }));
+
+test("cancelamentos preservam individuais e produzem PDFs persistidos separados em ordem", async () =>
+  scenario(async ({ request, objects, downloads, docs }) => {
+    const root = "/library/label-categories/archive/";
+    const call = (action: string, body: object, role = "generator") =>
+      request(root + action, role, body);
+    const id = "e".repeat(64);
+    const header = await (await call("begin", { id, name: "semana.pdf", total: 27 })).json();
+    const ref = { id, revision: header.revision };
+    const rows = [];
+    for (let n = 1; n <= 27; n++) {
+      const pdf = await PDFDocument.create();
+      pdf.addPage([100 + n, 200]);
+      rows.push({
+        number: n,
+        data: Buffer.from(await pdf.save()).toString("base64"),
+        label:
+          n <= 3
+            ? { products: [], issue: "Sem identificação" }
+            : { products: [{ sku: "ABC", description: "Agenda", variation: "" }] },
+      });
+    }
+    for (let i = 0; i < rows.length; i += 24)
+      assert.equal((await call("upload/pages", { ...ref, pages: rows.slice(i, i + 24) })).status, 200);
+    assert.equal((await call("exclude", { ...ref, numbers: [1] }, "manager")).status, 403);
+    assert.equal((await call("export", { ...ref, kind: "active" }, "manager")).status, 403);
+    async function exportPdf(kind: string) {
+      let version: number | undefined;
+      for (let i = 0; i < 6; i++) {
+        const response = await call("export", { ...ref, kind, version }, "another-generator");
+        assert.equal(response.status, 200, await response.clone().text());
+        const result = await response.json();
+        if (result.url) {
+          const saved = objects.get(new URL(result.url).pathname.slice(1));
+          assert.ok(saved);
+          return { result, pdf: await PDFDocument.load(saved.bytes) };
+        }
+        version = result.version;
+      }
+      throw new Error("Exportação não terminou.");
+    }
+    const original = await exportPdf("active");
+    assert.equal(original.pdf.getPageCount(), 27);
+    const readCount = downloads.length;
+    await exportPdf("active");
+    assert.equal(downloads.length, readCount, "PDF pronto deve ser reutilizado");
+    assert.equal((await call("confirm", ref)).status, 409);
+    assert.equal((await call("exclude", { ...ref, numbers: [1, 2] })).status, 200);
+    const selectionVersion = docs.get("_staffLabelImports/" + id).selectionVersion;
+    assert.equal((await call("exclude", { ...ref, numbers: [1, 2] })).status, 200);
+    assert.equal(docs.get("_staffLabelImports/" + id).selectionVersion, selectionVersion);
+    assert.equal((await call("export", { ...ref, kind: "active", version: 0 })).status, 409);
+    assert.equal((await call("exclude", { ...ref, numbers: [3] })).status, 200);
+    const active = await exportPdf("active"),
+      excluded = await exportPdf("excluded");
+    assert.deepEqual(
+      active.pdf.getPages().map((p) => p.getWidth()),
+      Array.from({ length: 24 }, (_, i) => 104 + i),
+    );
+    assert.deepEqual(
+      excluded.pdf.getPages().map((p) => p.getWidth()),
+      [101, 102, 103],
+    );
+    for (let n = 1; n <= 27; n++)
+      assert.ok(objects.has("staff-label-imports/" + id + "/" + ref.revision + "/" + n + ".pdf"));
+    const category = await (
+      await request("/library/label-categories/create", "generator", { name: "Agendas" })
+    ).json();
+    const key = createHash("sha256")
+      .update(JSON.stringify(["sku", "ABC"]))
+      .digest("hex");
+    await request("/library/label-categories/assign", "generator", { key, categoryId: category.id });
+    assert.equal(
+      (await call("confirm", ref)).status,
+      200,
+      "pendências excluídas deixam de bloquear a revisão",
+    );
+    const listing = await (await call("list", {})).json();
+    assert.equal(listing[0].excludedCount, 3);
+    assert.equal(listing[0].count, 27);
+    const read = await (await call("read", { ...ref, after: 0 })).json();
+    assert.equal(read.pages.filter((p: any) => p.excluded).length, 3);
+    for (let i = 0; i < 20; i++) {
+      const reply = await (await call("remove", ref)).json();
+      if (reply.done) break;
+      if (i === 19) throw new Error("A exclusão do arquivo não terminou.");
+    }
+    assert.equal(objects.size, 0, "remover o arquivo também limpa os PDFs agrupados");
+  }));
+
+test("remover o último PDF pelo fluxo anterior também limpa as exportações do arquivo", async () =>
+  scenario(async ({ request, objects }) => {
+    const root = "/library/label-categories/archive/";
+    const call = (action: string, body: object) => request(root + action, "generator", body);
+    const id = "d".repeat(64);
+    const header = await (await call("begin", { id, name: "antigo.pdf", total: 1 })).json();
+    const ref = { id, revision: header.revision };
+    await call("upload/pages", {
+      ...ref,
+      pages: [
+        {
+          number: 1,
+          data: Buffer.from(await pdf(1)).toString("base64"),
+          label: { products: [], issue: "Revisar" },
+        },
+      ],
+    });
+    await call("export", { ...ref, kind: "active" });
+    await call("export", { ...ref, kind: "active" });
+    for (let i = 0; i < 5; i++)
+      if ((await (await call("remove", { ...ref, number: 1 })).json()).done) break;
+    assert.equal(objects.size, 0);
+    assert.deepEqual(await (await call("list", {})).json(), []);
+  }));

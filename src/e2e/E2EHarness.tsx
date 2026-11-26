@@ -2,7 +2,7 @@ import { fixtureNfeAdminApi } from './nfeFixture';
 import { createSalesAdminApi } from '../services/salesService';
 import PersonalizationFontLoader from '../components/PersonalizationFontLoader';
 import { fixtureWorkApi,fixtureDocumentApi,emptyPdfLibrary } from './workClient';
-import StaffPdfFixture, { useStaffPdfFixture } from './StaffPdfFixture';
+import StaffPdfFixture, { StaffLabelFixture, useStaffPdfFixture } from './StaffPdfFixture';
 import type { StaffPdfApi } from '../services/staffPdfService';
 import { currentWorkTask } from '../services/workContext';
 import { EMPTY_PROFILE } from '../lib/customerProfile';
@@ -520,6 +520,7 @@ export default function E2EHarness() {
     <PersonalizationFontLoader fonts={config.fontes_personalizacao || []} />
     <BrowserRouter>
       <StoreThemeProvider><Routes>
+        <Route path="/__e2e/imported-labels" element={<StaffLabelFixture />} />
         <Route path="/__e2e/staff-pdf" element={<StaffPdfFixture />} />
         <Route path="/__e2e/store" element={<StoreFixture />} />
         <Route path="/__e2e/admin" element={<AdminFixtureRedirect />} />

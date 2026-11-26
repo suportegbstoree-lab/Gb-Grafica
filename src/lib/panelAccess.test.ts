@@ -5,7 +5,7 @@ import { ALL_STAFF_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS, type StaffPermission }
 test('each permission exposes only its own administrative section; order artwork/fulfillment alone do not grant order reads', () => {
   const expected: Record<StaffPermission, PanelSection[]> = {
     'documents.templates.manage':['documents'],
-    'documents.generate':['documents'],
+    'documents.generate':['documents','imported-labels'],
     'operations.self':['operations'],
     'bundles.manage': ['bundles'],
     'emails.manage': ['email'],

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Firestore } from "firebase-admin/firestore";
 import type { StaffDocumentDeps } from "./staffDocuments.js";
 import { sanitizeStaffPdfBase } from "./staffPdfSanitize.js";
+import { prepareLabelExport } from "./staffLabelExport.js";
 import { OperationsError } from "../lib/operations.js";
 import {
   labelProductIdentity,
@@ -12,7 +13,7 @@ import {
 
 type Bucket = ReturnType<StaffDocumentDeps["services"]>["bucket"];
 export interface LabelBucket {
-  file(path: string): Pick<ReturnType<Bucket["file"]>, "save" | "delete" | "getSignedUrl">;
+  file(path: string): Pick<ReturnType<Bucket["file"]>, "save" | "delete" | "getSignedUrl" | "download">;
 }
 const digest = /^[a-f0-9]{64}$/;
 const validNumber = (n: unknown, max: number): n is number =>
@@ -82,7 +83,8 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
     }
     const file = (number: number) =>
       bucket().file(`staff-label-imports/${body.id}/${body.revision}/${number}.pdf`);
-    return { ref, pages, check, file };
+    const exports = ref.collection("versions").doc(body.revision).collection("exports");
+    return { ref, pages, check, file, exports };
   }
   post("/list", async (body) => {
     let query = imports().orderBy("id").limit(100);
@@ -139,7 +141,11 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
     return {
       pages: snapshot.docs
         .filter((doc) => doc.get("state") !== "pending")
-        .map((doc) => ({ ...doc.get("label"), number: doc.get("number") })),
+        .map((doc) => ({
+          ...doc.get("label"),
+          number: doc.get("number"),
+          excluded: doc.get("excluded") === true,
+        })),
       after: snapshot.size === 100 ? snapshot.docs.at(-1)!.get("number") : null,
     };
   });
@@ -236,7 +242,12 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
     await database().runTransaction(async (tx) => {
       const header = a.check((await tx.get(a.ref)).data());
       const old = await tx.get(page);
-      if (header.state !== "ready" || old.get("state") !== "ready" || !old.get("label")?.issue)
+      if (
+        header.state !== "ready" ||
+        old.get("state") !== "ready" ||
+        old.get("excluded") ||
+        !old.get("label")?.issue
+      )
         throw conflict();
       tx.update(page, { label });
     });
@@ -253,6 +264,7 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
       const ids = new Set(categories.docs.map((doc) => doc.id)),
         keys = new Set<string>();
       for (const doc of pages.docs) {
+        if (doc.get("excluded")) continue;
         const label = doc.get("label") as ImportedLabel;
         if (doc.get("state") !== "ready" || !label || label.issue || !label.products.length)
           throw conflict();
@@ -275,6 +287,38 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
       }
       tx.update(a.ref, { confirmed: true, confirmedCategories: [...used] });
     });
+  });
+  post("/exclude", async (body) => {
+    const a = archive(body);
+    if (
+      !Array.isArray(body.numbers) ||
+      !body.numbers.length ||
+      body.numbers.length > 200 ||
+      !body.numbers.every((n: unknown) => validNumber(n, 100000))
+    )
+      throw invalid();
+    const numbers = [...new Set<number>(body.numbers)];
+    await database().runTransaction(async (tx) => {
+      const header = a.check((await tx.get(a.ref)).data());
+      if (header.state !== "ready") throw conflict();
+      const pages = await Promise.all(numbers.map((n) => tx.get(a.pages.doc(String(n)))));
+      if (pages.some((doc) => doc.get("state") !== "ready")) throw conflict();
+      const fresh = pages.filter((doc) => !doc.get("excluded"));
+      if (!fresh.length) return;
+      fresh.forEach((doc) =>
+        tx.update(a.pages.doc(String(doc.get("number"))), { excluded: true, excludedAt: Date.now() }),
+      );
+      tx.update(a.ref, {
+        excludedCount: (header.excludedCount ?? 0) + fresh.length,
+        selectionVersion: (header.selectionVersion ?? 0) + 1,
+        confirmed: false,
+      });
+    });
+  });
+  post("/export", async (body) => {
+    const a = archive(body);
+    a.check((await a.ref.get()).data());
+    return prepareLabelExport(database(), bucket(), body);
   });
   post("/links", async (body) => {
     const a = archive(body),
@@ -336,11 +380,22 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
         const old = await tx.get(page!);
         if (!old.exists) return false;
         tx.delete(page!);
-        if (parent.count === 1) tx.delete(a.ref);
-        else tx.update(a.ref, { count: parent.count - 1 });
+        if (parent.count === 1)
+          tx.update(a.ref, {
+            count: 0,
+            state: "deleting",
+            selectionVersion: (parent.selectionVersion ?? 0) + 1,
+          });
+        else
+          tx.update(a.ref, {
+            count: parent.count - 1,
+            excludedCount: Math.max(0, (parent.excludedCount ?? 0) - (old.get("excluded") ? 1 : 0)),
+            selectionVersion: (parent.selectionVersion ?? 0) + 1,
+            confirmed: false,
+          });
         return parent.count === 1;
       });
-      return { done: true, empty: last };
+      return { done: !last, empty: last };
     }
     // Bound each invocation so removing a whole weekly file can be retried.
     const batch = await a.pages.limit(16).get();
@@ -351,6 +406,17 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
       }),
     );
     if (batch.size === 16) return { done: false };
+    const exports = await a.exports.limit(1).get();
+    if (exports.size) {
+      const manifest = exports.docs[0];
+      const files = await manifest.ref.collection("files").limit(16).get();
+      for (const doc of files.docs) {
+        await removeObject(bucket().file(doc.get("path")));
+        await doc.ref.delete();
+      }
+      if (files.size < 16) await database().recursiveDelete(manifest.ref);
+      return { done: false };
+    }
     await database().runTransaction(async (tx) => {
       const parent = (await tx.get(a.ref)).data();
       if (parent?.revision === body.revision && parent.state === "deleting") tx.delete(a.ref);

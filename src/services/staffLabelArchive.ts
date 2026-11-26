@@ -70,9 +70,16 @@ export async function labelPdfFile(
   ref: LabelArchiveRef,
   numbers: number[],
   signal: AbortSignal,
+  kind?: "active" | "excluded",
 ): Promise<Blob> {
-  if (!numbers.length) throw new Error("Selecione ao menos uma etiqueta.");
   const { readStaffPdf } = await import("./staffPdfRequest");
+  if (kind) {
+    signal.throwIfAborted();
+    const result = await api.export(ref, kind);
+    signal.throwIfAborted();
+    return readStaffPdf(result.url, signal, Infinity);
+  }
+  if (!numbers.length) throw new Error("Selecione ao menos uma etiqueta.");
   const { PDFDocument } = await import("pdf-lib");
   const combined = numbers.length > 1 ? await PDFDocument.create({ updateMetadata: false }) : undefined;
   for (let start = 0; start < numbers.length; start += 12) {

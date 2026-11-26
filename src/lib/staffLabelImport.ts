@@ -123,6 +123,7 @@ export interface ImportedProduct extends ProductIdentityFields {
   key: string;
 }
 export interface ImportedLabel {
+  excluded?: boolean;
   number?: number;
   products: ImportedProduct[];
   issue?: string;
@@ -163,7 +164,9 @@ export async function identifyProduct(
 }
 export function missingLabelCategories(pages: ImportedLabel[], assignments: Record<string, string>) {
   return pages.filter(
-    (page) => page.issue || !page.products.length || page.products.some((p) => !assignments[p.key]),
+    (page) =>
+      !page.excluded &&
+      (page.issue || !page.products.length || page.products.some((p) => !assignments[p.key])),
   ).length;
 }
 
@@ -174,6 +177,8 @@ export interface LabelArchiveHeader {
   importedAt: number;
   total: number;
   count: number;
+  excludedCount?: number;
+  selectionVersion?: number;
   state: "uploading" | "ready" | "deleting";
   confirmed: boolean;
 }
@@ -193,5 +198,7 @@ export interface LabelArchiveApi {
   identify(ref: LabelArchiveRef, number: number, products: ImportedProduct[]): Promise<void>;
   confirm(ref: LabelArchiveRef): Promise<void>;
   links(ref: LabelArchiveRef, numbers: number[]): Promise<string[]>;
+  exclude(ref: LabelArchiveRef, numbers: number[]): Promise<void>;
+  export(ref: LabelArchiveRef, kind: "active" | "excluded"): Promise<{ url: string; count: number }>;
   remove(ref: LabelArchiveRef, number?: number): Promise<void>;
 }

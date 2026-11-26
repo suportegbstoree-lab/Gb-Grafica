@@ -1,6 +1,7 @@
 import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import React from "react";
 import { PDFDocument, rgb } from "pdf-lib";
+import StaffLabelCategories from "../components/StaffLabelCategories";
 import StaffPdfWorkspace from "../components/StaffPdfWorkspace";
 import {
   type StaffPdfBatchView,
@@ -479,6 +480,17 @@ export default function StaffPdfFixture() {
           ))}
         </section>
       </div>
+    </main>
+  );
+}
+
+export function StaffLabelFixture() {
+  const params = new URLSearchParams(location.search);
+  const { api } = useStaffPdfFixture(false, false, true);
+  return (
+    <main className="admin-controls min-h-screen bg-[#111] p-5 text-white">
+      <h2 className="mb-5 text-2xl font-bold">Etiquetas importadas</h2>
+      <StaffLabelCategories api={api.labelCategories!} owner={params.get("owner") || "fixture-owner"} />
     </main>
   );
 }

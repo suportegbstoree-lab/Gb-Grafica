@@ -24,7 +24,7 @@ export async function staffPdfRequest(
     throw Object.assign(new Error(data.error || "Não foi possível acessar os PDFs internos."), { status: response.status });
   return data;
 }
-export async function readStaffPdf(url: string, signal?: AbortSignal) {
+export async function readStaffPdf(url: string, signal?: AbortSignal, maxBytes = STAFF_DOCUMENT_MAX_BYTES) {
   const response = await fetch(url, {
     credentials: "omit",
     redirect: "error",
@@ -45,7 +45,7 @@ export async function readStaffPdf(url: string, signal?: AbortSignal) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > STAFF_DOCUMENT_MAX_BYTES)
+      if (size > maxBytes)
         throw new Error("PDF maior que 50 MB.");
       parts.push(new Uint8Array(value));
     }

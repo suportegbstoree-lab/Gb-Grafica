@@ -39,6 +39,11 @@ async function startE2EServer() {
               if (blobs.has(id)) throw Object.assign(new Error("exists"),{code:412});
               blobs.set(id,{bytes,type:"application/pdf"});
             },
+            download: async () => {
+              const blob=blobs.get(id);
+              if(!blob) throw Object.assign(new Error("missing"),{code:404});
+              return [blob.bytes];
+            },
             delete: async () => { blobs.delete(id); return [{}]; },
             getSignedUrl: async () => ["/__e2e/uploads/" + id],
           };

@@ -16,6 +16,7 @@ type Entry = { id: PanelSection; label: string; group: Group; order: number; Ico
 const entries: Entry[] = [
   { id: 'operations', label: 'Operações', group: 'team', order: 1, Icon: Layout, organizedLabel: 'Produtividade' },
   { id: 'documents', label: 'Gerar PDF', group: 'pdf', order: 0, Icon: FileText, organizedLabel: 'Oficina de PDFs' },
+  { id: 'imported-labels', label: 'Etiquetas importadas', group: 'pdf', order: 1, Icon: Tag },
   { id: 'products', label: 'Produtos', group: 'products', order: 0, Icon: Layout, organizedLabel: 'Catálogo' },
   { id: 'variation-types', label: 'Tipos de variação', group: 'products', order: 2, Icon: List },
   { id: 'bundles', label: 'Pacotes', group: 'products', order: 3, Icon: Package },
@@ -25,7 +26,7 @@ const entries: Entry[] = [
   { id: 'promotions', label: 'Promoções', group: 'discounts', order: 0, Icon: Tag },
   { id: 'coupons', label: 'Cupons', group: 'discounts', order: 1, Icon: Tag },
   { id: 'branding', label: 'Identidade Visual', group: 'store', order: 0, Icon: Image },
-  { id: 'fonts', label: 'Fontes', group: 'pdf', order: 1, Icon: Type },
+  { id: 'fonts', label: 'Fontes', group: 'pdf', order: 2, Icon: Type },
   { id: 'config', label: 'Configurações', group: 'store', order: 1, Icon: Settings, organizedLabel: 'Informações da Loja' },
   { id: 'email', label: 'E-mails', group: 'store', order: 2, Icon: Settings },
   { id: 'staff', label: 'Funcionários', group: 'team', order: 0, Icon: Settings, rolesLabel: 'Cargos e permissões' },

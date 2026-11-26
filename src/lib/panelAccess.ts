@@ -1,9 +1,10 @@
 import type { StaffPermission } from './staffAccess';
 
-export type PanelSection = 'products' | 'categories' | 'orders' | 'shipment-labels' | 'promotions' | 'branding' | 'fonts' | 'config' | 'staff' | 'operations' | 'email' | 'bundles' | 'documents' | 'variation-types' | 'coupons';
+export type PanelSection = 'products' | 'categories' | 'orders' | 'shipment-labels' | 'promotions' | 'branding' | 'fonts' | 'config' | 'staff' | 'operations' | 'email' | 'bundles' | 'documents' | 'imported-labels' | 'variation-types' | 'coupons';
 const SECTION_PERMISSIONS: Record<PanelSection, readonly StaffPermission[]> = {
   operations: ['operations.manage','operations.self'],
   documents:['documents.generate','documents.templates.manage'],
+  'imported-labels':['documents.generate'],
   email: ['emails.manage'],
   bundles: ['bundles.manage'],
   products: ['products.manage', 'products.images', 'products.personalization'],

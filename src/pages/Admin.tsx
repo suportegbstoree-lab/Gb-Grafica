@@ -3,6 +3,8 @@ import { parseShippingProfile, shippingOptionLabel } from '../lib/shipping';
 import { salesAdminApi, type SalesAdminApi } from '../services/salesService';
 import { variationReferenceUrls, MAX_PRODUCT_SKU } from '../lib/productSales';
 import StaffDocuments from '../components/StaffDocuments';
+import StaffLabelCategories from '../components/StaffLabelCategories';
+import { staffPdfApi } from '../services/staffPdfService';
 import StaffPdfQueueProgress, { type StaffPdfQueueProgressValue } from '../components/StaffPdfQueueProgress';
 import type { StaffPdfApi } from '../services/staffPdfService';
 import WorkdayBar from '../components/WorkdayBar';
@@ -1388,6 +1390,12 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
               <StaffDocuments storageOwner={pdfStorageOwner} fonts={config.fontes_personalizacao||[]} api={documentApi} timingApi={workClient} libraryApi={pdfLibraryApi} canGenerate={can('documents.generate')} canManageTemplates={can('documents.templates.manage')} visible={activeTab === 'documents'} onProgress={setPdfProgress} />
             </React.Fragment>
           </div>
+        )}
+        {activeTab === 'imported-labels' && tabAllowed('imported-labels') && (
+          <section key={pdfStorageOwner} className="space-y-5">
+            <h2 className="text-2xl font-bold">Etiquetas importadas</h2>
+            <StaffLabelCategories owner={pdfStorageOwner} api={(pdfLibraryApi ?? staffPdfApi).labelCategories!} />
+          </section>
         )}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}
         {activeTab === 'operations' && tabAllowed('operations') && <OperationsWorkbench client={operationsClient} workClient={workClient} fullAdmin={fullAdmin} />}

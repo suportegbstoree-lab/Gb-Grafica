@@ -13,7 +13,8 @@ import {
 } from "../lib/staffLabelImport";
 import ConfirmDialog from "./ConfirmDialog";
 import StaffLabelViewer from "./StaffLabelViewer";
-import { uploadLabelPages } from "../services/staffLabelArchive";
+import { downloadPersonalization } from "../services/personalizationExport";
+import { labelPdfFile, uploadLabelPages } from "../services/staffLabelArchive";
 import { listLabelImports, readLabelImport, forgetLocalLabelImport } from "../services/staffLabelImport";
 
 const button =
@@ -29,7 +30,7 @@ function pendingProducts(pages: ImportedLabel[], assignments: Record<string, str
     for (const p of new Map(page.products.map((p) => [p.key, p])).values()) {
       if (assignments[p.key]) continue;
       const group = products.get(p.key) ?? { product: p, pages: [] };
-      group.pages.push(i + 1);
+      group.pages.push(page.number ?? i + 1);
       products.set(p.key, group);
     }
   }
@@ -139,11 +140,13 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
   const [editName, setEditName] = React.useState("");
   type Removal =
     | { kind: "category"; category: LabelCategory }
-    | { kind: "file" | "page"; header: LabelArchiveHeader; number?: number };
+    | { kind: "file"; header: LabelArchiveHeader }
+    | { kind: "page"; header: LabelArchiveHeader; numbers: number[] };
   const [viewer, setViewer] = React.useState<{
     header: LabelArchiveHeader;
     numbers: number[];
     print: boolean;
+    kind?: "active" | "excluded";
   }>();
   const [removal, setRemoval] = React.useState<Removal>();
   const [directory, setDirectory] = React.useState<LabelCategoryDirectory>(emptyDirectory);
@@ -166,12 +169,11 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
       .filter((l) => !headers.some((h) => h.id === l.id))
       .map((l) => ({ id: l.id, name: l.name, count: l.pages.length, confirmed: false })),
   ];
+  const activePages = current?.pages.filter((p) => !p.excluded) ?? [];
+  const excludedPages = current?.pages.filter((p) => p.excluded) ?? [];
   const assignments = directory.assignments;
   const missing = current ? missingLabelCategories(current.pages, assignments) : 0;
-  const pending = React.useMemo(
-    () => pendingProducts(current?.pages ?? [], assignments),
-    [current, assignments],
-  );
+  const pending = React.useMemo(() => pendingProducts(activePages, assignments), [current, assignments]);
   const names = new Map(directory.categories.map((c) => [c.id, c.name]));
   const busy = Boolean(working) || !loaded;
 
@@ -256,6 +258,11 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
           await uploadLabelPages(api.archive, file, item, (n, total) =>
             setWorking(`Salvando ${file.name} · ${n} de ${total} etiquetas…`),
           );
+          const uploaded = await api.archive.begin(item.id, item.name, item.pages.length);
+          if (uploaded.count > (uploaded.excludedCount ?? 0)) {
+            setWorking("Preparando PDF completo…");
+            await api.archive.export({ id: uploaded.id, revision: uploaded.revision }, "active");
+          }
           if (previous && owner) {
             const h = await api.archive.begin(item.id, item.name, item.pages.length);
             const ref = { id: h.id, revision: h.revision };
@@ -321,19 +328,47 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
       setMessage("Importação concluída. Todas as etiquetas deste PDF estão categorizadas.");
     });
   }
-  function showPages(numbers: number[], print = false) {
+  function showPages(numbers: number[], print = false, kind?: "active" | "excluded") {
     if (header) {
       setError("");
-      setViewer({ header, numbers, print });
+      setViewer({ header, numbers, print, kind });
     }
+  }
+  function download(kind: "active" | "excluded") {
+    if (!header) return;
+    void run("Preparando download…", async () => {
+      const blob = await labelPdfFile(
+        api.archive,
+        { id: header.id, revision: header.revision },
+        [],
+        new AbortController().signal,
+        kind,
+      );
+      downloadPersonalization(
+        blob,
+        header.name.replace(/\.pdf$/i, "") +
+          " - " +
+          (kind === "active" ? "completo" : "excluídos") +
+          ".pdf",
+      );
+    });
   }
   function remove() {
     if (!removal) return;
     void run("Excluindo…", async () => {
       if (removal.kind === "category") await api.remove(removal.category.id, removal.category.name);
-      else {
+      else if (removal.kind === "page") {
         const { id, revision } = removal.header;
-        await api.archive.remove({ id, revision }, removal.number);
+        const ref = { id, revision };
+        await api.archive.exclude(ref, removal.numbers);
+        setWorking("Atualizando PDFs completo e excluídos…");
+        const latest = (await api.archive.list()).find((h) => h.id === id);
+        if (latest && latest.count > (latest.excludedCount ?? 0))
+          await api.archive.export(ref, "active");
+        await api.archive.export(ref, "excluded");
+      } else {
+        const { id, revision } = removal.header;
+        await api.archive.remove({ id, revision });
       }
       setRemoval(undefined);
       await load(current?.id);
@@ -341,7 +376,7 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
         removal.kind === "category"
           ? "Categoria excluída. Produtos vinculados precisam de uma nova categoria."
           : removal.kind === "page"
-            ? "Etiqueta excluída."
+            ? "Etiquetas canceladas e reunidas no PDF de excluídos."
             : "Etiquetas do arquivo excluídas.",
       );
     });
@@ -550,19 +585,62 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
             </p>
           )}
           {header && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                className={button}
-                disabled={busy || header.state !== "ready"}
-                onClick={() =>
-                  showPages(
-                    current.pages.map((p) => p.number!),
-                    true,
-                  )
-                }
-              >
-                Imprimir etiquetas do arquivo
-              </button>
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                {(["active", "excluded"] as const).map((kind) => {
+                  const pages = kind === "active" ? activePages : excludedPages;
+                  const title =
+                    kind === "active" ? "PDF completo sem os excluídos" : "PDF de etiquetas excluídas";
+                  return (
+                    <section
+                      key={kind}
+                      aria-label={title}
+                      className="space-y-3 rounded-xl border border-gray-700 p-4"
+                    >
+                      <h5 className="font-semibold">{title}</h5>
+                      <p className="text-sm text-gray-400">{pages.length} etiqueta(s)</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className={button}
+                          disabled={busy || header.state !== "ready" || !pages.length}
+                          onClick={() =>
+                            showPages(
+                              pages.map((p) => p.number!),
+                              false,
+                              kind,
+                            )
+                          }
+                        >
+                          Visualizar
+                        </button>
+                        <button
+                          className={button}
+                          disabled={busy || header.state !== "ready" || !pages.length}
+                          onClick={() => download(kind)}
+                        >
+                          Baixar PDF
+                        </button>
+                        <button
+                          className={button}
+                          aria-label={
+                            kind === "active" ? "Imprimir PDF completo" : "Imprimir PDF de excluídos"
+                          }
+                          disabled={busy || header.state !== "ready" || !pages.length}
+                          onClick={() =>
+                            showPages(
+                              pages.map((p) => p.number!),
+                              true,
+                              kind,
+                            )
+                          }
+                        >
+                          Imprimir
+                        </button>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
               <button
                 className={button}
                 disabled={busy}
@@ -573,18 +651,27 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
               >
                 Excluir etiquetas do arquivo
               </button>
-            </div>
+            </>
           )}
-          {header?.state === "ready" && !completed && onlineReady && !missing && (
-            <p className="text-sm text-green-300">
-              Todas as etiquetas têm categoria. Você já pode concluir este PDF.
+          {header?.state === "ready" && !activePages.length && (
+            <p role="status" className="text-sm text-amber-200">
+              Todas as etiquetas deste arquivo estão no PDF de excluídos.
             </p>
           )}
+          {header?.state === "ready" &&
+            !completed &&
+            onlineReady &&
+            !missing &&
+            activePages.length > 0 && (
+              <p className="text-sm text-green-300">
+                Todas as etiquetas têm categoria. Você já pode concluir este PDF.
+              </p>
+            )}
           {header?.state === "ready" && !completed && onlineReady && missing > 0 && (
             <div className="space-y-2 rounded-lg border border-amber-800 p-3">
               <p className="text-sm text-amber-200">
-                Faltam categorias em {missing} de {current.pages.length} etiqueta(s). Resolva as
-                pendências para concluir este PDF.
+                Faltam categorias em {missing} de {activePages.length} etiqueta(s). Resolva as pendências
+                para concluir este PDF.
               </p>
               <button className={button} onClick={() => pendingBox.current?.focus()}>
                 Ver pendências
@@ -606,6 +693,17 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
                     <p className="text-xs text-gray-300">
                       Presente em {pages.length} etiqueta(s) deste PDF.
                     </p>
+                    <button
+                      type="button"
+                      className={button}
+                      disabled={busy}
+                      onClick={() => {
+                        setError("");
+                        setRemoval({ kind: "page", header: header!, numbers: pages });
+                      }}
+                    >
+                      Excluir
+                    </button>
                     {!!directory.categories.length && (
                       <>
                         <label className="grid w-fit max-w-full gap-1 text-sm">
@@ -651,7 +749,7 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
                   </article>
                 );
               })}
-              {current.pages.map(
+              {activePages.map(
                 (page, i) =>
                   page.issue && (
                     <div key={current.id + i}>
@@ -671,6 +769,17 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
                           })
                         }
                       />
+                      <button
+                        type="button"
+                        className={button}
+                        disabled={busy}
+                        onClick={() => {
+                          setError("");
+                          setRemoval({ kind: "page", header: header!, numbers: [page.number!] });
+                        }}
+                      >
+                        Excluir etiqueta
+                      </button>
                     </div>
                   ),
               )}
@@ -683,11 +792,11 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
               onToggle={(e) => setShowDetails(e.currentTarget.open)}
             >
               <summary className="cursor-pointer text-sm">
-                Conferir etiquetas ({current.pages.length})
+                Conferir etiquetas ({activePages.length})
               </summary>
               {showDetails && (
                 <ul className="mt-2 max-h-64 space-y-2 overflow-auto text-sm">
-                  {current.pages.map((p, i) => (
+                  {activePages.map((p, i) => (
                     <li key={p.number ?? i} className="border-b border-gray-800 pb-2">
                       <b>Página {p.number ?? i + 1}</b>
                       {header?.state === "ready" && (
@@ -711,7 +820,7 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
                             disabled={busy}
                             onClick={() => {
                               setError("");
-                              setRemoval({ kind: "page", header, number: p.number });
+                              setRemoval({ kind: "page", header, numbers: [p.number!] });
                             }}
                           >
                             Excluir etiqueta
@@ -736,12 +845,14 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
           )}
           {completed ? (
             <p className="text-sm text-green-300">
-              Importação concluída · {current.pages.length} etiqueta(s).
+              Importação concluída · {activePages.length} etiqueta(s).
             </p>
           ) : (
             <button
               className={button}
-              disabled={busy || header?.state !== "ready" || !onlineReady || missing > 0}
+              disabled={
+                busy || header?.state !== "ready" || !onlineReady || missing > 0 || !activePages.length
+              }
               onClick={() => void complete()}
             >
               Concluir importação
@@ -755,6 +866,7 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
           header={viewer.header}
           numbers={viewer.numbers}
           printOnOpen={viewer.print}
+          kind={viewer.kind}
           onClose={() => setViewer(undefined)}
         />
       )}
@@ -774,7 +886,8 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
             (removal.kind === "category"
               ? `Os produtos de “${removal.category.name}” precisarão de uma nova categoria. Os PDFs serão preservados.`
               : removal.kind === "page"
-                ? `A página ${removal.number} de “${removal.header.name}” será excluída para toda a equipe.`
+                ? removal.numbers.length +
+                  " etiqueta(s) inteira(s) serão canceladas, incluindo todos os produtos dessas etiquetas. Elas irão para o PDF de excluídos e sairão do PDF completo para toda a equipe."
                 : `Todas as etiquetas de “${removal.header.name}” serão excluídas para toda a equipe.`)
           }
           confirmLabel="Confirmar exclusão"

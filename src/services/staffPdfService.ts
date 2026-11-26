@@ -123,6 +123,18 @@ export function labelCategoryClient(
       identify: (ref, number, products) => call("identify", { ...ref, number, products }),
       confirm: (ref) => call("confirm", ref),
       links: (ref, numbers) => call("links", { ...ref, numbers }),
+      async exclude(ref, numbers) {
+        for (let start = 0; start < numbers.length; start += 200)
+          await call("exclude", { ...ref, numbers: numbers.slice(start, start + 200) });
+      },
+      async export(ref, kind) {
+        let version: number | undefined;
+        for (;;) {
+          const reply = await call("export", { ...ref, kind, version });
+          if (reply.url) return { url: reply.url, count: reply.count };
+          version = reply.version;
+        }
+      },
       async remove(ref, number) {
         while (!(await call("remove", { ...ref, number })).done) {
           /* next group of labels */

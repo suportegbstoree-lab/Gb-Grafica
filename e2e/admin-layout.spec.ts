@@ -23,7 +23,7 @@ test('menu organizado abre áreas antigas e volta ao clássico sem sair da tela'
   await page.getByRole('button', { name: 'Voltar ao menu clássico' }).click();
   await expect(page).toHaveURL(/\/admin\/config$/);
   await expect(nav.getByRole('button', { name: 'Configurações', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(nav.getByRole('button')).toHaveCount(15);
+  await expect(nav.getByRole('button')).toHaveCount(16);
   await expect(page.getByLabel('Razão social ou nome completo')).toHaveValue('Rascunho preservado');
   await page.getByRole('button', { name: 'Salvar Todas as Configurações' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Configurações salvas' })).toBeVisible();
@@ -94,8 +94,29 @@ test('vitrine móvel tem uma faixa curta e o link abre a lista completa', async 
   await expect(page).toHaveURL(/\/promocoes$/);
   await expect(offers).toHaveCount(0);
   await expect(page.locator('#produtos article')).toHaveCount(7);
-  await page.getByRole('navigation', { name: 'Seções da loja' }).getByRole('link', { name: 'Todos os produtos', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Seções da loja' }).getByRole('link', { name: 'Todos', exact: true }).click();
   await expect(offers).toBeVisible();
-  await page.getByRole('navigation', { name: 'Categorias de produtos' }).getByRole('button', { name: /Personalizados/ }).click();
+  await page.getByRole('button', { name: 'Filtros', exact: true }).click();
+  await page.getByLabel('Filtrar por categoria', { exact: true }).selectOption({ label: 'Personalizados' });
   await expect(offers).toHaveCount(0);
+});
+
+test("etiquetas têm página própria no grupo Gerar PDF e saem das abas da oficina", async ({ page }) => {
+  await page.goto("/admin/documents");
+  const nav = page.getByRole("navigation", { name: "Seções administrativas" });
+  await expect(
+    page
+      .getByRole("navigation", { name: "Ferramentas PDF da equipe" })
+      .getByRole("button", { name: "Importar etiquetas", exact: true }),
+  ).toHaveCount(0);
+  await nav.getByRole("button", { name: "Etiquetas importadas", exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/imported-labels$/);
+  await expect(page.getByRole("heading", { name: "Etiquetas importadas", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Importação de etiquetas" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Ferramentas PDF da equipe" })).toBeHidden();
+  await page.reload();
+  await expect(nav.getByRole("button", { name: "Etiquetas importadas", exact: true })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 });

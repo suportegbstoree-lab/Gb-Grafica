@@ -11,12 +11,14 @@ export default function StaffLabelViewer({
   header,
   numbers,
   printOnOpen,
+  kind,
   onClose,
 }: {
   api: LabelArchiveApi;
   header: LabelArchiveHeader;
   numbers: number[];
   printOnOpen: boolean;
+  kind?: "active" | "excluded";
   onClose: () => void;
 }) {
   const [url, setUrl] = React.useState("");
@@ -32,7 +34,13 @@ export default function StaffLabelViewer({
     setError("");
     setNotice("");
     printed.current = false;
-    void labelPdfFile(api, { id: header.id, revision: header.revision }, numbers, controller.signal)
+    void labelPdfFile(
+      api,
+      { id: header.id, revision: header.revision },
+      numbers,
+      controller.signal,
+      kind,
+    )
       .then((blob) => {
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
@@ -51,7 +59,7 @@ export default function StaffLabelViewer({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [api, header.id, header.revision, numbers, attempt]);
+  }, [api, header.id, header.revision, numbers, kind, attempt]);
 
   function print() {
     try {
@@ -64,9 +72,13 @@ export default function StaffLabelViewer({
     }
   }
   const title =
-    numbers.length === 1
-      ? "Visualizar etiqueta · Página " + numbers[0]
-      : "Visualizar etiquetas do arquivo";
+    kind === "excluded"
+      ? "PDF de etiquetas excluídas"
+      : kind === "active"
+        ? "PDF completo sem os excluídos"
+        : numbers.length === 1
+          ? "Visualizar etiqueta · Página " + numbers[0]
+          : "Visualizar etiquetas do arquivo";
   return (
     <EditorModal
       wide

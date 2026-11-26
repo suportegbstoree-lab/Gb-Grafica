@@ -31,9 +31,8 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
   browser,
 }) => {
   const store = randomUUID();
-  const url = "/__e2e/staff-pdf?resume&label-store=" + store;
+  const url = "/__e2e/imported-labels?resume&label-store=" + store;
   await page.goto(url);
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   const pane = page.getByRole("region", { name: "Importação de etiquetas" });
   const makeFile = (name: string, buffer: Buffer) => ({ name, mimeType: "application/pdf", buffer });
   const weekly = makeFile(
@@ -70,7 +69,6 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
   await finish.click();
   await expect(pane.getByText("Importação concluída · 1 etiqueta(s).", { exact: true })).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   await pane.getByLabel("PDF em revisão").selectOption({ label: "semana.pdf · 2 etiqueta(s)" });
   await expect(finish).toBeDisabled();
   await expect(pane.getByRole("article")).toHaveCount(1);
@@ -89,7 +87,6 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
   const other = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
   try {
     await other.goto(url + "&owner=outra-pessoa");
-    await other.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
     const next = other.getByRole("region", { name: "Importação de etiquetas" });
     await next
       .getByLabel("PDF em revisão")
@@ -108,8 +105,8 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
       );
     expect((await PDFDocument.load(new Uint8Array(pdfBytes))).getPageCount()).toBe(1);
     await preview.getByRole("button", { name: "Fechar visualização", exact: true }).click();
-    await next.getByRole("button", { name: "Imprimir etiquetas do arquivo" }).click();
-    const sheets = other.getByRole("dialog", { name: "Visualizar etiquetas do arquivo", exact: true });
+    await next.getByRole("button", { name: "Imprimir PDF completo" }).click();
+    const sheets = other.getByRole("dialog", { name: "PDF completo sem os excluídos", exact: true });
     const combined = await sheets
       .locator('iframe[title="PDF das etiquetas"]')
       .evaluate(async (element: HTMLIFrameElement) =>
@@ -143,8 +140,7 @@ test("categoriza o produto uma vez para toda a equipe e conclui cada PDF indepen
   }
 });
 test("uma página sem texto exige identificação e categoria antes de concluir", async ({ page }) => {
-  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
   await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await page
     .getByLabel("PDFs de etiquetas", { exact: true })
@@ -178,7 +174,7 @@ test("envia uma revisão antiga ao Firebase preservando a identificação manual
       },
     ],
   };
-  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
   await page.evaluate(async (record) => {
     await new Promise<void>((resolve, reject) => {
       const pending = indexedDB.open("gb-label-imports", 1);
@@ -196,13 +192,11 @@ test("envia uma revisão antiga ao Firebase preservando a identificação manual
       pending.onerror = () => reject(pending.error);
     });
   }, record);
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   await expect(page.getByText(/Esta revisão foi salva neste navegador/)).toBeVisible();
   await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await page.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(file);
   await expect(page.getByRole("article")).toContainText("Identificado pela equipe");
   await page.reload();
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   await expect(page.getByRole("article")).toContainText("SKU MANUAL");
   await expect(
     page.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }),
@@ -210,8 +204,7 @@ test("envia uma revisão antiga ao Firebase preservando a identificação manual
 });
 
 test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async ({ page }) => {
-  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
   const file = {
     name: "semana-interrompida.pdf",
     mimeType: "application/pdf",
@@ -238,7 +231,6 @@ test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async (
     return request.continue();
   });
   await page.reload();
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
   await expect(page.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await page.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles(file);
   await expect(page.getByText("Conferir etiquetas (21)")).toBeVisible();
@@ -251,8 +243,7 @@ test("retoma um arquivo interrompido sem duplicar as páginas gravadas", async (
 test("visualiza e imprime o PDF salvo dentro do painel com a política de segurança do site", async ({
   page,
 }) => {
-  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
   const pane = page.getByRole("region", { name: "Importação de etiquetas" });
   const file = pane.getByLabel("PDFs de etiquetas", { exact: true });
   await expect(file).toBeEnabled();
@@ -288,7 +279,7 @@ test("visualiza e imprime o PDF salvo dentro do painel com a política de segura
     };
   }, headers["content-security-policy"]);
   const originalUrl = page.url();
-  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
+  await pane.getByRole("listitem").getByRole("button", { name: "Visualizar", exact: true }).click();
   const modal = page.getByRole("dialog", { name: "Visualizar etiqueta · Página 1", exact: true });
   const frame = modal.locator('iframe[title="PDF das etiquetas"]');
   await expect(frame).toHaveAttribute("src", /^blob:/);
@@ -318,8 +309,7 @@ test("visualiza e imprime o PDF salvo dentro do painel com a política de segura
 test("o viewer informa a falha de download e permite tentar novamente no próprio painel", async ({
   page,
 }) => {
-  await page.goto("/__e2e/staff-pdf?resume&label-store=" + randomUUID());
-  await page.getByRole("button", { name: "Importar etiquetas", exact: true }).click();
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
   const pane = page.getByRole("region", { name: "Importação de etiquetas" });
   await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
   await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
@@ -330,7 +320,7 @@ test("o viewer informa a falha de download e permite tentar novamente no própri
   await pane.getByText("Conferir etiquetas (1)").click();
   const download = "**/__e2e/uploads/**";
   await page.route(download, (route) => route.fulfill({ status: 503, body: "Indisponível" }));
-  await pane.getByRole("button", { name: "Visualizar", exact: true }).click();
+  await pane.getByRole("listitem").getByRole("button", { name: "Visualizar", exact: true }).click();
   const modal = page.getByRole("dialog", { name: "Visualizar etiqueta · Página 1", exact: true });
   await expect(modal.getByRole("alert")).toHaveText(
     "Não foi possível baixar a etiqueta salva. Tente novamente.",
@@ -343,4 +333,63 @@ test("o viewer informa a falha de download e permite tentar novamente no própri
   await expect(
     pane.getByRole("button", { name: "Excluir etiquetas do arquivo", exact: true }),
   ).toBeEnabled();
+});
+
+test("exclui um produto pendente, separa os PDFs e permite concluir só as etiquetas ativas", async ({
+  page,
+}) => {
+  await page.goto("/__e2e/imported-labels?resume&label-store=" + randomUUID());
+  const pane = page.getByRole("region", { name: "Importação de etiquetas" });
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
+    name: "revisao.pdf",
+    mimeType: "application/pdf",
+    buffer: await makeLabels([
+      { tracking: "BR123456789012A", rows: [["CANCELAR", "Pedido cancelado", 1]] },
+      { tracking: "BR123456789012B", rows: [["ATIVO", "Agenda", 1]] },
+      { tracking: "BR123456789012C", rows: [["CANCELAR", "Pedido cancelado", 1]] },
+      { tracking: "BR123456789012D", rows: [["ATIVO", "Agenda", 1]] },
+    ]),
+  });
+  await pane
+    .getByRole("article")
+    .filter({ hasText: "SKU CANCELAR" })
+    .getByRole("button", { name: "Excluir", exact: true })
+    .click();
+  const confirmation = page.getByRole("alertdialog");
+  await expect(confirmation).toContainText("2 etiqueta(s) inteira(s)");
+  await confirmation.getByRole("button", { name: "Confirmar exclusão" }).click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(pane.getByRole("article")).toHaveCount(1);
+  const active = pane.getByRole("region", { name: "PDF completo sem os excluídos", exact: true });
+  const cancelled = pane.getByRole("region", { name: "PDF de etiquetas excluídas", exact: true });
+  await expect(active).toContainText("2 etiqueta(s)");
+  await expect(cancelled).toContainText("2 etiqueta(s)");
+  await pane.getByLabel("Nome da categoria").fill("Agendas");
+  await pane.getByRole("button", { name: "Criar categoria", exact: true }).click();
+  await pane.getByLabel("Categoria do produto").selectOption({ label: "Agendas" });
+  await pane.getByRole("button", { name: "Confirmar categoria", exact: true }).click();
+  await pane.getByRole("button", { name: "Concluir importação", exact: true }).click();
+  await expect(pane.getByText("Importação concluída · 2 etiqueta(s).", { exact: true })).toBeVisible();
+  for (const field of [active, cancelled]) {
+    const transfer = page.waitForEvent("download");
+    await field.getByRole("button", { name: "Baixar PDF", exact: true }).click();
+    const download = await transfer;
+    const { readFile } = await import("node:fs/promises");
+    const result = await PDFDocument.load(await readFile((await download.path())!));
+    expect(result.getPageCount()).toBe(2);
+  }
+  await page.reload();
+  await expect(cancelled).toContainText("2 etiqueta(s)");
+  await pane.getByText("Conferir etiquetas (2)").click();
+  await expect(pane.getByRole("listitem").filter({ hasText: "Página 1" })).toHaveCount(0);
+  await expect(pane.getByRole("listitem").filter({ hasText: "Página 3" })).toHaveCount(0);
+  for (const n of [2, 4]) {
+    const row = pane.getByRole("listitem").filter({ hasText: "Página " + n });
+    await row.getByRole("button", { name: "Excluir etiqueta", exact: true }).click();
+    await page.getByRole("button", { name: "Confirmar exclusão", exact: true }).click();
+    await expect(row).toHaveCount(0);
+  }
+  await expect(active.getByRole("button", { name: "Visualizar", exact: true })).toBeDisabled();
+  await expect(cancelled).toContainText("4 etiqueta(s)");
 });
