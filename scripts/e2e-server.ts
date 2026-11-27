@@ -30,7 +30,10 @@ async function startE2EServer() {
   app.use('/__e2e/label-api/:store', (req, res, next) => {
     const store = req.params.store;
     if (!labelFixtures.has(store)) {
-      const { db } = memoryFirestore();
+      const { db } = memoryFirestore([
+        ["_staffPdfBases/"+"a".repeat(32),{status:"ready",name:"Kit de teste.pdf"}],
+        ["_staffPdfBases/"+"c".repeat(32),{status:"ready",name:"Base alternativa.pdf"}],
+      ]);
       const bucket = {
         file: (path: string) => {
           const id = store + "-" + path.replaceAll("/", "-");
@@ -49,7 +52,11 @@ async function startE2EServer() {
           };
         },
       };
-      labelFixtures.set(store, staffLabelCategoryRouter(() => db, () => bucket as any));
+      labelFixtures.set(store, staffLabelCategoryRouter(() => db, () => bucket as any, async id=>{
+        const base=(await db.collection("_staffPdfBases").doc(id).get()).data();
+        if(base?.status!=="ready") throw Object.assign(new Error("Base não encontrada."),{status:404});
+        return {id,...base} as any;
+      }));
     }
     res.locals.user = { permissions: ['documents.generate'] };
     labelFixtures.get(store)!(req, res, next);

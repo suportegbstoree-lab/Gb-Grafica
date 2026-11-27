@@ -1394,7 +1394,7 @@ export default function Admin({ salesApi = salesAdminApi, emailApi, activityApi 
         {activeTab === 'imported-labels' && tabAllowed('imported-labels') && (
           <section key={pdfStorageOwner} className="space-y-5">
             <h2 className="text-2xl font-bold">Etiquetas importadas</h2>
-            <StaffLabelCategories owner={pdfStorageOwner} api={(pdfLibraryApi ?? staffPdfApi).labelCategories!} />
+            <StaffLabelCategories owner={pdfStorageOwner} api={(pdfLibraryApi ?? staffPdfApi).labelCategories!} library={pdfLibraryApi ?? staffPdfApi} />
           </section>
         )}
         {activeTab === 'bundles' && tabAllowed('bundles') && <BundleManagement products={products} categories={categories} persistence={persistence} />}

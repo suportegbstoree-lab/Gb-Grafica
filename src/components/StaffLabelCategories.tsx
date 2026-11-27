@@ -1,3 +1,5 @@
+import StaffLabelBaseLinks from "./StaffLabelBaseLinks";
+import { staffPdfApi, type StaffPdfApi } from "../services/staffPdfService";
 import React from "react";
 import { Upload } from "lucide-react";
 import {
@@ -132,7 +134,11 @@ function IdentifyLabel({
   );
 }
 
-export default function StaffLabelCategories({ api, owner }: { api: LabelCategoryApi; owner?: string }) {
+export default function StaffLabelCategories({ api, owner, library=staffPdfApi }: {
+  api: LabelCategoryApi;
+  owner?: string;
+  library?: Pick<StaffPdfApi,"list">;
+}) {
   const [headers, setHeaders] = React.useState<LabelArchiveHeader[]>([]);
   const [legacy, setLegacy] = React.useState<LabelImport[]>([]);
   const [current, setCurrent] = React.useState<LabelImport>();
@@ -784,6 +790,9 @@ export default function StaffLabelCategories({ api, owner }: { api: LabelCategor
                   ),
               )}
             </section>
+          )}
+          {header?.state==="ready" && onlineReady && (
+            <StaffLabelBaseLinks pages={current.pages} api={api.baseBindings} library={library}/>
           )}
           {onlineReady && (
             <details

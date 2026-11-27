@@ -4,13 +4,14 @@ import { OperationsError } from "../lib/operations.js";
 import { normalizePdfCategory } from "../lib/staffPdfCategory.js";
 import type { Firestore } from "firebase-admin/firestore";
 import { staffLabelArchiveRouter, type LabelBucket } from "./staffLabelArchive.js";
+import { staffLabelBaseBindingsRouter, type LabelBaseResolver } from "./staffLabelBaseBindings.js";
 import type { WorkActor } from "./workRouter.js";
 
 const keyPattern = /^[a-f0-9]{64}$/;
 function isKey(key: unknown): key is string {
   return typeof key === "string" && keyPattern.test(key);
 }
-export function staffLabelCategoryRouter(database: () => Firestore, bucket: () => LabelBucket) {
+export function staffLabelCategoryRouter(database: () => Firestore, bucket: () => LabelBucket, resolveBase: LabelBaseResolver) {
   const router = express.Router();
   router.use((_req, res, next) => {
     const actor: WorkActor = res.locals.user;
@@ -18,6 +19,7 @@ export function staffLabelCategoryRouter(database: () => Firestore, bucket: () =
     next(new OperationsError("Sua função não permite categorizar etiquetas.", 403));
   });
   const categories = () => database().collection("_staffLabelCategories");
+  router.use("/base-bindings", staffLabelBaseBindingsRouter(database, resolveBase));
   router.use("/archive", staffLabelArchiveRouter(database, bucket));
   const assignments = () => database().collection("_staffLabelProductCategories");
   function post(path: string, handle: (req: express.Request, res: express.Response) => Promise<void>) {

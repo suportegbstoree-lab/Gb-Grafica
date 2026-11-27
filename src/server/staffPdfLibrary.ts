@@ -190,7 +190,7 @@ export function createStaffPdfLibraryRouter(deps: StaffDocumentDeps) {
       );
     return actor;
   };
-  router.use("/label-categories", staffLabelCategoryRouter(() => services().db, () => services().bucket));
+  router.use("/label-categories", staffLabelCategoryRouter(() => services().db, () => services().bucket, id => resolveStaffPdfBase(services(), id)));
   router.use("/batches", createStaffPdfBatchRouter(deps));
   const markerSettings = () => services().db.collection("_staffPdfSettings").doc("compound-marker");
   router.post("/compound-marker", action(async (req, res) => {

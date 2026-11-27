@@ -1674,3 +1674,53 @@ test("remover o último PDF pelo fluxo anterior também limpa as exportações d
     assert.equal(objects.size, 0);
     assert.deepEqual(await (await call("list", {})).json(), []);
   }));
+
+test("vínculos de etiquetas guardam apenas o ID da base, são compartilhados e protegem alterações concorrentes",async()=>scenario(async({request,docs,objects,downloads})=>{
+  const route="/library/label-categories/base-bindings/";
+  const a="1".repeat(32), b="2".repeat(32);
+  for(const [id,name] of [[a,"Base A.pdf"],[b,"Base B.pdf"]]) docs.set("_staffPdfBases/"+id,{
+    name,status:"ready",path:staffPdfStoragePath(id),revision:"a".repeat(32),pageCount:2,pages:[],
+  });
+  const product={sku:"001A",description:"Caderneta",variation:"Rosa"};
+  const identity=JSON.stringify([JSON.stringify(["sku","001A"]),"rosa"]);
+  const save=(baseId:string|null,expectedVersion:number,role="generator",p=product)=>
+    request(route+"save",role,{product:p,baseId,expectedVersion});
+  const lookup=(products=[product])=>request(route+"lookup","another-generator",{products});
+  assert.equal((await request(route+"lookup","manager",{products:[product]})).status,403);
+  assert.equal((await save(a,0,"manager")).status,403);
+  assert.equal((await save("3".repeat(32),0)).status,404);
+  assert.equal((await save("../../invalid",0)).status,422);
+  assert.equal((await save(a,-1)).status,422);
+  assert.deepEqual(await(await lookup()).json(),{});
+  const first=await(await save(a,0)).json();
+  assert.equal(first.baseId,a);
+  assert.equal(first.version,1);
+  assert.equal(first.available,true);
+  assert.equal((await(await save(a,0)).json()).version,1);
+  assert.equal((await(await lookup()).json())[identity].baseId,a);
+  const blue={...product,variation:"Azul"};
+  assert.equal((await save(b,0,"another-generator",blue)).status,200);
+  const separate=await(await lookup([product,blue])).json();
+  assert.equal(Object.keys(separate).length,2);
+  const rename=await request("/library/bases/"+a+"/rename","manager",{
+    name:"Base Renomeada.pdf",expectedName:"Base A.pdf",baseRevision:"a".repeat(32),
+  });
+  assert.equal(rename.status,200);
+  assert.equal((await(await lookup()).json())[identity].name,"Base Renomeada.pdf");
+  const both=await Promise.all([save(b,1),save(null,1,"another-generator")]);
+  assert.deepEqual(both.map(response=>response.status).sort(),[200,409]);
+  const current=(await(await lookup()).json())[identity];
+  await save(null,current.version);
+  assert.equal((await save(b,1)).status,409);
+  const cleared=(await(await lookup()).json())[identity];
+  assert.equal(cleared.baseId,null);
+  assert.equal((await save(a,cleared.version)).status,200);
+  docs.delete("_staffPdfBases/"+a);
+  const missing=(await(await lookup()).json())[identity];
+  assert.equal(missing.baseId,a);
+  assert.equal(missing.available,false);
+  assert.equal((await save(b,missing.version)).status,200);
+  assert.equal(objects.size,0,"o vínculo não produz arquivos PDF");
+  assert.equal(downloads.length,0,"o vínculo consulta somente os metadados das bases");
+  for(const path of docs.keys()) assert.ok(!/^_staff(Documents|PdfBatches)\//.test(path));
+}));

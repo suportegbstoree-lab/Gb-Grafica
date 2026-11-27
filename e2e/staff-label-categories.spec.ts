@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { createHash, randomUUID } from "node:crypto";
 
 async function makeLabels(
-  pages: Array<{ tracking: string; rows: Array<[string, string, number]> } | null>,
+  pages: Array<{ tracking: string; rows: Array<[string, string, number, string?]> } | null>,
 ) {
   const pdf = await PDFDocument.create();
   for (const label of pages) {
@@ -14,8 +14,8 @@ async function makeLabels(
     const columns = [15, 40, 120, 300, 400];
     ["Nº", "SKU", "DESCRIÇÃO", "VARIAÇÃO", "QTD"].forEach((s, i) => write(s, columns[i], 300));
     let y = 286;
-    for (const [i, [sku, description, qty]] of label.rows.entries()) {
-      [String(i + 1), sku, description, "", String(qty)].forEach((s, j) => {
+    for (const [i, [sku, description, qty, variation = ""]] of label.rows.entries()) {
+      [String(i + 1), sku, description, variation, String(qty)].forEach((s, j) => {
         if (s) write(s, columns[j], y);
       });
       y -= 16;
@@ -392,4 +392,81 @@ test("exclui um produto pendente, separa os PDFs e permite concluir só as etiqu
   }
   await expect(active.getByRole("button", { name: "Visualizar", exact: true })).toBeDisabled();
   await expect(cancelled).toContainText("4 etiqueta(s)");
+});
+
+test("vincula IDs por produto e variação, compartilha e permite alterar e remover depois de recarregar", async ({
+  page,
+  browser,
+}) => {
+  const url = "/__e2e/imported-labels?resume&label-store=" + randomUUID();
+  await page.goto(url);
+  const pane = page.getByRole("region", { name: "Importação de etiquetas" });
+  await expect(pane.getByLabel("PDFs de etiquetas", { exact: true })).toBeEnabled();
+  await pane.getByLabel("PDFs de etiquetas", { exact: true }).setInputFiles({
+    name: "vinculos.pdf",
+    mimeType: "application/pdf",
+    buffer: await makeLabels([
+      { tracking: "BR123456789012A", rows: [["001A", "Caderneta", 1, "Rosa"]] },
+      { tracking: "BR123456789012B", rows: [["001A", "Caderneta", 1, "Azul"]] },
+    ]),
+  });
+  const details = pane
+    .locator("details")
+    .filter({ has: page.locator("summary").filter({ hasText: "Vínculos com bases" }) });
+  await details.locator("summary").click();
+  const rose = details.getByRole("listitem").filter({ hasText: "Rosa" });
+  const blue = details.getByRole("listitem").filter({ hasText: "Azul" });
+  await rose.getByRole("button", { name: "Selecionar base", exact: true }).click();
+  let picker = page.getByRole("dialog", { name: "Vincular base ao produto da etiqueta", exact: true });
+  await picker.getByLabel("Filtrar por nome").fill("Kit de teste");
+  await picker.getByRole("button", { name: "Kit de teste.pdf", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Salvar vínculo", exact: true })
+    .click();
+  await expect(rose.locator("code")).toHaveText("a".repeat(32));
+  await expect(blue.getByText("Base pendente", { exact: true })).toBeVisible();
+  await blue.getByRole("button", { name: "Selecionar base", exact: true }).click();
+  picker = page.getByRole("dialog", { name: "Vincular base ao produto da etiqueta", exact: true });
+  await picker.getByRole("button", { name: "Base alternativa.pdf", exact: true }).click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Salvar vínculo", exact: true })
+    .click();
+  await expect(blue.locator("code")).toHaveText("c".repeat(32));
+  await page.reload();
+  await details.locator("summary").click();
+  await expect(rose.locator("code")).toHaveText("a".repeat(32));
+  await expect(blue.locator("code")).toHaveText("c".repeat(32));
+  const other = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
+  try {
+    await other.goto(url + "&owner=outra-pessoa");
+    const shared = other
+      .locator("details")
+      .filter({ has: other.locator("summary").filter({ hasText: "Vínculos com bases" }) });
+    await shared.locator("summary").click();
+    const row = shared.getByRole("listitem").filter({ hasText: "Rosa" });
+    await expect(row.locator("code")).toHaveText("a".repeat(32));
+    await row.getByRole("button", { name: "Alterar base", exact: true }).click();
+    await other
+      .getByRole("dialog", { name: "Vincular base ao produto da etiqueta", exact: true })
+      .getByRole("button", { name: "Base alternativa.pdf", exact: true })
+      .click();
+    await other
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Salvar vínculo", exact: true })
+      .click();
+    await expect(row.locator("code")).toHaveText("c".repeat(32));
+    await row.getByRole("button", { name: "Remover vínculo", exact: true }).click();
+    await other
+      .getByRole("alertdialog")
+      .getByRole("button", { name: "Remover vínculo", exact: true })
+      .click();
+    await expect(row.getByText("Base pendente", { exact: true })).toBeVisible();
+    await details.getByRole("button", { name: "Atualizar bases e vínculos", exact: true }).click();
+    await expect(rose.getByText("Base pendente", { exact: true })).toBeVisible();
+    await expect(blue.locator("code")).toHaveText("c".repeat(32));
+  } finally {
+    await other.close();
+  }
 });

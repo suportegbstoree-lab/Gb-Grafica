@@ -109,7 +109,31 @@ export interface LabelCategoryDirectory {
   categories: LabelCategory[];
   assignments: Record<string, string>;
 }
+export interface LabelBaseBinding {
+  baseId: string | null;
+  version: number;
+  available: boolean;
+  name?: string;
+}
+export interface LabelBaseBindingsApi {
+  lookup(products: ImportedProduct[]): Promise<Record<string, LabelBaseBinding>>;
+  save(
+    product: ImportedProduct,
+    baseId: string | null,
+    expectedVersion: number,
+  ): Promise<LabelBaseBinding>;
+}
+/** Categories use the SKU. A PDF base can differ between variations of that SKU. */
+export function labelBaseIdentity(product: Pick<LabelProduct, "sku" | "description" | "variation">) {
+  const variation = product.variation
+    .normalize("NFC")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .toLocaleLowerCase("pt-BR");
+  return JSON.stringify([labelProductIdentity(product), variation]);
+}
 export interface LabelCategoryApi {
+  baseBindings: LabelBaseBindingsApi;
   archive: LabelArchiveApi;
   rename(id: string, expectedName: string, name: string): Promise<void>;
   remove(id: string, expectedName: string): Promise<void>;

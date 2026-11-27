@@ -487,10 +487,18 @@ export default function StaffPdfFixture() {
 export function StaffLabelFixture() {
   const params = new URLSearchParams(location.search);
   const { api } = useStaffPdfFixture(false, false, true);
+  const library=React.useMemo(()=>({
+    async list() {
+      const data=await api.list();
+      return {...data,bases:[...data.bases,{
+        ...data.bases[0],id:"c".repeat(32),name:"Base alternativa.pdf",
+      }]};
+    },
+  }),[api]);
   return (
     <main className="admin-controls min-h-screen bg-[#111] p-5 text-white">
       <h2 className="mb-5 text-2xl font-bold">Etiquetas importadas</h2>
-      <StaffLabelCategories api={api.labelCategories!} owner={params.get("owner") || "fixture-owner"} />
+      <StaffLabelCategories api={api.labelCategories!} library={library} owner={params.get("owner") || "fixture-owner"} />
     </main>
   );
 }

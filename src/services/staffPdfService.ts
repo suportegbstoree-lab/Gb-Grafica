@@ -1,3 +1,4 @@
+import { labelBaseBindingsClient } from "./staffLabelBaseBindings";
 import type { LabelCategoryApi, LabelCategoryDirectory, LabelArchiveHeader, ImportedLabel } from "../lib/staffLabelImport";
 import type { StaffPdfCompoundMarker } from "../lib/staffPdfCompound";
 import type { ProductPdfTemplate } from "../lib/pdfTemplate";
@@ -98,6 +99,7 @@ export function labelCategoryClient(
     }
   }
   return {
+    baseBindings: labelBaseBindingsClient(request),
     archive: {
       async list() {
         const headers: LabelArchiveHeader[] = [];
