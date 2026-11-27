@@ -8,6 +8,7 @@ import {
 } from "../lib/staffLabelImport";
 import type { StaffPdfApi } from "../services/staffPdfService";
 import type { StaffPdfBase } from "../lib/staffPdf";
+import { suggestLabelBases } from "../lib/staffLabelBaseSuggestions";
 import StaffPdfPicker from "./StaffPdfPicker";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -49,6 +50,9 @@ export default function StaffLabelBaseLinks({
   }>();
   const request = React.useRef(0),
     mounted = React.useRef(false);
+  const suggestions = React.useMemo(
+    () => picker ? suggestLabelBases(picker.product, bases) : [], [picker, bases],
+  );
   async function load() {
     const version = ++request.current;
     setLoading(true);
@@ -230,6 +234,12 @@ export default function StaffLabelBaseLinks({
         <StaffPdfPicker
           title="Vincular base ao produto da etiqueta"
           options={options}
+          suggestions={suggestions}
+          context={[
+            picker.product.description,
+            picker.product.variation,
+            picker.product.sku && "SKU " + picker.product.sku,
+          ].filter(Boolean).join(" · ")}
           selected={links[picker.identity]?.baseId ?? ""}
           onChoose={(baseId) =>
             setAction({ group: picker, baseId, expectedVersion: links[picker.identity]?.version ?? 0 })

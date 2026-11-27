@@ -3,7 +3,47 @@ import type {
   LabelArchiveRef,
   LabelImport,
   LabelTransferPage,
+  ImportedLabel,
 } from "../lib/staffLabelImport";
+import { readSavedLabelPage } from "./staffLabelImport";
+import { readStaffPdf } from "./staffPdfRequest";
+
+/** Repair metadata from the already persisted individual PDFs; keep the PDFs untouched. */
+export async function reprocessLabelPages(
+  api: LabelArchiveApi,
+  ref: LabelArchiveRef,
+  pages: ImportedLabel[],
+  signal: AbortSignal,
+  progress: (done: number, total: number) => void,
+) {
+  const failed: number[] = [];
+  let done = 0;
+  for (let start = 0; start < pages.length; start += 12) {
+    signal.throwIfAborted();
+    const selection = pages.slice(start, start + 12);
+    const urls = await api.links(ref, selection.map(page => page.number!));
+    signal.throwIfAborted();
+    if (urls.length !== selection.length || urls.some(url => !url?.trim()))
+      throw new Error("Não foi possível localizar as etiquetas salvas. Atualize a importação.");
+    const updates: Parameters<LabelArchiveApi["reparse"]>[1] = [];
+    for (const [i, old] of selection.entries()) {
+      try {
+        const blob = await readStaffPdf(urls[i], signal);
+        signal.throwIfAborted();
+        const label = await readSavedLabelPage(blob);
+        signal.throwIfAborted();
+        updates.push({ number: old.number!, expectedVersion: old.parserVersion ?? 0, label });
+      } catch {
+        signal.throwIfAborted();
+        failed.push(old.number!);
+      }
+      progress(++done, pages.length);
+    }
+    signal.throwIfAborted();
+    if (updates.length) await api.reparse(ref, updates);
+  }
+  return failed;
+}
 
 async function dataUrl(blob: Blob) {
   const reader = new FileReader();

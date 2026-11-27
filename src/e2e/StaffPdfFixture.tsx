@@ -486,15 +486,19 @@ export default function StaffPdfFixture() {
 
 export function StaffLabelFixture() {
   const params = new URLSearchParams(location.search);
+  const suggestions = params.has("label-suggestions");
   const { api } = useStaffPdfFixture(false, false, true);
   const library=React.useMemo(()=>({
     async list() {
       const data=await api.list();
       return {...data,bases:[...data.bases,{
         ...data.bases[0],id:"c".repeat(32),name:"Base alternativa.pdf",
-      }]};
+      }, ...(suggestions ? [
+        {...data.bases[0],id:"d".repeat(32),name:"Gatinha Branca.pdf",category:"Caderneta de saúde"},
+        {...data.bases[0],id:"e".repeat(32),name:"Gatinha Rosa.pdf",category:"Caderneta de saúde"},
+      ] : [])]};
     },
-  }),[api]);
+  }),[api,suggestions]);
   return (
     <main className="admin-controls min-h-screen bg-[#111] p-5 text-white">
       <h2 className="mb-5 text-2xl font-bold">Etiquetas importadas</h2>

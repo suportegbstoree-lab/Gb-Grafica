@@ -7,6 +7,8 @@ import { prepareLabelExport } from "./staffLabelExport.js";
 import { OperationsError } from "../lib/operations.js";
 import {
   labelProductIdentity,
+  LABEL_PARSER_VERSION,
+  incompleteLabelReading,
   type ImportedLabel,
   type LabelArchiveHeader,
 } from "../lib/staffLabelImport.js";
@@ -53,7 +55,11 @@ function pageLabel(input: any): ImportedLabel {
     };
   });
   if (!products.length && !(typeof input.issue === "string" && input.issue.trim())) throw invalid();
-  return input.issue ? { products, issue: String(input.issue).slice(0, 500) } : { products };
+  const result: ImportedLabel = { products };
+  if (input.issue) result.issue = String(input.issue).slice(0, 500);
+  if (typeof input.warning === "string" && input.warning.trim()) result.warning = input.warning.slice(0, 500);
+  if (input.parserVersion === LABEL_PARSER_VERSION) result.parserVersion = LABEL_PARSER_VERSION;
+  return result;
 }
 
 export function staffLabelArchiveRouter(database: () => Firestore, bucket: () => LabelBucket) {
@@ -237,7 +243,7 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
   post("/identify", async (body) => {
     const a = archive(body);
     if (!validNumber(body.number, 100000)) throw invalid();
-    const label = pageLabel({ products: body.products });
+    const label = pageLabel({ products: body.products, parserVersion: LABEL_PARSER_VERSION });
     const page = a.pages.doc(String(body.number));
     await database().runTransaction(async (tx) => {
       const header = a.check((await tx.get(a.ref)).data());
@@ -246,10 +252,44 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
         header.state !== "ready" ||
         old.get("state") !== "ready" ||
         old.get("excluded") ||
-        !old.get("label")?.issue
+        !old.get("label") ||
+        !incompleteLabelReading(old.get("label"))
       )
         throw conflict();
       tx.update(page, { label });
+      tx.update(a.ref, { confirmed: false });
+    });
+  });
+  post("/reparse", async body => {
+    const a = archive(body);
+    if (!Array.isArray(body.pages) || !body.pages.length || body.pages.length > 12) throw invalid();
+    const updates = body.pages.map((page: any) => {
+      if (
+        !page || !validNumber(page.number, 100000) ||
+        !Number.isSafeInteger(page.expectedVersion) || page.expectedVersion < 0
+      ) throw invalid();
+      return {
+        number: page.number,
+        expectedVersion: page.expectedVersion,
+        label: pageLabel({ ...page.label, parserVersion: LABEL_PARSER_VERSION }),
+      };
+    });
+    await database().runTransaction(async tx => {
+      const header = a.check((await tx.get(a.ref)).data());
+      if (header.state !== "ready") throw conflict();
+      const documents = await Promise.all(updates.map(update => tx.get(a.pages.doc(String(update.number)))));
+      let changed = false;
+      documents.forEach((doc, i) => {
+        const current = doc.get("label") as ImportedLabel | undefined, update = updates[i];
+        // A concurrent manual correction or cancellation wins over this background repair.
+        if (
+          doc.get("state") !== "ready" || doc.get("excluded") || !current ||
+          !incompleteLabelReading(current) || (current.parserVersion ?? 0) !== update.expectedVersion
+        ) return;
+        tx.update(a.pages.doc(String(update.number)), { label: update.label });
+        changed = true;
+      });
+      if (changed) tx.update(a.ref, { confirmed: false });
     });
   });
   post("/confirm", async (body) => {
@@ -266,8 +306,11 @@ export function staffLabelArchiveRouter(database: () => Firestore, bucket: () =>
       for (const doc of pages.docs) {
         if (doc.get("excluded")) continue;
         const label = doc.get("label") as ImportedLabel;
-        if (doc.get("state") !== "ready" || !label || label.issue || !label.products.length)
-          throw conflict();
+        if (doc.get("state") !== "ready" || !label) throw conflict();
+        if (incompleteLabelReading(label))
+          throw new OperationsError(
+            "Há etiquetas com leitura incompleta. Reprocesse a leitura ou confirme os produtos dessas páginas.", 409,
+          );
         label.products.forEach((p) => keys.add(p.key));
       }
       const products = [...keys];

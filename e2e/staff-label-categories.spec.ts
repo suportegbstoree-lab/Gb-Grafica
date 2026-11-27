@@ -3,7 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { createHash, randomUUID } from "node:crypto";
 
 async function makeLabels(
-  pages: Array<{ tracking: string; rows: Array<[string, string, number, string?]> } | null>,
+  pages: Array<{ tracking: string; rows: Array<[string, string, number | string, string?]> } | null>,
 ) {
   const pdf = await PDFDocument.create();
   for (const label of pages) {
@@ -21,7 +21,7 @@ async function makeLabels(
       y -= 16;
     }
     write("Total", 306, y);
-    write(String(label.rows.reduce((sum, row) => sum + row[2], 0)), columns[4], y);
+    write(String(label.rows.reduce((sum, row) => sum + (Number(row[2]) || 0), 0)), columns[4], y);
   }
   return Buffer.from(await pdf.save());
 }
@@ -146,12 +146,109 @@ test("uma página sem texto exige identificação e categoria antes de concluir"
     .getByLabel("PDFs de etiquetas", { exact: true })
     .setInputFiles({ name: "scan.pdf", mimeType: "application/pdf", buffer: await makeLabels([null]) });
   await expect(page.getByRole("button", { name: "Concluir importação" })).toBeDisabled();
+  await expect(page.getByText("Leitura incompleta em 1 de 1 etiqueta(s)",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Faltam categorias/)).toHaveCount(0);
   await page.getByText("Identificar produtos manualmente", { exact: false }).click();
   await page.getByLabel("SKU", { exact: true }).fill("00012");
   await page.getByLabel("Descrição", { exact: true }).fill("Caderno da foto");
   await page.getByRole("button", { name: "Confirmar produtos da etiqueta" }).click();
   await expect(page.getByRole("article")).toContainText("SKU 00012");
   await expect(page.getByRole("button", { name: "Concluir importação" })).toBeDisabled();
+});
+
+test("quantidade ilegível preserva os produtos, reutiliza a categoria e permite concluir o PDF", async ({page}) => {
+  await page.goto("/__e2e/imported-labels?resume&label-store="+randomUUID());
+  await expect(page.getByLabel("PDFs de etiquetas",{exact:true})).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas",{exact:true}).setInputFiles({
+    name:"quantidades.pdf",mimeType:"application/pdf",buffer:await makeLabels([
+      {tracking:"BR100A",rows:[["010","Planner","?"]]},
+      {tracking:"BR100B",rows:[["010","Planner",""]]},
+      {tracking:"BR100C",rows:[["010","Planner","1.0"]]},
+    ]),
+  });
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(page.getByText("Conferir quantidades (2 etiqueta(s))",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Leitura incompleta em/)).toHaveCount(0);
+  await expect(page.getByText(/Faltam categorias em 3 de 3/)).toBeVisible();
+  await page.getByLabel("Nome da categoria").fill("Planners");
+  await page.getByRole("button",{name:"Criar categoria",exact:true}).click();
+  const product=page.getByRole("article");
+  await product.getByLabel("Categoria do produto").selectOption({label:"Planners"});
+  await product.getByRole("button",{name:"Confirmar categoria"}).click();
+  await expect(page.getByText(/Faltam categorias/)).toHaveCount(0);
+  await page.getByRole("button",{name:"Concluir importação"}).click();
+  await expect(page.getByText("Importação concluída · 3 etiqueta(s).",{exact:true})).toBeVisible();
+});
+
+test("mantém os produtos já reconhecidos ao completar uma leitura parcial manualmente", async ({page}) => {
+  await page.goto("/__e2e/imported-labels?resume&label-store="+randomUUID());
+  await expect(page.getByLabel("PDFs de etiquetas",{exact:true})).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas",{exact:true}).setInputFiles({
+    name:"parcial.pdf",mimeType:"application/pdf",buffer:await makeLabels([
+      {tracking:"BR100A",rows:[["010","Planner","?"],["","",1]]},
+    ]),
+  });
+  await expect(page.getByText("Leitura incompleta em 1 de 1 etiqueta(s)",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Conferir quantidades/)).toHaveCount(0);
+  await expect(page.getByRole("article")).toContainText("SKU 010");
+  await page.getByText("Identificar produtos manualmente",{exact:false}).click();
+  await expect(page.getByLabel("SKU",{exact:true})).toHaveValue("010");
+  await expect(page.getByLabel("Descrição",{exact:true})).toHaveValue("Planner");
+  await page.getByRole("button",{name:"Adicionar outro produto"}).click();
+  await page.getByLabel("SKU",{exact:true}).nth(1).fill("011");
+  await page.getByLabel("Descrição",{exact:true}).nth(1).fill("Adesivo");
+  await page.getByRole("button",{name:"Confirmar produtos da etiqueta"}).click();
+  await expect(page.getByText(/Leitura incompleta em/)).toHaveCount(0);
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("article").filter({hasText:"SKU 010"})).toContainText("Planner");
+  await expect(page.getByRole("article").filter({hasText:"SKU 011"})).toContainText("Adesivo");
+});
+
+test("reprocessa erros antigos pelo Firebase e retoma uma falha de download sem novo upload", async ({page}) => {
+  const store=randomUUID(),prefix="/__e2e/label-api/"+store;
+  const cat=await (await page.request.post(prefix+"/create",{data:{name:"Planners"}})).json();
+  const key=createHash("sha256").update(JSON.stringify(["sku","010"])).digest("hex");
+  expect((await page.request.post(prefix+"/assign",{data:{key,categoryId:cat.id}})).ok()).toBe(true);
+  await page.goto("/__e2e/imported-labels?resume&label-store="+store);
+  // Store metadata produced by the previous reader, while retaining the actual PDF bytes.
+  let uploads=0,reparses=0,downloads=0;
+  await page.route("**/archive/upload/pages",async route=>{
+    uploads++;
+    const body=route.request().postDataJSON();
+    for(const page of body.pages) page.label={products:[],issue:"Produto ou quantidade ilegível na tabela."};
+    await route.continue({postData:JSON.stringify(body)});
+  });
+  page.on("request",request=>{
+    if(request.url().endsWith("/archive/reparse")) reparses++;
+    if(request.url().includes("/__e2e/uploads/")) downloads++;
+  });
+  const failedDownload="**/__e2e/uploads/*-2.pdf";
+  await page.route(failedDownload,route=>route.fulfill({status:503,body:""}));
+  await expect(page.getByLabel("PDFs de etiquetas",{exact:true})).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas",{exact:true}).setInputFiles({
+    name:"legado.pdf",mimeType:"application/pdf",buffer:await makeLabels([
+      {tracking:"BR100A",rows:[["010","Planner","?"]]},
+      {tracking:"BR100B",rows:[["010","Planner",1]]},
+    ]),
+  });
+  await expect(page.getByRole("alert")).toContainText("Não foi possível reler 1 etiqueta(s)");
+  await expect(page.getByText("Leitura incompleta em 1 de 2 etiqueta(s)",{exact:true})).toBeVisible();
+  await expect(page.getByText(/Faltam categorias/)).toHaveCount(0);
+  await expect(page.getByText("Conferir quantidades (1 etiqueta(s))",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Concluir importação"})).toBeDisabled();
+  await page.unroute(failedDownload);
+  await page.getByRole("button",{name:"Reprocessar leitura",exact:true}).click();
+  await expect(page.getByRole("status")).toContainText("Leitura atualizada");
+  await expect(page.getByText(/Leitura incompleta em/)).toHaveCount(0);
+  await expect(page.getByText(/Faltam categorias/)).toHaveCount(0);
+  await page.getByRole("button",{name:"Concluir importação"}).click();
+  await expect(page.getByText("Importação concluída · 2 etiqueta(s).",{exact:true})).toBeVisible();
+  const beforeReload={uploads,reparses,downloads};
+  await page.reload();
+  await expect(page.getByText("Importação concluída · 2 etiqueta(s).",{exact:true})).toBeVisible();
+  expect({uploads,reparses,downloads}).toEqual(beforeReload);
+  expect(uploads).toBe(1);
+  expect(reparses).toBe(2);
 });
 
 test("envia uma revisão antiga ao Firebase preservando a identificação manual", async ({ page }) => {
@@ -469,4 +566,51 @@ test("vincula IDs por produto e variação, compartilha e permite alterar e remo
   } finally {
     await other.close();
   }
+});
+
+test("sugere a base pela variação, exige confirmação e mantém a escolha manual e os vínculos existentes", async ({page}) => {
+  const url="/__e2e/imported-labels?resume&label-suggestions&label-store="+randomUUID();
+  let writes=0;
+  page.on("request",request=>{ if(request.url().endsWith("/base-bindings/save")) writes++; });
+  await page.goto(url);
+  await expect(page.getByLabel("PDFs de etiquetas",{exact:true})).toBeEnabled();
+  await page.getByLabel("PDFs de etiquetas",{exact:true}).setInputFiles({
+    name:"sugestoes.pdf",mimeType:"application/pdf",buffer:await makeLabels([
+      {tracking:"BR100A",rows:[["10588006940","Caderneta de saude",1,"Gatinhas Brancas"]]},
+    ]),
+  });
+  const details=page.locator("details").filter({has:page.locator("summary").filter({hasText:"Vínculos com bases"})});
+  await details.locator("summary").click();
+  const row=details.getByRole("listitem");
+  await row.getByRole("button",{name:"Selecionar base",exact:true}).click();
+  const picker=page.getByRole("dialog",{name:"Vincular base ao produto da etiqueta",exact:true});
+  const suggested=picker.getByRole("region",{name:"Sugestões de bases",exact:true});
+  await expect(picker.getByText(/SKU 10588006940/)).toBeVisible();
+  await expect(suggested.getByRole("button")).toHaveCount(1);
+  const choice=suggested.getByRole("button",{name:"Caderneta de saúde · Gatinha Branca.pdf",exact:true});
+  await expect(choice).toContainText("Sugestão");
+  await expect(choice).toContainText("Variação em comum");
+  expect(writes).toBe(0);
+  await choice.click();
+  await expect(page.getByRole("alertdialog")).toContainText("Gatinha Branca.pdf");
+  expect(writes).toBe(0);
+  await page.getByRole("alertdialog").getByRole("button",{name:"Voltar",exact:true}).click();
+  await expect(row.getByText("Base pendente",{exact:true})).toBeVisible();
+  await row.getByRole("button",{name:"Selecionar base",exact:true}).click();
+  await choice.click();
+  await page.getByRole("alertdialog").getByRole("button",{name:"Salvar vínculo",exact:true}).click();
+  await expect(row.locator("code")).toHaveText("d".repeat(32));
+  expect(writes).toBe(1);
+  await page.reload();
+  await details.locator("summary").click();
+  await expect(row.locator("code")).toHaveText("d".repeat(32));
+  await row.getByRole("button",{name:"Alterar base",exact:true}).click();
+  await expect(choice).toHaveAttribute("aria-pressed","true");
+  expect(writes).toBe(1);
+  await picker.getByLabel("Filtrar por nome").fill("alternativa");
+  await expect(picker.getByRole("button",{name:"Caderneta de saúde · Gatinha Branca.pdf",exact:true})).toHaveCount(0);
+  await picker.getByRole("button",{name:"Base alternativa.pdf",exact:true}).click();
+  await page.getByRole("alertdialog").getByRole("button",{name:"Salvar vínculo",exact:true}).click();
+  await expect(row.locator("code")).toHaveText("c".repeat(32));
+  expect(writes).toBe(2);
 });

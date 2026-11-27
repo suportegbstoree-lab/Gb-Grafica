@@ -1464,6 +1464,7 @@ test("as etiquetas são PDFs privados de uma página, compartilhados e removidos
       "upload/part",
       "upload/pages",
       "identify",
+      "reparse",
       "links",
       "confirm",
       "remove",
@@ -1534,6 +1535,54 @@ test("as etiquetas são PDFs privados de uma página, compartilhados e removidos
     const fresh = await begin();
     assert.notEqual(fresh.revision, revision);
     assert.equal((await call("remove", ref)).status, 409);
+  }));
+
+test("reler uma etiqueta corrige apenas os metadados e preserva correções manuais e cancelamentos concorrentes", async () =>
+  scenario(async ({ request, objects }) => {
+    const root = "/library/label-categories/";
+    const call = (action: string, data: object) => request(root + "archive/" + action, "generator", data);
+    const id = "f".repeat(64);
+    const { revision } = await (await call("begin", {id,name:"legado.pdf",total:4})).json();
+    const ref = {id,revision};
+    const product = {sku:"001",description:"Planner",variation:""};
+    const broken = {products:[],issue:"Produto ou quantidade ilegível na tabela."};
+    const data = (await pdf(1)).toString("base64");
+    assert.equal((await call("upload/pages",{...ref,pages:[1,2,3,4].map(number=>({number,data,label:broken}))})).status,200);
+    const before = new Map([...objects].map(([path,obj]:any)=>[path,{bytes:Buffer.from(obj.bytes),meta:{...obj.meta}}]));
+    const initialFailure = await call("confirm",ref);
+    assert.equal(initialFailure.status,409);
+    assert.match((await initialFailure.json()).error,/leitura incompleta/);
+    const manual = {sku:"MANUAL",description:"Correção da equipe",variation:"Rosa"};
+    assert.equal((await call("identify",{...ref,number:2,products:[manual]})).status,200);
+    assert.equal((await call("exclude",{...ref,numbers:[3]})).status,200);
+    const label = {products:[product],warning:"A quantidade precisa de conferência."};
+    const updates = [1,2,3].map(number=>({number,expectedVersion:0,label}));
+    assert.equal((await call("reparse",{...ref,pages:updates})).status,200);
+    let pages = (await (await call("read",{...ref,after:0})).json()).pages;
+    assert.equal(pages[0].issue,undefined);
+    assert.equal(pages[0].parserVersion,1);
+    assert.equal(pages[0].warning,label.warning);
+    assert.equal(pages[1].products[0].sku,"MANUAL");
+    assert.equal(pages[2].excluded,true);
+    assert.equal(pages[2].issue,broken.issue);
+    // A stale metadata update cannot overwrite an already recovered page.
+    assert.equal((await call("reparse",{...ref,pages:[{number:1,expectedVersion:0,label:broken}]})).status,200);
+    assert.equal((await call("confirm",ref)).status,409);
+    // A current-version failure can be retried explicitly.
+    assert.equal((await call("reparse",{...ref,pages:[{number:4,expectedVersion:0,label:broken}]})).status,200);
+    assert.equal((await call("reparse",{...ref,pages:[{number:4,expectedVersion:1,label}]})).status,200);
+    pages = (await (await call("read",{...ref,after:0})).json()).pages;
+    const category = await (await request(root+"create","generator",{name:"Cadernos"})).json();
+    for (const key of new Set([pages[0].products[0].key,pages[1].products[0].key]))
+      assert.equal((await request(root+"assign","generator",{key,categoryId:category.id})).status,200);
+    assert.equal((await call("confirm",ref)).status,200);
+    const header = (await (await call("list",{})).json())[0];
+    assert.equal(header.confirmed,true);
+    assert.equal(header.count,4);
+    assert.equal(header.excludedCount,1);
+    assert.deepEqual(objects,before);
+    assert.equal((await call("reparse",{...ref,pages:[null]})).status,422);
+    assert.equal((await call("reparse",{...ref,pages:Array(13).fill(updates[0])})).status,422);
   }));
 
 test("renomear uma categoria legada mantém os vínculos e recriar um nome excluído exige nova classificação", async () =>

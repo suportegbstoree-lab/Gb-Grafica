@@ -1,16 +1,15 @@
 import {
   identifyProduct,
+  LABEL_PARSER_VERSION,
   labelDigest,
   parseLabelPage,
   type LabelImport,
   type ImportedLabel,
 } from "../lib/staffLabelImport";
 
-export async function readLabelImport(file: File): Promise<LabelImport> {
+async function readLabelPages(bytes: Uint8Array<ArrayBuffer>): Promise<ImportedLabel[]> {
   const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
   GlobalWorkerOptions.workerSrc = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const id = await labelDigest(bytes);
   const task = getDocument({ data: bytes, enableXfa: false });
   try {
     const document = await task.promise;
@@ -21,23 +20,39 @@ export async function readLabelImport(file: File): Promise<LabelImport> {
         const page = await document.getPage(n);
         try {
           const text = await page.getTextContent();
-          const { products, issue } = parseLabelPage(text.items.filter((item) => "str" in item));
-          const result: ImportedLabel = { products: [] };
+          const { products, issue, warning } = parseLabelPage(text.items.filter((item) => "str" in item));
+          const result: ImportedLabel = { products: [], parserVersion: LABEL_PARSER_VERSION };
           for (const product of products) result.products.push(await identifyProduct(product, cache));
           if (issue) result.issue = issue;
+          if (warning) result.warning = warning;
           pages.push(result);
         } finally {
           page.cleanup();
         }
       } catch {
-        pages.push({ products: [], issue: "Falha ao ler esta página." });
+        pages.push({
+          products: [],
+          issue: "Não foi possível extrair os produtos desta página.",
+          parserVersion: LABEL_PARSER_VERSION,
+        });
       }
     }
     if (!pages.length) throw new Error("O PDF está vazio.");
-    return { id, name: file.name, pages, importedAt: Date.now() };
+    return pages;
   } finally {
     await task.destroy();
   }
+}
+
+export async function readLabelImport(file: File): Promise<LabelImport> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const id = await labelDigest(bytes);
+  return { id, name: file.name, importedAt: Date.now(), pages: await readLabelPages(bytes) };
+}
+export async function readSavedLabelPage(blob: Blob): Promise<ImportedLabel> {
+  const pages = await readLabelPages(new Uint8Array(await blob.arrayBuffer()));
+  if (pages.length !== 1) throw new Error("O PDF salvo deve conter uma etiqueta por página.");
+  return pages[0];
 }
 
 // Store only the import metadata on this device. Each file is independently

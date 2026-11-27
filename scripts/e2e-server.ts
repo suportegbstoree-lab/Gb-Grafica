@@ -33,6 +33,8 @@ async function startE2EServer() {
       const { db } = memoryFirestore([
         ["_staffPdfBases/"+"a".repeat(32),{status:"ready",name:"Kit de teste.pdf"}],
         ["_staffPdfBases/"+"c".repeat(32),{status:"ready",name:"Base alternativa.pdf"}],
+        ["_staffPdfBases/"+"d".repeat(32),{status:"ready",name:"Gatinha Branca.pdf",category:"Caderneta de saúde"}],
+        ["_staffPdfBases/"+"e".repeat(32),{status:"ready",name:"Gatinha Rosa.pdf",category:"Caderneta de saúde"}],
       ]);
       const bucket = {
         file: (path: string) => {

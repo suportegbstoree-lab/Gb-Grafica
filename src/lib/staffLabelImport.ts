@@ -3,11 +3,12 @@ export interface LabelProduct {
   sku: string;
   description: string;
   variation: string;
-  quantity: number;
+  quantity?: number;
 }
 export interface LabelPage {
   products: LabelProduct[];
   issue?: string;
+  warning?: string;
 }
 
 const normalize = (text: string) =>
@@ -21,7 +22,7 @@ const normalize = (text: string) =>
 export function parseLabelPage(fragments: TextFragment[]): LabelPage {
   const words = fragments.filter((word) => word.str.trim());
   const result: LabelPage = { products: [] };
-  const pending = (issue: string): LabelPage => ({ ...result, products: [], issue });
+  const pending = (issue: string): LabelPage => ({ ...result, issue });
   const headers = words.filter((word) => normalize(word.str) === "sku");
   if (headers.length !== 1)
     return pending(
@@ -77,27 +78,32 @@ export function parseLabelPage(fragments: TextFragment[]): LabelPage {
         .map((p) => p.text)
         .join(separator);
     const units = cell(quantity.x, Infinity);
+    const count = /^(\d+)(?:[.,]0+)?(?:\s*(?:un(?:id(?:ades?)?)?\.?|x))?$/iu.exec(units.trim());
+    const parsedQuantity = count ? Number(count[1]) : undefined;
     const product = {
       sku: cell(sku.x, description.x, ""),
       description: cell(description.x, variation.x),
       variation: cell(variation.x, quantity.x),
-      quantity: Number(units),
+      quantity:
+        parsedQuantity !== undefined && Number.isSafeInteger(parsedQuantity) &&
+        parsedQuantity > 0 && parsedQuantity <= 10000
+          ? parsedQuantity
+          : undefined,
     };
-    if (
-      (!product.sku && !product.description) ||
-      !/^\d+$/.test(units) ||
-      !Number.isSafeInteger(product.quantity) ||
-      product.quantity < 1 ||
-      product.quantity > 10000
-    )
-      return pending("Produto ou quantidade ilegível na tabela.");
+    if (!product.sku && !product.description)
+      return pending("Não foi possível identificar todos os produtos da tabela.");
+    if (product.quantity === undefined)
+      result.warning = "Os produtos foram identificados. A quantidade precisa de conferência.";
     result.products.push(product);
   }
   const total = region.find(
     (p) => p.x >= quantity.x - slack && Math.abs(p.y - footer.y) < slack && /^\d+$/.test(p.text),
   );
-  if (total && Number(total.text) !== result.products.reduce((sum, p) => sum + p.quantity, 0))
-    return pending("A quantidade lida difere do total da etiqueta.");
+  if (
+    total && result.products.every(p => p.quantity !== undefined) &&
+    Number(total.text) !== result.products.reduce((sum, p) => sum + p.quantity!, 0)
+  )
+    result.warning = "Os produtos foram identificados. As quantidades diferem do total da etiqueta.";
   return result;
 }
 
@@ -146,7 +152,10 @@ type ProductIdentityFields = Pick<LabelProduct, "sku" | "description" | "variati
 export interface ImportedProduct extends ProductIdentityFields {
   key: string;
 }
+export const LABEL_PARSER_VERSION = 1;
 export interface ImportedLabel {
+  parserVersion?: number;
+  warning?: string;
   excluded?: boolean;
   number?: number;
   products: ImportedProduct[];
@@ -187,11 +196,11 @@ export async function identifyProduct(
   return { sku: product.sku, description: product.description, variation: product.variation, key };
 }
 export function missingLabelCategories(pages: ImportedLabel[], assignments: Record<string, string>) {
-  return pages.filter(
-    (page) =>
-      !page.excluded &&
-      (page.issue || !page.products.length || page.products.some((p) => !assignments[p.key])),
-  ).length;
+  return pages.filter(page => !page.excluded && page.products.some(p => !assignments[p.key])).length;
+}
+
+export function incompleteLabelReading(page: ImportedLabel) {
+  return !page.excluded && Boolean(page.issue || !page.products.length);
 }
 
 export interface LabelArchiveHeader {
@@ -220,6 +229,10 @@ export interface LabelArchiveApi {
   upload(ref: LabelArchiveRef, pages: LabelTransferPage[]): Promise<void>;
   part(ref: LabelArchiveRef, number: number, part: number, data: string): Promise<void>;
   identify(ref: LabelArchiveRef, number: number, products: ImportedProduct[]): Promise<void>;
+  reparse(
+    ref: LabelArchiveRef,
+    pages: Array<{ number: number; expectedVersion: number; label: ImportedLabel }>,
+  ): Promise<void>;
   confirm(ref: LabelArchiveRef): Promise<void>;
   links(ref: LabelArchiveRef, numbers: number[]): Promise<string[]>;
   exclude(ref: LabelArchiveRef, numbers: number[]): Promise<void>;

@@ -4,6 +4,8 @@ import React from "react";
 import { Upload } from "lucide-react";
 import {
   identifyProduct,
+  incompleteLabelReading,
+  LABEL_PARSER_VERSION,
   missingLabelCategories,
   type LabelArchiveHeader,
   type LabelCategory,
@@ -16,7 +18,7 @@ import {
 import ConfirmDialog from "./ConfirmDialog";
 import StaffLabelViewer from "./StaffLabelViewer";
 import { downloadPersonalization } from "../services/personalizationExport";
-import { labelPdfFile, uploadLabelPages } from "../services/staffLabelArchive";
+import { labelPdfFile, reprocessLabelPages, uploadLabelPages } from "../services/staffLabelArchive";
 import { listLabelImports, readLabelImport, forgetLocalLabelImport } from "../services/staffLabelImport";
 
 const button =
@@ -46,17 +48,23 @@ function IdentifyLabel({
   openPage,
   page,
   issue,
+  products,
   busy,
   save,
 }: {
   openPage?: () => void;
   page: number;
   issue: string;
+  products: ImportedProduct[];
   busy: boolean;
   save: (products: ImportedProduct[]) => Promise<void>;
 }) {
   const newRow = () => ({ id: crypto.randomUUID(), sku: "", description: "", variation: "" });
-  const [rows, setRows] = React.useState(() => [newRow()]);
+  const [rows, setRows] = React.useState(() =>
+    products.length
+      ? products.map(product => ({ ...product, id: crypto.randomUUID() }))
+      : [newRow()],
+  );
   return (
     <details className="rounded-lg border border-amber-800 p-3">
       <summary className="cursor-pointer">Página {page} · Identificar produtos manualmente</summary>
@@ -168,6 +176,8 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
   const active = React.useRef(false);
   const mounted = React.useRef(true);
   const pendingBox = React.useRef<HTMLHeadingElement>(null);
+  const repairAttempts = React.useRef(new Set<string>());
+  const repairController = React.useRef<AbortController | undefined>(undefined);
   const header = headers.find((h) => h.id === current?.id);
   const records = [
     ...headers.map((h) => ({ id: h.id, name: h.name, count: h.count, confirmed: h.confirmed })),
@@ -179,11 +189,13 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
   const excludedPages = current?.pages.filter((p) => p.excluded) ?? [];
   const assignments = directory.assignments;
   const missing = current ? missingLabelCategories(current.pages, assignments) : 0;
+  const unread = activePages.filter(incompleteLabelReading);
+  const warnings = activePages.filter(page => page.warning && !incompleteLabelReading(page));
   const pending = React.useMemo(() => pendingProducts(activePages, assignments), [current, assignments]);
   const names = new Map(directory.categories.map((c) => [c.id, c.name]));
   const busy = Boolean(working) || !loaded;
 
-  const completed = header?.state === "ready" && header.confirmed && !missing;
+  const completed = header?.state === "ready" && header.confirmed && !missing && !unread.length;
   async function load(preferred?: string, live = () => mounted.current) {
     const [remote, local] = await Promise.all([
       api.archive.list(),
@@ -219,6 +231,7 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
     setHeaders([]);
     setDirectory(emptyDirectory);
     setOnlineReady(false);
+    repairAttempts.current.clear();
     void load(undefined, () => live)
       .catch(() => {
         if (live) setError("Não foi possível carregar as etiquetas da equipe. Tente atualizar.");
@@ -229,6 +242,7 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
     return () => {
       live = false;
       mounted.current = false;
+      repairController.current?.abort();
     };
   }, [api, owner]);
 
@@ -247,6 +261,36 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
       if (mounted.current) setWorking("");
     }
   }
+  function reprocess(pages: ImportedLabel[]) {
+    if (!header) return;
+    return run("Reprocessando leitura das etiquetas salvas…", async () => {
+      const controller = new AbortController();
+      repairController.current = controller;
+      try {
+        const failed = await reprocessLabelPages(
+          api.archive, { id: header.id, revision: header.revision }, pages, controller.signal,
+          (done, total) => setWorking(`Reprocessando leitura · ${done} de ${total} etiquetas…`),
+        );
+        controller.signal.throwIfAborted();
+        await load(header.id);
+        if (failed.length)
+          setError(`Não foi possível reler ${failed.length} etiqueta(s). Use “Reprocessar leitura” para tentar novamente.`);
+        else setMessage("Leitura atualizada a partir dos PDFs salvos. Confira os avisos e as categorias abaixo.");
+      } finally {
+        if (repairController.current === controller) repairController.current = undefined;
+      }
+    });
+  }
+  React.useEffect(() => {
+    if (!loaded || working || active.current || header?.state !== "ready") return;
+    const attemptKey = (page: ImportedLabel) => JSON.stringify([header.id, header.revision, page.number]);
+    const old = unread.filter(page =>
+      (page.parserVersion ?? 0) < LABEL_PARSER_VERSION && !repairAttempts.current.has(attemptKey(page)),
+    );
+    if (!old.length) return;
+    old.forEach(page => repairAttempts.current.add(attemptKey(page)));
+    void reprocess(old);
+  }, [loaded, working, current, header?.revision]);
   function importFiles(files: File[]) {
     return run("Lendo etiquetas…", async () => {
       const known = new Set(headers.map((h) => h.id));
@@ -282,7 +326,8 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
             }
             if (previous.completed) {
               const directory = await api.lookup(allKeys([{ ...previous, pages: shared }]));
-              if (!missingLabelCategories(shared, directory.assignments)) await api.archive.confirm(ref);
+              if (!missingLabelCategories(shared, directory.assignments) && !shared.some(incompleteLabelReading))
+                await api.archive.confirm(ref);
             }
             await forgetLocalLabelImport(owner, item.id);
           }
@@ -668,6 +713,7 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
             !completed &&
             onlineReady &&
             !missing &&
+            !unread.length &&
             activePages.length > 0 && (
               <p className="text-sm text-green-300">
                 Todas as etiquetas têm categoria. Você já pode concluir este PDF.
@@ -686,6 +732,20 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
           )}
           {header?.state === "ready" && !completed && onlineReady && (
             <section className="space-y-2">
+              {!!unread.length && (
+                <div className="space-y-2 rounded-lg border border-amber-800 p-3">
+                  <h5 className="font-semibold">
+                    Leitura incompleta em {unread.length} de {activePages.length} etiqueta(s)
+                  </h5>
+                  <p className="text-sm text-amber-200">
+                    Não foi possível identificar todos os produtos dessas páginas. Isso é uma falha
+                    de leitura, não uma categoria faltante. Reprocesse ou confira o PDF para identificar os produtos.
+                  </p>
+                  <button className={button} disabled={busy} onClick={() => void reprocess(unread)}>
+                    Reprocessar leitura
+                  </button>
+                </div>
+              )}
               {!!missing && (
                 <h5 tabIndex={-1} ref={pendingBox} className="font-semibold">
                   Pendências de categorização
@@ -757,12 +817,13 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
               })}
               {activePages.map(
                 (page, i) =>
-                  page.issue && (
-                    <div key={current.id + i}>
+                  incompleteLabelReading(page) && (
+                    <div key={current.id + ":" + (page.number ?? i) + ":" + (page.parserVersion ?? 0)}>
                       <IdentifyLabel
                         openPage={header ? () => showPages([page.number!]) : undefined}
                         page={page.number ?? i + 1}
-                        issue={page.issue}
+                        issue={page.issue || "Nenhum produto foi identificado nesta página."}
+                        products={page.products}
                         busy={busy}
                         save={(products) =>
                           run("Salvando identificação…", async () => {
@@ -790,6 +851,24 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
                   ),
               )}
             </section>
+          )}
+          {!!warnings.length && (
+            <details className="rounded-lg border border-gray-700 p-3 text-sm">
+              <summary className="cursor-pointer">Conferir quantidades ({warnings.length} etiqueta(s))</summary>
+              <p className="my-2 text-gray-300">
+                Os produtos foram identificados. Este aviso não impede a categorização nem a conclusão da importação.
+              </p>
+              <ul className="space-y-2">
+                {warnings.map(page => (
+                  <li key={page.number}>
+                    Página {page.number} · {page.warning}{" "}
+                    <button className={button} disabled={busy} onClick={() => showPages([page.number!])}>
+                      Conferir página no PDF
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
           {header?.state==="ready" && onlineReady && (
             <StaffLabelBaseLinks pages={current.pages} api={api.baseBindings} library={library}/>
@@ -836,9 +915,8 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
                           </button>
                         </div>
                       )}
-                      {p.issue
-                        ? " · Identificação pendente"
-                        : p.products.map((product, j) => (
+                      {incompleteLabelReading(p) && <p className="text-amber-200">Identificação pendente</p>}
+                      {p.products.map((product, j) => (
                             <div key={j} className="break-words">
                               {productName(product)} ·{" "}
                               {names.get(assignments[product.key])
@@ -860,7 +938,7 @@ export default function StaffLabelCategories({ api, owner, library=staffPdfApi }
             <button
               className={button}
               disabled={
-                busy || header?.state !== "ready" || !onlineReady || missing > 0 || !activePages.length
+                busy || header?.state !== "ready" || !onlineReady || missing > 0 || unread.length > 0 || !activePages.length
               }
               onClick={() => void complete()}
             >

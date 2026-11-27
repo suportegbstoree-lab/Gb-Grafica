@@ -123,6 +123,7 @@ export function labelCategoryClient(
       upload: (ref, pages) => call("upload/pages", { ...ref, pages }),
       part: (ref, number, part, data) => call("upload/part", { ...ref, number, part, data }),
       identify: (ref, number, products) => call("identify", { ...ref, number, products }),
+      reparse: (ref, pages) => call("reparse", { ...ref, pages }),
       confirm: (ref) => call("confirm", ref),
       links: (ref, numbers) => call("links", { ...ref, numbers }),
       async exclude(ref, numbers) {
